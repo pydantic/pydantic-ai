@@ -5,6 +5,7 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory, mkdtemp
 
 import keyring
 import pytest
@@ -17,12 +18,6 @@ from tests.clai2.cli_runner import CliRunner
 
 # Keep browser-only fixtures out of ordinary test collection.
 collect_ignore: list[str] = ['browser'] if os.environ.get('CLAI2_BROWSER_TESTS') != '1' else []
-
-
-@pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
 
 
 @pytest.fixture
@@ -82,6 +77,21 @@ def fresh_rich_styles() -> None:
     Style._add.cache_clear()  # pyright: ignore[reportPrivateUsage] -- `Style + Style` caches its result here.
 
 
+@pytest.fixture(scope='session')
+def runtime_root() -> Iterator[Path]:
+    """Clean up after test-scoped OS monkeypatches have been restored."""
+    with TemporaryDirectory(prefix='c2-runtime-', dir='/tmp' if os.name == 'posix' else None) as root:
+        yield Path(root)
+
+
+@pytest.fixture(autouse=True)
+def runtime_directory(runtime_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep live-control sockets private, short, and outside the developer's real runtime directory."""
+    directory = Path(mkdtemp(prefix='r-', dir=runtime_root))
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(directory))
+    return directory
+
+
 @pytest.fixture(autouse=True)
 def isolated_environment(
     tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
@@ -126,6 +136,7 @@ def isolated_environment(
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
     # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    credential_store._warn_plaintext_fallback.cache_clear()  # pyright: ignore[reportPrivateUsage]
     credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
 
 

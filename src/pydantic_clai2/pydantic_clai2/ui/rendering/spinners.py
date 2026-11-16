@@ -158,27 +158,30 @@ def _parse_user_file(text: str, base: dict[str, Spinner]) -> tuple[dict[str, Spi
     for key, raw in entries.items():
         name = key.strip()
         try:
-            entry = _Entry.model_validate(raw)
-            if entry.frames is None:
-                if name not in base:
-                    raise ValueError('needs "frames" unless it names an existing spinner')
-                found = base[name]
-                interval = found.interval if entry.interval is None else clamp_interval(entry.interval)
-                description = found.description if entry.description is None else entry.description
-                spinners[name] = replace(found, interval=interval, description=description, source='user')
-            else:
-                spinner = build_spinner(
-                    name,
-                    entry.frames,
-                    interval=_PACK_INTERVAL if entry.interval is None else entry.interval,
-                    description=entry.description or '',
-                    source='user',
-                )
-                spinners[spinner.name] = spinner
+            spinners[name] = _user_spinner(name, raw, base)
         except (ValidationError, ValueError) as exc:
             reason = exc.errors()[0]['msg'] if isinstance(exc, ValidationError) else str(exc)
             problems.append(f'spinners.json: skipped {key!r}: {reason}')
     return spinners, tuple(problems)
+
+
+def _user_spinner(name: str, raw: object, base: dict[str, Spinner]) -> Spinner:
+    """The spinner one `spinners.json` entry defines, or the one in `base` it retunes; raises for a bad entry."""
+    entry = _Entry.model_validate(raw)
+    if entry.frames is None:
+        if name not in base:
+            raise ValueError('needs "frames" unless it names an existing spinner')
+        found = base[name]
+        interval = found.interval if entry.interval is None else clamp_interval(entry.interval)
+        description = found.description if entry.description is None else entry.description
+        return replace(found, interval=interval, description=description, source='user')
+    return build_spinner(
+        name,
+        entry.frames,
+        interval=_PACK_INTERVAL if entry.interval is None else entry.interval,
+        description=entry.description or '',
+        source='user',
+    )
 
 
 @contextmanager

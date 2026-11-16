@@ -282,23 +282,46 @@ pre {
   color: var(--muted);
 }
 
-.archived-toggle {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  color: var(--faint);
+.sidebar-views {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--hover);
 }
 
-.archived-toggle:hover {
-  background: var(--hover);
+.sidebar-views button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.sidebar-views button:hover {
   color: var(--text);
 }
 
-.archived-toggle.on {
-  background: var(--active);
-  color: var(--lithium);
+.sidebar-views button.on {
+  background: var(--bg-sidebar);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.view-count {
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--amber);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .projects {
@@ -343,65 +366,13 @@ pre {
   white-space: nowrap;
 }
 
-.worktree.nested {
-  margin: 2px 0 6px 12px;
-  padding-left: 6px;
-  border-left: 1px solid var(--border);
-}
-
-.worktree-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 8px 4px 6px;
-  color: var(--faint);
-  font-size: 12px;
-  border-radius: 6px;
-}
-
-.worktree-head {
+.project-head {
   position: relative;
   display: flex;
   align-items: center;
 }
 
-.worktree-head > .worktree-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.worktree-head > .session-more {
-  height: 22px;
-}
-
-.worktree-head:hover > .session-more {
-  display: grid;
-}
-
-.worktree-title:hover,
-.worktree.current > .worktree-head > .worktree-title {
-  color: var(--text-soft);
-}
-
-.worktree-name {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.worktree-tag {
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--faint);
-  font-size: 10.5px;
-}
-
-.worktree.missing .session-title {
+.project.removed .session-title {
   color: var(--muted);
 }
 
@@ -422,8 +393,7 @@ pre {
   border-radius: 8px;
 }
 
-.session:hover,
-.session.viewing {
+.session:hover {
   background: var(--hover);
 }
 
@@ -466,27 +436,55 @@ pre {
   font-variant-numeric: tabular-nums;
 }
 
-.session:hover .session-time {
+.session:is(:hover, :has(button:focus-visible)) .session-time {
   display: none;
 }
 
-.session.opening .session-time {
-  display: none;
+.session.unread .session-title {
+  color: var(--text);
+  font-weight: 600;
 }
 
+/* A branch or project, an imported session's agent, and a short ID when titles repeat: muted, so the title still leads. */
+.session-chip {
+  flex: none;
+  max-width: 40%;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needs-input {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  color: var(--amber);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+/* Hidden by size and opacity, not `display`, so Tab still reaches it. */
 .session-more {
-  display: none;
+  display: grid;
   place-items: center;
-  width: 26px;
+  width: 0;
   height: 26px;
-  margin-right: 3px;
+  overflow: hidden;
+  opacity: 0;
   border-radius: 6px;
   color: var(--muted);
 }
 
-.session:hover .session-more,
-.session-more:focus-visible {
-  display: grid;
+:is(.session, .project-head):is(:hover, :has(button:focus-visible)) .session-more {
+  width: 26px;
+  margin-right: 3px;
+  opacity: 1;
 }
 
 .session-more:hover {
@@ -503,11 +501,17 @@ pre {
   background: transparent;
 }
 
-.state.running,
-.state.busy {
+.state.running {
   background: var(--lithium);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
   animation: pulse 1.6s ease-out infinite;
+}
+
+/* Another CLAI runs it: a hollow ring, never this CLAI's spinner. */
+.state.busy {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--lithium);
 }
 
 .state.failed {
@@ -518,20 +522,28 @@ pre {
   background: var(--amber);
 }
 
-/* A running session with input queued behind its turn: the running dot, ringed. */
-.state.queued {
+.state.unread {
   background: var(--lithium);
-  outline: 1.5px solid var(--lithium);
-  outline-offset: 1.5px;
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
-  animation: pulse 1.6s ease-out infinite;
 }
 
-/* A question or dialog waits for the user: amber, and pulsing, unlike a cancelled turn's. */
+/* A folded project with a session waiting for your answer. */
 .state.asking {
   background: var(--amber);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 60%, transparent);
-  animation: pulse 1.6s ease-out infinite;
+}
+
+/* A row's turn running here: its glyph spins, at a dot's footprint. */
+.spinner.row-spinner {
+  width: 10px;
+  height: 10px;
+  margin-left: -4px;
+  border-width: 1.5px;
+  animation: spin 0.9s linear infinite;
+}
+
+/* A running session with input queued behind its turn: the spinner, ringed. */
+.spinner.row-spinner.with-queue {
+  outline: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: 1.5px;
 }
 
 @keyframes pulse {
@@ -946,6 +958,58 @@ pre {
   background: var(--surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Edit and Retry, shown on hover or keyboard focus. */
+.user-actions {
+  display: flex;
+  align-items: center;
+  margin-right: 4px;
+  opacity: 0;
+}
+
+.user-row:hover .user-actions,
+.user-actions:focus-within {
+  opacity: 1;
+}
+
+.user-actions .icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.user-bubble.editing {
+  display: flex;
+  flex-direction: column;
+  width: 78%;
+  gap: 8px;
+}
+
+.user-bubble.editing textarea {
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: 0;
+  padding: 6px 10px;
+  background: var(--composer);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.user-bubble.editing textarea:focus {
+  border-color: var(--focus);
+}
+
+.user-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.user-edit-actions span {
+  margin-right: auto;
 }
 
 /* A sent prompt's images, as the composer showed them, above its text. */
@@ -1530,6 +1594,21 @@ pre {
   padding: 6px 8px 8px 10px;
 }
 
+/* The session composer's bar wraps when it is narrow, as beside a side panel, so its actions move to a second line
+   instead of overflowing the composer. */
+.composer-bar.wraps {
+  flex-wrap: wrap;
+}
+
+/* The turn meter or hint and the send buttons, kept on one line and to the right. */
+.composer-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .hint {
   margin-left: auto;
   color: var(--faint);
@@ -1572,6 +1651,7 @@ pre {
 
 .send {
   display: grid;
+  flex: none;
   place-items: center;
   width: 32px;
   height: 32px;
@@ -2054,10 +2134,10 @@ pre {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-left: auto;
   color: var(--muted);
   font: 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .meter-time {
@@ -2117,6 +2197,42 @@ pre {
 .switch[aria-disabled='true'] {
   cursor: default;
   opacity: 0.7;
+}
+
+.switch.permissions select {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  outline: 0;
+}
+
+/* Approval card */
+
+.approval-tool {
+  margin-left: auto;
+  color: var(--muted);
+  font: 12px ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 400;
+}
+
+.approval-reason {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+}
+
+.approval-subject {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--active);
+  font: 12.5px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Theme picker */

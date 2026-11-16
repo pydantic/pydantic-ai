@@ -200,6 +200,7 @@ class Terminal(Generic[DepsT, OutputT]):
             ),
         )
         prompt.key_bindings = self.images.bindings()
+        prompt.app.on_reset += self.images.resume_notice
         return prompt
 
 

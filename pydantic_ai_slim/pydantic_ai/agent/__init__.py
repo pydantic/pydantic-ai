@@ -101,6 +101,7 @@ from ..capabilities.abstract import (
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
     _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
     _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
+    _RunIdInputs,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
     select_workspace,
 )
@@ -148,14 +149,14 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets._instruction_collection import collect_toolset_instructions, framework_appended_toolset_sources
+from ..toolsets._instruction_collection import collect_toolset_instructions
 from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces.unavailable import NO_WORKSPACE
+from ..workspaces.unavailable import HOST_WORKSPACE, NO_WORKSPACE
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
@@ -1803,10 +1804,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
         # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
         # default ids, so a re-execution of this code gets the same ones.
-        resolved_run_id = _agent_graph.resolve_run_id(
-            run_id if run_id is not None else bootstrap_capability.get_default_run_id(),
-            message_history,
-        )
+        if run_id is None:
+            run_id = await bootstrap_capability._get_default_run_id_for_inputs(  # pyright: ignore[reportPrivateUsage]
+                functools.partial(
+                    self._get_run_id_inputs,
+                    user_prompt=user_prompt,
+                    message_history=message_history,
+                    conversation_id=conversation_id,
+                    deps=deps,
+                    metadata=metadata,
+                    # Metadata can wrap the spec dict in a callback; retain its static layer for identity.
+                    spec_metadata=resolved.metadata if resolved is not None else None,
+                )
+            )
+        resolved_run_id = _agent_graph.resolve_run_id(run_id, message_history)
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
             usage=usage,
@@ -2338,21 +2349,53 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
         )
 
+    def _get_run_id_inputs(
+        self,
+        *,
+        user_prompt: str | Sequence[_messages.UserContent] | None,
+        message_history: Sequence[_messages.ModelMessage] | None,
+        conversation_id: str | None,
+        deps: AgentDepsT,
+        metadata: AgentMetadata[AgentDepsT] | None,
+        spec_metadata: dict[str, object] | None,
+    ) -> _RunIdInputs:
+        first, *remaining = self._get_metadata_sources(metadata, spec_metadata=spec_metadata)
+        # Metadata callbacks receive IDs, so only static values can determine those same IDs.
+        static_metadata = first if first is not None and not callable(first) else None
+        for source in remaining:
+            if source is not None and not callable(source):
+                static_metadata = _merge_metadata(static_metadata, source)
+        return {
+            'prompt': user_prompt,
+            'messages': list(message_history) if message_history else [],
+            # Result caching drops these IDs for cross-run reuse, but identity retains its lineage.
+            'message_history_ids': [(message.run_id, message.conversation_id) for message in message_history or ()],
+            'conversation_id': conversation_id,
+            'deps': deps,
+            'metadata': static_metadata or None,
+        }
+
+    def _get_metadata_sources(
+        self,
+        additional_metadata: AgentMetadata[AgentDepsT] | None,
+        *,
+        spec_metadata: dict[str, object] | None = None,
+    ) -> tuple[AgentMetadata[AgentDepsT] | None, ...]:
+        metadata_override = self._override_metadata.get()
+        if metadata_override is not None:
+            return (metadata_override.value,)
+        return self._metadata, spec_metadata, additional_metadata
+
     def _get_metadata(
         self,
         ctx: RunContext[AgentDepsT],
         additional_metadata: AgentMetadata[AgentDepsT] | None = None,
     ) -> dict[str, Any] | None:
-        metadata_override = self._override_metadata.get()
-        if metadata_override is not None:
-            return self._resolve_metadata_config(metadata_override.value, ctx)
-
-        base_metadata = self._resolve_metadata_config(self._metadata, ctx)
-        run_metadata = self._resolve_metadata_config(additional_metadata, ctx)
-
-        if base_metadata and run_metadata:
-            return {**base_metadata, **run_metadata}
-        return run_metadata or base_metadata
+        first, *remaining = self._get_metadata_sources(additional_metadata)
+        metadata = self._resolve_metadata_config(first, ctx)
+        for source in remaining:
+            metadata = _merge_metadata(metadata, self._resolve_metadata_config(source, ctx))
+        return metadata
 
     def _resolve_metadata_config(
         self,
@@ -2844,7 +2887,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
                 see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref].
                 `on_change='append'` makes the prompt dynamic whatever this says.
-            name: The name in the id `'system_prompt:<name>'` of the `<context>` element a system prompt with
+            name: The name in the id `'system_prompt:<name>'` of the `<pyai:context>` element a system prompt with
                 `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
                 It has no effect without `on_change='append'`. Existing histories tie the prompt to the
                 function's `__qualname__` whether or not this is set, so renaming or moving the function
@@ -2853,7 +2896,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             on_change: Whether a dynamic system prompt whose value changed between runs rewrites its part in the
                 message history (the default), which changes the start of every later request and so misses the
                 provider's prompt cache, or is appended to the history as a replacement that keeps the cached
-                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<context>` element from the
+                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<pyai:context>` element from the
                 first request on; see [appending system prompt changes](../agent.md#appending-system-prompt-changes).
 
         Example:
@@ -2899,7 +2942,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None,
         on_change: _messages.InstructionChangePolicy,
     ) -> str | None:
-        """The `<context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
+        """The `<pyai:context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
         if on_change != 'append':
             return None
         name = name if name is not None else func.__name__
@@ -4313,47 +4356,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sourced_instructions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
-            # Build `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
-            # instructions) and join with the canonical `InstructionPart.join` — same double-newline
-            # separator, static-before-dynamic ordering, and per-source `id`s as the graph run.
-            # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
-            instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
-            instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
-            if appended := _instructions.explicitly_appended_blocks(
-                sourced_instructions,
-                instruction_parts,
-                framework_toolset_sources=framework_appended_toolset_sources(tool_manager.toolset),
-            ):
-                warnings.warn(
-                    "`on_change='append'` is not supported by realtime sessions, so instruction blocks "
-                    f'{", ".join(map(repr, appended))} are sent as session instructions and their changes are not '
-                    'appended.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            if appending_system_prompts := [
-                runner.context_id for runner in self._system_prompt_functions if runner.context_id is not None
-            ]:
-                warnings.warn(
-                    "`on_change='append'` is not supported by realtime sessions, so dynamic system prompts "
-                    f'{", ".join(map(repr, appending_system_prompts))} are re-evaluated in place and their changes '
-                    'are not appended.',
-                    UserWarning,
-                    stacklevel=2,
-                )
-            # Nothing appends here, so an empty append-mode block has no withdrawal to record.
-            instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
             # which seeding skips: a session has no channel for them. They join the session's own instructions
             # instead, after the rest, resolved as the graph resolves them before each request.
             # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
-            for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history:
-                capability = run_context.capabilities.get(capability_id)
-                if capability is not None and capability.defer_loading is True:
-                    loaded_parts = await resolve_loaded_capability_instructions(
-                        capability_id, tool_manager.toolset, run_context
-                    )
-                    instruction_parts.extend(part for part in loaded_parts if part.content)
+            loaded_capability_ids = [
+                capability_id
+                for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history
+                if (capability := run_context.capabilities.get(capability_id)) is not None
+                and capability.defer_loading is True
+            ]
+
+            async def resolve_instruction_parts(
+                ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]
+            ) -> list[_messages.InstructionPart]:
+                """Resolve the session's instructions, at connect and again before each model turn.
+
+                Built from `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
+                instructions) with the same per-source `id`s as the graph run, every block that can change appending
+                its changes: see `session_instruction_parts`.
+                KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
+                """
+                parts = await _instructions.resolve_sourced_instructions(sourced_instructions, ctx)
+                parts.extend(await collect_toolset_instructions(toolset, ctx))
+                loaded_parts: list[_messages.InstructionPart] = []
+                for capability_id in loaded_capability_ids:
+                    loaded_parts.extend(await resolve_loaded_capability_instructions(capability_id, toolset, ctx))
+                return _instructions.session_instruction_parts(parts, loaded_parts)
+
+            instruction_parts = await resolve_instruction_parts(run_context, tool_manager.toolset)
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
             # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
@@ -4457,6 +4488,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 run_id=run_id,
                 wrap_event_stream=wrap_event_stream,
                 lifecycle=lifecycle_state,
+                resolve_instructions=resolve_instruction_parts,
+                appending_system_prompts={
+                    ref: runner
+                    for ref, runner in self._system_prompt_dynamic_functions.items()
+                    if runner.context_id is not None
+                },
             )
             try:
                 yield resolution
@@ -4678,6 +4715,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=resolved.model_request_parameters,
                     model_settings=session_settings,
                     wrap_event_stream=resolved.wrap_event_stream,
+                    _resolve_instructions=resolved.resolve_instructions,
+                    _appending_system_prompts=resolved.appending_system_prompts,
                 )
                 lifecycle.session = session
                 resolved.run_context.realtime_session = session
@@ -4991,6 +5030,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
+            # Keep errors replayable through recovery and teardown, then break their traceback cycles last.
+            stack.callback(graph_deps.release_tool_error_caches)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
             stack.callback(lambda: graph_deps.tool_manager._release_context())  # pyright: ignore[reportPrivateUsage]
@@ -5141,6 +5182,12 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                         self.resolve_metadata(agent_run.ctx)
 
 
+def _merge_metadata(base: dict[str, object] | None, additional: dict[str, object] | None) -> dict[str, object] | None:
+    if base and additional:
+        return {**base, **additional}
+    return additional or base
+
+
 def _cancellation_error_types(capability: AbstractCapability[Any]) -> tuple[type[BaseException], ...]:
     """The exception types the run's capabilities declare their environment cancels a run with."""
     error_types: list[type[BaseException]] = []
@@ -5269,7 +5316,7 @@ def _raise_for_unresolved_workspace(
     if workspace == 'new':
         raise exceptions.UserError(
             "`workspace='new'` needs a capability that can create a workspace, but none returned one. "
-            "Attach one, such as `capabilities=[LocalWorkspace('.')]`."
+            f"Attach one, such as `capabilities=[{HOST_WORKSPACE}('.')]`."
         )
     if isinstance(workspace, WorkspaceRef):
         named = f'`{workspace.provider}:{workspace.id}`'

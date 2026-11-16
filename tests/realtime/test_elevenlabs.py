@@ -477,10 +477,10 @@ async def test_keep_alive_sends_an_empty_append_when_idle(monkeypatch: pytest.Mo
     monkeypatch.setattr(ElevenLabsRealtimeConnection, '_keep_alive_after', 0.0)
     ws = _KeepAliveWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_elevenlabs.websockets, 'connect', FakeConnect(ws))
-    tasks_before = asyncio.all_tasks()
     async with _connect(_model(), 'x'):
         await asyncio.wait_for(ws.kept_alive.wait(), timeout=5)
-    assert asyncio.all_tasks() == tasks_before
+        (keep_alive,) = [task for task in asyncio.all_tasks() if task.get_name() == 'elevenlabs-keep-alive']
+    assert keep_alive.done()
 
 
 async def test_keep_alive_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:

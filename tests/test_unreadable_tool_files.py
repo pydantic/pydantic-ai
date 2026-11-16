@@ -201,6 +201,20 @@ async def test_document_of_unknown_media_type_is_left_to_the_adapter():
     assert tool_returns(request)[0].content == document
 
 
+async def test_text_like_binary_content_is_left_to_the_adapter():
+    """JSON, YAML and the like are no document to the flags: an adapter inlines them as text where the API has no
+    file part, so turning document input off doesn't replace them with a note."""
+    sent: list[list[ModelMessage]] = []
+    data = BinaryContent(b'{}', media_type='application/json', identifier='data')
+    profile = ModelProfile(supports_document_input=False)
+    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), data)
+
+    await agent.run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == data
+
+
 async def test_file_in_a_user_prompt_is_sent_as_it_is():
     """The user chose to send it, so it is the model adapter's to accept or refuse."""
     sent: list[list[ModelMessage]] = []

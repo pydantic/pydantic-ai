@@ -95,6 +95,7 @@ class Case:
     author: str = 'outside-contributor'
     permission: str = 'read'
     state: str = 'open'
+    event: str = 'pull_request_target'
     existing_comments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     # Defaults to len(files); set higher to model the PR-files API truncating.
     total_files: int | None = None
@@ -165,6 +166,9 @@ CASES: list[Case] = [
     ),
     # `edited` fires on closed and merged PRs too, where there is no merge left to guard.
     Case(id='closed-pr-being-edited', files=PROTECTED, blocked=False, comments=False, state='closed'),
+    # Each PR was judged on its head before it could be enqueued, so the merge group passes
+    # without being judged again, even on PR fields that would block a PR event.
+    Case(id='merge-group', files=PROTECTED, blocked=False, comments=False, event='merge_group'),
 ]
 
 
@@ -189,6 +193,7 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
             **os.environ,
             'PATH': f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
             'GH_TOKEN': 'stub-token',
+            'EVENT_NAME': case.event,
             'REPO': REPO,
             'PR_NUMBER': PR_NUMBER,
             'PR_AUTHOR': case.author,
@@ -291,6 +296,26 @@ def test_the_trigger_has_no_paths_filter():
     # `edited` is the only event fired when a PR's base branch changes, and the verdict is a
     # diff against that base — without it a green check survives a base switch.
     assert 'edited' in trigger['types']
+
+
+def test_the_required_check_reports_on_every_merge_group():
+    """A required check that never reports on a merge group stalls the merge queue.
+
+    GitHub matches required checks by job name across events, so the merge-group run has to
+    report under the same job. A merge group has no PR number, so its concurrency group falls
+    back to the group's own commit: keyed on the number alone, every group would share one
+    concurrency group and cancel the group building before it.
+    """
+    workflow = _workflow()
+    assert workflow[True]['merge_group'] == {'types': ['checks_requested']}
+    assert workflow['jobs']['guard']['name'] == '.github Directory Guard'
+    # `_run_guard` sets `EVENT_NAME` itself, so only this catches a missing mapping, which
+    # fails the guard on every event under `set -u`.
+    assert workflow['jobs']['guard']['steps'][0]['env']['EVENT_NAME'] == '${{ github.event_name }}'
+    assert workflow['concurrency'] == {
+        'group': 'protect-github-dir-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}',
+        'cancel-in-progress': True,
+    }
 
 
 def test_the_guard_job_holds_only_the_permission_it_uses():

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypeAlias, cast
@@ -13,15 +13,17 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
+from pydantic_ai._durable_replay import replay_scope
 from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
-from pydantic_ai.capabilities.set_tool_metadata import SetToolMetadata
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
+    capability_selects_child_workflow,
     conversation_id_from_run_id,
+    toolset_selects_child_workflow,
 )
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
@@ -31,7 +33,13 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase
 from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelQuotaExceededError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    UserError,
+)
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
@@ -49,6 +57,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._function_toolset import gate_tool_instance_defaults
 from ._operation_backend import (
     TemporalBoundOperation,
     TemporalOperationBackend,
@@ -77,6 +86,21 @@ from ._transports import (
 
 _STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
 """`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
+
+_DURABLE_COUNT_TOKENS_PATCH = 'pydantic_ai:durable_count_tokens'
+"""`workflow.patched()` ID marking histories in which a count ahead of a request runs in an activity."""
+
+_DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
+    ModelRequestRejectedError,
+    ModelQuotaExceededError,
+    ModelRequestTimeout,
+)
+"""The model errors another attempt of the same request can't fix, which Temporal doesn't retry by default.
+
+A rejected request (including a rejected API key, an unknown model and an overflowing context window) is rejected
+again, an exhausted quota stays exhausted until it resets, and a request that ran out of its deadline has no time
+left for another attempt.
+"""
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
@@ -122,6 +146,11 @@ It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including th
 arguments the workflow's run method needs to resume. Returning without calling it defers the
 continuation to the next model request.
 """
+
+
+def _replaying_history() -> bool:
+    """Workflow code running while Temporal replays history already ran, and recorded its telemetry, before."""
+    return workflow.in_workflow() and workflow.unsafe.is_replaying_history_events()
 
 
 @dataclass(init=False, kw_only=True)
@@ -171,7 +200,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         continue_as_new: ContinueAsNewHandler[AgentDepsT] | None = None,
-        non_retryable_model_errors: Sequence[type[ModelAPIError]] = (),
+        non_retryable_model_errors: Sequence[type[ModelAPIError]] = _DEFAULT_NON_RETRYABLE_MODEL_ERRORS,
     ):
         """Create a TemporalDurability capability.
 
@@ -227,12 +256,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 is true. It receives the run's `RunContext` and calls `workflow.continue_as_new()`
                 with the arguments the workflow needs to resume, or returns without calling it to
                 defer to the next model request. `None` disables continuation.
-            non_retryable_model_errors: Model error classes, such as
-                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or
-                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], that fail a model
-                activity without Temporal retrying it, whatever its retry policy says. An error matches when
-                it's an instance of a listed class, so a category also covers its subclasses. The workflow
-                still receives the error as its own class.
+            non_retryable_model_errors: Model error classes that fail a model activity without Temporal
+                retrying it, whatever its retry policy says. An error matches when it's an instance of a listed
+                class, so a category also covers its subclasses. The workflow still receives the error as its
+                own class. Defaults to the errors another attempt can't fix:
+                [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (which covers
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]),
+                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
+                [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. A list you pass replaces
+                the default, and `()` lets the retry policy retry every model error.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -343,7 +377,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
         # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
-        if isinstance(capability, SetToolMetadata) and is_child_workflow_metadata(capability.metadata.get('temporal')):
+        if capability_selects_child_workflow(capability, 'temporal'):
             self._child_workflow_metadata_capability = True
 
     def _selects_child_workflow(self, toolset_id: str) -> bool:
@@ -355,7 +389,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return True
         toolset = self._toolsets_by_id[toolset_id].wrapped
         assert isinstance(toolset, FunctionToolset)
-        return any(is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in toolset.tools.values())
+        return toolset_selects_child_workflow(toolset, 'temporal')
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Bind common model/event operations and adopt the existing toolset activities."""
@@ -369,14 +403,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         request_stream = self._bound_model_operations.request_stream
         compact_messages = self._bound_model_operations.compact_messages
         cancel_suspended_response = self._bound_model_operations.cancel_suspended_response
+        count_tokens = self._bound_model_operations.count_tokens
         assert isinstance(request, TemporalBoundOperation)
         assert isinstance(request_stream, TemporalBoundOperation)
         assert isinstance(compact_messages, TemporalBoundOperation)
         assert isinstance(cancel_suspended_response, TemporalBoundOperation)
+        assert isinstance(count_tokens, TemporalBoundOperation)
         self.request_activity = request.registration
         self.request_stream_activity = request_stream.registration
         self.compact_messages_activity = compact_messages.registration
         self.cancel_suspended_response_activity = cancel_suspended_response.registration
+        self.count_tokens_activity = count_tokens.registration
 
         if self._event_stream_handler is not None:
             self._bound_event_operation = self._bind_event_operation(backend)
@@ -415,6 +452,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         config.update(self._toolset_activity_config.get(toolset_id, {}))
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
         return config
+
+    def _function_tools_listing_in_durable_context(
+        self, toolset: FunctionToolset[AgentDepsT]
+    ) -> AbstractContextManager[None]:
+        return gate_tool_instance_defaults(toolset)
 
     @contextmanager
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
@@ -531,6 +573,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
 
+    def _counts_tokens_in_durable_unit(self) -> bool:
+        return workflow.patched(_DURABLE_COUNT_TOKENS_PATCH)
+
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
@@ -544,12 +589,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads inside Temporal workflows."""
+        """Disable threads inside Temporal workflows, and keep replayed work out of telemetry."""
         if not self.in_durable_context:
             return await handler()
 
-        with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            return await handler()
+        with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
+            return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""

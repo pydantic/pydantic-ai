@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -37,7 +35,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_relevance_compaction',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
     instance = DBOS(config=config)
     DBOS.launch()
@@ -45,7 +42,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 def _history() -> list[ModelMessage]:

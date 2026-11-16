@@ -7,19 +7,29 @@ import sys
 import threading
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import get_type_hints
+from typing import Any, get_type_hints
 from unittest.mock import Mock
 
 import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, PrefixTools
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import (
+    Authority,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
@@ -1087,7 +1097,8 @@ class TestCapabilityCreationToolset:
         finally:
             _gate(gate, 'release').set()
         assert await anyio.to_thread.run_sync(written.wait, _READY_TIMEOUT)
-        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['slow']
+        records = await anyio.to_thread.run_sync(CapabilityStore(tmp_path).list_all)
+        assert [record.name for record in records] == ['slow']
 
     async def test_author_validation_failure_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
@@ -1236,6 +1247,264 @@ class TestEndToEnd:
         agent = Agent(TestModel(), capabilities=[CapabilityCreation(directory=tmp_path)])
         with pytest.raises(UserError, match='imports model-written Python into the agent process'):
             await agent.run('go', workspace=backends[workspace])
+
+    @pytest.mark.parametrize('authority', ['user', 'none'])
+    async def test_refuses_a_store_directory_below_operator_authority(
+        self, tmp_path: Path, authority: Authority
+    ) -> None:
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path, authority=authority), CapabilityCreation(tmp_path / 'store')],
+        )
+        with pytest.raises(UserError, match=f"has `'{authority}'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'store').exists()
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_run_level_workspace_below_operator_authority(self, tmp_path: Path) -> None:
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        agent = Agent(_authoring_model(tmp_path), capabilities=[CapabilityCreation(tmp_path / 'store')])
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go', workspace=workspace)
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_runs_authored_code_in_a_store_directory_with_operator_authority(self, tmp_path: Path) -> None:
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path), CapabilityCreation(tmp_path / 'store')],
+        )
+        await agent.run('go')
+        assert (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_lower_store_directory_inside_an_operator_workspace(self, tmp_path: Path) -> None:
+        # The directory's own level decides: the rest of the workspace being the operator's doesn't help.
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(tmp_path / 'vendor' / 'store'),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_allows_an_operator_store_directory_inside_a_lower_workspace(self, tmp_path: Path) -> None:
+        # The operator's own directory next to a clone they don't control.
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, authority='none', path_authority={'store': 'operator'}),
+                CapabilityCreation(tmp_path / 'store'),
+            ],
+        )
+        await agent.run('go')
+        assert (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_store_directory_that_links_to_a_lower_path(self, tmp_path: Path) -> None:
+        (tmp_path / 'vendor').mkdir()
+        (tmp_path / 'store').symlink_to(tmp_path / 'vendor')
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(tmp_path / 'store'),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_store_directory_that_climbs_out_of_a_link_into_a_lower_path(self, tmp_path: Path) -> None:
+        # `link/../store` is `<tmp_path>/store` as text, but `vendor/store` to the filesystem, where the code runs.
+        (tmp_path / 'vendor' / 'subdir').mkdir(parents=True)
+        (tmp_path / 'link').symlink_to(tmp_path / 'vendor' / 'subdir')
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(Path(f'{tmp_path}/link/../store')),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'vendor' / 'store').exists()
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_relative_store_directory_resolves_against_the_process_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `directory` is a path on this machine, not a workspace path: read against the workspace's working
+        # directory, `store` would be `<tmp_path>/store`, at operator level, while the code runs from `vendor/store`.
+        (tmp_path / 'vendor').mkdir()
+        monkeypatch.chdir(tmp_path / 'vendor')
+        agent = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}),
+                CapabilityCreation(Path('store')),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_store_directory_outside_the_workspace_must_be_named_in_path_authority(self, tmp_path: Path) -> None:
+        (tmp_path / 'workspace').mkdir()
+        store = tmp_path / 'store'
+        refused = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path / 'workspace'), CapabilityCreation(store)],
+        )
+        with pytest.raises(UserError, match='path_authority'):
+            await refused.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+        named = Agent(
+            _authoring_model(tmp_path),
+            capabilities=[
+                LocalWorkspace(tmp_path / 'workspace', path_authority={str(store): 'operator'}),
+                CapabilityCreation(store),
+            ],
+        )
+        await named.run('go')
+        assert (tmp_path / 'ran').exists()
+
+
+def _authoring_model(tmp_path: Path) -> FunctionModel:
+    """Make a model that authors a capability, then finishes."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[_author_call(tmp_path)])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond)
+
+
+class TestDeferredLoading:
+    """A capability loaded mid-run with `load_capability` skips `before_run`, so its tools check for themselves."""
+
+    @pytest.mark.parametrize('authority', ['user', 'none'])
+    async def test_refuses_authoring_below_operator_authority(self, tmp_path: Path, authority: Authority) -> None:
+        agent = Agent(
+            _loading_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path, authority=authority), _deferred(tmp_path / 'store')],
+        )
+        with pytest.raises(UserError, match=f"has `'{authority}'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'store').exists()
+        assert not (tmp_path / 'ran').exists()
+
+    @pytest.mark.parametrize('workspace', ['read-only', 'sandbox'])
+    async def test_refuses_authoring_in_a_workspace_that_is_not_this_machine_and_writable(
+        self, tmp_path: Path, workspace: str
+    ) -> None:
+        backends: dict[str, WorkspaceBackend] = {
+            'read-only': ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))),
+            'sandbox': _Sandbox(tmp_path),
+        }
+        agent = Agent(_loading_model(tmp_path), capabilities=[_deferred(tmp_path / 'store')])
+        with pytest.raises(UserError, match='imports model-written Python into the agent process'):
+            await agent.run('go', workspace=backends[workspace])
+        assert not (tmp_path / 'ran').exists()
+
+    @pytest.mark.parametrize('tool', ['list_authored_capabilities', 'disable_authored_capability'])
+    async def test_refuses_the_other_authoring_tools(self, tmp_path: Path, tool: str) -> None:
+        args = {'name': 'authored'} if tool == 'disable_authored_capability' else {}
+        agent = Agent(
+            _loading_model(tmp_path, ToolCallPart(tool, args)),
+            capabilities=[LocalWorkspace(tmp_path, authority='none'), _deferred(tmp_path / 'store')],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+
+    async def test_refuses_authoring_under_a_prefixed_tool_name(self, tmp_path: Path) -> None:
+        agent = Agent(
+            _loading_model(tmp_path, tool_prefix='creation_'),
+            capabilities=[
+                LocalWorkspace(tmp_path, authority='none'),
+                PrefixTools(wrapped=_deferred(tmp_path / 'store'), prefix='creation'),
+            ],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go')
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_run_resuming_a_capability_loaded_in_history(self, tmp_path: Path) -> None:
+        operator = Agent(
+            _loading_model(tmp_path, ToolCallPart('list_authored_capabilities', {})),
+            capabilities=[LocalWorkspace(tmp_path), _deferred(tmp_path / 'store')],
+        )
+        history = (await operator.run('go')).all_messages()
+
+        agent = Agent(
+            TestModel(),
+            capabilities=[LocalWorkspace(tmp_path, authority='none'), _deferred(tmp_path / 'store')],
+        )
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await agent.run('go on', message_history=history)
+
+    async def test_authors_at_operator_authority(self, tmp_path: Path) -> None:
+        agent = Agent(
+            _loading_model(tmp_path),
+            capabilities=[LocalWorkspace(tmp_path), _deferred(tmp_path / 'store')],
+        )
+        await agent.run('go')
+        assert (tmp_path / 'ran').exists()
+
+    async def test_other_tools_are_not_checked(self, tmp_path: Path) -> None:
+        # The loaded capability's hook sees every tool call in the run, not only its own.
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'capability_creation'})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('other', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[LocalWorkspace(tmp_path, authority='none'), _deferred(tmp_path / 'store')],
+        )
+
+        @agent.tool_plain
+        def other() -> str:
+            return 'ok'
+
+        assert (await agent.run('go')).output == 'done'
+
+
+def _deferred(directory: Path) -> CapabilityCreation[Any]:
+    creation = CapabilityCreation[Any](directory)
+    creation.defer_loading = True
+    creation.description = 'Author new capabilities.'
+    return creation
+
+
+def _loading_model(tmp_path: Path, call: ToolCallPart | None = None, *, tool_prefix: str = '') -> FunctionModel:
+    """Load `CapabilityCreation` with `load_capability`, then make `call`, by default one authoring a capability."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'capability_creation'})])
+        if len(messages) == 3:
+            part = call or _author_call(tmp_path)
+            return ModelResponse(parts=[ToolCallPart(f'{tool_prefix}{part.tool_name}', part.args)])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond)
+
+
+def _author_call(tmp_path: Path) -> ToolCallPart:
+    """Author a capability whose module body leaves a `ran` file in `tmp_path`, so a test can see whether it ran."""
+    code = (
+        'from pathlib import Path\n'
+        'from pydantic_ai.capabilities import AbstractCapability\n\n'
+        f'Path({str(tmp_path / "ran")!r}).touch()\n\n\n'
+        'class Authored(AbstractCapability):\n'
+        '    pass\n'
+    )
+    return ToolCallPart('author_capability', {'name': 'authored', 'code': code})
 
 
 class _Sandbox(LocalWorkspaceBackend):

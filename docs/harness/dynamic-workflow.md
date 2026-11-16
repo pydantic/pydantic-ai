@@ -9,7 +9,22 @@ description: "Let a Pydantic AI orchestrator agent coordinate subagents by writi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](../img/harness/dynamic-workflow.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Dynamic Workflow: coordinate sub-agents with one script
+    accDescr: The orchestrator model calls run_workflow with one Python script, and the DynamicWorkflow capability runs it in the Monty sandbox. The capability starts two reviewer sub-agent runs in parallel, one for auth.py and one for parser.py, and their two reports stay in the sandbox. It passes both reports to a summarizer run and returns only the summary to the orchestrator model.
+    participant model as orchestrator model
+    participant cap as DynamicWorkflow()<br/>Monty sandbox
+    participant agents as sub-agent runs
+    model->>cap: run_workflow,<br/>one Python script
+    cap->>agents: reviewer, auth.py
+    cap->>agents: reviewer, parser.py,<br/>in parallel
+    agents-->>cap: two reports
+    Note over cap: both reports stay here
+    cap->>agents: summarizer,<br/>both reports
+    agents-->>cap: summary
+    cap-->>model: summary only
+```
 
 ## The idea
 
@@ -140,17 +155,17 @@ A hard, host-enforced ceiling on the number of sub-agent runs in one parent run.
 | `True` (default) | the parent's `usage` is shared across the tree | a tree-wide cap. Under concurrent fan-out it is best-effort: several sub-agents can pass the check before any of them adds to the count. |
 | `False` | each sub-agent run counts on its own | per-run limits. A per-run `total_tokens_limit` of `T` with `max_agent_calls` of `N` bounds the tree to roughly `N * T` tokens. |
 
-Without `sub_agent_usage_limits`, sub-agents sharing the counter (`forward_usage=True`) run under the `usage_limits` you pass to the parent `run()`, so the parent's budget bounds the whole tree. With `forward_usage=False` they fall back to pydantic-ai's default `request_limit` of 50 per run. For an exact ceiling on the number of runs, use `max_agent_calls`.
+Without `sub_agent_usage_limits`, sub-agents sharing the counter (`forward_usage=True`) run under the `usage_limits` you pass to the parent `run()`, so the parent's budget bounds the whole tree. With `forward_usage=False` they fall back to Pydantic AI's default `request_limit` of 50 per run. For an exact ceiling on the number of runs, use `max_agent_calls`.
 
 ### `resource_limits` -- guarding the script itself
 
 These limits guard the orchestration script's own memory, not the sub-agents it calls. The default backstop is 256 MB with no time limit. Printed output is collected separately with Monty's 10 MiB default cap.
 
 ```python
-DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
+DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 ```
 
-`max_duration_secs` measures the time your script spends running sandbox code, not wall-clock time. While the script waits on a sub-agent it is suspended and that time does not count, so the cap will not fire on a normal workflow no matter how long the sub-agents take. Its one job is catching a pure-CPU runaway -- a `while True:` loop that never awaits, which none of the sub-agent budgets can stop because it never calls a sub-agent. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains. A partial dict merges onto the backstop so you override only the caps you name.
+`max_duration_seconds` measures the time your script spends running sandbox code, not wall-clock time. While the script waits on a sub-agent it is suspended and that time does not count, so the cap will not fire on a normal workflow no matter how long the sub-agents take. Its one job is catching a pure-CPU runaway -- a `while True:` loop that never awaits, which none of the sub-agent budgets can stop because it never calls a sub-agent. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains. A partial dict merges onto the backstop so you override only the caps you name. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 ### Workflows do not nest
 
@@ -211,9 +226,10 @@ The script runs in Monty, a subset of Python. Knowing the edges matters:
 - No third-party libraries.
 - Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
-  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
+  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
-- `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
+- `asyncio.gather(...)` runs sub-agents concurrently (one at a time under
+  [DBOS](#running-under-other-durable-engines)) with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
 Before a script runs it is statically type-checked against the sub-agent signatures. An ordinary, statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed argument costs one retry but no sub-agent budget or sandbox execution. Values typed as `Any` can reach runtime validation; they are still rejected before a sub-agent runs.
@@ -227,12 +243,30 @@ Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflo
 sub-agent whose model requests should run as activities, then register every agent with its own
 `AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability),
 and is re-executed during replay against the recorded sub-agent results.
-Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
+Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
+
+## Running under other durable engines
+
+`DBOSDurability` numbers steps in the order they start, so the steps of concurrent sub-agents would
+interleave by timing and recovery could replay one sub-agent's results into another call. When
+sub-agents carry it, all of the script's calls run one at a time, so each sub-agent keeps its own step
+checkpoints and recovery replays them into the same call. An `asyncio.gather` over sub-agents then takes the sum of
+their run times rather than the longest.
+
+`AWSLambdaDurability` numbers a context's steps in the order they start too. When sub-agents carry it,
+the calls a script makes before it next waits run as the branches of one Lambda `parallel` operation,
+named after the tool, in the order the script made them. Sub-agents still run concurrently. Each
+branch has a child context of its own, whose step IDs derive from the branch's position, so a
+sub-agent's model requests and tool calls keep their own checkpoints. A branch's output is checkpointed
+with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
+branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
+
+Under other engines, sub-agents run concurrently.
 
 ## Observability
 
-The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. Until first-class progress streaming ships, set `event_stream_handler` on each sub-agent `Agent` to watch sub-agent runs inside the one tool call.
+The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. To watch sub-agent runs inside the one tool call, set `event_stream_handler` on each sub-agent `Agent`.
 
 ## API
 

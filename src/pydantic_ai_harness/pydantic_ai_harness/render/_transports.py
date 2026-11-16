@@ -25,7 +25,7 @@ from ._compat import (
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesParams,
     ModelRequestParams,
-    RenderJsonTransport,
+    RenderJSONTransport,
     RenderRunContextCodec,
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
@@ -41,7 +41,6 @@ from ._compat import (
     model_settings_from_json,
     model_settings_to_json,
     prepare_function_call_params,
-    resolve_function_tool_for_definition,
     resolve_mcp_tool_for_definition,
 )
 
@@ -53,7 +52,6 @@ __all__ = (
     'RenderCapabilityOperationTransport',
     'RenderCompactMessagesTransport',
     'RenderDynamicCallTransport',
-    'RenderDynamicGetToolsTransport',
     'RenderEventStreamHandlerTransport',
     'RenderFunctionCallTransport',
     'RenderGetToolsTransport',
@@ -119,7 +117,7 @@ class _EventPayload:
     run_context: JSONObject
 
 
-class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetCallToolParams]):
+class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[ToolsetCallToolParams]):
     result_type = CallToolResult
 
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT], toolset: FunctionToolset[AgentDepsT]) -> None:
@@ -145,12 +143,7 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJsonTransport[Tools
         ctx = self._context_codec.load(decoded.run_context)
         try:
             tool = (
-                resolve_function_tool_for_definition(
-                    self._toolset,
-                    decoded.tool_def,
-                    ctx=ctx,
-                    original_name=decoded.original_name,
-                )
+                self._toolset.tool_for_tool_def(decoded.tool_def, ctx=ctx, original_name=decoded.original_name)
                 if decoded.tool_def is not None
                 else None
             )
@@ -167,7 +160,7 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJsonTransport[Tools
         )
 
 
-class RenderGetToolsTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetGetToolsParams]):
+class RenderGetToolsTransport(Generic[AgentDepsT], RenderJSONTransport[ToolsetGetToolsParams]):
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT], *, result_type: object) -> None:
         self._context_codec = context_codec
         self.result_type = result_type
@@ -181,12 +174,7 @@ class RenderGetToolsTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetGe
         return ToolsetGetToolsParams(self._context_codec.load(decoded.run_context))
 
 
-class RenderDynamicGetToolsTransport(RenderGetToolsTransport[AgentDepsT]):
-    def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT]) -> None:
-        super().__init__(context_codec, result_type=DynamicToolsResult)
-
-
-class RenderMCPCallTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetCallToolParams]):
+class RenderMCPCallTransport(Generic[AgentDepsT], RenderJSONTransport[ToolsetCallToolParams]):
     result_type = CallToolResult
 
     def __init__(
@@ -224,7 +212,7 @@ class RenderMCPCallTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetCal
         )
 
 
-class RenderDynamicCallTransport(Generic[AgentDepsT], RenderJsonTransport[DynamicToolsetCallToolParams]):
+class RenderDynamicCallTransport(Generic[AgentDepsT], RenderJSONTransport[DynamicToolsetCallToolParams]):
     result_type = CallToolResult
 
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT]) -> None:
@@ -250,7 +238,7 @@ class RenderDynamicCallTransport(Generic[AgentDepsT], RenderJsonTransport[Dynami
         )
 
 
-class RenderCapabilityOperationTransport(Generic[AgentDepsT], RenderJsonTransport[CapabilityOperationParams]):
+class RenderCapabilityOperationTransport(Generic[AgentDepsT], RenderJSONTransport[CapabilityOperationParams]):
     def __init__(
         self,
         context_codec: RenderRunContextCodec[AgentDepsT],
@@ -277,7 +265,7 @@ class RenderCapabilityOperationTransport(Generic[AgentDepsT], RenderJsonTranspor
         )
 
 
-class RenderModelRequestTransport(Generic[AgentDepsT], RenderJsonTransport[ModelRequestParams]):
+class RenderModelRequestTransport(Generic[AgentDepsT], RenderJSONTransport[ModelRequestParams]):
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT], *, result_type: object) -> None:
         self._context_codec = context_codec
         self.result_type = result_type
@@ -304,7 +292,7 @@ class RenderModelRequestTransport(Generic[AgentDepsT], RenderJsonTransport[Model
         )
 
 
-class RenderCompactMessagesTransport(Generic[AgentDepsT], RenderJsonTransport[ModelCompactMessagesParams]):
+class RenderCompactMessagesTransport(Generic[AgentDepsT], RenderJSONTransport[ModelCompactMessagesParams]):
     result_type = ModelResponse
 
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT]) -> None:
@@ -341,7 +329,7 @@ class RenderCompactMessagesTransport(Generic[AgentDepsT], RenderJsonTransport[Mo
         )
 
 
-class RenderCancelTransport(Generic[AgentDepsT], RenderJsonTransport[ModelCancelSuspendedResponseParams]):
+class RenderCancelTransport(Generic[AgentDepsT], RenderJSONTransport[ModelCancelSuspendedResponseParams]):
     result_type = type(None)
 
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT]) -> None:
@@ -362,7 +350,7 @@ class RenderCancelTransport(Generic[AgentDepsT], RenderJsonTransport[ModelCancel
         return ModelCancelSuspendedResponseParams(decoded.model_id, response=decoded.response, run_context=ctx)
 
 
-class RenderEventStreamHandlerTransport(Generic[AgentDepsT], RenderJsonTransport[EventStreamHandlerParams]):
+class RenderEventStreamHandlerTransport(Generic[AgentDepsT], RenderJSONTransport[EventStreamHandlerParams]):
     result_type = type(None)
 
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT]) -> None:
@@ -385,7 +373,7 @@ class _WorkspacePayload:
     run_context: JSONObject
 
 
-class RenderWorkspaceCallTransport(Generic[AgentDepsT], RenderJsonTransport[WorkspaceCallParams]):
+class RenderWorkspaceCallTransport(Generic[AgentDepsT], RenderJSONTransport[WorkspaceCallParams]):
     result_type = WorkspaceCallResult
 
     def __init__(self, context_codec: RenderRunContextCodec[AgentDepsT]) -> None:
@@ -447,8 +435,8 @@ class RenderParameterTransports(ParameterTransports):
     def get_instructions(self, toolset: AbstractToolset[Any]) -> RenderGetToolsTransport[Any]:
         return RenderGetToolsTransport(self._codec(), result_type=Instructions)
 
-    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> RenderDynamicGetToolsTransport[Any]:
-        return RenderDynamicGetToolsTransport(self._codec())
+    def dynamic_get_tools(self, toolset: DynamicToolset[Any]) -> RenderGetToolsTransport[Any]:
+        return RenderGetToolsTransport(self._codec(), result_type=DynamicToolsResult)
 
     def dynamic_call(self, toolset: DynamicToolset[Any]) -> RenderDynamicCallTransport[Any]:
         return RenderDynamicCallTransport(self._codec())

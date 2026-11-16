@@ -1,0 +1,54 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "114"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.1-sol
+        stream: false
+        service_tier: ultrafast
+        messages:
+        - role: user
+          content: Say hi.
+  response:
+    status: 400
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "127"
+      content-type:
+      - application/json; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        error:
+          message: Invalid service_tier argument
+          type: invalid_request_error
+          param: service_tier
+          code: null
+  recorded_at: 2026-11-04T19:35:48.756668+00:00

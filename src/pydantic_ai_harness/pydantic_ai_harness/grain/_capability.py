@@ -25,7 +25,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset, read_only_toolset
+from pydantic_ai_harness._mcp import credential, hosted_toolset, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -102,14 +102,9 @@ class Grain(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Grain MCP tools."""
-        if self.client is not None:
-            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=self.id, include_instructions=self.include_instructions
-            )
-        elif callable(self.auth):
-            toolset = per_run_connection(self.auth, self._connect, id=self.id)
-        else:
-            toolset = self._connect(self.auth)
+        toolset = hosted_toolset(
+            self.client, self.auth, self._connect, id=self.id, include_instructions=self.include_instructions
+        )
         if self.read_only:
             toolset = read_only_toolset(toolset)
         return prefixed_toolset(toolset, self.tool_prefix)

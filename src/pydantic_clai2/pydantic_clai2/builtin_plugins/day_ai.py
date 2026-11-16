@@ -99,7 +99,7 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         console = self.host.console
         auth = self.settings.auth
         if isinstance(auth, KeyReference):
-            if auth.name not in load_keys():
+            if auth.name not in await to_thread.run_sync(load_keys):
                 # Each run fails closed until the key is saved.
                 console.print(
                     f'Day AI has no token: {auth.name} is not in /keys. {SETUP}',
