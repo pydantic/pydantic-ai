@@ -227,8 +227,9 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
 
 def start_x_server(log: str) -> str:
-    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless this machine's
-    X lock for the display names a running X server.
+    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one runs.
+
+    Whether one runs is read from the display's X lock, not from an X server answering.
 
     It fails once the X server exits, or after 10 seconds, printing the end of `log`.
 
