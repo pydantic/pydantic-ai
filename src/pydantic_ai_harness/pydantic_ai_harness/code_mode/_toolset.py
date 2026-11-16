@@ -22,7 +22,7 @@ from typing_extensions import TypedDict, TypeIs
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -50,6 +50,7 @@ try:
         MountDir,
         OsFunction,
         OsHandler,
+        OSPolicy,
         ResourceLimits,
     )
 except ImportError as _import_error:  # pragma: no cover
@@ -75,7 +76,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._typeguards import is_mapping
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
@@ -87,6 +88,8 @@ if TYPE_CHECKING:
 CodeModeOSCallback = Callable[[OsFunction, tuple[object, ...], dict[str, object]], object]
 # Accepted by `CodeMode.os_access`: a ready-made OS implementation or a handler that decides each call.
 CodeModeOS = AbstractOS | OsHandler | CodeModeOSCallback
+# Accepted by `CodeMode.os_policy`: Monty's session policies, merged key by key over the defaults.
+CodeModeOSPolicy = OSPolicy
 # Accepted by `CodeMode.mount`: one or more host-directory mounts.
 CodeModeMount = MountDir | list[MountDir]
 
@@ -110,7 +113,7 @@ _TIME_LIMIT_MESSAGE = (
 # fails there rather than silently losing its summary, and a Monty reword fails it rather than
 # quietly disabling recognition.
 _SANDBOX_LIMIT_MARKERS = {
-    'max_duration_secs': 'time limit exceeded',
+    'max_duration_seconds': 'time limit exceeded',
     'max_memory': 'memory limit exceeded',
     'max_suspensions': 'suspension limit ',
 }
@@ -225,7 +228,7 @@ def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
 
 
 def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
-    """Whether this runtime error is Monty stopping the snippet at `max_duration_secs`.
+    """Whether this runtime error is Monty stopping the snippet at `max_duration_seconds`.
 
     Stricter than `_exhausted_sandbox_limit` because it gates a session reset, and a wrong reset
     discards REPL state the session could still use.
@@ -242,7 +245,7 @@ def _is_duration_exhausted(error: MontyRuntimeError) -> bool:
     Callers must read `False` as "not known to be a timeout". A miss keeps the session and the
     ordinary runtime-error message.
     """
-    return not error.traceback() and _exhausted_sandbox_limit(error) == 'max_duration_secs'
+    return not error.traceback() and _exhausted_sandbox_limit(error) == 'max_duration_seconds'
 
 
 def _elided(count: int, shown: int, unit: str) -> str:
@@ -305,14 +308,16 @@ def _describe_started_calls(calls: dict[str, ToolCallPart], returns: dict[str, T
     used = 0
     for call_id, call in calls.items():
         result = returns.get(call_id)
-        # `ToolReturnPart.outcome` also allows 'failed', 'interrupted' and 'retried', but this
-        # function only ever sees parts built above, which set 'denied' or leave the default
-        # 'success'. Record any further outcome here rather than letting it fall through and read
-        # as a return.
+        # `ToolReturnPart.outcome` also allows 'interrupted' and 'retried', but this function only
+        # ever sees parts built above, which set 'denied', or 'failed' for a nested call that
+        # raised `ToolFailed`, or leave the default 'success'. Record any further outcome here
+        # rather than letting it fall through and read as a return.
         if result is None:
             outcome = 'did not finish, so it may have applied a partial change'
         elif result.outcome == 'denied':
             outcome = 'was denied and did not run'
+        elif result.outcome == 'failed':
+            outcome = f'failed: {_preview(result.content)}'
         else:
             outcome = f'returned {_preview(result.content)}'
         line = f'- {call.tool_name}({_preview(call.args)}) {outcome}'
@@ -331,11 +336,13 @@ def _describe_started_calls(calls: dict[str, ToolCallPart], returns: dict[str, T
 class CodeModeResourceLimits(TypedDict, total=False):
     """Caps on the sandbox code executed by `run_code`."""
 
-    max_duration_secs: float
+    max_duration_seconds: float
     """Sandbox execution time allowed to each `run_code` snippet; time awaiting tools does not count.
 
     Sleeping is not execution time, so each snippet may also sleep for up to this long in total.
     """
+    max_duration_secs: float
+    """Deprecated: renamed to `max_duration_seconds`."""
     max_memory: int
     max_suspensions: int
     """Cumulative host-interaction budget per session, not a per-snippet tool-call count.
@@ -345,19 +352,22 @@ class CodeModeResourceLimits(TypedDict, total=False):
     """
 
 
+# Without the deprecated key, which `__post_init__` renames.
+_RESOURCE_LIMIT_KEYS = frozenset(CodeModeResourceLimits.__annotations__) - {'max_duration_secs'}
+
+
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
     """Merge caller overrides onto the `run_code` backstop."""
     if limits == 'unlimited':
         return {}
     overrides: CodeModeResourceLimits = {} if limits is None else limits
-    unknown = set(overrides) - set(CodeModeResourceLimits.__annotations__)
+    unknown = set(overrides) - _RESOURCE_LIMIT_KEYS
     if unknown:
         raise UserError(
-            f'Unknown `resource_limits` key(s): {sorted(unknown)}. '
-            f'Valid keys are {sorted(CodeModeResourceLimits.__annotations__)}.'
+            f'Unknown `resource_limits` key(s): {sorted(unknown)}. Valid keys are {sorted(_RESOURCE_LIMIT_KEYS)}.'
         )
     # Read as `object` so values from untyped code are checked rather than trusted.
-    max_duration_secs: object = overrides.get('max_duration_secs', 30)
+    max_duration_seconds: object = overrides.get('max_duration_seconds', 30)
     max_memory: object = overrides.get('max_memory', 256 * 1024 * 1024)
     max_suspensions: object = overrides.get('max_suspensions', 1000)
     # Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
@@ -365,22 +375,23 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     if not (type(max_suspensions) is int and 1 <= max_suspensions < 2**64):
         raise UserError('`max_suspensions` must be an integer of at least 1 and below 2**64')
     if not (
-        max_duration_secs is None
+        max_duration_seconds is None
         or (
-            (type(max_duration_secs) is int or isinstance(max_duration_secs, float)) and 0 < max_duration_secs < 2.0**64
+            (type(max_duration_seconds) is int or isinstance(max_duration_seconds, float))
+            and 0 < max_duration_seconds < 2.0**64
         )
     ):
-        raise UserError('`max_duration_secs` must be a positive number of seconds below 2**64')
+        raise UserError('`max_duration_seconds` must be a positive number of seconds below 2**64')
     if not (max_memory is None or (type(max_memory) is int and 0 < max_memory < 2**64)):
         raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')
     return {
-        'max_feed_duration_secs': max_duration_secs,
+        'max_feed_duration_secs': max_duration_seconds,
         'max_memory': max_memory,
         'max_suspensions': max_suspensions,
     }
 
 
-class _RunCodeArguments(RunCodeArgs):
+class _RunCodeArgs(RunCodeArgs):
     # Keeps the schema title the model has always been sent; the fields come from `RunCodeArgs`.
     pass
 
@@ -437,7 +448,7 @@ def _split_by_placement(
     return sandboxed, native
 
 
-_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
+_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArgs)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 # Used to serialize tool return values before sending into Monty (dump_python)
@@ -505,22 +516,38 @@ The sandbox uses Monty, a subset of Python. Key restrictions:
 # configured. Three states, because `mount` and `os` enable different things:
 # a `mount` only exposes filesystem paths, while environment and clock calls
 # require an `os` handler.
+_SLEEP_SENTENCE = '`time.sleep` and `asyncio.sleep` really wait.'
+_POLICY_CLOCK_SENTENCE = f'`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` read the clock configured for this sandbox. {_SLEEP_SENTENCE}'
 _NO_OS_RESTRICTION = (
     '- **No filesystem, environment, or clock**: `pathlib.Path` I/O, `os.getenv`/`os.environ`, '
     '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are unavailable here '
     '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but '
-    'their I/O operations are not supported in this configuration. `time.sleep` and `asyncio.sleep` really wait.'
+    f'their I/O operations are not supported in this configuration. {_SLEEP_SENTENCE}'
 )
 _MOUNT_ONLY_NOTE = (
     '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
     'point(s) are routed to the host. `os.getenv`/`os.environ`, `datetime.datetime.now()`, '
-    '`datetime.date.today()`, and `time.time()` remain unavailable. `time.sleep` and `asyncio.sleep` really wait.'
+    f'`datetime.date.today()`, and `time.time()` remain unavailable. {_SLEEP_SENTENCE}'
 )
 _OS_ENABLED_NOTE = (
     '- **Configured OS access**: `pathlib.Path` operations, `os.getenv`/`os.environ`, '
     '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are routed to the OS '
-    'handler configured for this agent (availability depends on that configuration). '
-    '`time.sleep` and `asyncio.sleep` really wait.'
+    f'handler configured for this agent (availability depends on that configuration). {_SLEEP_SENTENCE}'
+)
+# The variants used when `os_policy` gives the sandbox a clock of its own: the notes above without
+# their "clock unavailable" or "clock routed to the handler" claim, plus the clock sentence.
+_NO_OS_WITH_CLOCK_NOTE = (
+    '- **No filesystem or environment**: `pathlib.Path` I/O and `os.getenv`/`os.environ` are unavailable here '
+    '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but their I/O '
+    f'operations are not supported in this configuration. {_POLICY_CLOCK_SENTENCE}'
+)
+_MOUNT_ONLY_WITH_CLOCK_NOTE = (
+    '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
+    f'point(s) are routed to the host. `os.getenv`/`os.environ` remain unavailable. {_POLICY_CLOCK_SENTENCE}'
+)
+_OS_ENABLED_WITH_CLOCK_NOTE = (
+    '- **Configured OS access**: `pathlib.Path` operations and `os.getenv`/`os.environ` are routed to the OS '
+    f'handler configured for this agent (availability depends on that configuration). {_POLICY_CLOCK_SENTENCE}'
 )
 _MOUNT_LIFETIME_NOTE = (
     "- **Mount write lifetime**: writes through a `mode='overlay'` mount last only for the current "
@@ -553,19 +580,26 @@ final expression, returns a list with the printed text followed by the native co
 """
 
 
-def _base_description(*, has_os: bool, has_mount: bool) -> str:
+def _policy_has_clock(os_policy: CodeModeOSPolicy | None) -> bool:
+    """Whether `os_policy` gives the sandbox a clock of its own rather than routing it to `os_access`."""
+    return os_policy is not None and os_policy.get('datetime', 'call_host') != 'call_host'
+
+
+def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
     """Assemble the `run_code` base description with the right OS-access restriction line.
 
     `os` routes environment, clock, and filesystem calls; a `mount` alone only
     exposes filesystem paths, so a mount-only sandbox must not advertise env or
     clock access (the model would generate calls that fail and burn retries).
+    `has_clock` says `os_policy` gives the sandbox a clock of its own, which the
+    note then advertises instead of calling it unavailable or routed to `os`.
     """
     if has_os:
-        restriction = _OS_ENABLED_NOTE
+        restriction = _OS_ENABLED_WITH_CLOCK_NOTE if has_clock else _OS_ENABLED_NOTE
     elif has_mount:
-        restriction = _MOUNT_ONLY_NOTE
+        restriction = _MOUNT_ONLY_WITH_CLOCK_NOTE if has_clock else _MOUNT_ONLY_NOTE
     else:
-        restriction = _NO_OS_RESTRICTION
+        restriction = _NO_OS_WITH_CLOCK_NOTE if has_clock else _NO_OS_RESTRICTION
     if has_mount:
         restriction = f'{restriction}\n{_MOUNT_LIFETIME_NOTE}'
     return f'{_RUN_CODE_DESCRIPTION_HEAD}\n{restriction}\n{_RUN_CODE_DESCRIPTION_TAIL}'
@@ -699,6 +733,9 @@ class RunCodeExecution:
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
     # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
     user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
+    # Each nested call's error, by call ID in the order the calls settled. Monty hands back only an
+    # uncaught error's text, so this is how the feed tells that a `ToolFailed` escaped the snippet.
+    nested_errors: dict[str, Exception] = field(default_factory=dict[str, Exception])
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
@@ -722,13 +759,14 @@ class RunCodeExecution:
             call_part, outcome, calls=self.nested_calls, returns=self.nested_returns, user_content=self.user_content
         )
         if outcome.error is not None:
+            self.nested_errors[call_part.tool_call_id] = outcome.error
             if outcome.usage_limit_exceeded is not None:
                 self.usage_limit_exceeded = outcome.usage_limit_exceeded
             raise outcome.error
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
 
-    def build_tool_return(self, result: Any) -> ToolReturn[Any]:
+    def make_tool_return(self, result: Any) -> ToolReturn[Any]:
         """Build the single public result for the logical `run_code` call."""
         output = self.capture.joined
         if not output:
@@ -764,6 +802,44 @@ def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
     """Re-raise the usage limit a nested call hit, which the snippet may have caught at its call site."""
     if execution.usage_limit_exceeded is not None:
         raise execution.usage_limit_exceeded
+
+
+def _raise_escaped_tool_failed(error: MontyRuntimeError, execution: RunCodeExecution) -> None:
+    """Raise a `ToolFailed` when the snippet ended on a nested call's uncaught `ToolFailed`.
+
+    Raising it from `run_code` gives the model a failed result that spends no retry, as calling the
+    tool directly does. Its `__cause__` is the instance the tool raised, so a `ToolFailed` subclass
+    and its data reach `run_code`'s error hooks. Monty passes an error a nested call raised back as a plain `Exception` with
+    the same message and nothing else, so the latest nested error with that message decides. Only a
+    snippet that handles a `ToolFailed` and another error with exactly the same text can be misread:
+    raising its own `Exception` with that text after catching the `ToolFailed` reads as the failure,
+    and re-raising a saved `ToolFailed` after a later nested error with that text reads as a retry.
+    A message Monty does not carry unchanged, such as one with a lone surrogate, falls back to a retry.
+    Telling these apart exactly needs Monty to carry the exception type across the boundary.
+
+    Limit failures that reset the session come back as `TimeoutError` or `MemoryError`, so they never
+    reach the match and need no reset advice here.
+    """
+    if type(error.exception()) is not Exception:
+        return
+    message = error.display(format='msg')
+    escaped = next((nested for nested in reversed(execution.nested_errors.values()) if str(nested) == message), None)
+    if not isinstance(escaped, ToolFailed):
+        return
+    _raise_usage_limit_exceeded(execution)
+    content = execution.capture.prepend_to(message)
+    if len(execution.nested_calls) > 1:
+        # Without a traceback, this is what tells the model which other calls already ran, so it
+        # does not repeat their side effects.
+        returns = dict(execution.nested_returns)
+        for call_id, nested in execution.nested_errors.items():
+            if isinstance(nested, ToolFailed):
+                tool_name = execution.nested_calls[call_id].tool_name
+                returns[call_id] = ToolReturnPart(
+                    tool_name=tool_name, content=nested.message, tool_call_id=call_id, outcome='failed'
+                )
+        content += f'\n\n{_describe_started_calls(execution.nested_calls, returns)}'
+    raise ToolFailed(content) from escaped
 
 
 def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
@@ -846,7 +922,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = field(default=None, kw_only=True)
     """Sandbox execution limits.
 
-    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_secs` is per
+    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_seconds` is per
     snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
     `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
@@ -857,6 +933,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
+
+    os_policy: CodeModeOSPolicy | None = field(default=None, kw_only=True)
+    """Monty session policies (clock, timezone, sleep, randomness), merged key by key over the defaults.
+
+    See [`CodeMode.os_policy`][pydantic_ai_harness.CodeMode.os_policy].
+    """
 
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
@@ -923,6 +1005,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeModeToolset')
         self.monty_sandbox_url = None
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeModeToolset')
 
     @property
     def id(self) -> str | None:
@@ -956,9 +1039,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         sandbox = self.monty_sandbox
         if isinstance(sandbox, str):
             _check_monty_sandbox_url(sandbox)
-            run_state = MontyRunState(monty_sandbox_url=sandbox)
+            run_state = MontyRunState(monty_sandbox_url=sandbox, os_policy=self.os_policy)
         elif sandbox is None or callable(sandbox):
-            run_state = MontyRunState(pool_factory=sandbox)
+            run_state = MontyRunState(pool_factory=sandbox, os_policy=self.os_policy)
         else:
             raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
         await self.wrapped.__aenter__()
@@ -978,14 +1061,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         self._run_state = None
         try:
             if self.speculation is not None:
-                await self.speculation.close()
+                await self.speculation.aclose()
             return await self.wrapped.__aexit__(*args)
         finally:
             try:
                 if repl is not None:
                     await repl.save(run_state)
             finally:
-                await run_state.close()
+                await run_state.aclose()
 
     @classmethod
     def from_run_context(cls, ctx: RunContext[AgentDepsT]) -> Self | None:
@@ -1086,11 +1169,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # static (it doesn't change per discovery), so it belongs in the cached description.
         has_os = self.os_access is not None
         has_mount = self.mount is not None
+        has_clock = _policy_has_clock(self.os_policy)
         if self.dynamic_catalog:
-            description = _base_description(has_os=has_os, has_mount=has_mount)
+            description = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
             self._last_catalog = self._render_catalog(callable_defs)
         else:
-            description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
+            description = self._build_description(
+                callable_defs, has_os=has_os, has_mount=has_mount, has_clock=has_clock
+            )
             self._last_catalog = ''
 
         if RUN_CODE_TOOL_NAME in native_tools:
@@ -1184,12 +1270,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         tool call id. What speculation bought goes on the return's history-only metadata, where
         traces and UIs can read it without spending the model's tokens on it every turn.
         """
-        tool_return = execution.build_tool_return(result)
+        tool_return = execution.make_tool_return(result)
         if self.speculation is not None:
             summary = await self.speculation.evict_part(ctx, execution.parent_tool_call_id)
             if summary is not None:
                 metadata: dict[str, Any] | None = tool_return.metadata
-                assert metadata is not None, '`build_tool_return` always attaches metadata'
+                assert metadata is not None, '`make_tool_return` always attaches metadata'
                 metadata['speculation'] = summary
         return tool_return
 
@@ -1287,7 +1373,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 portal=run_state.portal,
                 # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
                 # check is dropped there for replay, but sleeps are charged what they request.
-                max_sleep_secs=configured.get('max_feed_duration_secs'),
+                max_sleep_seconds=configured.get('max_feed_duration_secs'),
                 os_handler=os_handler,
             ).run(
                 partial(
@@ -1300,11 +1386,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 )
             )
             run_state.has_executed_feed = True
-        except BaseException as e:
-            retry = await self._feed_failure_retry(e, run_state, execution, fresh_repl=fresh_repl)
+        except BaseException as exc:
+            retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:
                 raise
-            raise retry from e
+            raise retry from exc
 
         _raise_usage_limit_exceeded(execution)
         result = completed.output
@@ -1357,7 +1443,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> ModelRetry | None:
         """Reset the session a failed feed left unusable and build the retry to raise for it.
 
-        Returns `None` for an interruption, which the caller re-raises unchanged.
+        Returns `None` for an interruption, which the caller re-raises unchanged. Raises `ToolFailed`
+        instead when the snippet let a nested call's `ToolFailed` escape.
         """
         capture = execution.capture
         match error:
@@ -1373,6 +1460,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
             case MontyRuntimeError():
                 run_state.has_executed_feed = True
+                _raise_escaped_tool_failed(error, execution)
                 return _runtime_failure_retry(
                     error, execution, reset_advice=await self._reset_for_runtime_error(error, run_state)
                 )
@@ -1490,9 +1578,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return callable_defs, sanitized_to_original
 
     @staticmethod
-    def _build_description(callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool) -> str:
+    def _build_description(
+        callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool, has_clock: bool
+    ) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""
-        base = _base_description(has_os=has_os, has_mount=has_mount)
+        base = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
         catalog = CodeModeToolset._render_catalog(callable_defs)
         if not catalog:
             return base

@@ -48,6 +48,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call, schema_arg_names
+from pydantic_ai_harness._warn import warn_callable_renamed
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -205,7 +206,7 @@ _StrictBool = Annotated[bool, Strict()]
 """A declaration counts only when it is literally `True`, not a truthy stand-in."""
 
 
-class _McpSafetyHints(TypedDict, total=False):
+class _MCPSafetyHints(TypedDict, total=False):
     """The MCP tool annotations that vouch for early execution, as they arrive in tool metadata."""
 
     readOnlyHint: _StrictBool
@@ -215,7 +216,7 @@ class _SafetyDeclarations(TypedDict, total=False):
     """The tool metadata keys `speculate='declared'` reads; unrelated keys are ignored."""
 
     read_only: _StrictBool
-    annotations: _McpSafetyHints
+    annotations: _MCPSafetyHints
 
 
 _SAFETY_ADAPTER = TypeAdapter(_SafetyDeclarations)
@@ -596,11 +597,11 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         if not final and newlines == watch.scanned_newlines:
             # No line boundary since the last scan: nothing can have closed. Report the grown
             # code for live rendering and skip the parse work.
-            await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statements=watch.closed_count))
+            await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statement_count=watch.closed_count))
             return
         watch.scanned_newlines = newlines
         watch.closed_count = self._count_closed(code, final=final)
-        await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statements=watch.closed_count))
+        await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statement_count=watch.closed_count))
         # Launch from the raw text, not the closed statements: a call is ready once its closing
         # paren has streamed, even while its enclosing statement (an `if` arm, a `with` body) is
         # still being generated. Rescans recount every occurrence in the grown prefix, so
@@ -707,7 +708,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         await ctx.emit(
             SpeculativeCallLaunchedEvent(
                 launch_id=launch_id,
-                sandbox_function=sandbox_name,
+                sandbox_function_name=sandbox_name,
                 wrapped_tool_name=original_name,
                 arguments=extracted.kwargs,
                 line_start=extracted.line_start,
@@ -864,7 +865,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         self._watch_for(ctx, execution).misses += 1
         await ctx.emit(
             SpeculativeCallMissedEvent(
-                sandbox_function=sandbox_name,
+                sandbox_function_name=sandbox_name,
                 wrapped_tool_name=call_part.tool_name,
                 nested_tool_call_id=call_part.tool_call_id,
             )
@@ -890,7 +891,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             'wasted': len(evicted),
         }
 
-    async def close(self) -> None:
+    async def aclose(self) -> None:
         """Run-end cleanup: cancel every launch no snippet ever claimed.
 
         Shielded: a run cancelled through an anyio scope is level-triggered, so without the
@@ -903,6 +904,11 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         with anyio.CancelScope(shield=True):
             for watch in parts.values():
                 await self._cancel_watch(watch)
+
+    async def close(self) -> None:
+        """Deprecated: renamed to `aclose`."""
+        warn_callable_renamed('SpeculationCoordinator.close', 'SpeculationCoordinator.aclose')
+        await self.aclose()
 
     async def _evict(
         self, ctx: RunContext[AgentDepsT], watch: _PartWatch

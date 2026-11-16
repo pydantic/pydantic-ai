@@ -141,12 +141,12 @@ async def test_url_beyond_server_root_rejected(url: str) -> None:
 
 @pytest.mark.parametrize(
     ('resource_limits', 'request_timeout'),
-    [(None, 40.0), ({'max_duration_secs': 90}, 100.0), ('unlimited', None)],
+    [(None, 40.0), ({'max_duration_seconds': 90}, 100.0), ('unlimited', None)],
 )
 async def test_remote_turn_deadline_follows_max_duration(
     monkeypatch: pytest.MonkeyPatch, resource_limits: Any, request_timeout: float | None
 ) -> None:
-    """The transport's per-turn deadline leaves room for `max_duration_secs` to fire first."""
+    """The transport's per-turn deadline leaves room for `max_duration_seconds` to fire first."""
     seen: list[float | None] = []
 
     def recording_pool(url: str, *, request_timeout: float | None) -> Never:
@@ -336,7 +336,7 @@ class TestCodeModeErrorRouting:
             capabilities=[
                 CodeMode(
                     monty_sandbox=MagicMock(return_value=local_backed_factory_pool),
-                    resource_limits={'max_duration_secs': 0.01},
+                    resource_limits={'max_duration_seconds': 0.01},
                 )
             ],
         )

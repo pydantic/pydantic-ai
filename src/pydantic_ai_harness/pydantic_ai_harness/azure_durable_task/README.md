@@ -114,6 +114,9 @@ completed results from history. This shapes how you write agents for it:
   capability's `@durable_operation` method.
 - **Names are persisted.** Activity names come from the agent's `name`, toolset IDs and tool names.
   Don't rename them while orchestrations that use them are still running.
+- **Token counts are activities.** With `count_tokens_before_request=True`, the count ahead of each
+  model request runs as an activity. Earlier versions counted in orchestrator code, so let
+  orchestrations that set it finish before you upgrade.
 - **Replay cost grows with run length.** Each replay re-runs the agent up to its latest step, so
   orchestrator CPU grows with the square of the number of model and tool steps. Keep very long
   conversations in separate orchestrations.

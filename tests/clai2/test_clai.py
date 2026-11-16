@@ -28,6 +28,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command, Commands, config_command, config_completions, plugins_command
+from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.rendering.splash import Splash
 
@@ -163,11 +164,8 @@ def test_settings_round_trip_and_validation(tmp_path: Path) -> None:
     assert config_command(store, ['get', 'display.thinking']) == 'true'
     config_command(store, ['set', 'model', 'test'])
     assert store.load().model == 'test'
-    plugins_command(store, ['add', 'audit', 'missing.module:Plugin'])
-    plugins_command(store, ['disable', 'audit'])
-    assert [plugin.enabled for plugin in store.plugins()] == [False]
-    plugins_command(store, ['remove', 'audit'])
-    assert store.plugins() == []
+    store.save_plugin(PluginSettings(id='audit', factory='missing.module:Plugin'))
+    assert plugins_command(store, ['list']) == 'audit: missing.module:Plugin (enabled)'
 
 
 def test_completion_uses_registry(tmp_path: Path) -> None:

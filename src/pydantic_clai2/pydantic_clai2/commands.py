@@ -24,10 +24,11 @@ from pydantic_clai2.config import (
     TOOL_CALL_DISPLAYS,
     UPDATE_CHANNELS,
     PluginSettings,
+    Settings,
+    resolve_settings,
 )
-from pydantic_clai2.config.builtins import STOCK_PLUGINS
-from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
-from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
+from pydantic_clai2.config.project_settings import SAFE_PROJECT_KEYS, widens
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
@@ -299,12 +300,38 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
     if len(args) == 2 and args[0] == 'reset':
         store.reset(args[1])
     elif len(args) == 3 and args[0] == 'set':
-        adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
-        value: JsonValue = args[2] if args[1] in STRING_SETTINGS else adapter.validate_json(args[2])
-        store.set(args[1], value)
+        store.set(args[1], _typed(args[1], args[2]))
     else:
         raise ValueError('Usage: config show|get KEY|set KEY VALUE|reset KEY')
     return 'Saved. Applies when you restart CLAI.'
+
+
+def _typed(key: str, raw: str) -> JsonValue:
+    adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+    return raw if key in STRING_SETTINGS else adapter.validate_json(raw)
+
+
+def refuse_widening(store: SettingsStore, args: list[str]) -> None:
+    """Refuse a `clai2 config` change that could widen what the agent may do: only `/config` in a session makes it."""
+    match args:
+        case ['set', key, raw] if key in SETTING_FIELDS:
+            value = _typed(key, raw)
+            resolve_settings({key: value})
+        case ['reset', key] if key in SETTING_FIELDS:
+            value = Settings().model_dump()[SETTING_FIELDS[key]]
+        case _:
+            return
+    # Before loading: an invalid saved display setting must stay fixable from the shell.
+    if key not in SAFE_PROJECT_KEYS and widens(key, value, saved=store.load()):
+        raise _session_only('config', args)
+
+
+def _session_only(command: str, args: list[str]) -> ValueError:
+    """The agent can run `clai2` from its shell, so a change that lets it do more is a `/command` the user types."""
+    return ValueError(
+        f'`clai2 {command} {args[0]}` cannot let the agent do more, since the agent can run clai2 from its shell. '
+        f'Run `/{shlex.join([command, *args])}` in a CLAI session instead.'
+    )
 
 
 def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> Iterable[str]:
@@ -348,10 +375,13 @@ PLUGINS_USAGE = (
     'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
     '\nGit repositories can be installed only inside a CLAI session: /plugins add GIT_URL'
 )
+_SHELL_PLUGINS_USAGE = (
+    'Usage: plugins list\nAdd, enable, disable, or remove plugins with /plugins inside a CLAI session.'
+)
 
 
 def added_plugin(args: list[str]) -> PluginSettings:
-    """The declaration `plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
+    """The declaration `/plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
     if len(args) not in (3, 4) or args[0] != 'add':
         raise ValueError(PLUGINS_USAGE)
     settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
@@ -359,29 +389,15 @@ def added_plugin(args: list[str]) -> PluginSettings:
 
 
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
-    """Manage explicit plugin declarations without importing plugins."""
-    if len(args) > 1:
-        args = [args[0], canonical_plugin_id(args[1]), *args[2:]]
-    declarations = store.plugins()
+    """`clai2 plugins`: list plugin declarations without importing plugins; only `/plugins` changes them."""
     match args:
         case [] | ['list']:
             return (
-                '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in declarations)
+                '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in store.plugins())
                 or 'No plugins.'
             )
-        case ['add', *_]:
-            added = added_plugin(args)
-            # Without importing, only a capability class's tags are known; a plugin's own come when it saves.
-            store.save_plugin(added, requires=CAPABILITY_REQUIREMENTS.get(added.factory))
-        case ['enable' | 'disable', plugin_id]:
-            # A saved declaration overrides the built-in, as in the shell; the CLI owns its agent, so the stock ones.
-            builtin = {p.id: p for p in STOCK_PLUGINS}
-            plugin = next((p for p in declarations if p.id == plugin_id), builtin.get(plugin_id))
-            if plugin is None:
-                raise ValueError(f'Unknown plugin: {plugin_id}')
-            store.save_plugin(plugin.model_copy(update={'enabled': args[0] == 'enable'}))
-        case ['remove', plugin_id]:
-            store.delete_plugin(plugin_id)
+        case ['add' | 'enable' | 'disable' | 'remove', *_]:
+            # Disabling can widen too: a plugin such as `hooks` may be what blocks a tool call.
+            raise _session_only('plugins', args)
         case _:
-            raise ValueError(PLUGINS_USAGE)
-    return 'Saved. Plugin code is trusted and loads on next startup.'
+            raise ValueError(_SHELL_PLUGINS_USAGE)

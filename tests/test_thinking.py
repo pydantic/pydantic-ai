@@ -846,6 +846,26 @@ class TestGoogleThinkingTranslation:
         result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
         assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
 
+    @pytest.mark.parametrize(
+        ('model_name', 'effort', 'expected'),
+        [
+            ('gemini-3-flash-preview', 'xhigh', 'HIGH'),
+            ('gemini-3-flash-preview', 'max', 'HIGH'),
+            ('gemini-4-hydrogen', 'high', 'HIGH'),
+            ('gemini-4-hydrogen', 'xhigh', 'XHIGH'),
+            ('gemini-4-hydrogen', 'max', 'XHIGH'),
+        ],
+    )
+    def test_thinking_xhigh_reaches_only_models_that_list_it(
+        self, model_name: str, effort: ThinkingEffort, expected: str
+    ):
+        """Only a model that lists `XHIGH` gets it: Gemini 3 models reject it, so they snap to `HIGH`."""
+        model = FunctionModel(_echo, profile=google_model_profile(model_name))
+        params = ModelRequestParameters(thinking=effort)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(model, settings, params)
+        assert result == {'include_thoughts': True, 'thinking_level': expected}
+
     def test_thinking_false_maps_to_lowest_supported_level(self, flash_lite_image_model: FunctionModel):
         """`thinking=False` resolves through the lowest supported level, here `MINIMAL`."""
         params = ModelRequestParameters(thinking=False)
@@ -1278,6 +1298,42 @@ class TestBedrockThinkingTranslation:
         params = ModelRequestParameters(thinking=True)
         result = model._build_additional_model_request_fields(settings, params, [])
         assert result is None
+
+    @pytest.mark.parametrize(
+        'model_name,thinking,expected',
+        [
+            # GLM-5 and DeepSeek V3.2 have no effort levels: `'high'` turns reasoning on and `'none'` turns it off.
+            ('zai.glm-5', True, {'reasoning_effort': 'high'}),
+            ('zai.glm-5', 'low', {'reasoning_effort': 'high'}),
+            ('zai.glm-5', False, {'reasoning_effort': 'none'}),
+            ('deepseek.v3.2', 'low', {'reasoning_effort': 'high'}),
+            ('deepseek.v3.2', False, {'reasoning_effort': 'none'}),
+            # GLM-5.3 takes every effort level except `'minimal'`, and `True` sends `'max'`, its default. Its `'medium'`
+            # and `'xhigh'` rows pass through, where Z.AI's own API would fold them.
+            ('us.zai.glm-5.3', True, {'reasoning_effort': 'max'}),
+            ('us.zai.glm-5.3', 'minimal', {'reasoning_effort': 'low'}),
+            ('us.zai.glm-5.3', 'medium', {'reasoning_effort': 'medium'}),
+            ('us.zai.glm-5.3', 'xhigh', {'reasoning_effort': 'xhigh'}),
+            # GLM-5.3 can't turn thinking off, so `False` reasons as little as it can.
+            ('us.zai.glm-5.3', False, {'reasoning_effort': 'low'}),
+            # R1 always reasons and Converse rejects any additional field, so the V3.2 mapping doesn't reach it.
+            ('us.deepseek.r1-v1:0', True, None),
+        ],
+    )
+    def test_reasoning_effort_variants(self, model_name: str, thinking: ThinkingLevel, expected: dict[str, str] | None):
+        """Unified `thinking` maps to Bedrock's `reasoning_effort` for Z.AI GLM and DeepSeek V3.2.
+
+        Not a VCR test: the field is decided before the request is built, and a recording only matches on
+        method and URI, so it would not notice a dropped field.
+        """
+        profile = BedrockProvider.model_profile(model_name)
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=thinking)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == expected
 
     def test_xai_variant_user_reasoning_wins(self):
         """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched.
@@ -2835,6 +2891,24 @@ _CROSS_SCOPE_CASES = [
         _bedrock_probe('us.xai.grok-4.7'),
         lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'high'}}),
         'low',
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        'bedrock-zai-reasoning-effort',
+        _bedrock_probe('zai.glm-5'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_effort': 'low'}),
+        'high',
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        'bedrock-deepseek-reasoning-effort',
+        _bedrock_probe('deepseek.v3.2'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_effort': 'low'}),
+        'high',
         _bedrock_sent,
         overrides=True,
         marks=_SKIP_WITHOUT_BEDROCK,

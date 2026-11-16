@@ -341,7 +341,7 @@ Key facts for building realtime agents:
   OpenAI/Azure, a contextual update on ElevenLabs Agents, a note to GPT-Live's voice model, `<system>`-tagged
   user text elsewhere), is recorded as a `SystemPromptPart`, and with the default `respond=True` gets a reply.
 - **Instructions are re-resolved before each model turn**, as in a standard run, and every change is appended (a
-  `<context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
+  `<pyai:context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
   the backend's instructions), whatever the block's `on_change`. Only instructions with an id can change: name an
   instruction function (`@agent.instructions(name=...)`) whose text changes mid-call, or the session warns and keeps
   the text it opened with.

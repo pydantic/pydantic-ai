@@ -9,7 +9,25 @@ capabilities written or selected by application code, see
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/capability_creation/)
 
-![In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to <directory>/<name>.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.](https://pydantic.dev/docs/ai/img/harness/capability-creation.svg)
+```mermaid
+flowchart TB
+    accTitle: Capability Creation: the agent writes capabilities for its next run
+    accDescr: In this run, the model calls author_capability(name, code) on CapabilityCreation(directory=...) and gets a result. The capability writes, imports and checks the capability's .py file in the directory and writes manifest.json. Your loop calls creation.store.load_active() and passes the active capabilities as capabilities= to the next agent.run, where their tools, hooks and instructions are live.
+    subgraph thisrun["This run"]
+        model(["model"])
+        creation["CapabilityCreation(directory=...)<br/>author_capability(name, code)"]:::capability
+    end
+    files["&lt;directory&gt;/&lt;name&gt;.py<br/>manifest.json"]
+    subgraph nextrun["Your loop, then the next run"]
+        load["creation.store.load_active()"]
+        run["next agent.run<br/>its tools, hooks and<br/>instructions are live"]
+    end
+    model <-->|"tool call, result"| creation
+    creation -->|"writes, imports, checks"| files
+    files -->|"active capabilities"| load
+    load -->|"capabilities="| run
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 

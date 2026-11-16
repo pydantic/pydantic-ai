@@ -50,6 +50,14 @@ class ReadMissingInHook(AbstractCapability[Any]):
         await ctx.workspace.read_text('missing.txt')
 
 
+class ReadInForRun(AbstractCapability[Any]):
+    """Reads the workspace while the run is prepared, before its steps begin."""
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        await ctx.workspace.exists('a.txt')
+        return self
+
+
 class AmnesiacWorkspaces(AbstractCapability[Any]):
     """Creates environments but can't reattach to the ones it created."""
 
@@ -103,9 +111,19 @@ class ScenarioAgents:
     local: Agent[None, str]
     amnesiac: Agent[None, str]
     uncaught: Agent[None, str]
+    prepare_reads: Agent[None, str]
 
     def all(self) -> list[Agent[None, str]]:
-        return [self.fresh, self.plain, self.read_only, self.explicit, self.local, self.amnesiac, self.uncaught]
+        return [
+            self.fresh,
+            self.plain,
+            self.read_only,
+            self.explicit,
+            self.local,
+            self.amnesiac,
+            self.uncaught,
+            self.prepare_reads,
+        ]
 
 
 def scenario_agents(
@@ -147,6 +165,9 @@ def scenario_agents(
         ),
         uncaught=Agent(
             TestModel(), name=f'{prefix}uncaught', capabilities=[ReadMissingInHook(), workspaces(), durability()]
+        ),
+        prepare_reads=Agent(
+            TestModel(), name=f'{prefix}prepare_reads', capabilities=[ReadInForRun(), workspaces(), durability()]
         ),
     )
 
@@ -277,6 +298,7 @@ async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict
         'ref': result.workspace.ref.id,
         'working_dir': await result.workspace.working_dir(),
         'note': await result.workspace.read_text('note.txt'),
+        'cwd': (await result.workspace.run(['pwd'], cwd='sub')).stdout,
     }
 
 
@@ -288,9 +310,25 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
     return (await agents.uncaught.run('Nothing to do.')).output
 
 
+async def prepare_reads(agents: ScenarioAgents, arg: str | None, engine_id: str) -> str:
+    return (await agents.prepare_reads.run('Nothing to do.')).output
+
+
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
+    for scenario in (
+        fresh,
+        multi_turn,
+        two_agents,
+        run_id,
+        read_only,
+        explicit,
+        binary,
+        local,
+        amnesiac,
+        uncaught,
+        prepare_reads,
+    )
 }
 
 
@@ -371,18 +409,26 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
 
 async def check_local(run: Runner, agents: ScenarioAgents) -> None:
     shutil.rmtree(agents.local_dir, ignore_errors=True)
-    os.makedirs(agents.local_dir)
+    # A subdirectory, so the scenario's `pwd` only prints it if `cwd` crossed the journal.
+    os.makedirs(os.path.join(agents.local_dir, 'sub'))
     try:
         assert await run('local', None) == {
             'output': '{"write_note":"on disk"}',
             'ref': agents.local_dir,
             'working_dir': os.path.realpath(agents.local_dir),
             'note': 'on disk',
+            'cwd': f'{os.path.realpath(agents.local_dir)}/sub\n',
         }
         with open(os.path.join(agents.local_dir, 'note.txt'), encoding='utf-8') as note:
             assert note.read() == 'on disk'
     finally:
         shutil.rmtree(agents.local_dir, ignore_errors=True)
+
+
+async def check_prepare_reads(run: Runner, agents: ScenarioAgents) -> None:
+    """A workspace call made while the run is prepared reaches the run's backend, not a new one."""
+    await run('prepare_reads', None)
+    assert agents.provider.log == ['create:env-1']
 
 
 async def check_failure(name: str, type: str, fragment: str, run: Runner, agents: ScenarioAgents) -> None:
@@ -419,6 +465,7 @@ CASES: dict[str, Check] = {
     'explicit_dead_ref': partial(
         check_explicit_rejected, 'dead_ref', 'WorkspaceUnavailableError', "environment 'expired' does not exist"
     ),
+    'prepare_reads': check_prepare_reads,
     'binary': check_binary,
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),

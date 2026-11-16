@@ -1,8 +1,10 @@
 """Keyboard decoding only, with no prompt-toolkit application or renderer."""
 
 import asyncio
+import os
 import re
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 
 from prompt_toolkit.input import Input
@@ -24,7 +26,6 @@ _KEY_ALIASES = {
     'ctrl-i': 'tab',
     'ctrl-m': 'enter',
     'ctrl-[': 'escape',
-    'ctrl-enter': 'enter',
     'ctrl-shift-enter': 'enter',
     '<bracketed-paste>': 'paste',
     '<vt100-mouse-event>': 'mouse',
@@ -49,6 +50,11 @@ _NAMED_KEYS = {
     57426: 'delete',
     57427: 'begin',
 }
+
+
+def ctrl_enter_steers(*, platform: str = sys.platform, environ: Mapping[str, str] = os.environ) -> bool:
+    """Whether Ctrl+Enter steers: Windows and Windows Terminal (`WT_SESSION`, also in WSL) take Alt+Enter."""
+    return platform == 'win32' or 'WT_SESSION' in environ
 
 
 def _key_name(key: Keys | str) -> str:
