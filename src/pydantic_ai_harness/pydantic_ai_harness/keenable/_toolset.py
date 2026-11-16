@@ -291,7 +291,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         client: KeenableClient | None,
-        max_results: int = KEENABLE_DEFAULT_MAX_RESULTS,
+        max_results: int | None = None,
         max_snippet_chars: int,
         max_page_chars: int,
         id: str | None = None,
@@ -305,7 +305,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
                 `HttpKeenableClient` configured from the `KEENABLE_API_KEY` and
                 `KEENABLE_API_URL` environment variables.
             max_results: Number of results `web_search` asks Keenable for, from
-                1 to 50.
+                1 to 50. `None` asks for 5.
             max_snippet_chars: Maximum characters of excerpt `web_search`
                 returns per result.
             max_page_chars: Maximum characters of page text `get_page` returns,
@@ -322,10 +322,12 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         """
         super().__init__(id=id)
         if num_results is not None:
-            if max_results != KEENABLE_DEFAULT_MAX_RESULTS:
+            if max_results is not None:
                 raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
             warn_argument_renamed('KeenableSearchToolset', 'num_results', 'max_results')
             max_results = num_results
+        elif max_results is None:
+            max_results = KEENABLE_DEFAULT_MAX_RESULTS
         # `KeenableSearch` validates these at construction, but the toolset is
         # public too, so a direct caller gets the same guarantee. Validated
         # before the client is built, so a bad budget fails on its own terms.

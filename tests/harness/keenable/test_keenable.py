@@ -309,8 +309,15 @@ class TestKeenableSearchToolset:
         assert client.max_results == [2]
         with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
             KeenableSearchToolset[None](
-                client=client, max_results=4, num_results=2, max_snippet_chars=500, max_page_chars=10_000
+                client=client, max_results=5, num_results=2, max_snippet_chars=500, max_page_chars=10_000
             )
+
+    async def test_toolset_max_results_defaults_to_five(self):
+        client = FakeClient(results=[_result('https://example.com/one')])
+        await KeenableSearchToolset[None](client=client, max_snippet_chars=500, max_page_chars=10_000).web_search(
+            'cats'
+        )
+        assert client.max_results == [5]
 
     async def test_web_search_collapses_whitespace_and_caps_the_excerpt(self):
         # Snippets are raw page text, newlines included, and far longer than the
