@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import struct
 import threading
-import zlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from typing import Any
@@ -1541,21 +1540,6 @@ RED_SQUARE = (974, 176, 1022, 224)
 """Left, top, right and bottom of the red square on `_RedSquareScreen`, in pixels."""
 
 
-def _red_square_png() -> bytes:
-    """A white 1280x800 PNG with a red square at `RED_SQUARE`."""
-    (width, height), (left, top, right, bottom) = FAKE_DISPLAY_SIZE, RED_SQUARE
-    white, red = b'\xff\xff\xff', b'\xff\x00\x00'
-    plain = b'\x00' + white * width
-    marked = b'\x00' + white * left + red * (right - left) + white * (width - right)
-    rows = b''.join(marked if top <= y < bottom else plain for y in range(height))
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
-
-    header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
-
-
 class _RedSquareScreen(ScreenProvider):
     def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
         return _RedSquareBackend(self, ref)
@@ -1563,7 +1547,7 @@ class _RedSquareScreen(ScreenProvider):
 
 class _RedSquareBackend(ScreenBackend):
     async def screenshot(self) -> bytes:
-        return _red_square_png()
+        return png(*FAKE_DISPLAY_SIZE, background=b'\xff\xff\xff', red_box=RED_SQUARE)
 
 
 @pytest.mark.vcr
