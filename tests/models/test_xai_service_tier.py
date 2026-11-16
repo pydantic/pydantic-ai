@@ -30,10 +30,15 @@ MODEL_NAME = 'grok-4-fast-non-reasoning'
 
 
 @pytest.mark.parametrize(
-    'service_tier,expected',
-    [('default', 'default'), ('priority', 'priority'), ('auto', None), ('flex', None)],
+    'service_tier,sent',
+    [
+        ('default', {'service_tier': 'default'}),
+        ('priority', {'service_tier': 'priority'}),
+        ('auto', {}),
+        ('flex', {}),
+    ],
 )
-async def test_xai_service_tier(allow_model_requests: None, service_tier: ServiceTier, expected: str | None):
+async def test_xai_service_tier(allow_model_requests: None, service_tier: ServiceTier, sent: dict[str, str]):
     """`default` and `priority` reach `chat.create`; `auto` and `flex` have no xAI tier and are omitted."""
     mock_client = MockXai.create_mock([create_response(content='test response')])
     m = XaiModel(MODEL_NAME, provider=XaiProvider(xai_client=mock_client))
@@ -42,7 +47,7 @@ async def test_xai_service_tier(allow_model_requests: None, service_tier: Servic
     await agent.run('Hello')
 
     kwargs = get_mock_chat_create_kwargs(mock_client)[0]
-    assert kwargs.get('service_tier') == expected
+    assert {key: value for key, value in kwargs.items() if key == 'service_tier'} == sent
 
 
 @pytest.mark.parametrize('served_tier', ['default', 'priority'])
