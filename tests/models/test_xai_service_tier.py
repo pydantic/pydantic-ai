@@ -1,7 +1,6 @@
 """xAI's service tier: the tier `chat.create()` receives and the tier the response reports.
 
-`MockXai` stands in for a gRPC recording: no xAI key was available to record one. The mock captures the
-`chat.create()` arguments as sent, and each test sets the tier on the response proto.
+`MockXai` captures the `chat.create()` arguments as sent, and each test sets the tier on the response proto.
 https://github.com/pydantic/pydantic-ai/issues/12071
 """
 
