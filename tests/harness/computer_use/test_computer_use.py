@@ -1227,9 +1227,11 @@ Each call runs a list of actions in order and returns a screenshot of the result
             tasks.cancel_scope.cancel()
         assert provider.actions == [MouseDown(), MouseUp()]
 
-    async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
+    async def test_a_call_refused_before_it_acts_leaves_its_presses_to_the_run_end(
         self, durability: list[AbstractCapability[Any]]
     ) -> None:
+        # A failed call may have pressed any button it names, so the run's end releases them; a release with nothing
+        # pressed causes no click.
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'mouse_down'}, {'type': 'click', 'x': 5000, 'y': 1}]),
@@ -1239,7 +1241,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
-        assert provider.actions == []
+        assert provider.actions == [MouseUp()]
 
     async def test_an_environment_gone_at_the_end_of_a_run_leaves_its_result(self) -> None:
         class LostOnRelease(ScreenBackend):
@@ -1256,7 +1258,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert (await agent.run('Go.')).output == 'done'
 
     @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
-    async def test_a_deferred_computer_use_releases_the_buttons_its_run_holds(self) -> None:
+    async def test_a_computer_use_loaded_mid_run_releases_at_the_end_of_each_call(self) -> None:
         provider = ScreenProvider()
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1264,11 +1266,43 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'computer'})])
             if len(messages) == 3:
                 return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
+            if len(messages) == 5:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'move', 'x': 5, 'y': 5}]})])
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(FunctionModel(respond), capabilities=[provider.capability(), ComputerUse(defer_loading=True)])
-        await agent.run('Go.')
-        assert provider.actions == [MouseDown(), MouseUp()]
+        _, pressed, _ = _returns((await agent.run('Go.')).all_messages())
+
+        assert pressed.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
+        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
+
+    async def test_a_call_after_one_that_failed_after_a_press_releases_it_before_reporting_what_is_held(
+        self,
+    ) -> None:
+        class FirstScreenshotFails(ScreenBackend):
+            failed = False
+
+            async def screenshot(self) -> bytes:
+                if not FirstScreenshotFails.failed:
+                    FirstScreenshotFails.failed = True
+                    raise WorkspaceError('the capture failed')
+                return await super().screenshot()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return FirstScreenshotFails(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        failed, moved = _returns((await agent.run('Go.')).all_messages())
+
+        assert failed.outcome == 'failed'
+        # The press may or may not have stuck, so the next call releases it rather than call it still pressed.
+        assert moved.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
+        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
 
     async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
         provider = ScreenProvider()
@@ -1371,41 +1405,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
         )
         await agent.run('Go.')
         assert provider.actions == [MouseUp()]
-
-    async def test_another_run_on_the_screen_can_only_look_while_one_holds_a_button(self) -> None:
-        provider = ScreenProvider()
-        screen = provider.backend(None)
-        holding, tried = anyio.Event(), anyio.Event()
-
-        async def hold(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
-            holding.set()
-            await tried.wait()
-            return ModelResponse(parts=[TextPart('done')])
-
-        holder = Agent(FunctionModel(hold), capabilities=[ComputerUse()])
-        other = Agent(
-            _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}]), capabilities=[ComputerUse()]
-        )
-
-        async def hold_the_button() -> None:
-            await holder.run('Go.', workspace=screen)
-
-        returns: list[ToolReturnPart] = []
-        async with anyio.create_task_group() as tasks:
-            tasks.start_soon(hold_the_button)
-            with anyio.fail_after(READY_TIMEOUT):
-                await holding.wait()
-            returns = _returns((await other.run('Go.', workspace=screen)).all_messages())
-            tried.set()
-        refused, looked = returns
-
-        assert refused.content == snapshot(
-            'Another agent is holding a mouse button on this screen; try again after it lets go.'
-        )
-        assert looked.outcome == 'success'
-        assert provider.actions == [MouseDown(), MouseUp()]
 
     async def test_a_button_whose_press_took_effect_but_failed_is_released(self) -> None:
         class LostReply(ScreenBackend):
