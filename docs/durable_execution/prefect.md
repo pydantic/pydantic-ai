@@ -303,6 +303,10 @@ A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a flow. T
 
 The deadline bounds the agent run, not the flow. To bound the whole flow as well, set Prefect's own `timeout_seconds` on the flow.
 
+### Counting Tokens Before a Request
+
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count runs in its own task ahead of each model request task, configured by `model_task_config`. It's keyed on the same inputs as the model request, so a retried flow run loads the recorded count instead of calling the provider again.
+
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate tasks.
