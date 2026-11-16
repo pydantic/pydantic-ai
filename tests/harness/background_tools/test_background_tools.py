@@ -16,10 +16,12 @@ from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter, ValidationError
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, ToolOutput, UsageLimits
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, Instrumentation, SetToolMetadata
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -71,7 +73,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, CodeMode
 from pydantic_graph import End
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
-from tests.harness.conftest import IsStr
+from tests.harness.conftest import Instrumented, IsStr
 
 from ...realtime_connections import InferredConnection
 
@@ -2038,7 +2040,13 @@ def _span(exporter: InMemorySpanExporter, name: str) -> ReadableSpan:
     return span
 
 
-def _summary(span: ReadableSpan) -> dict[str, Any]:
+class _SpanSummary(TypedDict):
+    attributes: dict[str, AttributeValue]
+    status: str
+    events: list[dict[str, AttributeValue]]
+
+
+def _summary(span: ReadableSpan) -> _SpanSummary:
     """The span's own attributes, status and exception events, without the timing and ids that vary."""
     return {
         'attributes': {
@@ -2054,9 +2062,7 @@ def _summary(span: ReadableSpan) -> dict[str, Any]:
 class TestTelemetry:
     """The placeholder's `execute_tool` span is marked, and the real execution gets a span of its own."""
 
-    async def test_background_execution_has_its_own_span(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ) -> None:
+    async def test_background_execution_has_its_own_span(self, instrumented: Instrumented) -> None:
         release = asyncio.Event()
         instrumentation, exporter = instrumented(False)
         agent = Agent(
@@ -2105,7 +2111,7 @@ class TestTelemetry:
         self,
         error: Exception,
         outcome: str,
-        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+        instrumented: Instrumented,
     ) -> None:
         instrumentation, exporter = instrumented(False)
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools(), instrumentation])
@@ -2121,9 +2127,7 @@ class TestTelemetry:
         assert summary['status'] == 'ERROR'
         assert 'secret detail' not in str([(span.attributes, span.events) for span in exporter.get_finished_spans()])
 
-    async def test_a_retry_from_the_tool_records_cores_cause(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ) -> None:
+    async def test_a_retry_from_the_tool_records_cores_cause(self, instrumented: Instrumented) -> None:
         instrumentation, exporter = instrumented(False)
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools(), instrumentation])
 
@@ -2147,7 +2151,7 @@ class TestTelemetry:
         self,
         error_factory: Callable[[], Exception],
         cause: str,
-        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+        instrumented: Instrumented,
     ) -> None:
         instrumentation, exporter = instrumented(False)
         agent = Agent(
@@ -2167,9 +2171,7 @@ class TestTelemetry:
             cause,
         )
 
-    async def test_a_tool_raising_cancelled_error_itself_is_interrupted(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ) -> None:
+    async def test_a_tool_raising_cancelled_error_itself_is_interrupted(self, instrumented: Instrumented) -> None:
         instrumentation, exporter = instrumented(False)
         agent = Agent(_model_calling('cancelled'), capabilities=[BackgroundTools(), instrumentation])
 
@@ -2200,9 +2202,7 @@ class TestTelemetry:
             ('app request', {})
         ]
 
-    async def test_failure_message_is_recorded_with_include_content(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ) -> None:
+    async def test_failure_message_is_recorded_with_include_content(self, instrumented: Instrumented) -> None:
         instrumentation, exporter = instrumented(True)
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools(), instrumentation])
 
@@ -2215,9 +2215,7 @@ class TestTelemetry:
         [event] = _span(exporter, 'background_tools execute broken').events
         assert (event.attributes or {})['exception.message'] == 'visible detail'
 
-    async def test_run_ending_error_and_cancelled_sibling(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ) -> None:
+    async def test_run_ending_error_and_cancelled_sibling(self, instrumented: Instrumented) -> None:
         slow_started = asyncio.Event()
         instrumentation, exporter = instrumented(False)
 
@@ -2261,9 +2259,7 @@ class TestTelemetry:
             }
         )
 
-    async def test_base_exception_marks_the_span_as_failed(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ) -> None:
+    async def test_base_exception_marks_the_span_as_failed(self, instrumented: Instrumented) -> None:
         class FatalBackgroundError(BaseException):
             pass
 
