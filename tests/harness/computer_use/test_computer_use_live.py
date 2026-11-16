@@ -601,6 +601,31 @@ async def test_claude_toolset_calls_go_back_to_a_computer_20251124_model(
 
 
 @needs_anthropic
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='the second agent is on a model with another computer use tool')
+async def test_claude_computer_20251124_calls_go_back_to_a_toolset_model(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    capabilities = [provider.capability(), ComputerUse()]
+    earlier_model = _claude('claude-sonnet-4-6', anthropic_api_key, request_capture)
+    result = await Agent(earlier_model, capabilities=capabilities).run(TASK)
+
+    model = _claude('claude-haiku-5-5', anthropic_api_key, request_capture)
+    await Agent(model, capabilities=capabilities).run(
+        'Now click at x=10 y=10, then reply "done". Do nothing else.', message_history=result.all_messages()
+    )
+
+    assert provider.actions == [*DONE, Click(x=10, y=10)]
+    last = request_capture.bodies('/v1/messages')[-1]
+    assert _tools(last) == [{'type': 'computer_toolset_20260801'}]
+    # `computer_20251124`'s calls went back as plain `computer` calls, and the new one as a toolset member's.
+    calls = content_blocks(last, 'tool_use')
+    assert 'actions' in json_objects([calls[0]['input']])[0] and 'toolset_name' not in calls[0]
+    assert calls[-1]['toolset_name'] == 'computer'
+
+
+@needs_anthropic
 @needs_bedrock
 @pytest.mark.vcr
 async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
@@ -746,6 +771,7 @@ async def test_gpt_compacts_computer_and_function_calls_through_the_compact_endp
     assert 'computer_call_output' in kinds and 'function_call' in kinds and 'function_call_output' in kinds
 
 
+@needs_openai
 @pytest.mark.vcr
 async def test_gpt_gets_only_the_outputs_in_a_conversation(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
@@ -766,6 +792,7 @@ async def test_gpt_gets_only_the_outputs_in_a_conversation(
     )
 
 
+@needs_openai
 @pytest.mark.vcr
 async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_endpoint(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
@@ -792,6 +819,7 @@ async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_
     assert _kinds(compact) == ['computer_call_output']
 
 
+@needs_openai
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='compaction replaces the history')
 async def test_gpt_compacts_a_history_of_computer_calls_on_the_server(

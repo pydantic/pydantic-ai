@@ -1,4 +1,8 @@
-"""Anthropic's computer use tools, sent for a tool of the `computer` kind."""
+"""Anthropic's computer use tools, sent for a tool of the `computer` kind.
+
+Not VCR tests: they pin the request and stream shapes the cassettes' body matching can miss, and cases no live model
+produces, such as stored histories and cut-off streams; the recorded runs are in `tests/harness/computer_use/`.
+"""
 
 from __future__ import annotations as _annotations
 
