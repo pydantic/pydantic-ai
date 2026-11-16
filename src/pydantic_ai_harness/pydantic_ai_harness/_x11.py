@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import re
+import shlex
 from collections.abc import Callable
 
 import anyio
@@ -194,6 +195,26 @@ def _move(x: int | None, y: int | None) -> list[str]:
     return [] if x is None or y is None else ['mousemove', str(x), str(y)]
 
 
+_MAX_CHAIN_BYTES = 100_000
+"""The most bytes of `xdotool` arguments sent in one command. E2B runs a command as one `bash -l -c` argument, which
+Linux caps at 131,072 bytes: a live probe started a 130,630-byte line and refused 130,664 bytes with "argument list
+too long", and typing 25,000 characters in one command failed. The rest is room for the backend's own wrapping."""
+
+
+def _chains(steps: list[list[str]], prefix: tuple[str, ...] = ()) -> list[list[str]]:
+    """`steps` in order, grouped into `xdotool` chains that each start with `prefix` and fit `_MAX_CHAIN_BYTES`."""
+    chains: list[list[str]] = []
+    size = _MAX_CHAIN_BYTES
+    for step in steps:
+        step_size = len(shlex.join(step)) + 1
+        if size + step_size > _MAX_CHAIN_BYTES:
+            chains.append(list(prefix))
+            size = len(shlex.join(prefix))
+        chains[-1] += step
+        size += step_size
+    return chains
+
+
 _ENV = {'DISPLAY': DISPLAY}
 
 
@@ -276,18 +297,22 @@ class X11Computer:
         return result
 
     async def _xdotool(
-        self, chain: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
+        self, *chains: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
     ) -> None:
-        """Run an `xdotool` command chain with `hold` held down; if it fails or is cancelled, let go of everything.
+        """Run `xdotool` command chains in turn with `hold` held down; if one fails or is cancelled, let go of everything.
 
-        `release` is an `xdotool` chain that lets go of what the chain presses; the command may take `pauses` on top of
+        `release` is an `xdotool` chain that lets go of what the chains press; each command may take `pauses` on top of
         the usual time limit.
         """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
         try:
-            await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *keydown, *chain, *keyup], pauses=pauses)
+            for index, chain in enumerate(chains):
+                # Held keys stay down from the first command to the last.
+                first = keydown if index == 0 else []
+                last = keyup if index == len(chains) - 1 else []
+                await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *first, *chain, *last], pauses=pauses)
         except BaseException as error:
             # Each release runs on its own, so one that fails doesn't keep the other from running.
             failures = await self._release([list(release), keyup])
@@ -354,10 +379,10 @@ class X11Computer:
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]
                 steps = drag_steps(path)
-                moves = [arg for point in steps for arg in ['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)]]
+                moves = [['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)] for point in steps]
                 pause = ['sleep', str(DRAG_PRESS_PAUSE)]
                 await self._xdotool(
-                    [*_move(start.x, start.y), 'mousedown', '1', *pause, *moves, *pause, 'mouseup', '1'],
+                    *_chains([[*_move(start.x, start.y), 'mousedown', '1', *pause], *moves, [*pause, 'mouseup', '1']]),
                     hold=modifiers,
                     release=('mouseup', '1'),
                     pauses=2 * DRAG_PRESS_PAUSE + len(steps) * DRAG_STEP_PAUSE,
@@ -379,7 +404,7 @@ class X11Computer:
                 # A cancel can land between a key's press and release, and X then repeats the key without end.
                 # `xdotool` holds Shift_L for a shifted character such as `!`.
                 await self._xdotool(
-                    ['key', '--delay', _TYPING_DELAY_MS, '--', *keysyms],
+                    *_chains([[keysym] for keysym in keysyms], prefix=('key', '--delay', _TYPING_DELAY_MS, '--')),
                     release=('keyup', 'Shift_L', *dict.fromkeys(keysyms)),
                     pauses=len(keysyms) * _KEY_SECONDS,
                 )
