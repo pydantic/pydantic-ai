@@ -13,7 +13,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, PendingModelResponse
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, HandleDeferredToolCalls, LocalWorkspace
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -820,21 +820,43 @@ class TestRunControls:
 
         @worker.tool_plain
         async def hang() -> str:
-            await asyncio.sleep(1)
+            await asyncio.sleep(30)
             return 'late'  # pragma: no cover - cancelled by the timeout
 
         parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
-            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.5, keep_partial_output=True)])],
         )
         result = await parent.run('go')
         assert _delegate_returns(result) == snapshot(
             [
                 """\
-Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence.
+Sub-agent 'worker' exceeded its 0.5s time budget. Treat this as a recoverable observation and decide from existing evidence.
 
 <partial_output>first finding</partial_output>\
 """
+            ]
+        )
+
+    async def test_partial_output_skips_text_rejected_as_output(self) -> None:
+        worker = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('secret')])), name='worker')
+
+        @worker.output_validator
+        def reject(output: str) -> str:
+            raise ModelRetry('not allowed')
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents=[SubAgent(worker, usage_limits=UsageLimits(request_limit=1), keep_partial_output=True)]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' reached its usage budget. Treat this as a recoverable observation and decide from existing evidence."
             ]
         )
 

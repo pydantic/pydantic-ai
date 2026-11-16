@@ -134,7 +134,7 @@ async def test_resumed_task_keeps_partial_output_of_its_own_run_only(tmp_path: P
         yield 'old answer'
 
     child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
-    capability = SubAgents(agents=[SubAgent(child, timeout_seconds=0.05, keep_partial_output=True)], agent_folders=None)
+    capability = SubAgents(agents=[SubAgent(child, timeout_seconds=0.5, keep_partial_output=True)], agent_folders=None)
     owner = DelegationTasks(directory=tmp_path)
     with anyio.fail_after(WAIT):
         async with owner.opened():
@@ -150,7 +150,7 @@ async def test_resumed_task_keeps_partial_output_of_its_own_run_only(tmp_path: P
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
     ]
-    assert "Sub-agent 'worker' exceeded its 0.05s time budget." in str(output)
+    assert "Sub-agent 'worker' exceeded its 0.5s time budget." in str(output)
     assert '<partial_output>' not in str(output)
 
 

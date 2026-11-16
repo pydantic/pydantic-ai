@@ -32,7 +32,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import register_tag, wrap
-from pydantic_ai.messages import ModelMessage, ModelResponse, repair_messages
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryFeedbackPart, repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -279,7 +279,8 @@ class SubAgent(Generic[AgentDepsT]):
 
     keep_partial_output: bool = dataclass_field(default=False, kw_only=True)
     """Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response.
-    The parent gets it after the steering message, in a `<partial_output>` frame."""
+    The parent gets it after the steering message, in a `<partial_output>` frame. It has not passed the child's
+    output validation; text the child rejected as output and retried is not passed on."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -1630,7 +1631,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         reason: str,
         messages: Sequence[ModelMessage],
     ) -> _Ended:
-        """The steering message for a child stopped by its own budget, with its last text when it keeps partial output."""
+        """For a child stopped by its timeout or own usage budget: the steering message, plus its last text when kept."""
         output = self._steer(
             sub_agent.on_failure, f'{reason} Treat this as a recoverable observation and decide from existing evidence.'
         )
@@ -1647,8 +1648,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
 
 def _last_text(messages: Sequence[ModelMessage]) -> str | None:
-    """The text of the last model response that has any."""
-    return next((m.text for m in reversed(messages) if isinstance(m, ModelResponse) and m.text), None)
+    """The text of the last model response that has any, skipping one the run rejected as output and retried."""
+    retried = False
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            if message.text and not retried:
+                return message.text
+            retried = False
+        else:
+            retried = any(isinstance(part, RetryFeedbackPart) for part in message.parts)
+    return None
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:

@@ -173,7 +173,8 @@ Gotchas:
   remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
-  `<partial_output>`, to the steering message when its timeout or own usage budget stops it.
+  `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
+  has not passed output validation; a response the child retried as output is skipped.
 - A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
   raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
   `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
