@@ -4,12 +4,15 @@ description: "Send images, audio, video, PDFs and other documents to a Pydantic 
 
 # Multimodal Input
 
-Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.
+Alongside text, agents can accept image, audio, video, and document input.
+
+!!! tip "Files the model can't read"
+    You aren't limited to the file types a model reads natively. With the [File Understanding](capabilities/file-understanding.md) capability, a file the agent's model can't take, such as audio on a model without audio input or an image on a text-only model, is described in text by another model first, and the agent's model gets the description in the file's place. Files the model does read are sent as they are.
 
 ## Image Input
 
 !!! info
-    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input.
+    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the image with a model that can.
 
 If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.ImageUrl]:
 
@@ -52,21 +55,21 @@ print(result.output)
 ## Audio Input
 
 !!! info
-    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. See [OpenAI](models/openai.md#audio-input) for which OpenAI models take audio.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input. See [OpenAI](models/openai.md#audio-input) for which OpenAI models take audio. If a model doesn't, [File Understanding](capabilities/file-understanding.md) can describe the audio with a model that can.
 
 For audio, use [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Video Input
 
 !!! info
-    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
+    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input. See [Bedrock](models/bedrock.md#video-input) for which Bedrock models take video. If a model doesn't, [File Understanding](capabilities/file-understanding.md) can describe the video with a model that can.
 
 For video, use [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
 ## Document Input
 
 !!! info
-    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
+    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input. If it doesn't, [File Understanding](capabilities/file-understanding.md) can describe the document with a model that can.
 
 For documents, use [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent].
 
@@ -86,7 +89,7 @@ print(result.output)
 #> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
-The supported document formats vary by model.
+Which document formats are supported varies by model. Pydantic AI sends a document of any media type that Python's `mimetypes` knows a file extension for, carrying the media type and, where the API wants one, the extension (such as `pdf` or `pptx`), and a model that can't read a format rejects it. Text-like content such as JSON or XML is inlined as text instead where the API has no file part.
 
 You can also use [`BinaryContent`][pydantic_ai.BinaryContent] to pass document data directly:
 
@@ -214,6 +217,8 @@ Support for file URLs varies depending on type and provider:
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF, non-text) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` (Nova only) | `AudioUrl`, and `VideoUrl` outside Nova |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
+
+When Pydantic AI downloads files itself, it downloads at most 50 MiB per file and 500 MiB in total for the files of one model request, and raises a `ValueError` past either limit. To send larger files, pass them as [`BinaryContent`][pydantic_ai.BinaryContent], or send the URL to a provider that fetches it itself.
 
 A model that does not accept a kind of file at all can still be given one through the [File Understanding](capabilities/file-understanding.md) capability, which has another model describe it in text first. Without it, a file in a user prompt that the model can't take fails the request, while one a tool returned is [replaced by a note naming it](tools-advanced.md#tool-return-file-provenance), so the run goes on.
 

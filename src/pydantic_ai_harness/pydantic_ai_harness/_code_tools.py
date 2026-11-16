@@ -5,8 +5,7 @@ Kept free of any sandbox or kernel dependency, so each capability's optional ext
 
 from __future__ import annotations
 
-import keyword
-import re
+import builtins
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -14,7 +13,7 @@ from typing import Any
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
-from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     ToolCallPart,
     ToolPartKind,
@@ -28,8 +27,22 @@ from pydantic_ai.tools import AgentDepsT, ToolDenied
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
+FOLD_INTO_CODE_MODE = 'fold_into_code_mode'
+"""Tool metadata key that, set to `True`, lets `CodeMode` and `IPythonCodeMode` fold a code-execution tool into
+the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
+
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
+
+BUILTIN_NAMES = frozenset(dir(builtins))
+"""Every CPython builtin, which no sandboxed tool may be named after.
+
+Code is resolved against the sandbox's builtins, so a tool called `open` or `print` never runs as
+the model intends: Monty looks the builtin up first and the tool is unreachable, while the IPython
+kernel puts the tool in the namespace ahead of the builtin, so the model's own `open(...)` calls the
+tool. All of CPython's builtins, not just the current sandbox's set, so a builtin added later
+cannot take over a tool that works today.
+"""
 
 
 def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
@@ -38,16 +51,15 @@ def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     Framework control tools (tool search, capability loading) drive protocol-level flows; a local fallback
     (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
     the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-    `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+    `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
+    `FOLD_INTO_CODE_MODE`.
     """
+    folds = bool(tool_def.metadata and tool_def.metadata.get(FOLD_INTO_CODE_MODE) is True)
     return (
         tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
         and not tool_def.unless_native
-        and not is_code_execution_tool(tool_def)
+        and (folds or not is_code_execution_tool(tool_def))
     )
-
-
-_INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
 
 def is_code_execution_tool(tool_def: ToolDefinition) -> bool:
@@ -72,12 +84,7 @@ def sanitize_tool_name(name: str) -> str:
     Replaces hyphens, dots, and other non-identifier characters with underscores,
     prepends `_` if the result starts with a digit, appends `_` if it is a Python keyword.
     """
-    sanitized = _INVALID_IDENT_CHARS.sub('_', name)
-    if sanitized and sanitized[0].isdigit():
-        sanitized = f'_{sanitized}'
-    if keyword.iskeyword(sanitized):
-        sanitized = f'{sanitized}_'
-    return sanitized or '_'
+    return _to_python_identifier(name)
 
 
 def partition_callable_tools(
@@ -102,6 +109,11 @@ def partition_callable_tools(
             raise UserError(
                 f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
                 f'meta-tool. Rename your tool to avoid conflicts.'
+            )
+        if safe_name in BUILTIN_NAMES:
+            raise UserError(
+                f'Tool name {name!r} is a Python builtin, so code in the sandbox cannot call the tool by that '
+                'name. Rename the tool, for example with `toolset.prefixed(...)` or `toolset.renamed(...)`.'
             )
         if safe_name in callable_defs:
             existing = sanitized_to_original.get(safe_name, safe_name)
@@ -170,8 +182,8 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         # This call counts once it succeeds, and so does the enclosing `run_code` call.
         try:
             usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 2))
-        except UsageLimitExceeded as e:
-            return NestedCallOutcome(error=e, usage_limit_exceeded=e, tool_kind=tool_kind)
+        except UsageLimitExceeded as exc:
+            return NestedCallOutcome(error=exc, usage_limit_exceeded=exc, tool_kind=tool_kind)
         # A pending call counts toward the limit until it settles: calls started together with
         # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
         # counts the call itself once it succeeds, so the reservation is released however it ends.
@@ -180,19 +192,19 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         ctx.usage.tool_calls += 1
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
-    except (CallDeferred, ApprovalRequired) as e:
+    except (CallDeferred, ApprovalRequired) as exc:
         # No handler resolved the deferral. The sandbox can't round-trip to the caller, so the
         # error propagates through Monty -> MontyRuntimeError -> ModelRetry.
         error = UserError(
-            f'Tool {call_part.tool_name!r} raised {type(e).__name__} inside code mode, '
+            f'Tool {call_part.tool_name!r} raised {type(exc).__name__} inside code mode, '
             'but no `HandleDeferredToolCalls` capability resolved it. Add a handler '
             'capability on the agent so deferred and approval-required calls can '
             'be resolved inline.'
         )
-        error.__cause__ = e
+        error.__cause__ = exc
         return NestedCallOutcome(error=error, tool_kind=tool_kind)
-    except Exception as e:
-        return NestedCallOutcome(error=e, tool_kind=tool_kind)
+    except Exception as exc:
+        return NestedCallOutcome(error=exc, tool_kind=tool_kind)
     finally:
         ctx.usage.tool_calls -= reserved
 
@@ -251,6 +263,18 @@ def record_nested_call(
     if outcome.user_content:
         content = outcome.user_content
         user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
+
+
+def schema_arg_names(tool_def: ToolDefinition, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Key the arguments of a sandbox call by the tool's schema property names.
+
+    A schema property whose name is a Python keyword or not an identifier (e.g. `from`, `user-id`) is
+    rendered as a sanitized parameter (`from_`, `user_id`), which the code passes as a keyword argument.
+    """
+    renamed = {param.name: name for name, param in tool_def.function_signature.params.items() if param.name != name}
+    if not renamed:
+        return kwargs
+    return {renamed.get(key, key): value for key, value in kwargs.items()}
 
 
 def signatures_and_conflicts(

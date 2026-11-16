@@ -1,3 +1,4 @@
+import { reloadedFor, reloadedFrom } from './api'
 import type {
   Dialog,
   ForkEntry,
@@ -13,8 +14,8 @@ import type {
   StatusInfo,
   TaskEntry,
   ThemeInfo,
+  TurnSummary,
   UpdateInfo,
-  Usage,
   UsageReport,
 } from './protocol'
 
@@ -32,16 +33,6 @@ export interface NoticeEntry {
   fork: ForkEntry | null
 }
 
-export interface TurnSummary {
-  id: string
-  kind: 'turn'
-  outcome: 'completed' | 'failed' | 'cancelled'
-  error: string | null
-  usage: Usage | null
-  /** Seconds the turn took, as this page saw it; `null` when it started before the page connected. */
-  seconds: number | null
-}
-
 export type Entry = Item | NoticeEntry | TurnSummary
 
 /** One conversation as the page shows it: a live session's, or the orchestrator's. */
@@ -53,6 +44,8 @@ export interface Chat {
   questions: Questions[]
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
+  /** Where the running turn's entries start; from a snapshot, which may come during a turn, the first. */
+  turnFrom: number
   /** The conversation's delegated tasks, each parent before its children. */
   tasks: TaskEntry[]
   /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
@@ -68,6 +61,7 @@ export const initialChat: Chat = {
   status: null,
   questions: [],
   turnStartedAt: null,
+  turnFrom: 0,
   tasks: [],
   taskItems: {},
   queue: [],
@@ -129,6 +123,8 @@ export interface State {
   version: string | null
   /** `/update` installing a newer CLAI, until the install ends or the new build is back. */
   update: UpdateInfo | null
+  /** The versions the last `/update` this page followed went from and to, once the new build is back. */
+  updated: { from: string; to: string } | null
 }
 
 export const initial: State = {
@@ -148,6 +144,7 @@ export const initial: State = {
   followsWorkspace: false,
   version: null,
   update: null,
+  updated: null,
 }
 
 /**
@@ -216,6 +213,17 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   }
 }
 
+/** How many tool calls in `entries` have finished, a `run_code` cell's own calls too: each may have changed files. */
+export function finishedCalls(entries: Entry[]): number {
+  let finished = 0
+  for (const entry of entries) {
+    if (entry.kind !== 'tool') continue
+    if (entry.state !== 'running') finished++
+    for (const call of entry.calls) if (call.state !== 'running') finished++
+  }
+  return finished
+}
+
 /** A task's new row replaces its old one, or joins the list; a finished task's live items go, as its saved history serves. */
 function taskChanged(chat: Chat, task: TaskEntry): Chat {
   const found = chat.tasks.some((entry) => entry.id === task.id)
@@ -256,6 +264,7 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         ...chat,
         running: true,
         turnStartedAt: Date.now(),
+        turnFrom: chat.entries.length,
         entries: message.item ? [...chat.entries, message.item] : chat.entries,
       }
     case 'turn_ended': {
@@ -313,6 +322,7 @@ function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: Not
     status: message.status,
     questions: message.questions,
     turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
+    turnFrom: 0,
     tasks: message.tasks,
     taskItems: message.task_items,
     queue: message.queue,
@@ -322,8 +332,8 @@ function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: Not
 /** Show a snapshot: its session's chat starts over from it, and it carries the page-wide state too. */
 function applySnapshot(state: State, message: Snapshot): State {
   const id = message.session.id
-  // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
-  const updated = state.version !== null && message.version !== state.version
+  // A CLAI that `/update` restarted comes back as a new version, whose bundle the page loaded again for: say so once.
+  const updated = state.version === null && message.version === reloadedFor
   const notice: NoticeEntry = {
     id: nextId('notice'),
     kind: 'notice',
@@ -352,6 +362,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     followsWorkspace: message.follows_workspace,
     version: message.version,
     update: message.update,
+    updated: updated && reloadedFrom !== null ? { from: reloadedFrom, to: message.version } : state.updated,
   }
 }
 

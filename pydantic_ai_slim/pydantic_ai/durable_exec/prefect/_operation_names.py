@@ -6,6 +6,7 @@ from .._operation import (
     EventStreamHandlerId,
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
+    ModelCountTokensId,
     ModelRequestId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
@@ -34,6 +35,8 @@ class PrefectOperationNamer(DurableOperationNamer):
                 return f'Cancel Suspended Response: {model_name}'
             case ModelCompactMessagesId(model_name=model_name):
                 return f'Compact Messages: {model_name}'
+            case ModelCountTokensId(model_name=model_name):
+                return f'Count Tokens: {model_name}'
             case EventStreamHandlerId():
                 return 'Handle Stream Event'
             case ToolsetGetToolsId(toolset_kind='mcp', toolset_id=toolset_id):

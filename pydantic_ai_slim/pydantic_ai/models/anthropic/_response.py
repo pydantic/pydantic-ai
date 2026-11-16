@@ -2,15 +2,18 @@
 
 from __future__ import annotations as _annotations
 
-from typing import Any, assert_never
+from collections.abc import Sequence
+from typing import Any, Literal, assert_never
 
 import pydantic_core
 from anthropic.types.beta import (
     BetaInputTransformation,
+    BetaIterationsUsage,
     BetaMessage,
     BetaMessageDeltaUsage,
     BetaRawMessageDeltaEvent,
     BetaRawMessageStartEvent,
+    BetaRefusalStopDetails,
     BetaStopReason,
     BetaUsage,
 )
@@ -51,6 +54,41 @@ def report_input_transformations(
             attributes={'anthropic.input_transformations': pydantic_core.to_json(reported).decode()},
         )
     return reported
+
+
+def refusal_details(stop_details: BetaRefusalStopDetails) -> dict[str, str]:
+    """The `provider_details` a refusal's `stop_details` adds: its explanation and category, when set."""
+    details: dict[str, str] = {}
+    if stop_details.explanation is not None:
+        details['refusal'] = stop_details.explanation
+    if stop_details.category is not None:
+        details['refusal_category'] = stop_details.category
+    return details
+
+
+def response_provider_details(response: BetaMessage) -> dict[str, Any] | None:
+    """The `provider_details` of a non-streamed response, which a stream builds across its events."""
+    provider_details: dict[str, Any] | None = None
+    if raw_finish_reason := response.stop_reason:  # pragma: no branch
+        provider_details = {'finish_reason': raw_finish_reason}
+    if response.stop_details is not None:
+        provider_details = provider_details or {}
+        provider_details.update(refusal_details(response.stop_details))
+    if response.container:
+        provider_details = provider_details or {}
+        provider_details['container_id'] = response.container.id
+    if response.input_transformations:
+        provider_details = provider_details or {}
+        provider_details['input_transformations'] = report_input_transformations(response.input_transformations)
+    if response.diagnostics is not None:
+        provider_details = provider_details or {}
+        provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
+    # Only fast mode is recorded: a standard request reports `usage.speed` as `'standard'` or not at all, and
+    # neither selects a price variant. `speed` is the price context key for genai-prices' fast mode rates.
+    if response.usage.speed == 'fast':
+        provider_details = provider_details or {}
+        provider_details['speed'] = 'fast'
+    return provider_details
 
 
 _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
@@ -98,38 +136,46 @@ def extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> 
     if server_tool_use is not None and (web_search_requests := server_tool_use.web_search_requests):
         details['web_search_requests'] = web_search_requests
 
-    iterations = response_usage.iterations
-    if not iterations:
-        return details
+    if iterations := response_usage.iterations:
+        details.update(iteration_usage_details(iterations))
+    return details
 
+
+def iteration_usage_details(iterations: BetaIterationsUsage) -> dict[str, int]:
+    """The compaction and advisor iteration totals for `extract_usage_details`, with the executor turn count."""
     compaction_iterations = [it for it in iterations if it.type == 'compaction']
     advisor_iterations = [it for it in iterations if it.type == 'advisor_message']
     if not compaction_iterations and not advisor_iterations:
-        return details
+        return {}
 
     # Both compaction and advisor iterations are separate from executor turns, so exclude them from
     # the `message_iterations` count.
-    details['message_iterations'] = len(iterations) - len(compaction_iterations) - len(advisor_iterations)
+    details: dict[str, int] = {
+        'message_iterations': len(iterations) - len(compaction_iterations) - len(advisor_iterations)
+    }
 
     if compaction_iterations:
-        details['compaction_iterations'] = len(compaction_iterations)
-        for key in _COMPACTION_TOKEN_KEYS:
-            if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
-                details[f'compaction_{key}'] = compaction_total
+        details.update(iteration_totals('compaction', compaction_iterations))
         if compaction_ephemeral_1h_input_tokens := sum(
             it.cache_creation.ephemeral_1h_input_tokens for it in compaction_iterations if it.cache_creation is not None
         ):
             details['compaction_ephemeral_1h_input_tokens'] = compaction_ephemeral_1h_input_tokens
 
     if advisor_iterations:
-        details['advisor_iterations'] = len(advisor_iterations)
         # The advisor iteration token fields share the names in `_COMPACTION_TOKEN_KEYS`. These are
         # recorded for observability only; `map_usage` must not fold them into the request totals.
-        for key in _COMPACTION_TOKEN_KEYS:
-            if advisor_total := sum(getattr(it, key) for it in advisor_iterations):
-                details[f'advisor_{key}'] = advisor_total
+        details.update(iteration_totals('advisor', advisor_iterations))
 
     return details
+
+
+def iteration_totals(kind: Literal['compaction', 'advisor'], iterations: Sequence[object]) -> dict[str, int]:
+    """The count of one kind of iteration, as `<kind>_iterations`, and its token totals, as `<kind>_<key>`."""
+    totals: dict[str, int] = {f'{kind}_iterations': len(iterations)}
+    for key in _COMPACTION_TOKEN_KEYS:
+        if total := sum(getattr(it, key) for it in iterations):
+            totals[f'{kind}_{key}'] = total
+    return totals
 
 
 def last_pass_input_tokens(response_usage: BetaUsage | BetaMessageDeltaUsage) -> int | None:
@@ -176,21 +222,22 @@ def map_usage(
     model: str,
     existing_usage: usage.RequestUsage | None = None,
 ) -> usage.RequestUsage:
-    if isinstance(message, BetaMessage):
-        response_usage = message.usage
-    elif isinstance(message, BetaRawMessageStartEvent):
-        if message.message is None:  # pyright: ignore[reportUnnecessaryComparison]
-            # On Bedrock the Anthropic SDK drops SSE event types, so Bedrock-only chunks
-            # (e.g. `amazon-bedrock-invocationMetrics`) are non-validating `construct_type`d
-            # into `BetaRawMessageStartEvent(message=None)`, violating the type annotation.
-            # The metrics chunk's token counts duplicate the canonical `message_start` /
-            # `message_delta` usage, so dropping them here avoids double-counting.
-            return existing_usage or usage.RequestUsage()
-        response_usage = message.message.usage
-    elif isinstance(message, BetaRawMessageDeltaEvent):
-        response_usage = message.usage
-    else:
-        assert_never(message)
+    match message:
+        case BetaMessage():
+            response_usage = message.usage
+        case BetaRawMessageStartEvent():
+            if message.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+                # On Bedrock the Anthropic SDK drops SSE event types, so Bedrock-only chunks
+                # (e.g. `amazon-bedrock-invocationMetrics`) are non-validating `construct_type`d
+                # into `BetaRawMessageStartEvent(message=None)`, violating the type annotation.
+                # The metrics chunk's token counts duplicate the canonical `message_start` /
+                # `message_delta` usage, so dropping them here avoids double-counting.
+                return existing_usage or usage.RequestUsage()
+            response_usage = message.message.usage
+        case BetaRawMessageDeltaEvent():
+            response_usage = message.usage
+        case _:
+            assert_never(message)
 
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
@@ -207,6 +254,23 @@ def map_usage(
         else:
             del details['ephemeral_1h_input_tokens']
 
+    # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
+    # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
+    request_usage = usage.RequestUsage.extract(
+        dict(model=model, usage=usage_to_extract(details, response_usage)),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='anthropic',
+        details=details,
+    )
+    # genai-prices doesn't map Anthropic's thinking token count, which is already priced inside `output_tokens`.
+    if thinking_tokens := details.get('thinking_tokens'):
+        request_usage.output_reasoning_tokens = thinking_tokens
+    return request_usage
+
+
+def usage_to_extract(details: dict[str, int], response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, Any]:
+    """The usage `map_usage` hands genai-prices: `details` with the totals and nested shapes it prices from."""
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
     usage_for_extraction: dict[str, Any] = dict(details)
@@ -228,20 +292,7 @@ def map_usage(
     for gateway_key in ('logfire_ai_gateway', 'pydantic_ai_gateway'):
         if gateway_usage := (response_usage.model_extra or {}).get(gateway_key):
             usage_for_extraction[gateway_key] = gateway_usage
-
-    # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
-    # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
-    request_usage = usage.RequestUsage.extract(
-        dict(model=model, usage=usage_for_extraction),
-        provider=provider,
-        provider_url=provider_url,
-        provider_fallback='anthropic',
-        details=details,
-    )
-    # genai-prices doesn't map Anthropic's thinking token count, which is already priced inside `output_tokens`.
-    if thinking_tokens := details.get('thinking_tokens'):
-        request_usage.output_reasoning_tokens = thinking_tokens
-    return request_usage
+    return usage_for_extraction
 
 
 def compaction_provider_details(encrypted_content: str | None, signature: str | None = None) -> dict[str, Any] | None:
@@ -256,3 +307,16 @@ def compaction_provider_details(encrypted_content: str | None, signature: str | 
         if value is not None
     }
     return details or None
+
+
+def report_inference_geo(
+    provider_details: dict[str, Any] | None, inference_geo: str | None, *, report: bool
+) -> dict[str, Any] | None:
+    """Add where the request ran to `provider_details`.
+
+    Anthropic echoes `usage.inference_geo` on every response, so it's only reported when `report` is set, which is
+    when the request carried `anthropic_inference_geo`: other responses keep their `provider_details` unchanged.
+    """
+    if not report or inference_geo is None:
+        return provider_details
+    return {**(provider_details or {}), 'inference_geo': inference_geo}

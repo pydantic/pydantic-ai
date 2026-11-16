@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`clai2`'s `MOVED_FACTORIES` gains `pydantic_ai_harness.subagents:SubAgents` -> `pydantic_ai_harness.sub_agents:SubAgents` (#11321), so stored plugin rows migrate to the renamed module; existing entries are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13401"
+}

@@ -8,7 +8,27 @@ Let an agent use Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, and People 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Inside your agent, the GoogleWorkspace capability opens one connection per selected product to Google's hosted MCP servers, here gmailmcp.googleapis.com and calendarmcp.googleapis.com, with the same OAuth access token. The model sees each server's tools under names that start with the product, such as gmail_search_threads. Your auth function returns the token at the start of each run; the capability does not refresh it, and Google access tokens expire after about an hour.](../img/harness/google-workspace.svg)
+```mermaid
+flowchart TB
+    accTitle: Google Workspace: Gmail, Calendar, Drive and more through Google's MCP servers
+    accDescr: Inside your agent, the model calls tools of the GoogleWorkspace capability, such as gmail_search_threads and those prefixed calendar_, and gets results. Your auth function gives it a token for each run. It sends tools/call with a Bearer token to the Gmail MCP server and with the same token to the Calendar MCP server, and with read_only=True it drops the tools not marked read-only.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        google["GoogleWorkspace()<br/>gmail_search_threads,<br/>calendar_&lt;tool&gt;"]:::capability
+    end
+    gmail["Gmail MCP server"]:::external
+    calendar["Calendar MCP server"]:::external
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    model <-->|"tool call, result"| google
+    auth -->|"token for each run"| google
+    google <-->|"tools/call, Bearer token"| gmail
+    google <-->|"tools/call, same token"| calendar
+    google -.-x|"drops"| dropped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install and connect
 
@@ -107,6 +127,6 @@ A fixed `auth` is one set of connections shared by every run; see [Per-user cred
 
 ## Telemetry
 
-`GoogleWorkspace` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each Google Workspace tool call as a tool span, and connecting makes no decision worth a span of its own.
+`GoogleWorkspace` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each Google Workspace tool call as a tool span.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/google_workspace/)

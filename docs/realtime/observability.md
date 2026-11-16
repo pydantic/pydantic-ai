@@ -132,7 +132,7 @@ when the session closes. `pydantic_ai.queue_dropped_deltas` and `pydantic_ai.que
 count the older part delta events and structural events discarded from the session event queue while
 nothing was iterating it.
 
-See [Debugging and monitoring](../logfire.md) for Logfire setup and privacy controls.
+See [Debugging and monitoring](../logfire.md#using-logfire) for Logfire setup and privacy controls.
 
 ## Gateway trace propagation
 

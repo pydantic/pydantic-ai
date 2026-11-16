@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
@@ -30,6 +31,7 @@ from . import _function_schema, _utils, messages as _messages
 from ._deferred import (
     DeferredToolApprovalResult as DeferredToolApprovalResult,
     DeferredToolCallResult as DeferredToolCallResult,
+    DeferredToolKind as DeferredToolKind,
     DeferredToolRequests as DeferredToolRequests,
     DeferredToolResult as DeferredToolResult,
     DeferredToolResults as DeferredToolResults,
@@ -160,24 +162,26 @@ ToolsPrepareFunc: TypeAlias = Callable[
 This is useful if you want to customize the definition of multiple tools or you want to register
 a subset of tools for a given step. Both sync and async functions are accepted.
 
-Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
+Example — here `turn_on_strict_if_supported` is valid as a `ToolsPrepareFunc`. It reads the profile's
+`supports_json_schema_output` as a stand-in, since there's no provider-agnostic strict-tools flag:
 
 ```python {noqa="I001"}
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.models import Model
 from pydantic_ai.tools import ToolDefinition
 
 
-def turn_on_strict_if_openai(
+def turn_on_strict_if_supported(
     ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition]:
-    if ctx.model.system == 'openai':
+    if isinstance(ctx.model, Model) and ctx.model.profile.get('supports_json_schema_output', False):
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
-agent = Agent('openai:gpt-5.2', capabilities=[PrepareTools(turn_on_strict_if_openai)])
+agent = Agent('openai:gpt-5.2', capabilities=[PrepareTools(turn_on_strict_if_supported)])
 ```
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.
@@ -338,6 +342,11 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
 ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
 
+_without_toolset_sequential_defer_loading: ContextVar[bool] = ContextVar(
+    '_without_toolset_sequential_defer_loading', default=False
+)
+"""Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
+
 
 def _validate_max_retries(max_retries: int | None) -> None:
     if max_retries is not None and max_retries < 0:
@@ -376,6 +385,11 @@ class Tool(Generic[ToolAgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
+    # Set when a `FunctionToolset` turned on `sequential` or `defer_loading` from its own value. Temporal and
+    # DBOS list the tool without them, wherever it is held, for workflows started before `FunctionToolset` did so.
+    # Unannotated, so they aren't dataclass fields: a dataclass subclass adding a required field stays valid.
+    _sequential_from_toolset = False
+    _defer_loading_from_toolset = False
 
     def __init__(
         self,
@@ -562,16 +576,19 @@ class Tool(Generic[ToolAgentDepsT]):
 
     @property
     def tool_def(self) -> ToolDefinition:
+        # Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its
+        # `sequential` and `defer_loading` to `Tool` instances: drop those, so `prepare` sees what it saw then.
+        without_toolset = _without_toolset_sequential_defer_loading.get()
         return ToolDefinition(
             name=self.name,
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
-            sequential=self.sequential,
+            sequential=self.sequential and not (without_toolset and self._sequential_from_toolset),
             metadata=self.metadata,
             tool_kind=self.tool_kind,
             timeout=self.timeout,
-            defer_loading=self.defer_loading,
+            defer_loading=self.defer_loading and not (without_toolset and self._defer_loading_from_toolset),
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
             include_return_schema=self.include_return_schema,

@@ -33,17 +33,20 @@ if [ "${1:-}" = "--partition-files" ]; then
 
   # Keep the historical ordering files for consumers that use them. Resolve
   # equal-size ties by path so assignments do not depend on GitHub API order.
+  # Generated files match the per-file diff split's pattern. jq's `$` also
+  # matches before a final newline and its `.` skips one, so `\z` and `(?s)`
+  # give it awk's meaning.
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by(.filename) | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/az.txt"
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by(.filename) | reverse | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/za.txt"
 
   PARTITIONS=$(jq '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename]) as $files
     | ($files | length) as $file_count
     | ([$files[] | (.additions // 0) + (.deletions // 0)] | add // 0) as $diff_lines
@@ -74,7 +77,7 @@ if [ "${1:-}" = "--partition-files" ]; then
   # Existing largest.txt remains the ordered source used for first-pass
   # assignments. Assign each next-largest file to the least-loaded delegate.
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename])
     | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/largest.txt"
@@ -270,34 +273,111 @@ fi
 # Per-file diffs with function context (excluding generated files)
 echo "  - Per-file diffs (excluding generated files)"
 mkdir -p "$CTX/diff"
+# Without the `python` driver, -W extends a Python hunk to its whole top-level
+# class. A PR's `.gitattributes` still takes precedence over this file. The
+# callers run the PR's own copy of this script, so the PR controls this diff
+# either way. --no-ext-diff and --no-textconv keep a `.gitattributes` from
+# selecting a command.
+PY_ATTRIBUTES=$(mktemp)
+track_tmp "$PY_ATTRIBUTES"
+echo '*.py diff=python' > "$PY_ATTRIBUTES"
 if [ -n "$MERGE_BASE" ]; then
   # -W (--function-context) shows the full function body around each change,
   # so the reviewer can see the function signature and surrounding logic without
-  # needing to read the full source file separately.
-  git diff -W --no-color "$MERGE_BASE" HEAD
+  # needing to read the full source file separately. core.quotePath=false keeps a non-ASCII path
+  # unquoted, so its header names it.
+  git -c core.attributesFile="$PY_ATTRIBUTES" -c core.quotePath=false diff -W --no-color --no-ext-diff --no-textconv "$MERGE_BASE" HEAD
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
-fi | awk -v dir="$CTX/diff" '
-  /^diff --git/ {
+fi | LC_ALL=C awk -v dir="$CTX/diff" '
+  # Reads the C-style quoted path git writes for a path holding a quote, a
+  # backslash or a control character. The API diff also quotes a non-ASCII
+  # path. s starts at the opening quote; qend is set to the closing quote, or 0
+  # when there is none. Under LC_ALL=C, %c turns each octal escape into its byte.
+  function unquote(s,    out, i, c, k) {
+    out = ""
+    for (i = 2; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "\"") { qend = i; return out }
+      if (c == "\\") {
+        c = substr(s, ++i, 1)
+        k = index("abtnvfr", c)
+        if (k) c = sprintf("%c", k + 6)
+        else if (c ~ /[0-7]/) {
+          k = c * 64 + substr(s, i + 1, 1) * 8 + substr(s, i + 2, 1)
+          c = sprintf("%c", k)
+          i += 2
+        }
+      }
+      out = out c
+    }
+    qend = 0
+    return ""
+  }
+
+  # Names the held file from its new (b/) path, so renamed files match the
+  # GitHub API .filename field, then writes its held lines. "diff --git" alone
+  # is ambiguous: a crafted "z b/src.py" reads as "src.py". A rename or copy
+  # names its new path in the extended header; any other header repeats one
+  # path P as "a/P b/P", or quoted as "\"a/P\" \"b/P\"", so P is its first half.
+  function open_held(    rest, n, i) {
+    if (fname == "") {
+      rest = substr(held[1], 12)
+      n = (length(rest) - 5) / 2
+      if (substr(rest, 1, 3) == "\"a/") {
+        fname = unquote(rest)
+        fname = (qend && substr(rest, qend + 1) == (" \"b/" substr(rest, 4, qend - 3))) ? substr(fname, 3) : ""
+      } else if (n == int(n) && n > 0 && substr(rest, 1, 2) == "a/" && substr(rest, n + 3, 3) == " b/" \
+          && substr(rest, 3, n) == substr(rest, n + 6))
+        fname = substr(rest, 3, n)
+    }
+    # Generated files are each `uv.lock` and the `.yaml` cassettes under a
+    # `cassettes/` directory below the root. The pattern ends the path, so a
+    # real file cannot hide from review by naming either.
+    skip = (fname == "" || fname ~ /(^|\/)uv\.lock$|\/cassettes\/.*\.yaml$/)
+    if (!skip) {
+      # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
+      # non-hidden name that no other path shares. Encoding a backslash, tab,
+      # newline and carriage return too leaves nothing for the index to escape.
+      safe = fname
+      gsub(/%/, "%25", safe)
+      gsub(/\\/, "%5C", safe)
+      gsub(/\t/, "%09", safe)
+      gsub(/\n/, "%0A", safe)
+      gsub(/\r/, "%0D", safe)
+      gsub(/\//, "%2F", safe)
+      sub(/^\./, "%2E", safe)
+      outfile = dir "/" safe ".diff"
+      # A typechange diffs its path twice, as a deletion and then an addition.
+      # Truncating each name only on its first open keeps both.
+      if (!(outfile in opened)) { printf "" > outfile; close(outfile); opened[outfile] = 1 }
+      for (i = 1; i <= nheld; i++) print held[i] >> outfile
+    }
+    nheld = 0
+  }
+
+  /^diff --git / {
+    if (nheld) open_held()
     # Close previous file to avoid running out of file descriptors
     if (outfile) close(outfile)
     outfile = ""
-
-    # Extract new (b/) filename from "diff --git a/path b/path"
-    # Uses b/ side so renamed files match the GitHub API .filename field
-    fname = $0
-    sub(/^.* b\//, "", fname)
-
-    skip = (fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
-    if (!skip) {
-      # Sanitize path: replace / with __, strip leading dots to avoid hidden files
-      safe = fname
-      gsub(/\//, "__", safe)
-      sub(/^\.+/, "", safe)
-      outfile = dir "/" safe ".diff"
-    }
+    fname = ""
+    nheld = 1
+    held[1] = $0
+    next
   }
-  !skip && outfile { print > outfile }
+  nheld && /^(rename|copy) to / {
+    fname = $0
+    sub(/^(rename|copy) to /, "", fname)
+    if (substr(fname, 1, 1) == "\"") fname = unquote(fname)
+  }
+  nheld && /^(old mode|new mode|deleted file mode|new file mode|copy from|copy to|rename from|rename to|similarity index|dissimilarity index|index) / {
+    held[++nheld] = $0
+    next
+  }
+  nheld { open_held() }
+  !skip && outfile { print >> outfile }
+  END { if (nheld) open_held() }
 '
 
 # Annotate commentable diff lines with source line numbers (NL:/OL: prefixes)
@@ -391,9 +471,9 @@ FILES_JSON=$(mktemp)
 track_tmp "$FILES_JSON"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
   | jq -s 'add // []' > "$FILES_JSON"
-jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("/"; "__") | gsub("^\\.+"; "")) + ".diff"] | @tsv' "$FILES_JSON" \
+jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("%"; "%25") | gsub("\\\\"; "%5C") | gsub("\t"; "%09") | gsub("\n"; "%0A") | gsub("\r"; "%0D") | gsub("/"; "%2F") | sub("^\\."; "%2E")) + ".diff"] | @tsv' "$FILES_JSON" \
   | while IFS=$'\t' read -r fname counts diffname; do
-    if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
+    if echo "$fname" | grep -qE '(^|/)uv\.lock$|/cassettes/.*\.yaml$'; then
       printf '%s\t%s\n' "$fname" "$counts"
     else
       printf '%s\t%s\tdiff/%s\n' "$fname" "$counts" "$diffname"
@@ -409,8 +489,8 @@ mkdir -p "$CTX/file-orderings"
 
 # PR size summary — file count and total diff lines. The prompt uses this to
 # pick a single-pass vs fan-out review strategy.
-FILE_COUNT=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)] | length' "$FILES_JSON")
-DIFF_LINES=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not) | (.additions // 0) + (.deletions // 0)] | add // 0' "$FILES_JSON")
+FILE_COUNT=$(jq '[.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)] | length' "$FILES_JSON")
+DIFF_LINES=$(jq '[.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not) | (.additions // 0) + (.deletions // 0)] | add // 0' "$FILES_JSON")
 printf '%s files, %s diff lines (excluding generated files)\n' "$FILE_COUNT" "$DIFF_LINES" > "$CTX/pr-size.txt"
 rm -f "$FILES_JSON"
 
@@ -557,7 +637,9 @@ the surrounding code before posting.
   reasons differ deliberately across providers. Check the provider's
   SDK docs (or recent commits in `pydantic_ai/models/<provider>.py`)
   before asserting a "bug".
-- **Cassettes / `uv.lock` / generated files** — never review.
+- **Generated files** — never review a `uv.lock`, a `.yaml` cassette under a
+  `cassettes/` directory below the root, or another generated file. Review
+  every other file under `cassettes/` like any source file.
 - **Theoretical performance** — `O(n²)` is only a problem if `n` is
   realistically large in this use case. Don't flag without evidence of
   real-world impact.

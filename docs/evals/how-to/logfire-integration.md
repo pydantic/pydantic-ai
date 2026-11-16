@@ -22,7 +22,7 @@ pip install 'pydantic-evals[logfire]'
 
 ## Basic Setup
 
-Configure Logfire before running evaluations:
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project to sign in and pick or create a project. Then [configure Logfire](../../logfire.md#using-logfire) before running evaluations:
 
 ```python {title="basic_logfire_setup.py"}
 import logfire

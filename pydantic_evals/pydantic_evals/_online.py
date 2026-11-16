@@ -259,13 +259,12 @@ def sample_evaluators(
             handler = (
                 online_eval.on_sampling_error if online_eval.on_sampling_error is not None else config.on_sampling_error
             )
-            if handler is not None:
-                try:
-                    handler(exc, online_eval.evaluator)
-                except Exception:
-                    pass
-            else:
+            if handler is None:
                 raise
+            try:
+                handler(exc, online_eval.evaluator)
+            except Exception:
+                pass
     return sampled
 
 
@@ -300,6 +299,22 @@ async def _call_on_error(
             await result
     except Exception:
         pass
+
+
+async def _call_on_max_concurrency(
+    on_max_concurrency: OnMaxConcurrencyCallback | None,
+    on_error: OnErrorCallback | None,
+    context: EvaluatorContext,
+    evaluator: Evaluator,
+) -> None:
+    if on_max_concurrency is None:
+        return
+    try:
+        result = on_max_concurrency(context)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
 
 
 @dataclass
@@ -338,13 +353,7 @@ async def _run_and_collect(
     )
 
     if not online_eval.semaphore.acquire(blocking=False):
-        if on_max_concurrency is not None:
-            try:
-                result = on_max_concurrency(context)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception as exc:
-                await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
+        await _call_on_max_concurrency(on_max_concurrency, on_error, context, evaluator)
         return
 
     # Pair the acquire with a try/finally that always releases. The parent-context
@@ -421,13 +430,7 @@ async def _submit_group_to_sink(
             await _call_on_error(handler, exc, payload.context, online_eval.evaluator, 'sink')
 
 
-async def dispatch_evaluators(
-    online_evaluators: Sequence[OnlineEvaluator],
-    context: EvaluatorContext,
-    span_reference: SpanReference | None,
-    target: str,
-    config: OnlineEvalConfig,
-) -> None:
+def _group_by_sink(online_evaluators: Sequence[OnlineEvaluator], config: OnlineEvalConfig) -> dict[int, _SinkGroup]:
     # Group evaluators by raw sink source so evaluators sharing a source land a
     # single batched `submit` call per sink. Keyed by `id()` of the raw source
     # (default_sink or per-evaluator `sink=` override) so user-visible identity
@@ -447,7 +450,17 @@ async def dispatch_evaluators(
             group = _SinkGroup(sinks=sinks, evaluators=[], outcomes=[])
             groups[key] = group
         group.evaluators.append(online_eval)
+    return groups
 
+
+async def dispatch_evaluators(
+    online_evaluators: Sequence[OnlineEvaluator],
+    context: EvaluatorContext,
+    span_reference: SpanReference | None,
+    target: str,
+    config: OnlineEvalConfig,
+) -> None:
+    groups = _group_by_sink(online_evaluators, config)
     if not groups:
         return
 

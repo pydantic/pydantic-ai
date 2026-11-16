@@ -1,4 +1,4 @@
-"""Planning capability: model-owned task planning with a cache-safe live reminder."""
+"""Planning capability: model-owned task planning, with the plan returned in the plan tools' results."""
 
 from pydantic_ai_harness.planning._capability import Planning
 from pydantic_ai_harness.planning._events import (

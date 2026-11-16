@@ -58,6 +58,17 @@ from pydantic_clai2.ui.rendering.tool_output import (
 )
 
 
+def prompt_line(text: str) -> Text:
+    """Text the user typed, as the transcript shows it: an accent marker and bold text set it apart from answers."""
+    return Text.assemble(('> ', theme.color(theme.ACCENT)), (terminal_text(text), 'bold'))
+
+
+def print_prompt(console: Console, text: str) -> None:
+    """Echo a submitted prompt, then a blank line."""
+    console.print(prompt_line(text), highlight=False)
+    console.print()
+
+
 def markdown_style() -> RenderStyle:
     """Keep the existing Markdown colours unless a Termflow palette is selected."""
     palette = theme.current()
@@ -319,36 +330,56 @@ class StreamRenderer:
         if await self._render_sandbox_call(event):
             return
         if await self._render_with_plugins(event):
-            if isinstance(event, PartStartEvent) and isinstance(event.part, (TextPart, ThinkingPart)):
-                self._thinking = isinstance(event.part, ThinkingPart)
-                self._index = event.index
-                self._start_part()
-                if isinstance(event.part, TextPart):
-                    self.rendered_text = True
+            self._open_plugin_rendered_part(event)
             return
         if isinstance(event, CapabilityEvent) and await self._render_capability(event):
             return
-        if isinstance(event, PartStartEvent) and isinstance(event.part, (TextPart, ThinkingPart)):
-            await self._drain()
-            self.stop_loading()
-            thinking = isinstance(event.part, ThinkingPart)
-            if thinking and not self.show_thinking:
-                return
-            self._thinking = thinking
-            self._index = event.index
-            self._start_part()
-            self._feed(event.part.content)
-            if not thinking:
-                self.rendered_text = True
-        elif isinstance(event, PartDeltaEvent) and event.index == self._index:
-            if isinstance(event.delta, TextPartDelta):
+        match event:
+            case PartStartEvent() if isinstance(event.part, (TextPart, ThinkingPart)):
+                await self._stream_part(event.index, event.part)
+            case PartDeltaEvent() if event.index == self._index:
+                self._feed_delta(event)
+            case PartStartEvent():
+                await self._drain()
+            case PartEndEvent() if event.index == self._index:
+                await self._drain()
+            case FunctionToolCallEvent() | FunctionToolResultEvent():
+                await self._render_tool(event)
+            case _:
+                pass
+
+    def _open_plugin_rendered_part(self, event: AgentStreamEvent) -> None:
+        """Open a text or thinking part a plugin rendered the start of, so the rest of it streams as usual."""
+        if not (isinstance(event, PartStartEvent) and isinstance(event.part, (TextPart, ThinkingPart))):
+            return
+        self._thinking = isinstance(event.part, ThinkingPart)
+        self._index = event.index
+        self._start_part()
+        if isinstance(event.part, TextPart):
+            self.rendered_text = True
+
+    async def _stream_part(self, index: int, part: TextPart | ThinkingPart) -> None:
+        """Start streaming a text or thinking part, unless it is reasoning the user hid."""
+        await self._drain()
+        self.stop_loading()
+        thinking = isinstance(part, ThinkingPart)
+        if thinking and not self.show_thinking:
+            return
+        self._thinking = thinking
+        self._index = index
+        self._start_part()
+        self._feed(part.content)
+        if not thinking:
+            self.rendered_text = True
+
+    def _feed_delta(self, event: PartDeltaEvent) -> None:
+        match event.delta:
+            case TextPartDelta():
                 self._feed(event.delta.content_delta)
-            elif isinstance(event.delta, ThinkingPartDelta):
+            case ThinkingPartDelta():
                 self._feed(event.delta.content_delta or '')
-        elif isinstance(event, PartStartEvent) or isinstance(event, PartEndEvent) and event.index == self._index:
-            await self._drain()
-        elif isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent)):
-            await self._render_tool(event)
+            case _:
+                pass
 
     async def _render_capability(self, event: CapabilityEvent) -> bool:
         """Return whether the event was handled. A diff ends the tool-call group."""
@@ -479,8 +510,7 @@ class StreamRenderer:
             self._buffer = ''
         continuation = self._markdown.continuation() if self._markdown is not None else None
         await self.finish()
-        self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-        self.console.print()
+        print_prompt(self.console, text)
         if index is not None:
             self._index = index
             self._thinking = thinking

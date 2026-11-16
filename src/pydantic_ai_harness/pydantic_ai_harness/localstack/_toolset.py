@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, partial
 from pathlib import Path
 from typing import IO, Annotated, Any, Self
 
 import anyio
 import anyio.to_thread
-import httpx
+import httpx2
 from pydantic import Field
 
 from pydantic_ai import RunContext
@@ -24,13 +25,13 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.localstack._container import (
+    HEALTH_PATH,
     LocalStackContainer,
     endpoint_port,
     managed_endpoint_url,
     validate_host_address,
 )
 
-_HEALTH_PATH = '/_localstack/health'
 _UTF8_MAX_BYTES_PER_CHAR = 4
 _AWS_GLOBAL_OPTIONS_WITH_VALUE = {
     '--ca-bundle',
@@ -296,8 +297,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """
         try:
             tokens = shlex.split(command)
-        except ValueError as e:
-            raise ModelRetry(f'Could not parse the AWS CLI command: {e}') from e
+        except ValueError as exc:
+            raise ModelRetry(f'Could not parse the AWS CLI command: {exc}') from exc
         if tokens and tokens[0] == 'aws':
             tokens = tokens[1:]
         if not tokens:
@@ -418,13 +419,14 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         rather than only at dispatch, so a durable record of the command is
         bounded too.
         """
-        with tempfile.TemporaryDirectory(prefix='harness_aws_') as work_dir:
+        work_dir = await anyio.to_thread.run_sync(partial(tempfile.mkdtemp, prefix='harness_aws_'))
+        try:
             with (
                 Path(work_dir, 'stdout').open('w+b') as stdout_file,
                 Path(work_dir, 'stderr').open('w+b') as stderr_file,
             ):
                 try:
-                    proc = await anyio.open_process(
+                    process = await anyio.open_process(
                         argv,
                         env=self._build_env(work_dir),
                         stdin=subprocess.DEVNULL,
@@ -440,14 +442,14 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                 try:
                     try:
                         with anyio.fail_after(timeout):
-                            await proc.wait()
+                            await process.wait()
                     except TimeoutError:
-                        proc.kill()
+                        process.kill()
                         with anyio.CancelScope(shield=True):
-                            await proc.wait()
+                            await process.wait()
                         return f'[command timed out after {timeout}s]'
                 finally:
-                    await proc.aclose()
+                    await process.aclose()
 
                 stdout, stderr = await anyio.to_thread.run_sync(
                     lambda: (
@@ -455,6 +457,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                         _read_tail(stderr_file, self._max_output_chars),
                     )
                 )
+        finally:
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(shutil.rmtree, work_dir)
 
         parts: list[str] = []
         if stdout:
@@ -463,7 +468,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             parts.append(f'[stderr]\n{stderr}')
         output = '\n'.join(parts) if parts else '(no output)'
 
-        exit_code = proc.returncode
+        exit_code = process.returncode
         if exit_code:
             output = f'{output}\n[exit code: {exit_code}]'
         return truncate_tail(output, self._max_output_chars)
@@ -479,12 +484,12 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """
         if self._operations is not None:
             return await self._operations.localstack_health(self._endpoint_url)
-        url = self._endpoint_url.rstrip('/') + _HEALTH_PATH
+        url = self._endpoint_url.rstrip('/') + HEALTH_PATH
         try:
-            async with httpx.AsyncClient(timeout=self._default_timeout) as client:
+            async with httpx2.AsyncClient(timeout=self._default_timeout) as client:
                 response = await client.get(url)
-        except httpx.HTTPError as e:
-            return truncate_tail(f'[error: could not reach LocalStack at {url}: {e}]', self._max_output_chars)
+        except httpx2.HTTPError as exc:
+            return truncate_tail(f'[error: could not reach LocalStack at {url}: {exc}]', self._max_output_chars)
         if response.status_code != 200:
             return f'[error: LocalStack health check returned HTTP {response.status_code}]'
         return truncate_tail(response.text, self._max_output_chars)

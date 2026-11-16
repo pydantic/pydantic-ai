@@ -6,9 +6,12 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field, replace
+from importlib.util import find_spec
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol
@@ -32,8 +35,8 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.memory import (
-    FileStore,
-    InMemoryStore,
+    FileMemoryStore,
+    InMemoryMemoryStore,
     MemoryConflictError,
     MemoryFile,
     MemoryOperation,
@@ -52,17 +55,70 @@ class Store(MemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
 
 
+def test_wildcard_import_skips_the_optional_pixeltable_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'pixeltable', None)
+    namespace: dict[str, object] = {}
+    exec('from pydantic_ai_harness.memory import *', namespace)
+    assert 'InMemoryMemoryStore' in namespace
+    assert 'PixeltableMemoryStore' not in namespace
+
+
+def test_unknown_memory_attribute_raises() -> None:
+    import pydantic_ai_harness.memory as memory
+
+    with pytest.raises(AttributeError, match="has no attribute 'MissingStore'"):
+        memory.MissingStore
+
+
+@pytest.fixture(scope='module')
+def pixeltable_catalog() -> None:
+    """Start Pixeltable's catalog, an embedded Postgres server, once per process before the tests that use it.
+
+    The first Pixeltable call in a process starts it, which takes seconds and more on a loaded runner. Started here, it
+    isn't charged to whichever test happens to run first against the per-test time budget.
+    """
+    import pixeltable as pxt
+
+    pxt.list_tables()  # Its first call in a process starts the catalog.
+
+
+_PIXELTABLE_INDEX = 3  # `_local_store` gives this index the Pixeltable store.
+
+
+@pytest.fixture(autouse=True)
+def _start_pixeltable_before_its_store(request: pytest.FixtureRequest) -> None:
+    """Have `pixeltable_catalog` start Pixeltable before a test that `_local_store` gives the Pixeltable store."""
+    if 'index' in request.fixturenames and request.getfixturevalue('index') == _PIXELTABLE_INDEX:
+        request.getfixturevalue('pixeltable_catalog')
+
+
+_PIXELTABLE = pytest.param(
+    _PIXELTABLE_INDEX, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra')
+)
+_STORE_INDEXES = (0, 1, 2, _PIXELTABLE)
+_VERSION_INDEXES = (0, 2, _PIXELTABLE)
+
+
 def _local_stores(tmp_path: Path) -> list[Store]:
     return [
-        InMemoryStore(),
-        FileStore('files', workspace=LocalWorkspaceBackend(tmp_path)),
+        InMemoryMemoryStore(),
+        FileMemoryStore('files', workspace=LocalWorkspaceBackend(tmp_path)),
         SqliteMemoryStore(database=tmp_path / 'memory.sqlite3'),
     ]
 
 
-@pytest.mark.parametrize('index', range(3))
+def _local_store(tmp_path: Path, index: int) -> Store:
+    if index != _PIXELTABLE_INDEX:
+        return _local_stores(tmp_path)[index]
+    from pydantic_ai_harness.memory import PixeltableMemoryStore
+
+    # The session-wide `PIXELTABLE_HOME` is a temporary catalog, so each test only needs its own table.
+    return PixeltableMemoryStore(table_name=f'harness_contract_{uuid.uuid4().hex[:8]}.memory')
+
+
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_compare_and_set_contract(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
 
     created = await store.write('notes/main.md', 'one', expected_version=None)
     assert created.version is not None
@@ -173,7 +229,7 @@ async def test_local_store_rejects_invalid_metadata_before_writing(
 
 async def test_file_store_does_not_record_metadata(tmp_path: Path) -> None:
     """Its sidecar files could not be written in one atomic step with the Markdown, nor kept from the model."""
-    store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path))
     assert not isinstance(store, MetadataMemoryStore)
     await store.write('main.md', 'content', expected_version=None)
     file = await store.read('main.md', max_chars=100)
@@ -186,9 +242,9 @@ def test_memory_file_with_metadata_stays_hashable() -> None:
     assert hash(file) == hash(MemoryFile(content='a', version='1', operation_id=None, truncated=False))
 
 
-@pytest.mark.parametrize('index', (0, 2))  # `FileStore` versions are content hashes; see below.
+@pytest.mark.parametrize('index', _VERSION_INDEXES)  # `FileMemoryStore` versions are content hashes; see below.
 async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     first = await store.write('main.md', 'same', expected_version=None)
     await store.delete('main.md', expected_version=first.version)
     recreated = await store.write('main.md', 'same', expected_version=None)
@@ -200,9 +256,9 @@ async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_
         await store.delete('main.md', expected_version=first.version)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     await store.write('acme/main/MEMORY.md', 'tea', expected_version=None)
     await store.write('acme/main/main/MEMORY.md', 'tea tea', expected_version=None)
     await store.write('acme/main/main/notes.md', 'tea tea tea', expected_version=None)
@@ -224,7 +280,7 @@ async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int
 
 
 async def test_search_yields_to_the_event_loop_between_files() -> None:
-    store = InMemoryStore()
+    store = InMemoryMemoryStore()
     for index in range(20):
         await store.write(f'main/topic-{index:02}.md', 'tea', expected_version=None)
     ticks = 0
@@ -269,7 +325,7 @@ async def test_sqlite_store_prefix_queries_seek_the_path_index(tmp_path: Path) -
 
 
 async def test_in_memory_store_keeps_the_most_recent_receipts() -> None:
-    store = InMemoryStore()
+    store = InMemoryMemoryStore()
     version = None
     operations = [MemoryOperation(id=f'op-{index}', fingerprint='write') for index in range(1_025)]
     for operation in operations:
@@ -283,12 +339,12 @@ async def test_in_memory_store_keeps_the_most_recent_receipts() -> None:
 @pytest.mark.parametrize('path', ['./main.md', 'tenant/./main.md', 'tenant/.'])
 async def test_store_paths_reject_dot_segments(path: str) -> None:
     with pytest.raises(ValueError, match='invalid memory path'):
-        await InMemoryStore().write(path, 'content', expected_version=None)
+        await InMemoryMemoryStore().write(path, 'content', expected_version=None)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_read_and_listing_bounds(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     created = await store.write('a.md', '0123456789', expected_version=None)
     await store.write('b.md', 'b', expected_version=None)
     await store.write('c.md', 'c', expected_version=None)
@@ -305,9 +361,9 @@ async def test_local_store_read_and_listing_bounds(tmp_path: Path, index: int) -
     assert await store.list_paths(limit=2) == ['a.md', 'b.md']
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_operation_receipts(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:one')
 
     first = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
@@ -330,9 +386,9 @@ async def test_local_store_operation_receipts(tmp_path: Path, index: int) -> Non
     assert (await store.delete('missing.md', expected_version=None, operation=delete_operation)).replayed
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     for path, content in (
         ('tenant-a/main/alpha.md', 'alpha alpha'),
         ('tenant-a/main/beta.md', 'alpha'),
@@ -357,23 +413,24 @@ async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> 
     assert tiny.matches == []
     assert tiny.truncated
 
-    for query, limit, max_files, max_chars in (
-        ('', 10, 10, 80),
-        ('alpha', 0, 10, 80),
-        ('alpha', 10, 0, 80),
-        ('alpha', 10, 10, 0),
+    for query, limit, max_files, max_chars, max_file_chars in (
+        ('', 10, 10, 80, 1_000),
+        ('alpha', 0, 10, 80, 1_000),
+        ('alpha', 10, 0, 80, 1_000),
+        ('alpha', 10, 10, 0, 1_000),
+        ('alpha', 10, 10, 80, 0),
     ):
         empty = await store.search(
-            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=1_000
+            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=max_file_chars
         )
         assert empty.matches == []
         assert empty.scanned == 0
         assert not empty.truncated
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_snippets_cover_tiny_and_offset_windows(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     await store.write('a', '012345alpha-tail', expected_version=None)
 
     tiny = await store.search('', 'alpha', limit=1, max_files=1, max_chars=3, max_file_chars=1_000)
@@ -384,38 +441,44 @@ async def test_local_store_search_snippets_cover_tiny_and_offset_windows(tmp_pat
     assert offset.matches[0].snippet.startswith('...')
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_store_search_bounds_each_file_and_ignores_namespace_prefix(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     namespace = 'n' * 180
     prefix = f'{namespace}/main/'
     await store.write(f'{prefix}note.md', 'prefix TARGET', expected_version=None)
 
     bounded = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=100, max_file_chars=6)
     assert bounded.matches == []
+    assert bounded.truncated
+    cut_hit = await store.search(prefix, 'prefix', limit=10, max_files=10, max_chars=100, max_file_chars=6)
+    assert [match.path for match in cut_hit.matches] == [f'{prefix}note.md']
+    assert cut_hit.truncated
     namespace_result = await store.search(prefix, namespace, limit=10, max_files=10, max_chars=100, max_file_chars=100)
     assert namespace_result.matches == []
     visible = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=20, max_file_chars=100)
     assert [match.path for match in visible.matches] == [f'{prefix}note.md']
+    assert not visible.truncated
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 @pytest.mark.parametrize('path', ('../escape.md', '/absolute.md', 'a//b.md', 'a/../../b.md', 'a b.md'))
 async def test_local_stores_reject_unsafe_paths(tmp_path: Path, index: int, path: str) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     with pytest.raises(ValueError):
         await store.read(path, max_chars=1_000)
 
 
-def test_bundled_stores_implement_public_protocols(tmp_path: Path) -> None:
-    for store in _local_stores(tmp_path):
-        assert isinstance(store, MemoryStore)
-        assert isinstance(store, SearchableMemoryStore)
+@pytest.mark.parametrize('index', _STORE_INDEXES)
+def test_bundled_stores_implement_public_protocols(tmp_path: Path, index: int) -> None:
+    store = _local_store(tmp_path, index)
+    assert isinstance(store, MemoryStore)
+    assert isinstance(store, SearchableMemoryStore)
 
 
-@pytest.mark.parametrize('index', range(3))
+@pytest.mark.parametrize('index', _STORE_INDEXES)
 async def test_local_stores_reject_non_positive_read_and_listing_bounds(tmp_path: Path, index: int) -> None:
-    store = _local_stores(tmp_path)[index]
+    store = _local_store(tmp_path, index)
     with pytest.raises(ValueError, match='max_chars'):
         await store.read('main.md', max_chars=0)
     with pytest.raises(ValueError, match='limit'):
@@ -424,7 +487,7 @@ async def test_local_stores_reject_non_positive_read_and_listing_bounds(tmp_path
 
 async def test_in_memory_store_copies_and_indexes_initial_files() -> None:
     initial = {'a.md': 'a', 'b.md': 'b'}
-    store = InMemoryStore(files=initial)
+    store = InMemoryMemoryStore(files=initial)
     initial['c.md'] = 'c'
 
     assert (await store.read('a.md', max_chars=10)) is not None
@@ -434,11 +497,11 @@ async def test_in_memory_store_copies_and_indexes_initial_files() -> None:
 
 
 def test_in_memory_store_repr_omits_content() -> None:
-    assert repr(InMemoryStore({'main/MEMORY.md': 'secret'})) == 'InMemoryStore()'
+    assert repr(InMemoryMemoryStore({'main/MEMORY.md': 'secret'})) == 'InMemoryMemoryStore()'
 
 
 def test_in_memory_store_files_view_is_read_only() -> None:
-    store = InMemoryStore(files={'a.md': 'a'})
+    store = InMemoryMemoryStore(files={'a.md': 'a'})
 
     with pytest.raises(TypeError):
         exec("files['b.md'] = 'b'", {}, {'files': store.files})
@@ -465,7 +528,7 @@ class _FlakyBackend(LocalWorkspaceBackend):
 
 
 async def test_file_store_keeps_plain_markdown_in_the_workspace(tmp_path: Path) -> None:
-    store = FileStore('memory', workspace=LocalWorkspaceBackend(tmp_path))
+    store = FileMemoryStore('memory', workspace=LocalWorkspaceBackend(tmp_path))
     operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md')
     written = await store.write('notes/main.md', '# Memory', expected_version=None, operation=operation)
 
@@ -480,7 +543,7 @@ async def test_file_store_keeps_plain_markdown_in_the_workspace(tmp_path: Path) 
 
 
 async def test_file_store_versions_are_content_hashes(tmp_path: Path) -> None:
-    store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path))
     created = await store.write('main.md', 'original', expected_version=None)
 
     (tmp_path / 'main.md').write_text('external')
@@ -493,7 +556,7 @@ async def test_file_store_versions_are_content_hashes(tmp_path: Path) -> None:
 
 async def test_file_store_interrupted_write_is_applied_once(tmp_path: Path) -> None:
     backend = _FlakyBackend(tmp_path)
-    store = FileStore('.', workspace=backend)
+    store = FileMemoryStore('.', workspace=backend)
     created = await store.write('main.md', 'old', expected_version=None)
     operation = MemoryOperation(id='run-1:call-1', fingerprint='write:main.md:new')
 
@@ -516,7 +579,7 @@ async def test_file_store_interrupted_write_is_applied_once(tmp_path: Path) -> N
 
 async def test_file_store_settles_an_interrupted_mutation_before_the_next_one_on_its_path(tmp_path: Path) -> None:
     backend = _FlakyBackend(tmp_path)
-    store = FileStore('.', workspace=backend)
+    store = FileMemoryStore('.', workspace=backend)
     created = await store.write('main.md', 'old', expected_version=None)
     delete = MemoryOperation(id='delete-1', fingerprint='delete:main.md')
 
@@ -545,7 +608,7 @@ async def test_file_store_settles_an_interrupted_mutation_before_the_next_one_on
 
 
 async def test_file_store_listing_walks_only_the_requested_scope(tmp_path: Path) -> None:
-    store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path))
     await store.write('tenant-a/unrelated.md', 'a', expected_version=None)
     await store.write('tenant-b/main.md', 'b', expected_version=None)
     await store.write('other.md', 'other', expected_version=None)
@@ -563,7 +626,7 @@ async def test_file_store_listing_rejects_symlinked_prefix(tmp_path: Path) -> No
     outside.mkdir()
     (outside / 'secret.md').write_text('secret')
     (root / 'alias').symlink_to(outside, target_is_directory=True)
-    store = FileStore('.', workspace=LocalWorkspaceBackend(root))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(root))
     assert await store.list_paths('alias/', limit=10) == []
 
 
@@ -574,7 +637,7 @@ async def test_file_store_search_skips_a_file_that_disappears_after_listing(tmp_
                 raise FileNotFoundError(path)
             return await super().read_bytes(path)
 
-    store = FileStore('.', workspace=Disappearing(tmp_path))
+    store = FileMemoryStore('.', workspace=Disappearing(tmp_path))
     await store.write('a.md', 'alpha', expected_version=None)
     await store.write('b.md', 'alpha', expected_version=None)
 
@@ -597,7 +660,7 @@ async def test_file_store_reuses_root_realpath_within_bound_run(tmp_path: Path) 
             return await super().realpath(path)
 
     backend = CountingBackend(root)
-    store = FileStore('.').bind(Workspace(backend))
+    store = FileMemoryStore('.').bind(Workspace(backend))
     await store.write('main/first.md', 'one', expected_version=None)
     await store.write('main/second.md', 'two', expected_version=None)
     assert (root / 'main' / 'first.md').read_text() == 'one'
@@ -613,7 +676,9 @@ async def test_file_store_rejects_symlink_escape(tmp_path: Path) -> None:
     os.symlink(outside, root / 'link')
 
     with pytest.raises(ValueError, match='outside the store directory'):
-        await FileStore('.', workspace=LocalWorkspaceBackend(root)).write('link/escape.md', 'x', expected_version=None)
+        await FileMemoryStore('.', workspace=LocalWorkspaceBackend(root)).write(
+            'link/escape.md', 'x', expected_version=None
+        )
     assert not (outside / 'escape.md').exists()
 
 
@@ -624,7 +689,7 @@ async def test_file_store_refuses_to_read_through_a_symlink_escape(tmp_path: Pat
     os.symlink(tmp_path / 'secret.txt', root / 'scope' / 'MEMORY.md')
 
     with pytest.raises(ValueError, match='outside the store directory'):
-        await FileStore('.', workspace=LocalWorkspaceBackend(root)).read('scope/MEMORY.md', max_chars=100)
+        await FileMemoryStore('.', workspace=LocalWorkspaceBackend(root)).read('scope/MEMORY.md', max_chars=100)
 
 
 async def test_file_store_refuses_a_receipts_file_linked_outside_the_store(tmp_path: Path) -> None:
@@ -632,7 +697,7 @@ async def test_file_store_refuses_a_receipts_file_linked_outside_the_store(tmp_p
     root.mkdir()
     (tmp_path / 'victim.txt').write_text('keep')
     os.symlink(tmp_path / 'victim.txt', root / '.memory-operations.json')
-    store = FileStore('.', workspace=LocalWorkspaceBackend(root))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(root))
 
     with pytest.raises(ValueError, match='outside the store directory'):
         await store.write('main.md', 'x', expected_version=None, operation=MemoryOperation('write-1', 'w'))
@@ -655,7 +720,7 @@ async def test_file_store_settles_a_pending_receipt_only_inside_the_store(tmp_pa
         'done': False,
     }
     (root / '.memory-operations.json').write_text(json.dumps([receipt]))
-    store = FileStore('.', workspace=LocalWorkspaceBackend(root))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(root))
 
     # Settling compares the linked file's hash with the receipt, which would reveal its content.
     with pytest.raises(ValueError, match='outside the store directory'):
@@ -670,7 +735,7 @@ async def test_file_store_search_does_not_read_through_a_symlink_escape(tmp_path
     (tmp_path / 'outside' / 'other.md').write_text('alpha outside')
     os.symlink(tmp_path / 'secret.md', root / 'leak.md')
     os.symlink(tmp_path / 'outside', root / 'linked')
-    store = FileStore('.', workspace=LocalWorkspaceBackend(root))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(root))
     await store.write('kept.md', 'alpha kept', expected_version=None)
 
     result = await store.search('', 'alpha', limit=10, max_files=10, max_chars=1000, max_file_chars=1000)
@@ -679,14 +744,14 @@ async def test_file_store_search_does_not_read_through_a_symlink_escape(tmp_path
 
 
 async def test_file_store_needs_a_workspace(tmp_path: Path) -> None:
-    with pytest.raises(UserError, match='`FileStore` has no workspace'):
-        await FileStore('memory').read('main.md', max_chars=10)
+    with pytest.raises(UserError, match='`FileMemoryStore` has no workspace'):
+        await FileMemoryStore('memory').read('main.md', max_chars=10)
     with pytest.raises(TypeError, match='takes a workspace backend'):
-        FileStore('memory', workspace=LocalWorkspace('.'))  # pyright: ignore[reportArgumentType]
+        FileMemoryStore('memory', workspace=LocalWorkspace('.'))  # pyright: ignore[reportArgumentType]
     with pytest.warns(HarnessDeprecationWarning, match=r'workspace=LocalWorkspaceBackend\('):
-        FileStore(tmp_path)
+        FileMemoryStore(tmp_path)
     # A store with its own workspace ignores the one it is bound to.
-    store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path))
     assert store.bind(Workspace(LocalWorkspaceBackend(tmp_path / 'elsewhere'))) is store
 
 
@@ -709,6 +774,46 @@ async def test_sqlite_store_supports_caller_owned_connection() -> None:
         store = SqliteMemoryStore(connection=connection)
         await store.write('main.md', 'content', expected_version=None)
         assert (await store.list_paths(limit=100)) == ['main.md']
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize('encoding', ['UTF-8', 'UTF-16le', 'UTF-16be'])
+@pytest.mark.parametrize('content', ['', '\x00match', 'aé€😀\x00match', '😀' * 5 + '\x00match', 'match\x00'])
+async def test_sqlite_store_reads_nul_and_unicode_content(encoding: str, content: str) -> None:
+    connection = sqlite3.connect(':memory:', check_same_thread=False)
+    try:
+        connection.execute(f"PRAGMA encoding = '{encoding}'")
+        store = SqliteMemoryStore(connection=connection)
+        await store.write('main.md', content, expected_version=None)
+
+        for max_chars in sorted({1, 2, 3, max(1, len(content) - 1), len(content) + 1, max(1, len(content))}):
+            file = await store.read('main.md', max_chars=max_chars)
+            assert file is not None
+            assert file.content == content[:max_chars]
+            assert file.truncated is (len(content) > max_chars)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize('encoding', ['UTF-8', 'UTF-16le', 'UTF-16be'])
+@pytest.mark.parametrize('max_file_chars', [1, 7, 8, 9])
+async def test_sqlite_store_searches_nul_and_unicode_content(encoding: str, max_file_chars: int) -> None:
+    connection = sqlite3.connect(':memory:', check_same_thread=False)
+    try:
+        connection.execute(f"PRAGMA encoding = '{encoding}'")
+        store = SqliteMemoryStore(connection=connection)
+        content = 'é😀\x00match'
+        await store.write('main/notes.md', content, expected_version=None)
+        await store.write('main/empty.md', '', expected_version=None)
+
+        result = await store.search(
+            'main/', 'match', limit=10, max_files=10, max_chars=100, max_file_chars=max_file_chars
+        )
+
+        assert [match.path for match in result.matches] == (['main/notes.md'] if max_file_chars >= len(content) else [])
+        assert result.scanned == 2
+        assert result.truncated is (len(content) > max_file_chars)
     finally:
         connection.close()
 
@@ -1297,7 +1402,7 @@ def _staged_files(directory: Path) -> list[Path]:
 
 
 async def test_file_store_failed_write_keeps_the_old_content(tmp_path: Path) -> None:
-    store = FileStore('.', workspace=_TruncatingBackend(tmp_path))
+    store = FileMemoryStore('.', workspace=_TruncatingBackend(tmp_path))
     (tmp_path / 'notes').mkdir()
     (tmp_path / 'notes/main.md').write_text('old content')
     with pytest.raises(OSError, match='simulated full disk'):
@@ -1307,11 +1412,11 @@ async def test_file_store_failed_write_keeps_the_old_content(tmp_path: Path) -> 
 
 
 async def test_file_store_failed_journal_write_keeps_the_old_journal(tmp_path: Path) -> None:
-    await FileStore('.', workspace=LocalWorkspaceBackend(tmp_path)).write(
+    await FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path)).write(
         'main.md', 'old', expected_version=None, operation=MemoryOperation('write-1', 'w')
     )
     journal = (tmp_path / '.memory-operations.json').read_text()
-    store = FileStore('.', workspace=_TruncatingBackend(tmp_path))
+    store = FileMemoryStore('.', workspace=_TruncatingBackend(tmp_path))
     with pytest.raises(OSError, match='simulated full disk'):
         await store.write('main.md', 'new', expected_version=_version('old'), operation=MemoryOperation('write-2', 'w'))
     assert (tmp_path / '.memory-operations.json').read_text() == journal
@@ -1325,7 +1430,7 @@ async def test_file_store_failed_rename_names_the_target(tmp_path: Path, error: 
     backend.error = error
     (tmp_path / 'main.md').write_text('old')
     with pytest.raises(WorkspaceError, match=r"Could not replace memory file '.*/main\.md'"):
-        await FileStore('.', workspace=backend).write('main.md', 'new', expected_version=_version('old'))
+        await FileMemoryStore('.', workspace=backend).write('main.md', 'new', expected_version=_version('old'))
     assert (tmp_path / 'main.md').read_text() == 'old'
     assert _staged_files(tmp_path) == []
 
@@ -1336,13 +1441,13 @@ async def test_file_store_rename_in_a_gone_workspace_reports_it_gone(tmp_path: P
     backend.error = WorkspaceUnavailableError('sandbox was destroyed')
     (tmp_path / 'main.md').write_text('old')
     with pytest.raises(WorkspaceUnavailableError, match=r'^sandbox was destroyed$'):
-        await FileStore('.', workspace=backend).write('main.md', 'new', expected_version=_version('old'))
+        await FileMemoryStore('.', workspace=backend).write('main.md', 'new', expected_version=_version('old'))
     assert (tmp_path / 'main.md').read_text() == 'old'
     assert _staged_files(tmp_path) == []
 
 
 async def test_file_store_writes_in_place_without_commands(tmp_path: Path) -> None:
-    store = FileStore('.', workspace=_FilesystemOnly(tmp_path))
+    store = FileMemoryStore('.', workspace=_FilesystemOnly(tmp_path))
     created = await store.write('main.md', 'old', expected_version=None, operation=MemoryOperation('write-1', 'w'))
     await store.write('main.md', 'new', expected_version=created.version)
     assert (tmp_path / 'main.md').read_text() == 'new'
@@ -1351,7 +1456,7 @@ async def test_file_store_writes_in_place_without_commands(tmp_path: Path) -> No
 
 
 async def test_file_store_success_leaves_no_staged_files(tmp_path: Path) -> None:
-    store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+    store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path))
     await store.write('notes/main.md', 'one', expected_version=None, operation=MemoryOperation('write-1', 'w'))
     assert (tmp_path / 'notes/main.md').read_text() == 'one'
     assert _staged_files(tmp_path) == []

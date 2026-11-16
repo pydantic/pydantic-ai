@@ -43,6 +43,7 @@ from boxd import (
     ExecResult,
     Machine,
     MachineNetworking,
+    MachineSpecBuilder,
     NotFoundError,
 )
 from boxd._generated import api_pb2
@@ -149,6 +150,10 @@ class _FakeExecCall:
             start_new_session=True,
         )
         machine.processes.append(process)
+        # The command can run before this registers it, so a delete that did not see the process kills it here.
+        if machine.status == 'destroyed':  # pragma: lax no cover
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
         assert process.stdout is not None and process.stderr is not None
         # `None` ends the stream, so no chunk depends on whether it was read before or after exit.
         chunks: asyncio.Queue[Any] = asyncio.Queue()
@@ -362,8 +367,10 @@ class FakeMachines:
         isolated: bool = False,
         vcpu: int | None = None,
         auto_suspend_timeout: int | None = None,
+        spec: MachineSpecBuilder | None = None,
     ) -> Machine:
         owner = self._owner
+        resolved = None if spec is None else spec.resolve()
         owner.check_call()
         owner.create_names.append(name)
         if owner.create_gate is not None and not owner.create_then_hang:
@@ -383,7 +390,9 @@ class FakeMachines:
             'isolated': isolated,
             'vcpu': vcpu,
             'auto_suspend_timeout': auto_suspend_timeout,
+            'spec': resolved,
         }
+        isolated = isolated or (resolved is not None and resolved.get('isolated', False))
         machine = owner.add(
             name=name, isolated=isolated, networks=networks, create_kwargs=kwargs, boot_polls=owner.boot_polls, org=org
         )

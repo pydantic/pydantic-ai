@@ -77,6 +77,12 @@ export const PencilIcon = icon(
     <path d="m13.5 6.5 4 4" />
   </>,
 )
+export const RetryIcon = icon(
+  <>
+    <path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.7" />
+    <path d="M4 4v4.7h4.7" />
+  </>,
+)
 export const ToolIcon = icon(
   <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4Z" />,
 )
@@ -194,6 +200,7 @@ export const ServerIcon = icon(
     <path d="M8 7.5h.01M8 16.5h.01" />
   </>,
 )
+export const ShieldIcon = icon(<path d="M12 3 5 6v5c0 4.5 3 8.5 7 10 4-1.5 7-5.5 7-10V6Z" />)
 export const PlusIcon = icon(<path d="M12 5v14M5 12h14" />)
 export const DiffIcon = icon(
   <>
