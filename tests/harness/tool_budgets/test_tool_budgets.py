@@ -56,7 +56,7 @@ def _agent(
     log = [] if ran is None else ran
 
     @agent.tool_plain
-    def search(query: str) -> str:
+    def search(query: str, limit: int = 10) -> str:
         log.append(f'search:{query}')
         if query == 'flaky':
             raise ModelRetry('Try again')
@@ -118,8 +118,9 @@ class TestToolBudgets:
     async def test_refuses_a_repeat_of_a_listed_tool_only(self):
         ran: list[str] = []
         model = _scripted(
-            [_search('a', 's1')],
-            [ToolCallPart('search', '{"query": "a"}', tool_call_id='s2')],
+            [ToolCallPart('search', {'query': 'a', 'limit': 5}, tool_call_id='s1')],
+            [ToolCallPart('search', '{"limit": 5, "query": "a"}', tool_call_id='s2')],
+            [ToolCallPart('search', {'query': 'a', 'limit': 6}, tool_call_id='s3')],
             [_poll('p1')],
             [_poll('p2')],
         )
@@ -127,7 +128,7 @@ class TestToolBudgets:
 
         result = await agent.run('Research it')
 
-        assert ran == ['search:a', 'poll:j1', 'poll:j1']
+        assert ran == ['search:a', 'search:a', 'poll:j1', 'poll:j1']
         assert _returns(result.all_messages())[1] == snapshot(
             (
                 's2',
