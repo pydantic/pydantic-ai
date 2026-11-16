@@ -31,7 +31,8 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import repair_messages
+from pydantic_ai.framing import register_tag, wrap
+from pydantic_ai.messages import ModelMessage, ModelResponse, repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -100,6 +101,8 @@ SELF_AGENT_NAME = 'self'
 
 DEFAULT_MAX_DEPTH = 3
 """Default `SubAgents.max_depth`: the top-level run, its delegates, and theirs."""
+
+_PARTIAL_OUTPUT_TAG = register_tag('partial_output')
 
 _depth: ContextVar[int] = ContextVar('pydantic_ai_harness.sub_agents.depth', default=1)
 """How deep in a delegation tree the current run is, counting the top-level run as 1.
@@ -273,6 +276,10 @@ class SubAgent(Generic[AgentDepsT]):
     can_ask_questions: bool = dataclass_field(default=True, kw_only=True)
     """Whether the sub-agent gets an `ask_parent` tool to ask the delegating agent a question, with
     `SubAgents.task_control` set. Not offered when the task can't run in the background."""
+
+    keep_partial_output: bool = dataclass_field(default=False, kw_only=True)
+    """Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response.
+    The parent gets it after the steering message, in a `<partial_output>` frame."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -1329,6 +1336,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         own_budget, child_usage, usage_limits = self._child_budget(ctx, sub_agent, managed=managed or owner is not None)
 
         run_model, settings = self._run_model(ctx, sub_agent, key=key, is_self=is_self)
+        messages: list[ModelMessage] = []
         run = self._child_run(
             ctx,
             sub_agent,
@@ -1342,10 +1350,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             workspace=workspace,
             owner=owner,
             record=record,
+            messages=messages,
         )
         token = _depth.set(_depth.get() + 1)
         try:
-            ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget, serving_model=serving_model)
+            ended = await self._settle(
+                agent_name, sub_agent, run, own_budget=own_budget, serving_model=serving_model, messages=messages
+            )
         except BaseException as exc:
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
@@ -1460,10 +1471,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         workspace: Workspace,
         owner: DelegationTasks | None,
         record: DelegationTask | None,
+        messages: list[ModelMessage],
     ) -> Coroutine[Any, Any, AgentRunResult[Any]]:
         """The child run, dropping token counting inherited from the parent if the child's model can't count.
 
         Token counting the delegate asks for in its own `usage_limits` is kept, as on a top-level run.
+        `messages` receives the messages of the run that counts, also when it raises or is cancelled.
         """
         # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
         # the resumed run adds a new prompt, so close them out as interrupted first.
@@ -1478,7 +1491,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if attempted and record is not None:
                 record.run_id = uuid4().hex
             attempted = True
-            with capture_run_messages() as messages:
+            with capture_run_messages() as captured:
                 try:
                     return await sub_agent.agent.run(
                         task,
@@ -1498,8 +1511,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                         run_id=record.run_id if record is not None else None,
                     )
                 finally:
-                    if record is not None and messages:
-                        record.messages = messages
+                    messages[:] = captured
+                    if record is not None and captured:
+                        record.messages = captured
 
         if sub_agent.usage_limits is not None and sub_agent.usage_limits.count_tokens_before_request:
             return start(usage_limits)
@@ -1540,6 +1554,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         *,
         own_budget: bool,
         serving_model: ServingModelRecorder,
+        messages: Sequence[ModelMessage],
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
@@ -1557,23 +1572,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 # delegation budget is set at all. That is a child crash, so the
                 # crash handlers decide what the parent sees.
                 return self._crash_outcome(agent_name, sub_agent, exc)
-            return _Ended(
-                outcome='timeout',
-                output=self._steer(
-                    sub_agent.on_failure,
-                    f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget. '
-                    f'Treat this as a recoverable observation and decide from existing evidence.',
-                ),
+            return self._stopped(
+                'timeout', sub_agent, f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget.', messages
             )
         except UsageLimitExceeded:
             if own_budget:
-                return _Ended(
-                    outcome='budget',
-                    output=self._steer(
-                        sub_agent.on_failure,
-                        f'Sub-agent {agent_name!r} reached its usage budget. '
-                        f'Treat this as a recoverable observation and decide from existing evidence.',
-                    ),
+                return self._stopped(
+                    'budget', sub_agent, f'Sub-agent {agent_name!r} reached its usage budget.', messages
                 )
             # A shared/parent usage limit means the whole tree is out of budget.
             raise
@@ -1618,12 +1623,32 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             cause=exc,
         )
 
+    def _stopped(
+        self,
+        outcome: DelegationOutcome,
+        sub_agent: SubAgent[AgentDepsT],
+        reason: str,
+        messages: Sequence[ModelMessage],
+    ) -> _Ended:
+        """The steering message for a child stopped by its own budget, with its last text when it keeps partial output."""
+        output = self._steer(
+            sub_agent.on_failure, f'{reason} Treat this as a recoverable observation and decide from existing evidence.'
+        )
+        if sub_agent.keep_partial_output and (text := _last_text(messages)):
+            output = f'{output}\n\n{wrap(_PARTIAL_OUTPUT_TAG, text)}'
+        return _Ended(outcome=outcome, output=output)
+
     @staticmethod
     def _steer(on_failure: str | None, default: str) -> str:
         """A soft steering message: the delegate's `on_failure` override, else `default`."""
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _last_text(messages: Sequence[ModelMessage]) -> str | None:
+    """The text of the last model response that has any."""
+    return next((m.text for m in reversed(messages) if isinstance(m, ModelResponse) and m.text), None)
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:
