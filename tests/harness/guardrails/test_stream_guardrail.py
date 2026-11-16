@@ -293,7 +293,7 @@ class TestStreamGuardrail:
         with pytest.raises(OutputBlocked, match='no SSNs'):
             async with agent.run_stream_events('weather?') as events:
                 async for event in events:
-                    seen.append(event)  # pragma: no cover - nothing is released before the block
+                    seen.append(event)  # pragma: no cover
 
         assert seen == []
         assert screened == ['{"city": "SSN 123"}']
