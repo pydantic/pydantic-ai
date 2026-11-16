@@ -35,13 +35,12 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
-from ..display_fakes import screen
+from ..display_fakes import look_click_then_finish, screen
 from .fake_daytona import FakeDaytona, FakeSandbox
 
 
@@ -472,19 +471,10 @@ def test_a_desktop_sandbox_reattaches_with_its_display() -> None:
     assert DaytonaSandbox().backend(ref).display is None
 
 
-def _look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Takes a screenshot, clicks on what it showed, then answers."""
-    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
-    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
-    if done == len(steps):
-        return ModelResponse(parts=[TextPart('done')])
-    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
-
-
 async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(fake_daytona: FakeDaytona) -> None:
     sandbox_capability = DaytonaSandbox(desktop=True)
     agent = Agent(
-        FunctionModel(_look_click_then_finish),
+        FunctionModel(look_click_then_finish),
         capabilities=[sandbox_capability, ComputerUse(native=False)],
     )
 
@@ -494,8 +484,8 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(fake
         part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerReturnPart)
     ]
     (sandbox,) = fake_daytona.sandboxes
-    assert looked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
-    assert clicked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert looked.result == {'performed': 1}
+    assert clicked.result == {'performed': 1}
     assert clicked.screenshot is not None and clicked.screenshot.data == sandbox.computer_use.png
     assert 'click 3 4 left clicks=1 modifiers=[]' in sandbox.desktop_calls
 
