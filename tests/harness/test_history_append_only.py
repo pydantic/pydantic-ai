@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
@@ -104,6 +104,9 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = pytest.mark.filterwarnings(
@@ -281,6 +284,14 @@ def _modal_sandbox() -> AbstractCapability[Any]:
     return ModalSandbox(warn_if_no_tools=False)
 
 
+def _kubernetes_sandbox() -> KubernetesSandbox:
+    # Imported here, so collecting this file never imports the agent-sandbox SDK. The test has already
+    # skipped when it isn't installed (`OPTIONAL_DEPENDENCIES`).
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+    return KubernetesSandbox(warm_pool='python-pool')
+
+
 def _ipython_code_mode() -> AbstractCapability[Any]:
     # Imported here, so collecting this file never imports `jupyter_client`. The test has already skipped
     # when it isn't installed (`OPTIONAL_DEPENDENCIES`).
@@ -321,6 +332,7 @@ FIXTURES: dict[str, Fixture] = {
     # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
     # launching a kernel process for every provider.
     'IPythonCodeMode': lambda _: _ipython_code_mode(),
+    'KubernetesSandbox': lambda _: _kubernetes_sandbox(),
     'Macroscope': _workspace(Macroscope),
     'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
     'ModalSandbox': lambda _: _modal_sandbox(),
@@ -641,6 +653,7 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'ExaAgent': 'exa_py',
     'ExaSearch': 'exa_py',
     'IPythonCodeMode': 'jupyter_client',
+    'KubernetesSandbox': 'k8s_agent_sandbox',
     'ModalSandbox': 'modal',
     'OpenSandbox': 'opensandbox',
     'Pixeltable': 'pixeltable',

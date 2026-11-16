@@ -219,13 +219,7 @@ SDK_MODEL_LITERALS = [
     SdkModelLiteral('openai-embedding', 'openai', EmbeddingModel, LatestOpenAIEmbeddingModelNames),
     SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName, frozenset({'claude-fable-5-2'})),
     SdkModelLiteral('xai', 'xai-sdk', ChatModel, XaiModelName, frozenset({'grok-4.7'})),
-    SdkModelLiteral(
-        'xai-image',
-        'xai-sdk',
-        ImageGenerationModel,
-        LatestXaiImageGenerationModelNames,
-        frozenset({'grok-imagine-image-2.0'}),
-    ),
+    SdkModelLiteral('xai-image', 'xai-sdk', ImageGenerationModel, LatestXaiImageGenerationModelNames),
 ]
 
 SDK_MODEL_IDS: dict[str, list[str]] = {
@@ -424,7 +418,7 @@ SDK_MODEL_IDS: dict[str, list[str]] = {
             'grok-code-fast-1',
         ]
     ),
-    'xai-image': snapshot(['grok-imagine-image', 'grok-imagine-image-pro', 'grok-imagine-image-quality']),
+    'xai-image': snapshot(['grok-imagine-image', 'grok-imagine-image-2.0', 'grok-imagine-image-quality']),
 }
 
 
