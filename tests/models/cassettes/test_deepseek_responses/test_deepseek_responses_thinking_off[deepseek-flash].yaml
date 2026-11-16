@@ -1,0 +1,105 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "150"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        input:
+        - role: user
+          content: What is 17 * 23? Reply only with digits.
+        reasoning:
+          effort: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        id: ab3f0912-548e-45ff-aeb4-3692bc1d8481
+        object: response
+        created_at: 1792953278
+        status: completed
+        background: false
+        completed_at: 1792953279
+        content_filters: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: deepseek-flash
+        moderation: null
+        output:
+        - type: message
+          id: ae877702-dacd-4bd8-8bc5-b139d2308951
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "391"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: null
+        reasoning:
+          effort: none
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: null
+        tool_choice: auto
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 17
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 1
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 18
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-25T18:34:39.431303+00:00

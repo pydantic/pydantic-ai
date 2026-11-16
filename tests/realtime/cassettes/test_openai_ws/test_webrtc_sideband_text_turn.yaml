@@ -1,0 +1,66 @@
+interactions:
+- request:
+    body: "--78fa8e666cba5b9d149ee9c9c6085eb1\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\nv=0\no=-
+      3984138995 3984138995 IN IP4 192.0.2.10\ns=-\nt=0 0\na=group:BUNDLE 0 1\na=msid-semantic:WMS *\nm=audio 55983 UDP/TLS/RTP/SAVPF
+      96 0 8\nc=IN IP4 198.51.100.20\na=sendrecv\na=mid:0\na=rtcp-mux\na=rtpmap:96 opus/48000/2\na=rtpmap:0 PCMU/8000\na=rtpmap:8
+      PCMA/8000\na=ice-ufrag:JCSJ\na=ice-pwd:4VjSN9HmbfuizcxBRohAKf\na=fingerprint:sha-256 A4:48:06:9B:5F:3C:23:B7:FF:02:08:A2:30:6A:BB:39:D3:0E:5A:8D:3E:EB:B9:BA:AC:91:C0:AD:3F:A1:46:B8\na=setup:actpass\nm=application
+      57304 UDP/DTLS/SCTP webrtc-datachannel\nc=IN IP4 198.51.100.20\na=mid:1\na=sctp-port:5000\na=max-message-size:65536\na=ice-ufrag:xNB3\na=ice-pwd:imPFbPwvIpZaDrxqpdwWiI\na=fingerprint:sha-256
+      A4:48:06:9B:5F:3C:23:B7:FF:02:08:A2:30:6A:BB:39:D3:0E:5A:8D:3E:EB:B9:BA:AC:91:C0:AD:3F:A1:46:B8\na=setup:actpass\n\r\n--78fa8e666cba5b9d149ee9c9c6085eb1\r\nContent-Disposition:
+      form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{\"model\": \"gpt-realtime\", \"type\": \"realtime\",
+      \"instructions\": \"Answer in two words.\", \"output_modalities\": [\"text\"], \"audio\": {\"input\": {\"format\": {\"type\":
+      \"audio/pcm\", \"rate\": 24000}, \"turn_detection\": {\"type\": \"server_vad\", \"create_response\": true, \"interrupt_response\":
+      true}, \"transcription\": {\"model\": \"gpt-realtime-whisper\"}}, \"output\": {\"format\": {\"type\": \"audio/pcm\",
+      \"rate\": 24000}}}}\r\n--78fa8e666cba5b9d149ee9c9c6085eb1--\r\n"
+    headers:
+      accept:
+      - application/sdp
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1418'
+      content-type:
+      - multipart/form-data; boundary=78fa8e666cba5b9d149ee9c9c6085eb1
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/realtime/calls
+  response:
+    body:
+      string: "v=0\r\no=- 391087511162331193 1784736004 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256
+        5A:25:24:FC:84:67:89:33:A7:1F:9A:AD:B3:4B:3A:B2:A0:A3:9B:79:DA:9F:AF:7F:A2:36:C2:18:A9:46:2B:ED\r\na=ice-lite\r\na=group:BUNDLE
+        0 1\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:active\r\na=mid:0\r\na=ice-ufrag:ThWE0W/u0/3oMkLB\r\na=ice-pwd:jMjVyMQwPDperHKAo4nZuUxnzBST9SGM\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96
+        opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:468595094
+        cname:realtimeapi\r\na=ssrc:468595094 msid:realtimeapi audio\r\na=ssrc:468595094 mslabel:realtimeapi\r\na=ssrc:468595094
+        label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:1352698770 1 udp 2130706431 68.155.152.41 3478
+        typ host ufrag ThWE0W/u0/3oMkLB\r\na=candidate:2321888134 1 tcp 1671430143 68.155.152.41 443 typ host tcptype passive
+        ufrag ThWE0W/u0/3oMkLB\r\na=candidate:727169150 1 udp 2130706431 4.151.200.38 3478 typ host ufrag ThWE0W/u0/3oMkLB\r\na=candidate:1878291698
+        1 tcp 1671430143 4.151.200.38 443 typ host tcptype passive ufrag ThWE0W/u0/3oMkLB\r\na=candidate:2832417414 1 udp
+        2130706431 20.168.48.117 3478 typ host ufrag ThWE0W/u0/3oMkLB\r\na=candidate:3818869066 1 tcp 1671430143 20.168.48.117
+        443 typ host tcptype passive ufrag ThWE0W/u0/3oMkLB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4
+        0.0.0.0\r\na=setup:active\r\na=mid:1\r\na=sendrecv\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\na=ice-ufrag:ThWE0W/u0/3oMkLB\r\na=ice-pwd:jMjVyMQwPDperHKAo4nZuUxnzBST9SGM\r\n"
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - Location, X-Request-Id
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1533'
+      content-type:
+      - text/plain; charset=utf-8
+      location:
+      - /v1/realtime/calls/rtc_u0_E4TeWIkEAnw5DOa1vyO18
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - '*'
+    status:
+      code: 201
+      message: Created
+version: 1

@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
-from pydantic_core import to_json
+from pydantic_core import ErrorDetails, to_json
 
 from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -21,12 +22,14 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
+    ModelRetry,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -35,25 +38,32 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    _otel_messages,
 )
 from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_json
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.messages import InstructionBaselinePart, InstructionPart
+from pydantic_ai.models import Model, ModelProfile, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 from .._inline_snapshot import snapshot, warns
-from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, try_import
+from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -169,8 +179,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 SystemPromptPart('system_prompt'),
                 UserPromptPart('user_prompt'),
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
-                RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
-                RetryPromptPart('retry_prompt2'),
+                legacy_retry_prompt_part('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
+                legacy_retry_prompt_part('retry_prompt2'),
                 {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
@@ -207,6 +217,11 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'introduced_tool_names': [],
+                        'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -214,7 +229,9 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -313,6 +330,50 @@ async def test_instrumented_model_not_recording():
             output_mode='text',
             output_object=None,
         ),
+    )
+
+
+class MalformedPortModel(MyModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/foo'
+
+
+async def test_instrumented_model_malformed_base_url_port(capfire: CaptureLogfire):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedModel(MalformedPortModel(), InstrumentationSettings())
+
+    await model.request(
+        [ModelRequest(parts=[UserPromptPart('user_prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot({})
+
+
+async def test_instrumented_model_wrapped_model_server_attributes(capfire: CaptureLogfire):
+    """A wrapper between the instrumentation and the concrete model still reports the server attributes.
+
+    Every durability engine and `ConcurrencyLimitedModel` interpose a `WrapperModel` here, so a wrapper
+    that didn't forward `base_url` would silently drop `server.*` from all of their spans.
+    """
+    model = InstrumentedModel(WrapperModel(MyModel()), InstrumentationSettings())
+
+    await model.request(
+        [ModelRequest(parts=[UserPromptPart('user_prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == snapshot(
+        {'server.address': 'example.com', 'server.port': 8000}
     )
 
 
@@ -431,7 +492,7 @@ def test_safe_to_json_falls_back_on_lone_surrogates():
 
 
 def test_instrumentation_settings_rejects_removed_version():
-    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, or 6'):
         InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
 
 
@@ -497,6 +558,11 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'introduced_tool_names': [],
+                        'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -504,7 +570,9 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -589,6 +657,11 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'introduced_tool_names': [],
+                        'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -596,7 +669,9 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -650,8 +725,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 SystemPromptPart('system_prompt'),
                 UserPromptPart('user_prompt'),
                 ToolReturnPart('tool3', 'tool_return_content', 'tool_call_3'),
-                RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
-                RetryPromptPart('retry_prompt2'),
+                legacy_retry_prompt_part('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
+                legacy_retry_prompt_part('retry_prompt2'),
                 {},  # test unexpected parts  # pyright: ignore[reportArgumentType]
             ],
             timestamp=IsDatetime(),
@@ -688,6 +763,11 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'introduced_tool_names': [],
+                        'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -695,7 +775,9 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
@@ -886,6 +968,437 @@ def test_messages_to_otel_message_parts_compaction_part():
     otel_messages = settings.messages_to_otel_messages(messages)
     # CompactionPart is skipped; only TextPart appears
     assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_messages_to_otel_message_parts_tool_availability_delta(include_content: bool):
+    """A tool-availability change is legible in the trace, with the names in either mode.
+
+    The names aren't user content — they're already in the request's tool definitions — and a run
+    where the model suddenly can, or can't, call something can't be read without them.
+    """
+    from pydantic_ai.messages import ToolAvailabilityDeltaPart
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolAvailabilityDeltaPart(tools_added=['lookup_exchange_rate']),
+                UserPromptPart(content='Convert 10 EUR.'),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+    settings = InstrumentationSettings(include_content=include_content)
+    # The delta renders as its own system-voice message rather than blending into user content.
+    [system_message, user_message] = settings.messages_to_otel_messages(messages)
+    assert system_message['role'] == 'system'
+    assert system_message['parts'] == snapshot(
+        [{'type': 'text', 'content': 'Tool availability changed: +lookup_exchange_rate'}]
+    )
+    assert user_message['role'] == 'user'
+
+
+def test_messages_to_otel_messages_leave_out_instruction_baselines():
+    """A baseline is bookkeeping the model never sees, so it adds no message to the trace, empty or otherwise.
+
+    The instructions it records are reported with the request itself.
+    """
+    agent = Agent(TestModel(), instructions=InstructionPart('Be brief.', name='style', on_change='append'))
+    messages = agent.run_sync('Hello').all_messages()
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    assert any(isinstance(part, InstructionBaselinePart) for part in request.parts)
+    otel_messages = InstrumentationSettings(include_content=True).messages_to_otel_messages(messages)
+    assert [message['role'] for message in otel_messages] == ['user', 'assistant']
+
+    # Asked directly, as a caller rendering parts one by one would, it contributes nothing either.
+    assert InstructionBaselinePart(instructions=[]).otel_message_parts(InstrumentationSettings()) == []
+
+    # Nor does one split the parts around it into two messages.
+    split = ModelRequest(
+        parts=[UserPromptPart(content='One.'), InstructionBaselinePart(instructions=[]), UserPromptPart(content='Two.')]
+    )
+    assert InstrumentationSettings(include_content=True).messages_to_otel_messages([split]) == snapshot(
+        [{'role': 'user', 'parts': [{'type': 'text', 'content': 'One.'}, {'type': 'text', 'content': 'Two.'}]}]
+    )
+
+
+def test_messages_to_otel_messages_request_roles_v6():
+    """From version 6 a request splits into one message per role, in part order.
+
+    A tool return and a retry that answers a tool call both render as a `tool_call_response`, which
+    the GenAI semantic conventions put in a `tool` message. A legacy retry that answers nothing
+    renders as text and reaches the model as user content, so it starts a new message, while a
+    `RetryFeedbackPart` reaches it in the system voice and takes `system`.
+
+    Every one of those roles is a changed value on telemetry versions 2-5 already emit, so each is
+    gated on version 6 and the earlier versions keep the single `user` message they shared.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be brief.'), UserPromptPart(content='Convert 10 EUR.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='convert', args={'amount': 10}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='convert', content='11 USD', tool_call_id='call_1'),
+                legacy_retry_prompt_part(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
+                legacy_retry_prompt_part(content='Output did not validate.'),
+                RetryFeedbackPart(content='Output did not validate.', retry=RetryInfo(cause='validation_error')),
+                UserPromptPart(content='Thanks.'),
+            ]
+        ),
+    ]
+    assert InstrumentationSettings(include_content=True, version=6).messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Be brief.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'convert', 'arguments': {'amount': 10}}],
+            },
+            {
+                'role': 'tool',
+                'parts': [
+                    {'type': 'tool_call_response', 'id': 'call_1', 'name': 'convert', 'result': '11 USD'},
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'call_2',
+                        'name': 'convert',
+                        'result': """\
+Unknown currency.
+
+Fix the errors and try again.\
+""",
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'text',
+                        'content': """\
+Validation feedback:
+Output did not validate.
+
+Fix the errors and try again.\
+""",
+                    },
+                    {
+                        'type': 'text',
+                        'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:validation_errors>
+Output did not validate.
+</pyai:validation_errors>\
+""",
+                    },
+                    {'type': 'text', 'content': 'Thanks.'},
+                ],
+            },
+        ]
+    )
+
+    # Every earlier version keeps the tool results on `user`, in the single message they shared there.
+    settings = InstrumentationSettings(include_content=True)
+    assert [message['role'] for message in settings.messages_to_otel_messages(messages)] == snapshot(
+        ['system', 'user', 'assistant', 'user']
+    )
+
+
+def test_messages_to_otel_messages_retry_feedback_across_versions():
+    """A retry that answers no tool call, on each setting that renders it differently.
+
+    The content is the same text the model is shown at every version, so nothing here is
+    version-gated but the role.
+
+    Version 6 gives each cause the role it reaches the model in: `system` for a `'model_retry'`,
+    `user` for a `'validation_error'`, which quotes the model's own output back inside its fence.
+    Versions 2-5 keep every cause on the `user` the tool-less `RetryPromptPart` this part replaced was
+    emitted on, so a consumer written against them keeps reading the role it was built for — and for a
+    validation error that is already the role the wire uses, so the gate moves nothing there.
+    """
+    errors: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('answer',), 'msg': 'Field required', 'input': {'answr': 'oui'}},
+        {'type': 'string_type', 'loc': ('answer', 'text'), 'msg': 'Input should be a valid string', 'input': 42},
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                RetryFeedbackPart(content=errors, retry=RetryInfo(cause='validation_error')),
+                RetryFeedbackPart(content='Answer in French.', retry=RetryInfo(cause='model_retry')),
+            ]
+        ),
+    ]
+    settings_by_label: dict[str, InstrumentationSettings] = {
+        'v5': InstrumentationSettings(version=5),
+        'v6': InstrumentationSettings(version=6),
+        'v6 without content': InstrumentationSettings(version=6, include_content=False),
+    }
+    by_settings = {label: settings.messages_to_otel_messages(messages) for label, settings in settings_by_label.items()}
+    assert by_settings == snapshot(
+        {
+            'v5': [
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:validation_errors>
+[{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
+</pyai:validation_errors>\
+""",
+                        },
+                        {
+                            'type': 'text',
+                            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in French.
+</pyai:retry_feedback>\
+""",
+                        },
+                    ],
+                }
+            ],
+            'v6': [
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'text',
+                            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:validation_errors>
+[{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
+</pyai:validation_errors>\
+""",
+                        },
+                        {
+                            'type': 'text',
+                            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in French.
+</pyai:retry_feedback>\
+""",
+                        },
+                    ],
+                }
+            ],
+            'v6 without content': [{'role': 'user', 'parts': [{'type': 'text'}, {'type': 'text'}]}],
+        }
+    )
+
+
+async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire):
+    """What an agent run records for a retry that answers no tool call.
+
+    Two attributes carry it, built from two different histories, and neither substitutes for the
+    other. `pydantic_ai.all_messages` on the run span is built from the stored history, so it is the
+    one that reaches `RetryFeedbackPart.otel_message_parts` and the one the instrumentation version
+    moves. A request span's `gen_ai.input.messages` is built after `Model.prepare_messages`, which
+    has already replaced the part with the statement the model is shown — so it records that
+    statement, identically on every version, and differs only by whether the provider takes a
+    mid-conversation system message or needs the `<system>`-tagged fallback.
+
+    Every other test here calls `messages_to_otel_messages` directly, where the part is still a
+    `RetryFeedbackPart`. Only a run pins which of the two shapes a consumer is actually served, and
+    on which attribute a new version would be visible at all.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        answered = any(isinstance(message, ModelResponse) for message in messages)
+        return ModelResponse(parts=[TextPart('Ten euros.' if answered else 'Non.')])
+
+    recorded: dict[str, dict[str, Any]] = {}
+    for version in (5, 6):
+        for supports_inline_system_prompts in (True, False):
+            capfire.exporter.clear()
+            agent = Agent(
+                FunctionModel(
+                    respond, profile=ModelProfile(supports_inline_system_prompts=supports_inline_system_prompts)
+                ),
+                capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+            )
+
+            @agent.output_validator
+            def spell_it_out(text: str) -> str:
+                if text == 'Non.':
+                    raise ModelRetry('Answer in English.')
+                return text
+
+            await agent.run('Convert 10 EUR.')
+
+            spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+            requests = [span for span in spans if 'gen_ai.input.messages' in span['attributes']]
+            [run] = [span for span in spans if 'pydantic_ai.all_messages' in span['attributes']]
+            recorded[f'v{version}, inline system prompts: {supports_inline_system_prompts}'] = {
+                'request after the retry (gen_ai.input.messages)': requests[-1]['attributes']['gen_ai.input.messages'],
+                'run (pydantic_ai.all_messages)': run['attributes']['pydantic_ai.all_messages'],
+            }
+
+    assert recorded == snapshot(
+        {
+            'v5, inline system prompts: True': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+            'v5, inline system prompts: False': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+            'v6, inline system prompts: True': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+            'v6, inline system prompts: False': {
+                'request after the retry (gen_ai.input.messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                ],
+                'run (pydantic_ai.all_messages)': [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer in English.
+</pyai:retry_feedback>\
+""",
+                            }
+                        ],
+                    },
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
+                ],
+            },
+        }
+    )
 
 
 def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent):
@@ -1270,7 +1783,14 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')], timestamp=IsDatetime()),
         ModelRequest(
-            parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
+            parts=[legacy_retry_prompt_part('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
+            timestamp=IsDatetime(),
+        ),
+        # A tool-less legacy retry and the harness feedback that replaced it: both carry
+        # model-visible prose, so both must honor `include_content=False` like every sibling part.
+        ModelRequest(parts=[legacy_retry_prompt_part('retry_prompt_no_tool')], timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[RetryFeedbackPart(content='harness feedback', retry=RetryInfo(cause='model_retry'))],
             timestamp=IsDatetime(),
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])], timestamp=IsDatetime()),
@@ -1302,6 +1822,8 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'application/pdf'}]},
@@ -1339,14 +1861,10 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
     model = InstrumentedModel(MyModel())
 
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
-    monkeypatch.setattr(ModelResponse, 'cost', None)
+    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', None)
 
     with warns(
-        snapshot(
-            [
-                "CostCalculationFailedWarning: Failed to get cost from response: TypeError: 'NoneType' object is not callable"
-            ]
-        )
+        snapshot(["CostCalculationFailedWarning: Failed to get cost: TypeError: 'NoneType' object is not callable"])
     ):
         await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
 
@@ -1368,6 +1886,11 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
+                        'revealed_tool_names': [],
+                        'introduced_tool_names': [],
+                        'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1375,7 +1898,9 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat gpt-4o',
@@ -1602,8 +2127,25 @@ def test_build_tool_definitions():
         parameters_json_schema={'type': 'object', 'properties': {}},
     )
 
+    # A withheld tool is not represented anywhere in the request, so its (possibly sensitive)
+    # schema and description must not leak into telemetry; a `via_history` tool does reach the
+    # model, so it is recorded.
+    tool_withheld = ToolDefinition(
+        name='hidden_tool',
+        description='SECRET: hidden until revealed',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    tool_via_history = ToolDefinition(
+        name='revealed_tool',
+        description='Revealed through the additions channel',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+
     params = ModelRequestParameters(
-        function_tools=[tool_without_params, tool_with_params, tool_no_description],
+        function_tools=[tool_without_params, tool_with_params, tool_no_description, tool_withheld, tool_via_history],
+        tool_visibility={'hidden_tool': 'withheld', 'revealed_tool': 'via_history'},
         native_tools=[],
         output_tools=[],
         output_mode='text',
@@ -1626,6 +2168,12 @@ def test_build_tool_definitions():
         {
             'type': 'function',
             'name': 'no_desc_tool',
+            'parameters': {'type': 'object', 'properties': {}},
+        },
+        {
+            'type': 'function',
+            'name': 'revealed_tool',
+            'description': 'Revealed through the additions channel',
             'parameters': {'type': 'object', 'properties': {}},
         },
     ]
@@ -2321,3 +2869,316 @@ async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     # finish() was never called, so response-specific attributes are absent
     assert 'gen_ai.response.id' not in spans[0]['attributes']
     assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
+
+
+async def test_wrapped_model_receives_unprepared_request():
+    """The wrapped model must be handed the originals, not the span's prepared context.
+
+    `prepare_request` is not idempotent: every model re-prepares whatever it is given, so forwarding
+    an already-prepared context makes the second pass append the prompted-output instructions again
+    and re-walk an already-transformed JSON schema. Regression test for the behaviour introduced in
+    #5429 and released in v1.100.0.
+    """
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.output import OutputObjectDefinition
+    from pydantic_ai.profiles import ModelProfile
+
+    seen: list[int] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(len(info.instructions or ''))
+        return ModelResponse(parts=[TextPart('{"answer": "x"}')])
+
+    wrapped = FunctionModel(respond, profile=ModelProfile(default_structured_output_mode='prompted'))
+    params = ModelRequestParameters(
+        output_mode='auto',
+        output_object=OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}}),
+        allow_text_output=True,
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')])]
+
+    await wrapped.request(messages, None, params)
+    baseline = seen[-1]
+
+    await InstrumentedModel(wrapped, InstrumentationSettings(tracer_provider=NoOpTracerProvider())).request(
+        messages, None, params
+    )
+    assert seen[-1] == baseline, 'instrumentation changed the instructions the wrapped model received'
+
+
+def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | None = None) -> Agent[None, str]:
+    """An agent that adds a request-scoped reminder to each of its three requests: two tool calls, then an answer."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls = sum(isinstance(message, ModelResponse) for message in messages)
+        if calls < 2:
+            return ModelResponse(
+                parts=[ToolCallPart('get_weather', {'city': ['Paris', 'Oslo'][calls]}, f'call_{calls}')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    class Reminder(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.enqueue(SystemPromptPart(f'Reminder {ctx.run_step}.', scope='request'))
+            return request_context
+
+    agent = Agent(
+        FunctionModel(respond, profile=profile),
+        capabilities=[Reminder(), Instrumentation(settings=settings or InstrumentationSettings())],
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'{city}: 18C'
+
+    return agent
+
+
+def _chat_span_input_messages(capfire: CaptureLogfire) -> list[Any]:
+    return [
+        span['attributes']['gen_ai.input.messages']
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if 'gen_ai.input.messages' in span['attributes']
+    ]
+
+
+async def test_later_request_spans_mark_answered_request_scoped_prompts(capfire: CaptureLogfire):
+    """Where the API clears a request-scoped system prompt itself, every later request still sends it.
+
+    The span of the request that sent it renders it normally; every later span marks it `visible: false`,
+    since the model no longer sees it. The run's per-message JSON cache rebuilds the fragment once the
+    request has been answered.
+    """
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+
+    await _reminder_agent(profile).run('Weather in Paris, then Oslo?')
+
+    assert _chat_span_input_messages(capfire) == snapshot(
+        [
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.'}]},
+            ],
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 2.'}]},
+            ],
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 2.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather', 'arguments': {'city': 'Oslo'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather', 'result': 'Oslo: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 3.'}]},
+            ],
+        ]
+    )
+
+
+async def test_answered_request_scoped_prompt_marker_without_content(capfire: CaptureLogfire):
+    """The marker carries no content, so it's recorded with `include_content=False` too."""
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+
+    await _reminder_agent(profile, InstrumentationSettings(include_content=False)).run('Weather in Paris, then Oslo?')
+
+    assert _chat_span_input_messages(capfire)[-1] == snapshot(
+        [
+            {'role': 'user', 'parts': [{'type': 'text'}]},
+            {'role': 'system', 'parts': [{'type': 'text', 'visible': False}]},
+            {'role': 'assistant', 'parts': [{'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather'}]},
+            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather'}]},
+            {'role': 'system', 'parts': [{'type': 'text', 'visible': False}]},
+            {'role': 'assistant', 'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather'}]},
+            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather'}]},
+            {'role': 'system', 'parts': [{'type': 'text'}]},
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
+async def test_answered_request_scoped_prompts_are_absent_from_later_spans(capfire: CaptureLogfire):
+    """Where the API can't clear a request-scoped system prompt, `prepare_messages` leaves it out of later requests.
+
+    The request spans record the prepared messages, so a later span doesn't list it at all.
+    """
+    await _reminder_agent(ModelProfile(supports_inline_system_prompts=True)).run('Weather in Paris, then Oslo?')
+
+    assert _chat_span_input_messages(capfire)[-1] == snapshot(
+        [
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris, then Oslo?'}]},
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_0', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'tool_call_response', 'id': 'call_0', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                ],
+            },
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather', 'arguments': {'city': 'Oslo'}}],
+            },
+            {
+                'role': 'user',
+                'parts': [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather', 'result': 'Oslo: 18C'}],
+            },
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 3.'}]},
+        ]
+    )
+
+
+async def test_instrumented_model_marks_answered_request_scoped_prompts(capfire: CaptureLogfire):
+    """A request outside an agent run, serialized without the per-message cache, marks an answered prompt too."""
+    model = InstrumentedModel(
+        FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('done')]),
+            profile=ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True),
+        ),
+        InstrumentationSettings(),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Weather in Paris?'), SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, 'call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Paris: 18C', 'call_1'),
+                SystemPromptPart('Reminder 2.', scope='request'),
+            ]
+        ),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    assert _chat_span_input_messages(capfire) == snapshot(
+        [
+            [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather in Paris?'}]},
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.', 'visible': False}]},
+                {
+                    'role': 'assistant',
+                    'parts': [
+                        {'type': 'tool_call', 'id': 'call_1', 'name': 'get_weather', 'arguments': {'city': 'Paris'}}
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'parts': [
+                        {'type': 'tool_call_response', 'id': 'call_1', 'name': 'get_weather', 'result': 'Paris: 18C'}
+                    ],
+                },
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 2.'}]},
+            ]
+        ]
+    )
+
+
+class _UppercaseInstrumentationSettings(InstrumentationSettings):
+    """Upper-cases recorded text, the way an override can redact or rewrite what a trace records."""
+
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
+        otel_messages = super().messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+        for otel_message in otel_messages:
+            for part in otel_message['parts']:
+                if part['type'] == 'text' and 'content' in part:
+                    part['content'] = part['content'].upper()
+        return otel_messages
+
+
+async def test_messages_to_otel_messages_override_applies_to_marked_spans(capfire: CaptureLogfire):
+    """An override of `messages_to_otel_messages` still shapes `gen_ai.input.messages`, and the marker is added to its result."""
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+
+    await _reminder_agent(profile, _UppercaseInstrumentationSettings()).run('Weather in Paris, then Oslo?')
+
+    assert [
+        [part for message in messages if message['role'] == 'system' for part in message['parts']]
+        for messages in _chat_span_input_messages(capfire)
+    ] == snapshot(
+        [
+            [{'type': 'text', 'content': 'REMINDER 1.'}],
+            [{'type': 'text', 'content': 'REMINDER 1.', 'visible': False}, {'type': 'text', 'content': 'REMINDER 2.'}],
+            [
+                {'type': 'text', 'content': 'REMINDER 1.', 'visible': False},
+                {'type': 'text', 'content': 'REMINDER 2.', 'visible': False},
+                {'type': 'text', 'content': 'REMINDER 3.'},
+            ],
+        ]
+    )
+
+
+async def test_answered_request_scoped_prompt_left_unmarked_when_an_override_reshapes_messages(
+    capfire: CaptureLogfire,
+):
+    """Where an override returns a different shape than the default conversion, no part can be attributed to the prompt."""
+
+    class DropUserMessages(InstrumentationSettings):
+        def messages_to_otel_messages(
+            self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+        ) -> list[_otel_messages.ChatMessage]:
+            otel_messages = super().messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+            return [message for message in otel_messages if message['role'] != 'user']
+
+    model = InstrumentedModel(
+        FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('done')]),
+            profile=ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True),
+        ),
+        DropUserMessages(),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Weather in Paris?'), SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[TextPart('Sunny.')]),
+        ModelRequest(parts=[UserPromptPart('And Oslo?')]),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    assert _chat_span_input_messages(capfire) == snapshot(
+        [
+            [
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.'}]},
+                {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Sunny.'}]},
+            ]
+        ]
+    )

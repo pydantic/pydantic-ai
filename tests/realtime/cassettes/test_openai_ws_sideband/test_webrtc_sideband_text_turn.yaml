@@ -1,0 +1,302 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Answer in two words.
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-realtime-whisper
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  data:
+    type: session.updated
+    event_id: event_E4TeW9ICT6DVZnrWnQ3XZ
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_u0_E4TeWIkEAnw5DOa1vyO18
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: Answer in two words.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1784739604
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-realtime-whisper
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say hello.
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_E4TeWHfxwuRPhJhRQMj2L
+    previous_item_id: null
+    item:
+      id: item_E4TeWg2azcUcjFllWFYza
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say hello.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_E4TeWvMOPjM100x1zDTIr
+    previous_item_id: null
+    item:
+      id: item_E4TeWg2azcUcjFllWFYza
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say hello.
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_E4TeWZ9Ky8tGqLQldCq4D
+    response:
+      object: realtime.response
+      id: resp_E4TeWHGi39hl6MVfeF82C
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_E4TeWB7vcYPN5ZsEFsLOL
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_E4TeXy257PW05s4ezhBGz
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    output_index: 0
+    item:
+      id: item_E4TeWw81Z3ugazvi7riPP
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_E4TeXIXzNKNOySefNWkAz
+    previous_item_id: item_E4TeWg2azcUcjFllWFYza
+    item:
+      id: item_E4TeWw81Z3ugazvi7riPP
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_E4TeXRqcYwCqNa5pCFJmv
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    item_id: item_E4TeWw81Z3ugazvi7riPP
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_E4TeXMS7VVo89LeY5SWNM
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    item_id: item_E4TeWw81Z3ugazvi7riPP
+    output_index: 0
+    content_index: 0
+    delta: Hello
+    obfuscation: CQUfc6KxcDR
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_E4TeX1U4J93zhxGtxz8oT
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    item_id: item_E4TeWw81Z3ugazvi7riPP
+    output_index: 0
+    content_index: 0
+    delta: ' there'
+    obfuscation: cmSKohwDCY
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_E4TeXzM24Y9h5q9TbsU6N
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    item_id: item_E4TeWw81Z3ugazvi7riPP
+    output_index: 0
+    content_index: 0
+    delta: '!'
+    obfuscation: NhluSrQKE282IST
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.done
+    event_id: event_E4TeXfWUoBwJ5MIMhBEdv
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    item_id: item_E4TeWw81Z3ugazvi7riPP
+    output_index: 0
+    content_index: 0
+    text: Hello there!
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_E4TeXaW8SpJ83LFjOB5M1
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    item_id: item_E4TeWw81Z3ugazvi7riPP
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: Hello there!
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_E4TeXav92GZPNG9TLNRyl
+    previous_item_id: null
+    item:
+      id: item_E4TeWw81Z3ugazvi7riPP
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Hello there!
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_E4TeXQwms3KQVL85UOuD4
+    response_id: resp_E4TeWHGi39hl6MVfeF82C
+    output_index: 0
+    item:
+      id: item_E4TeWw81Z3ugazvi7riPP
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: Hello there!
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_E4TeXXuAhjOOZhxJK78CT
+    response:
+      object: realtime.response
+      id: resp_E4TeWHGi39hl6MVfeF82C
+      status: completed
+      status_details: null
+      output:
+      - id: item_E4TeWw81Z3ugazvi7riPP
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: Hello there!
+      conversation_id: conv_E4TeWB7vcYPN5ZsEFsLOL
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 17
+        input_tokens: 12
+        output_tokens: 5
+        input_token_details:
+          text_tokens: 12
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 5
+          audio_tokens: 0
+      metadata: null

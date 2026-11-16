@@ -1,0 +1,229 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '451'
+      content-type:
+      - application/json
+      host:
+      - myorg-myaccount.snowflakecomputing.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Mexico City? Reply with a short sentence.
+        role: user
+      model: claude-sonnet-4-6
+      reasoning:
+        effort: low
+      stream: false
+      temperature: 1
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://myorg-myaccount.snowflakecomputing.com/api/v2/cortex/v1/chat/completions
+  response:
+    headers:
+      cache-control:
+      - no-cache
+      content-length:
+      - '1469'
+      content-type:
+      - application/json
+      expect-ct:
+      - enforce, max-age=3600
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding, User-Agent
+    parsed_body:
+      choices:
+      - finish_reason: ''
+        index: 0
+        logprobs:
+          content: null
+          refusal: null
+        message:
+          annotations: null
+          audio:
+            data: ''
+            expires_at: 0
+            id: ''
+            transcript: ''
+          content: Sure! Let me check that for you!
+          function_call:
+            arguments: ''
+            name: ''
+          reasoning_details:
+          - format: anthropic-claude-v1
+            id: reasoning-text-1
+            index: 0
+            signature: EvABCmcIDxABGAIqQFM/jYu4+m2g6fS9iiCUBIS45wLt7DdCQHB0qE7xpn8yZKDDAVY9GGV6zNWApQNAm8GJt8tEJUdsXjw1dTmu+OEyEWNsYXVkZS1zb25uZXQtNC02OABCCHRoaW5raW5nEgwm+8JGUtw/04vqhQYaDEMH3O/Tk/u4Ma35PyIwxmOSxfYhf9241w6X/2C/qLVXxmTjZv96q97L6Z+XL2RHebYbSsWNsxOTnS/ZqkZrKjd6apu9z4RZ01LZrKu4EEx+EU73OCjN3InMvsXiiYcfEQgE76iaKpYvdtHzGnfUlp5tlxxT1L42GAE=
+            text: Let me get the weather for Mexico City.
+            type: reasoning.text
+          refusal: ''
+          role: assistant
+          tool_calls:
+          - custom:
+              input: ''
+              name: ''
+            function:
+              arguments: '{"city":"Mexico City"}'
+              name: get_weather
+            id: toolu_bdrk_01VmA9jmWpws4HgPqjhtGo6i
+            type: function
+      created: 1783468054
+      id: ''
+      model: claude-sonnet-4-6
+      object: chat.completion
+      service_tier: ''
+      system_fingerprint: ''
+      usage:
+        completion_tokens: 81
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 597
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 678
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1306'
+      content-type:
+      - application/json
+      host:
+      - myorg-myaccount.snowflakecomputing.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Mexico City? Reply with a short sentence.
+        role: user
+      - content: Sure! Let me check that for you!
+        reasoning_details:
+        - format: anthropic-claude-v1
+          id: reasoning-text-1
+          index: 0
+          signature: EvABCmcIDxABGAIqQFM/jYu4+m2g6fS9iiCUBIS45wLt7DdCQHB0qE7xpn8yZKDDAVY9GGV6zNWApQNAm8GJt8tEJUdsXjw1dTmu+OEyEWNsYXVkZS1zb25uZXQtNC02OABCCHRoaW5raW5nEgwm+8JGUtw/04vqhQYaDEMH3O/Tk/u4Ma35PyIwxmOSxfYhf9241w6X/2C/qLVXxmTjZv96q97L6Z+XL2RHebYbSsWNsxOTnS/ZqkZrKjd6apu9z4RZ01LZrKu4EEx+EU73OCjN3InMvsXiiYcfEQgE76iaKpYvdtHzGnfUlp5tlxxT1L42GAE=
+          text: Let me get the weather for Mexico City.
+          type: reasoning.text
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Mexico City"}'
+            name: get_weather
+          id: toolu_bdrk_01VmA9jmWpws4HgPqjhtGo6i
+          type: function
+      - content: Sunny, 25°C
+        role: tool
+        tool_call_id: toolu_bdrk_01VmA9jmWpws4HgPqjhtGo6i
+      model: claude-sonnet-4-6
+      reasoning:
+        effort: low
+      stream: false
+      temperature: 1
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://myorg-myaccount.snowflakecomputing.com/api/v2/cortex/v1/chat/completions
+  response:
+    headers:
+      cache-control:
+      - no-cache
+      content-length:
+      - '802'
+      content-type:
+      - application/json
+      expect-ct:
+      - enforce, max-age=3600
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding, User-Agent
+    parsed_body:
+      choices:
+      - finish_reason: ''
+        index: 0
+        logprobs:
+          content: null
+          refusal: null
+        message:
+          annotations: null
+          audio:
+            data: ''
+            expires_at: 0
+            id: ''
+            transcript: ''
+          content: It's currently sunny and 25°C in Mexico City! ☀️
+          function_call:
+            arguments: ''
+            name: ''
+          refusal: ''
+          role: assistant
+          tool_calls: null
+      created: 1783468055
+      id: ''
+      model: claude-sonnet-4-6
+      object: chat.completion
+      service_tier: ''
+      system_fingerprint: ''
+      usage:
+        completion_tokens: 20
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 651
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 671
+    status:
+      code: 200
+      message: OK
+version: 1

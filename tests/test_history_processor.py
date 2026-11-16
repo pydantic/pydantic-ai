@@ -1,6 +1,6 @@
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from copy import deepcopy
 from dataclasses import replace
 from typing import Any
@@ -27,9 +27,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
-
-pytestmark = [pytest.mark.anyio]
+from .conftest import IsDatetime, IsInstance, IsStr
 
 
 @pytest.fixture
@@ -113,6 +111,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -151,8 +150,8 @@ async def test_history_processor_run_replaces_message_history(
                         content='Question 3',
                         timestamp=IsDatetime(),
                     ),
-                    SystemPromptPart(
-                        content='Processed answer',
+                    UserPromptPart(
+                        content='<system>Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -179,6 +178,7 @@ async def test_history_processor_run_replaces_message_history(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -219,8 +219,8 @@ async def test_history_processor_streaming_replaces_message_history(
                         content='Question 3',
                         timestamp=IsDatetime(),
                     ),
-                    SystemPromptPart(
-                        content='Processed answer',
+                    UserPromptPart(
+                        content='<system>Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -247,6 +247,7 @@ async def test_history_processor_streaming_replaces_message_history(
                 parts=[TextPart(content='hello')],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -306,6 +307,7 @@ async def test_history_processor_messages_sent_to_provider(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -397,6 +399,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=57, output_tokens=3),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -464,6 +467,152 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[-2:]
+
+
+async def test_sync_history_processor_returning_coroutine(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """A plain `def` (not `async def`) that returns a coroutine must have that coroutine awaited.
+
+    Such a processor is valid per the `HistoryProcessor` type (its members include
+    `Callable[[list[ModelMessage]], Awaitable[list[ModelMessage]]]`). It is not an
+    `is_async_callable`, so it runs in the executor; the returned coroutine must still be
+    awaited or the transformation never takes effect.
+    """
+
+    async def _filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    def sync_processor_returning_coroutine(messages: list[ModelMessage]) -> Awaitable[list[ModelMessage]]:
+        # Plain `def`: returns the coroutine without awaiting it here.
+        return _filter_responses(messages)
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(sync_processor_returning_coroutine)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Previous question')]),
+        ModelResponse(parts=[TextPart(content='Previous answer')]),  # This should be filtered out
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Previous question',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='New question',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[-2:]
+
+
+async def test_sync_history_processor_with_context_returning_coroutine(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """The plain-`def`-returning-coroutine shape must also be awaited for the with-`RunContext` variant."""
+
+    async def _prefix(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:
+        prefix = ctx.deps
+        return [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=f'{prefix}: {part.content}') if isinstance(part, UserPromptPart) else part
+                    for part in msg.parts
+                ]
+            )
+            if isinstance(msg, ModelRequest)
+            else msg
+            for msg in messages
+        ]
+
+    def sync_context_processor_returning_coroutine(
+        ctx: RunContext[str], messages: list[ModelMessage]
+    ) -> Awaitable[list[ModelMessage]]:
+        # Plain `def`: returns the coroutine without awaiting it here.
+        return _prefix(ctx, messages)
+
+    agent = Agent(
+        function_model,
+        capabilities=[ProcessHistory(sync_context_processor_returning_coroutine)],
+        deps_type=str,
+    )
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('test', deps='PREFIX')
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='PREFIX: test',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='PREFIX: test',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -538,6 +687,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                 parts=[TextPart(content='hello')],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -604,6 +754,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -665,6 +816,7 @@ async def test_history_processor_with_context_async(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -759,6 +911,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=56, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -818,6 +971,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -893,6 +1047,7 @@ async def test_callable_class_history_processor_no_op(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -946,6 +1101,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -997,6 +1153,7 @@ async def test_new_messages_index_during_iter_with_pruning():
                 parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
+                model_id='function:test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1018,6 +1175,7 @@ async def test_new_messages_index_during_iter_with_pruning():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=52, output_tokens=3),
                 model_name='test',
+                model_id='function:test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1075,6 +1233,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
                 parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='function:test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1096,6 +1255,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=52, output_tokens=3),
                 model_name='test',
+                model_id='function:test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1159,6 +1319,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1231,6 +1392,7 @@ async def test_history_processor_injects_into_new_stream(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1299,6 +1461,7 @@ async def test_history_processor_injects_without_run_id_before_current_run(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1349,6 +1512,7 @@ async def test_history_processor_overrides_run_id_uses_response_as_new_messages(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=53, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1423,6 +1587,7 @@ async def test_history_processor_resuming_without_prompt(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1472,6 +1637,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
                 parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='test',
+                model_id='function:test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1493,6 +1659,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=54, output_tokens=3),
                 model_name='test',
+                model_id='function:test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1555,6 +1722,7 @@ async def test_resuming_without_prompt_excludes_request_with_different_run_id(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=55, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1606,6 +1774,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1683,6 +1852,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1760,6 +1930,7 @@ async def test_history_processor_replace_resumed_request_excludes_resumed_reques
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
+                model_id='function:function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2024,12 +2195,57 @@ async def test_history_processor_insert_and_replace_resumed_request_excludes_res
     assert not _user_request_present(result.new_messages())
 
 
-def test_takes_ctx_returns_false_for_untyped_processor():
-    """takes_run_context returns False when the processor's first param has no type annotation."""
-    from pydantic_ai._utils import takes_run_context
+@pytest.mark.parametrize('is_async', [False, True])
+async def test_history_processor_without_annotations(function_model: FunctionModel, is_async: bool):
+    """A processor with no annotations at all keeps being called with just the messages.
 
-    def untyped_processor(messages) -> list[ModelMessage]:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
-        return messages  # pyright: ignore[reportUnknownVariableType] # pragma: no cover
+    This is the documented no-context form, so an unannotated first parameter must not be mistaken
+    for one that takes a `RunContext`.
+    """
+    received: list[Any] = []
 
-    # When first param has no type annotation, takes_run_context returns False
-    assert takes_run_context(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]
+    def sync_processor(messages):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        received.append(messages)
+        return messages  # pyright: ignore[reportUnknownVariableType]
+
+    async def async_processor(messages):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        received.append(messages)
+        return messages  # pyright: ignore[reportUnknownVariableType]
+
+    processor: Any = async_processor if is_async else sync_processor  # pyright: ignore[reportUnknownVariableType]
+    agent = Agent(function_model, capabilities=[ProcessHistory(processor)])
+
+    result = await agent.run('Hello')
+    assert result.output == 'Provider response'
+    # The message list, not a `RunContext`, is what the processor got.
+    assert received == [[IsInstance(ModelRequest)]]
+
+
+async def test_history_processor_unresolvable_annotations(
+    function_model: FunctionModel, create_module: Callable[[str], Any]
+):
+    """A processor whose annotations can't be resolved raises instead of being silently mis-bound.
+
+    `RunContext` imported under `if TYPE_CHECKING:` in a module using `from __future__ import
+    annotations` used to make the processor look like it takes no context, so it was called as
+    `processor(messages)` and the message list ended up bound to `ctx`.
+    """
+    mod = create_module("""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai import ModelMessage, RunContext
+
+
+def drop_first(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[1:]
+""")
+    agent = Agent(function_model, capabilities=[ProcessHistory(mod.drop_first)])
+
+    with pytest.raises(
+        UserError,
+        match=r"Unable to resolve the type annotations of 'drop_first': name 'RunContext' is not defined\.",
+    ):
+        await agent.run('Hello')

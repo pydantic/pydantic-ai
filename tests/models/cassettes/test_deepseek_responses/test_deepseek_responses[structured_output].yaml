@@ -1,0 +1,136 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '455'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of Japan?
+        role: user
+      model: deepseek-v4-flash
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          type: object
+        strict: true
+        type: function
+    uri: https://api.deepseek.com/responses
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '1810'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      completed_at: 1785967720
+      content_filters: null
+      created_at: 1785967719
+      error: null
+      frequency_penalty: 0.0
+      id: 4333ebf8-e16c-4969-b5ac-fde1294e642a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: deepseek-v4-flash
+      moderation: null
+      object: response
+      output:
+      - content:
+        - text: The user asked for the capital of Japan, which is Tokyo. I should use the final_result tool.
+          type: reasoning_text
+        id: eaa32d41-e515-4399-adf5-9ef8c58fc62d
+        status: completed
+        summary: []
+        type: reasoning
+      - arguments: '{"city": "Tokyo", "country": "Japan"}'
+        call_id: call_00_fHeIT46fj9tK0YhyHu7Q9878
+        id: c830d5e3-c87c-4e9c-9150-b157d70e5f9f
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: null
+      tool_choice: auto
+      tools:
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 376
+        input_tokens_details:
+          cached_tokens: 256
+        output_tokens: 81
+        output_tokens_details:
+          reasoning_tokens: 21
+        total_tokens: 457
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,95 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are Sam, a phone support agent for Acme Telecom. Answer in one
+            short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.688
+  data:
+    setupComplete:
+      sessionId: 0be3d6d6-e7e2-4f2a-9d2b-a25a080886f7
+- kind: message
+  direction: sent
+  at: 0.689
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: <system>The caller has been verified as the account holder, Jamie.
+            Address them by name.</system>
+        role: user
+      turnComplete: false
+- kind: message
+  direction: sent
+  at: 0.689
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Hi, can you tell me whose account this is?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.136
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: This
+- kind: message
+  direction: received
+  at: 1.142
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' account'
+- kind: message
+  direction: received
+  at: 1.151
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' belongs to Jamie.'
+- kind: message
+  direction: received
+  at: 1.152
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.16
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 51
+      candidatesTokenCount: 6
+      totalTokenCount: 57
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 51
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 6

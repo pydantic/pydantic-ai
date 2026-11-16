@@ -1,9 +1,15 @@
+from dataclasses import replace
+from typing import Literal
+
 import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
+    AdvisorTool,
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
@@ -32,6 +38,11 @@ def test_model_request_parameters_are_serializable():
         {
             'function_tools': [],
             'native_tools': [],
+            'tool_visibility': None,
+            'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
+            'deferred_capability_ids': set(),
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -39,7 +50,9 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
+            'cache': None,
         }
     )
     assert ta.validate_python(dumped) == params
@@ -78,6 +91,7 @@ def test_model_request_parameters_are_serializable():
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -88,6 +102,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_search',
                     'optional': False,
+                    'provider_settings': None,
                     'search_context_size': 'medium',
                     'user_location': {'city': 'New York', 'country': 'US'},
                     'blocked_domains': None,
@@ -99,6 +114,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_fetch',
                     'optional': False,
+                    'provider_settings': None,
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -108,6 +124,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'image_generation',
                     'optional': False,
+                    'provider_settings': None,
                     'action': 'auto',
                     'background': 'auto',
                     'input_fidelity': None,
@@ -142,6 +159,11 @@ def test_model_request_parameters_are_serializable():
                     'headers': None,
                 },
             ],
+            'tool_visibility': None,
+            'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
+            'deferred_capability_ids': set(),
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
@@ -159,6 +181,7 @@ def test_model_request_parameters_are_serializable():
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -169,10 +192,100 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
+            'cache': None,
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+@pytest.mark.parametrize(
+    'tool',
+    [
+        WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
+        WebSearchTool(provider_settings={'openrouter': {'engine': 'exa', 'max_results': 3}}),
+        WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}),
+        AdvisorTool(model='advisor', provider_settings={'openrouter': {'forward_transcript': True}}),
+        AdvisorTool(model='advisor', provider_settings={'anthropic': {'caching': '5m'}}),
+        ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}),
+        FileSearchTool(file_store_ids=['store'], provider_settings={'xai': {'retrieval_mode': 'keyword'}}),
+    ],
+)
+def test_provider_settings_survive_serialization(tool: AbstractNativeTool):
+    """Durable execution sends native tools through this round trip between activities."""
+    params = ModelRequestParameters(native_tools=[tool])
+
+    assert ta.validate_json(ta.dump_json(params)) == params
+
+
+def test_provider_settings_payload_with_unknown_option_is_kept():
+    """Like model settings, an option this version doesn't know is kept for a model that reads it, not rejected."""
+    payload = {'native_tools': [{'kind': 'web_search', 'provider_settings': {'openrouter': {'future': 1}}}]}
+
+    params = ta.validate_python(payload)
+
+    assert params.native_tools == [WebSearchTool(provider_settings={'openrouter': {'future': 1}})]  # pyright: ignore[reportArgumentType]
+    assert ta.validate_json(ta.dump_json(params)) == params
+
+
+def test_model_request_parameters_cache_round_trip():
+    """A non-`None` resolved `cache` survives serialization; durable-execution engines
+    (e.g. Temporal) serialize the parameters across the activity boundary."""
+    params = ModelRequestParameters(cache='1h')
+    assert ta.validate_python(ta.dump_python(params)).cache == '1h'
+
+
+def test_request_visibility_state_survives_serialization_but_stays_out_of_repr():
+    """Visibility state has to cross a durable-execution boundary, and stay out of the repr.
+
+    Temporal hands the model activity a `_RequestParams` carrying the whole
+    `ModelRequestParameters`, serialized by the pydantic data converter, and the adapters read both
+    sets on the far side — Anthropic decides there whether the corpus is capability-only. Excluding
+    them from serialization would deliver empty state to every durable run, which nothing that
+    stays inside one process would notice. `revealed_tool_names` stays out of the repr via
+    `repr=False`; `tool_visibility` relies on the no-defaults repr instead — omitted while `None`
+    (authored), visible once resolved — so object snapshots can see resolution state and never
+    mismatch invisibly.
+    """
+    params = ModelRequestParameters(revealed_tool_names={'deferred_tool'})
+
+    round_tripped = ta.validate_python(ta.dump_python(params, mode='json'))
+
+    assert round_tripped.revealed_tool_names == {'deferred_tool'}
+    assert repr(params) == snapshot('ModelRequestParameters(function_tools=[], native_tools=[], output_tools=[])')
+    assert repr(replace(params, tool_visibility={'t': 'visible'})) == snapshot(
+        "ModelRequestParameters(function_tools=[], native_tools=[], tool_visibility={'t': 'visible'}, output_tools=[])"
+    )
+
+
+@pytest.mark.parametrize('visibility', ['visible', 'deferred', 'withheld', 'via_history'])
+def test_tool_visibility_round_trip_and_equality(
+    visibility: Literal['visible', 'deferred', 'withheld', 'via_history'],
+):
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='t')], tool_visibility={'t': visibility})
+
+    dumped = ta.dump_python(params, mode='json')
+    round_tripped = ta.validate_python(dumped)
+    assert round_tripped.tool_visibility == {'t': visibility}
+
+    del dumped['tool_visibility']
+    old_payload = ta.validate_python(dumped)
+    assert old_payload.tool_visibility is None
+
+    assert ModelRequestParameters(tool_visibility={'t': visibility}) == ModelRequestParameters(
+        tool_visibility={'t': visibility}
+    )
+    assert ModelRequestParameters(tool_visibility={'t': visibility}) != ModelRequestParameters()
+
+
+def test_visibility_of_unresolved_parameters_uses_authored_deferral() -> None:
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='hidden', defer_loading=True), ToolDefinition(name='visible')]
+    )
+    assert params.visibility_of('hidden') == 'withheld'
+    assert params.visibility_of('visible') == 'visible'
+    assert params.visibility_of('unknown') == 'visible'
 
 
 @pytest.mark.parametrize(
@@ -201,3 +314,48 @@ def test_with_default_output_mode_overrides_allow_text():
     resolved = params.with_default_output_mode('native')
     assert resolved.output_mode == 'native'
     assert resolved.allow_text_output is True
+
+
+def test_deferred_capability_ids_records_which_capabilities_defer_loading():
+    """The field says which *capabilities* defer loading, which the tool definitions cannot.
+
+    `capability_id` records which capability contributed a tool, and `defer_loading` is set both by
+    a deferred capability and by a search-gated tool inside an always-on one — so ownership alone
+    cannot tell the two apart. The agent reads it off the capability instances instead, and
+    adapters and reveal-gating rely on it meaning what it says.
+    """
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='gated', defer_loading=True, capability_id='refunds'),
+            ToolDefinition(name='searchable', defer_loading=True, capability_id='eager_capability'),
+            ToolDefinition(name='plain', capability_id='eager_capability'),
+        ],
+        deferred_capability_ids={'refunds'},
+    )
+    assert params.deferred_capability_ids == {'refunds'}
+    # `eager_capability` owns a deferred tool but does not itself defer, so it is absent — the
+    # distinction that a derivation from the definitions would collapse.
+    assert 'eager_capability' not in params.deferred_capability_ids
+
+
+def test_old_serialized_payload_with_deferred_capability_ids_still_validates():
+    """A v2.23-era Temporal payload carries the removed field; deserialization must not choke."""
+    dumped = ta.dump_python(ModelRequestParameters(), mode='json')
+    dumped['deferred_capability_ids'] = ['refunds']
+    ta.validate_python(dumped)
+
+
+def test_declared_tool_defs_never_drops_an_output_tool():
+    """The visibility filter applies to function tools only.
+
+    `tool_visibility` is keyed by name; a hidden function tool sharing a name with an output tool
+    must not shadow the output tool out of the provider's `tools` collection.
+    """
+    output_tool = ToolDefinition(name='final_result', kind='output')
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='final_result', defer_loading=True)],
+        output_tools=[output_tool],
+        tool_visibility={'final_result': 'withheld'},
+    )
+    assert params.declared_function_tools == []
+    assert params.declared_tool_defs == {'final_result': output_tool}

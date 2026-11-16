@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.ui._adapter import validation_error_response
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -30,6 +31,21 @@ ModelsParam = Sequence[Model | KnownModelName | str] | Mapping[str, Model | Know
 # the UI's real SDK major and reserves it for future v7-only chunks. `to_web()` controls both ends
 # (server + bundled UI). See `VercelAIAdapter.sdk_version`.
 BUNDLED_UI_SDK_VERSION: Literal[7] = 7
+
+# `/chat` requires exactly this content type. This is a CSRF control, not content negotiation: a
+# browser can send the three CORS-safelisted content types (`text/plain`, `multipart/form-data`,
+# `application/x-www-form-urlencoded`) — or no content type at all — cross-origin with no preflight,
+# and every one of them can carry a JSON body. Without this check, a page the developer happens to
+# visit while running the web UI could start an agent run on their machine, and execute whatever
+# tools the served agent exposes. `application/json` is not safelisted, so requiring it forces a
+# preflight, which `options_chat` refuses.
+#
+# Keep this an allowlist. A denylist of the safelisted types would miss the no-content-type case,
+# and would silently stop covering anything added to the safelist later.
+#
+# The bundled UI — and the Vercel AI SDK's `DefaultChatTransport` generally — always sends
+# `application/json`; other clients need to set the header explicitly.
+JSON_MEDIA_TYPE = 'application/json'
 
 
 class ModelInfo(BaseModel, alias_generator=to_camel, populate_by_name=True):
@@ -96,6 +112,11 @@ def create_api_app(
 ) -> Starlette:
     """Create API app for the web chat UI.
 
+    This sub-app carries no `Host` validation of its own: `create_web_app()` applies
+    `HostValidationMiddleware` to the outer app it mounts this into. Serving it directly, or
+    re-mounting `create_web_app(...).router` (which drops application middleware), exposes the chat
+    endpoint to any `Host` — mount the app `create_web_app()` returns instead.
+
     Args:
         agent: Agent instance.
         models: Models to make available in the UI. Can be:
@@ -114,53 +135,23 @@ def create_api_app(
     Returns:
         A Starlette application with the API endpoints.
     """
-    # Build model ID → original reference mapping and ModelInfo list for frontend
-    model_id_to_ref: dict[str, Model | str] = {}
-    model_infos: list[ModelInfo] = []
-
-    # Filter out tools that are already configured on the agent (they're always included)
-    agent_tool_ids = {t.unique_id for t in agent._cap_native_tools if isinstance(t, AbstractNativeTool)}  # pyright: ignore[reportPrivateUsage]
-    ui_native_tools = [t for t in (native_tools or []) if t.unique_id not in agent_tool_ids]
-
-    # Build combined models: agent's model first (if exists), then provided models
-    all_models: list[tuple[str | None, Model | str]] = []
-    if agent.model is not None:
-        all_models.append((None, agent.model))
-    items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
-    all_models.extend(items)
-
-    seen_model_ids: set[str] = set()
-    for label, model_ref in all_models:
-        try:
-            model = infer_model(model_ref)
-        except UserError:
-            # A capability resolver may intentionally use an ID that built-in inference does
-            # not understand. Resolution needs run dependencies, so leave custom references
-            # untouched here and let Agent resolve them when the request is dispatched.
-            if agent._root_capability.has_resolve_model_id:  # pyright: ignore[reportPrivateUsage]
-                model = None
-            else:
-                raise
-        # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
-        if model_id in seen_model_ids:
-            continue
-        seen_model_ids.add(model_id)
-        display_name = label or (model.label if model is not None else model_id)
-        if model is None:
-            supported_tool_ids = []
-        else:
-            model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-            supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
-
-        model_id_to_ref[model_id] = model_ref
-        model_infos.append(ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids))
-
+    ui_native_tools = _ui_native_tools(agent, native_tools)
+    model_id_to_ref, model_infos = _model_options(agent, models, ui_native_tools)
     model_ids = set(model_id_to_ref.keys())
     allowed_tool_ids = {tool.unique_id for tool in ui_native_tools}
 
     async def options_chat(request: Request) -> Response:
-        """Handle CORS preflight requests."""
+        """Answer CORS preflight requests without granting cross-origin access.
+
+        Deliberately carries no `Access-Control-Allow-*` header, so a browser refuses any
+        cross-origin request that needs a preflight. Together with the `application/json`
+        requirement in `post_chat()`, that is what keeps a page the developer visits from reaching
+        the local web UI: requiring a non-safelisted content type forces the preflight, and this
+        response denies it.
+
+        Do not add `Access-Control-Allow-Origin` here without an accompanying CSRF control — on its
+        own it re-opens the endpoint to any website the developer has open.
+        """
         return Response()
 
     async def configure_frontend(request: Request) -> Response:
@@ -177,10 +168,22 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
-            request, agent=agent, sdk_version=sdk_version
-        )
-        extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        if (media_type := request.headers.get('content-type', '').split(';')[0].strip().lower()) != JSON_MEDIA_TYPE:
+            # Checked up front so a cross-origin-forgeable request is turned away before the body is
+            # parsed and before the agent is dispatched — the attacker never needs to read the
+            # response, so the run itself is the damage.
+            return JSONResponse(
+                {'error': f'Expected `Content-Type: {JSON_MEDIA_TYPE}`, got {media_type or "no content type"}'},
+                status_code=415,
+            )
+
+        try:
+            adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
+                request, agent=agent, sdk_version=sdk_version
+            )
+            extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        except ValidationError as e:
+            return validation_error_response(e)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)
@@ -207,3 +210,67 @@ def create_api_app(
         Route('/health', health, methods=['GET']),
     ]
     return Starlette(routes=routes)
+
+
+def _ui_native_tools(
+    agent: Agent[AgentDepsT, OutputDataT], native_tools: Sequence[AbstractNativeTool] | None
+) -> list[AbstractNativeTool]:
+    """The native tools the UI offers as options."""
+    # Filter out tools that are already configured on the agent (they're always included)
+    agent_tool_ids = {t.unique_id for t in agent._cap_native_tools if isinstance(t, AbstractNativeTool)}  # pyright: ignore[reportPrivateUsage]
+    return [t for t in (native_tools or []) if t.unique_id not in agent_tool_ids]
+
+
+def _model_options(
+    agent: Agent[AgentDepsT, OutputDataT], models: ModelsParam, ui_native_tools: Sequence[AbstractNativeTool]
+) -> tuple[dict[str, Model | str], list[ModelInfo]]:
+    """The model ID → original reference mapping `/chat` selects from, and the `ModelInfo` list for the frontend."""
+    model_id_to_ref: dict[str, Model | str] = {}
+    model_infos: list[ModelInfo] = []
+
+    # Build combined models: agent's model first (if exists), then provided models
+    all_models: list[tuple[str | None, Model | str]] = []
+    if agent.model is not None:
+        all_models.append((None, agent.model))
+    items = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in (models or [])]
+    all_models.extend(items)
+
+    seen_model_ids: set[str] = set()
+    for label, model_ref in all_models:
+        model = _infer_listed_model(agent, model_ref)
+        # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
+        model_id = model_ref if isinstance(model_ref, str) else model_ref.model_id
+        if model_id in seen_model_ids:
+            continue
+        seen_model_ids.add(model_id)
+        model_info = _model_info(model_id, label, model, ui_native_tools)
+
+        model_id_to_ref[model_id] = model_ref
+        model_infos.append(model_info)
+    return model_id_to_ref, model_infos
+
+
+def _model_info(
+    model_id: str, label: str | None, model: Model | None, ui_native_tools: Sequence[AbstractNativeTool]
+) -> ModelInfo:
+    """The frontend's `ModelInfo` for a listed model, with the UI's native tools it supports."""
+    display_name = label or (model.label if model is not None else model_id)
+    if model is None:
+        supported_tool_ids: list[str] = []
+    else:
+        model_supported_tools = model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        supported_tool_ids = [t.unique_id for t in ui_native_tools if type(t) in model_supported_tools]
+    return ModelInfo(id=model_id, name=display_name, builtin_tools=supported_tool_ids)
+
+
+def _infer_listed_model(agent: Agent[AgentDepsT, OutputDataT], model_ref: Model | str) -> Model | None:
+    """The model a listed reference names, or `None` for one only the agent's capabilities can resolve."""
+    try:
+        return infer_model(model_ref)
+    except UserError:
+        # A capability resolver may intentionally use an ID that built-in inference does
+        # not understand. Resolution needs run dependencies, so leave custom references
+        # untouched here and let Agent resolve them when the request is dispatched.
+        if agent._root_capability.has_resolve_model_id:  # pyright: ignore[reportPrivateUsage]
+            return None
+        raise

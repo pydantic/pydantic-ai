@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '121'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of France?
+        role: user
+      model: deepseek-v4-flash
+      stream: false
+    uri: https://api.deepseek.com/responses
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '1471'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      completed_at: 1785967715
+      content_filters: null
+      created_at: 1785967714
+      error: null
+      frequency_penalty: 0.0
+      id: 2e532992-cac2-41fd-80b5-c98ad79215f3
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: deepseek-v4-flash
+      moderation: null
+      object: response
+      output:
+      - content:
+        - text: We need answer capital of France.
+          type: reasoning_text
+        id: 1dfb7474-dbd9-4b8d-a852-ebe49345dd32
+        status: completed
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The capital of France is Paris.
+          type: output_text
+        id: 8050c022-c55f-4377-b009-1d6341eacc57
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: null
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 90
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 7
+        total_tokens: 105
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

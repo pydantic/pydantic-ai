@@ -2,10 +2,10 @@ from __future__ import annotations as _annotations
 
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.zai import zai_model_profile
@@ -23,7 +23,6 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
-@pytest.mark.anyio
 async def test_zai_provider():
     provider = ZaiProvider(api_key='api-key')
     assert provider.name == 'zai'
@@ -44,6 +43,12 @@ async def test_zai_provider():
     assert second_http_client.is_closed
 
 
+def test_zai_provider_custom_base_url() -> None:
+    provider = ZaiProvider(api_key='api-key', base_url='https://api.z.ai/api/coding/paas/v4')
+    assert provider.base_url == 'https://api.z.ai/api/coding/paas/v4'
+    assert str(provider.client.base_url) == 'https://api.z.ai/api/coding/paas/v4/'
+
+
 def test_zai_provider_need_api_key(env: TestEnv) -> None:
     env.remove('ZAI_API_KEY')
     with pytest.raises(
@@ -56,16 +61,22 @@ def test_zai_provider_need_api_key(env: TestEnv) -> None:
         ZaiProvider()
 
 
-def test_zai_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = ZaiProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
-
-
 def test_zai_provider_pass_openai_client() -> None:
     openai_client = AsyncOpenAI(api_key='api-key')
     provider = ZaiProvider(openai_client=openai_client)
     assert provider.client == openai_client
+
+
+def test_zai_provider_openai_client_base_url() -> None:
+    openai_client = AsyncOpenAI(api_key='api-key', base_url='https://api.z.ai/api/coding/paas/v4/')
+    provider = ZaiProvider(openai_client=openai_client)
+    assert provider.base_url == 'https://api.z.ai/api/coding/paas/v4/'
+
+
+def test_zai_provider_openai_client_and_base_url_are_exclusive() -> None:
+    openai_client = AsyncOpenAI(api_key='api-key')
+    with pytest.raises(UserError, match='Cannot provide both `openai_client` and `base_url`'):
+        ZaiProvider(openai_client=openai_client, base_url='https://api.z.ai/api/coding/paas/v4')  # type: ignore[call-overload]
 
 
 def test_zai_provider_model_profile(mocker: MockerFixture):
@@ -92,6 +103,31 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_5_2 is not None
     assert profile_5_2.get('supports_thinking') is True
     assert profile_5_2.get('zai_supports_reasoning_effort') is True
+
+    # GLM-5.3 always reasons, no longer supports disabling thinking, and only accepts a subset of the
+    # unified effort levels, so it carries an effort mapping.
+    profile_5_3 = provider.model_profile('glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
+    assert profile_5_3 is not None
+    assert profile_5_3.get('supports_thinking') is True
+    assert profile_5_3.get('thinking_always_enabled') is True
+    assert profile_5_3.get('json_schema_transformer') == InlineDefsJsonSchemaTransformer
+    assert profile_5_3.get('zai_supports_reasoning_effort') is True
+    assert profile_5_3.get('zai_reasoning_effort_mapping') == {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}
+    assert profile_5_2.get('zai_reasoning_effort_mapping') is None
+
+    # `glm-5.3-flash` inherits the whole GLM-5.3 profile from the shared prefix.
+    profile_5_3_flash = provider.model_profile('glm-5.3-flash')
+    zai_model_profile_mock.assert_called_with('glm-5.3-flash')
+    assert profile_5_3_flash == profile_5_3
+
+    # `glm-5.1` reasons and can still be told not to, and predates per-request effort.
+    profile_5_1 = provider.model_profile('glm-5.1')
+    zai_model_profile_mock.assert_called_with('glm-5.1')
+    assert profile_5_1 is not None
+    assert profile_5_1.get('supports_thinking') is True
+    assert profile_5_1.get('thinking_always_enabled', False) is False
+    assert profile_5_1.get('zai_supports_reasoning_effort', False) is False
 
     profile_air = provider.model_profile('glm-4.5-air')
     zai_model_profile_mock.assert_called_with('glm-4.5-air')

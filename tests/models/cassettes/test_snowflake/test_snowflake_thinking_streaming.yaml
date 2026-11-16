@@ -1,0 +1,83 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      host:
+      - myorg-myaccount.snowflakecomputing.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 15 * 27?
+        role: user
+      model: claude-sonnet-4-6
+      reasoning:
+        effort: low
+      stream: true
+      stream_options:
+        include_usage: true
+      temperature: 1
+    uri: https://myorg-myaccount.snowflakecomputing.com/api/v2/cortex/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"choices":[{"delta":{"content":"","reasoning_details":[{"format":"anthropic-claude-v1","id":"reasoning-text-1","index":0,"text":"15","type":"reasoning.text"}],"refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"","reasoning_details":[{"format":"anthropic-claude-v1","id":"reasoning-text-1","index":0,"text":" * 27 = 405","type":"reasoning.text"}],"refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"15 × 27 = **","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"405**\n\nHere","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"'s the breakdown","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":":\n- 15 × ","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"20","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":" = 300\n- 15","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":" × 7 = 105","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"\n- 300 + 105","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":" = **","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"405**","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[{"delta":{"content":"","refusal":"","role":"assistant","tool_calls":null},"index":0,"logprobs":{"content":null,"refusal":null}}],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":""}
+
+        data: {"choices":[],"created":0,"id":"","model":"claude-sonnet-4-6","object":"chat.completion.chunk","service_tier":"","system_fingerprint":"","usage":{"completion_tokens":73,"completion_tokens_details":{"accepted_prediction_tokens":0,"audio_tokens":0,"reasoning_tokens":0,"rejected_prediction_tokens":0},"prompt_tokens":45,"prompt_tokens_details":{"audio_tokens":0,"cached_tokens":0},"total_tokens":118}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      content-type:
+      - text/event-stream
+      expect-ct:
+      - enforce, max-age=3600
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding, User-Agent
+    status:
+      code: 200
+      message: OK
+version: 1
+...

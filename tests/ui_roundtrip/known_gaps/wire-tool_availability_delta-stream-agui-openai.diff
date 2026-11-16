@@ -1,0 +1,208 @@
+--- expected
++++ actual
+@@ -256,4 +255,0 @@
+-   "role": "system",
+-   "content": "The following tool(s) are now available: `secret`"
+-  },
+-  {
+@@ -292,12 +287,0 @@
+-    "description": "",
+-    "parameters": {
+-     "additionalProperties": false,
+-     "properties": {},
+-     "type": "object"
+-    }
+-   }
+-  },
+-  {
+-   "type": "function",
+-   "function": {
+-    "name": "secret",
+@@ -363,0 +348,46 @@
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "secret-3",
++     "type": "function",
++     "function": {
++      "name": "secret",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "secret-3",
++   "content": "the secret"
++  },
++  {
++   "role": "assistant",
++   "content": "The secret is out."
++  },
++  {
++   "role": "user",
++   "content": "Question 2"
++  },
++  {
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "unlock-7",
++     "type": "function",
++     "function": {
++      "name": "unlock",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "unlock-7",
++   "content": "unlocked"
++  },
++  {
+@@ -366,46 +395,0 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "secret-3",
+-     "type": "function",
+-     "function": {
+-      "name": "secret",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "secret-3",
+-   "content": "the secret"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "The secret is out."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 2"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "unlock-7",
+-     "type": "function",
+-     "function": {
+-      "name": "unlock",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "unlock-7",
+-   "content": "unlocked"
+@@ -490,0 +475,46 @@
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "secret-3",
++     "type": "function",
++     "function": {
++      "name": "secret",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "secret-3",
++   "content": "the secret"
++  },
++  {
++   "role": "assistant",
++   "content": "The secret is out."
++  },
++  {
++   "role": "user",
++   "content": "Question 2"
++  },
++  {
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "unlock-7",
++     "type": "function",
++     "function": {
++      "name": "unlock",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "unlock-7",
++   "content": "unlocked"
++  },
++  {
+@@ -493,46 +522,0 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "secret-3",
+-     "type": "function",
+-     "function": {
+-      "name": "secret",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "secret-3",
+-   "content": "the secret"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "The secret is out."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 2"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "unlock-7",
+-     "type": "function",
+-     "function": {
+-      "name": "unlock",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "unlock-7",
+-   "content": "unlocked"

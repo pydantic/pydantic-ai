@@ -1,0 +1,129 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Always call get_weather for a weather question, then answer in one
+            short sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Look up the weather for a city.
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: STRING
+            required:
+            - city
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.811
+  data:
+    setupComplete:
+      sessionId: 8f51ae5c-b2fa-4d38-bac1-93a2ec3aedfd
+- kind: message
+  direction: sent
+  at: 0.821
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the weather in London?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.247
+  data:
+    toolCall:
+      functionCalls:
+      - name: get_weather
+        args:
+          city: London
+        id: 604ca0c3-5815-4cb2-9eb8-9d230d81986a
+- kind: message
+  direction: received
+  at: 1.25
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.25
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 24
+      candidatesTokenCount: 5
+      totalTokenCount: 29
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 24
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 5
+- kind: message
+  direction: sent
+  at: 1.253
+  data:
+    tool_response:
+      functionResponses:
+      - id: 604ca0c3-5815-4cb2-9eb8-9d230d81986a
+        name: get_weather
+        response:
+          output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  at: 1.688
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: It
+- kind: message
+  direction: received
+  at: 1.737
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - text: ' is foggy and 12 degrees Celsius in London.'
+- kind: message
+  direction: received
+  at: 1.737
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.739
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 44
+      candidatesTokenCount: 12
+      totalTokenCount: 56
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 44
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 12

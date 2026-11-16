@@ -1,0 +1,305 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1623'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Record a tree whose root is labelled "root" with two children labelled "a" and "b", and whose deep value is
+            "hello". Use the record tool.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: |-
+            The two schema shapes Google names as risky, neither of which `HostileToStrict` covers.
+
+            Google's JSON schema reference demonstrates recursive `$ref` and warns that very large or deeply
+            nested schemas may be rejected, so these are where `VALIDATED` could plausibly accept less than
+            `AUTO` does.
+
+            See <https://ai.google.dev/gemini-api/docs/structured-output#json-schema-support>.
+          name: record
+          parameters_json_schema:
+            $defs:
+              DeepA:
+                properties:
+                  b:
+                    $ref: '#/$defs/DeepB'
+                required:
+                - b
+                type: object
+              DeepB:
+                properties:
+                  c:
+                    $ref: '#/$defs/DeepC'
+                required:
+                - c
+                type: object
+              DeepC:
+                properties:
+                  d:
+                    $ref: '#/$defs/DeepD'
+                required:
+                - d
+                type: object
+              DeepD:
+                properties:
+                  value:
+                    type: string
+                required:
+                - value
+                type: object
+              TreeNode:
+                description: A self-referencing node, so Pydantic emits a `$ref` cycle back into `$defs`.
+                properties:
+                  children:
+                    default: []
+                    items:
+                      $ref: '#/$defs/TreeNode'
+                    type: array
+                  label:
+                    type: string
+                required:
+                - label
+                type: object
+            properties:
+              deep:
+                $ref: '#/$defs/DeepA'
+              tree:
+                $ref: '#/$defs/TreeNode'
+            required:
+            - tree
+            - deep
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1525'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1644
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                deep:
+                  b:
+                    c:
+                      d:
+                        value: hello
+                tree:
+                  children:
+                  - children: []
+                    label: a
+                  - children: []
+                    label: b
+                  label: root
+              name: record
+            thoughtSignature: Cv0EARFNMg+lgcC+jVSOOrWCpnKR6RoQA1E7Iswjh5Nt03HaWK4jEZ0dlDa467RBe2cc5ajF2Y8lkmorXA7tc/hijovTQcbFlJ7XN8eoRP/Rx1COlhGOUArluKGhJ673Om5opILVDpRzenw8H6ZHA+QDEsBC8XbijTFBiCgd06DJODqvaiTPMLt9KUB31vyrO4oFZ7NxnTheuB6zPtc4Bu1ormZmktkN7zvyfoEqsovUJKQzsiM3yIAEk5dvyojT8zPdKBKYFCmU65Hb1kpj37iox2JA1qGe8dw9WL5KHZNsbO1il76RyMW1bbgKbps3KWCH8zfAds8sU1XSVaYICQM2C9iLGtxddlSklP2OCWxFXVj633+bY2l+dUSwDNSgd/pDTV7H0oCeB5BOHbyYiJQcbYMLtK1fb3SExs3d30wih0+SOcoP6RRNBVsSzqsZ1qWOzJU6cKNUux2iNu5MIZkqqjJOKjOmTKRldGeTnIsZbzMutL8uOZkck/+F2NhJ6KtaX/RMaTfBbtudTleiQsZPi8vohBsGLTVoV6oQvi0ocheSr1JxwKmNAWhhEBxvT0uqQn/dh1j6jAEuNvLrIi7wZffbHaE1pBtHZt3xuWWZMQWMc5It+tOn1qqpwqNj9+DyxB3wbmCDvnTnjSAnQnxNNpvSIzuuXZ66o5B4uchFfeHqcq395N7qdjhGdSTIgP8tLfyE+eQt4MrtM63bOE/zUdwxnRoGy9vDPxxCYhf5A+89Xpq5ypyK/uTswlYxrSFN9p0xko0Oq3Jmc1S98mknuoxOGnr6OMZ84GARfBtWPFCXeBCA1nMr4D039wtJ5TaeO9BbZFr+OSgylfFBnQ==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: XX1raozWNsW2qtsPyaOXmAQ
+      usageMetadata:
+        candidatesTokenCount: 59
+        promptTokenCount: 776
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 776
+        serviceTier: standard
+        thoughtsTokenCount: 184
+        totalTokenCount: 1019
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2977'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Record a tree whose root is labelled "root" with two children labelled "a" and "b", and whose deep value is
+            "hello". Use the record tool.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              deep:
+                b:
+                  c:
+                    d:
+                      value: hello
+              tree:
+                children:
+                - children: []
+                  label: a
+                - children: []
+                  label: b
+                label: root
+            id: pyd_ai_71efbc69293b402f8e8ee92ffd77c22a
+            name: record
+          thoughtSignature: Cv0EARFNMg-lgcC-jVSOOrWCpnKR6RoQA1E7Iswjh5Nt03HaWK4jEZ0dlDa467RBe2cc5ajF2Y8lkmorXA7tc_hijovTQcbFlJ7XN8eoRP_Rx1COlhGOUArluKGhJ673Om5opILVDpRzenw8H6ZHA-QDEsBC8XbijTFBiCgd06DJODqvaiTPMLt9KUB31vyrO4oFZ7NxnTheuB6zPtc4Bu1ormZmktkN7zvyfoEqsovUJKQzsiM3yIAEk5dvyojT8zPdKBKYFCmU65Hb1kpj37iox2JA1qGe8dw9WL5KHZNsbO1il76RyMW1bbgKbps3KWCH8zfAds8sU1XSVaYICQM2C9iLGtxddlSklP2OCWxFXVj633-bY2l-dUSwDNSgd_pDTV7H0oCeB5BOHbyYiJQcbYMLtK1fb3SExs3d30wih0-SOcoP6RRNBVsSzqsZ1qWOzJU6cKNUux2iNu5MIZkqqjJOKjOmTKRldGeTnIsZbzMutL8uOZkck_-F2NhJ6KtaX_RMaTfBbtudTleiQsZPi8vohBsGLTVoV6oQvi0ocheSr1JxwKmNAWhhEBxvT0uqQn_dh1j6jAEuNvLrIi7wZffbHaE1pBtHZt3xuWWZMQWMc5It-tOn1qqpwqNj9-DyxB3wbmCDvnTnjSAnQnxNNpvSIzuuXZ66o5B4uchFfeHqcq395N7qdjhGdSTIgP8tLfyE-eQt4MrtM63bOE_zUdwxnRoGy9vDPxxCYhf5A-89Xpq5ypyK_uTswlYxrSFN9p0xko0Oq3Jmc1S98mknuoxOGnr6OMZ84GARfBtWPFCXeBCA1nMr4D039wtJ5TaeO9BbZFr-OSgylfFBnQ==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_71efbc69293b402f8e8ee92ffd77c22a
+            name: record
+            response:
+              return_value: Recorded tree "root" with 2 children.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: |-
+            The two schema shapes Google names as risky, neither of which `HostileToStrict` covers.
+
+            Google's JSON schema reference demonstrates recursive `$ref` and warns that very large or deeply
+            nested schemas may be rejected, so these are where `VALIDATED` could plausibly accept less than
+            `AUTO` does.
+
+            See <https://ai.google.dev/gemini-api/docs/structured-output#json-schema-support>.
+          name: record
+          parameters_json_schema:
+            $defs:
+              DeepA:
+                properties:
+                  b:
+                    $ref: '#/$defs/DeepB'
+                required:
+                - b
+                type: object
+              DeepB:
+                properties:
+                  c:
+                    $ref: '#/$defs/DeepC'
+                required:
+                - c
+                type: object
+              DeepC:
+                properties:
+                  d:
+                    $ref: '#/$defs/DeepD'
+                required:
+                - d
+                type: object
+              DeepD:
+                properties:
+                  value:
+                    type: string
+                required:
+                - value
+                type: object
+              TreeNode:
+                description: A self-referencing node, so Pydantic emits a `$ref` cycle back into `$defs`.
+                properties:
+                  children:
+                    default: []
+                    items:
+                      $ref: '#/$defs/TreeNode'
+                    type: array
+                  label:
+                    type: string
+                required:
+                - label
+                type: object
+            properties:
+              deep:
+                $ref: '#/$defs/DeepA'
+              tree:
+                $ref: '#/$defs/TreeNode'
+            required:
+            - tree
+            - deep
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '578'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=559
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I have recorded a tree with root "root" and two children "a" and "b", and a deep value of "hello".
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: X31rarWwIqScqtsPh-7luAI
+      usageMetadata:
+        cacheTokensDetails:
+        - modality: TEXT
+          tokenCount: 594
+        cachedContentTokenCount: 594
+        candidatesTokenCount: 28
+        promptTokenCount: 859
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 859
+        serviceTier: standard
+        totalTokenCount: 887
+    status:
+      code: 200
+      message: OK
+version: 1

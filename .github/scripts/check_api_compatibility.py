@@ -1,0 +1,423 @@
+from __future__ import annotations
+
+import argparse
+import ast
+import hashlib
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path, PurePath
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
+
+PACKAGES = {
+    'pydantic_ai': 'pydantic_ai_slim',
+    'pydantic_graph': 'pydantic_graph',
+    'pydantic_evals': 'pydantic_evals',
+    'clai': 'clai',
+    'pydantic_ai_harness': 'src/pydantic_ai_harness',
+    'pydantic_clai2': 'src/pydantic_clai2',
+}
+# The `clai2` web UI and the `workspaces` plugin behind it are application code, not an SDK for others to build on,
+# so their changes need no compatibility waiver. Each excludes every module in the package.
+EXCLUDED_PACKAGES = (
+    'pydantic_clai2.builtin_plugins.web',
+    'pydantic_clai2.builtin_plugins.workspaces',
+)
+# Run from its own tool environment: `griffe` 1.x, which `prefect` accepts, installs over `griffelib`'s `griffe`
+# module, and `griffecli` crashes against it. A bump of either package can reword or add findings, which changes
+# their fingerprints.
+GRIFFECLI_VERSION = '2.3.0'
+# Without it Griffe treats an import its module's `__all__` doesn't list as private, so a
+# `from ._module import Name as Name` re-export such as `pydantic_ai.models.KnownModelName` is never checked.
+GRIFFE_PUBLIC_REDUNDANT_ALIASES_VERSION = '0.3.2'
+_FINDING_RE = re.compile(r'^(?P<path>.*):(?P<line>\d+): (?P<message>.*)$')
+_ATTRIBUTE_VALUE_CHANGED = ': Attribute value was changed: '
+# One file per waiver, so PRs that each add one never conflict.
+WAIVERS = '.github/api-compatibility-waivers'
+_WAIVER_FILE_RE = re.compile(r'(?P<fingerprint>[0-9a-f]{64})\.json')
+
+
+class Waiver(BaseModel):
+    """A reviewed compatibility impact, stored in `WAIVERS` as `<fingerprint>.json`."""
+
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    against: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    pull_request: Annotated[str, StringConstraints(pattern=r'^https://github\.com/pydantic/pydantic-ai/pull/\d+$')]
+
+
+class ModelNameLiteral(BaseModel):
+    """A type alias listing model names for IDE autocompletion, whose `Literal` members can change without a waiver.
+
+    So can its whole value, when the new one is nothing but string `Literal`s: an SDK type replaced by a curated
+    `Literal` needs no waiver.
+
+    Removing a name from an alias without a `str |` arm is still a permitted compatibility impact: it needs the
+    `compatibility impact` label and a release note.
+    """
+
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    path: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    symbol: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class GrowingCollection(BaseModel):
+    """A public `dict` or `set` constant that registers entries, such as CLAI's settings, which can gain entries without a waiver.
+
+    The constant can also be a comprehension over a tuple or list of names, such as the capability types registry,
+    which then gains entries when a name is added to that sequence.
+
+    Removing an entry or changing an entry's value still needs a waiver.
+    """
+
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    path: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    symbol: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class Allowlist(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    model_name_literals: list[ModelNameLiteral] = []
+    growing_collections: list[GrowingCollection] = []
+
+
+@dataclass(frozen=True)
+class Finding:
+    package: str
+    path: str
+    line: int
+    message: str
+
+    @property
+    def fingerprint(self) -> str:
+        value = f'{self.package}\0{self.path}\0{self.message}'.encode()
+        return hashlib.sha256(value).hexdigest()
+
+    @property
+    def symbol(self) -> str:
+        return self.message.partition(': ')[0]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description='Compare the public Python API with a released Git tag.')
+    parser.add_argument('--against', required=True, help='Released Git tag to compare against.')
+    parser.add_argument(
+        '--allowlist',
+        type=Path,
+        default=Path('.github/api-compatibility-allowlist.json'),
+        help='Model-name aliases and growing collections whose permitted changes need no waiver.',
+    )
+    parser.add_argument(
+        '--waivers',
+        type=Path,
+        default=Path(WAIVERS),
+        help='Directory of exact reviewed compatibility-impact waivers, one `<fingerprint>.json` file each.',
+    )
+    args = parser.parse_args()
+
+    model_name_literals, growing_collections = load_allowlist(args.allowlist)
+    waivers = load_waivers(args.waivers)
+    used_waivers: set[str] = set()
+    failed = False
+    for package, search_path in PACKAGES.items():
+        findings = run_griffe(package, search_path, args.against)
+        for finding in findings:
+            if is_excluded(finding, search_path):
+                continue
+            if (finding.path, finding.symbol) in model_name_literals and (
+                changes := literal_member_changes(finding.message)
+            ):
+                added, removed = changes
+                message = (
+                    f'{finding.symbol}: model names added: {sorted(added)}, removed: {sorted(removed)}. '
+                    'Model-name alias changes need no waiver.'
+                )
+                if removed:
+                    message += (
+                        ' Removing a name from an alias without a `str |` arm is a permitted compatibility impact: '
+                        'add the `compatibility impact` label and a release note.'
+                    )
+                emit_annotation('warning' if removed else 'notice', finding, message)
+                continue
+            if (
+                (finding.path, finding.symbol) in growing_collections
+                and (changes := collection_entry_changes(finding.message)) is not None
+                and not changes[1]
+            ):
+                message = (
+                    f'{finding.symbol}: entries added: {changes[0]}. Additions to a growing collection need no waiver.'
+                )
+                emit_annotation('notice', finding, message)
+                continue
+            if is_field_description_change(finding.message):
+                message = f'{finding.symbol}: `Field` description changed. Description changes need no waiver.'
+                emit_annotation('notice', finding, message)
+                continue
+            waiver = waivers.get(finding.fingerprint)
+            if waiver is None or waiver.against != args.against:
+                failed = True
+                path = f'{args.waivers / finding.fingerprint}.json'
+                message = (
+                    f'{finding.message} [fingerprint: {finding.fingerprint}]. '
+                    'Preserve compatibility or follow the allowed compatibility-impact process, '
+                    f'with a waiver in `{path}`.'
+                )
+                if waiver is not None:
+                    message += (
+                        f' `{path}` waives it against {waiver.against}; '
+                        f'replace its contents with a waiver against {args.against}.'
+                    )
+                emit_annotation('error', finding, message)
+            else:
+                used_waivers.add(finding.fingerprint)
+                emit_annotation(
+                    'warning',
+                    finding,
+                    f'{finding.message} Allowed by {waiver.pull_request}: {waiver.reason}',
+                )
+
+    current_waivers = {fingerprint for fingerprint, waiver in waivers.items() if waiver.against == args.against}
+    for fingerprint in sorted(current_waivers - used_waivers):
+        failed = True
+        print(f'::error::Unused API compatibility waiver for {args.against}: {fingerprint}')
+
+    if failed:
+        raise SystemExit(1)
+
+
+def is_excluded(finding: Finding, search_path: str) -> bool:
+    """Whether the finding is in a file of one of `EXCLUDED_PACKAGES` under `search_path`."""
+    path = Path(finding.path)
+    return any(path.is_relative_to(Path(search_path, *package.split('.'))) for package in EXCLUDED_PACKAGES)
+
+
+def load_allowlist(path: Path) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    allowlist = Allowlist.model_validate_json(path.read_text(encoding='utf-8'))
+    return (
+        {(entry.path, entry.symbol) for entry in allowlist.model_name_literals},
+        {(entry.path, entry.symbol) for entry in allowlist.growing_collections},
+    )
+
+
+def load_waivers(directory: Path) -> dict[str, Waiver]:
+    """The waivers in `directory`, by fingerprint. Any other file in it is an error."""
+    # Git doesn't track an empty directory, so it is missing from a checkout once every waiver is pruned.
+    if not directory.exists():
+        return {}
+    return dict(read_waiver(path, path.read_text(encoding='utf-8')) for path in sorted(directory.iterdir()))
+
+
+def read_waiver(path: PurePath, text: str) -> tuple[str, Waiver]:
+    """The fingerprint that the name of the waiver file at `path` holds, and the waiver that its `text` holds."""
+    match = _WAIVER_FILE_RE.fullmatch(path.name)
+    if match is None:
+        raise ValueError(f'{path}: a waiver file must be named `<fingerprint>.json`')
+    try:
+        return match.group('fingerprint'), Waiver.model_validate_json(text)
+    except ValidationError as error:
+        raise ValueError(f'{path}: {error}') from error
+
+
+def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
+    """Return the names a value change adds and removes, if it changes nothing but `Literal` string members, or if
+    its new side has no other arm.
+
+    An old arm that isn't a string `Literal` and that the new side drops, such as `str` or an SDK type like
+    `ModelParam`, counts as removed under its source: the names it accepted can't be listed.
+    """
+    _, _, values = message.partition(_ATTRIBUTE_VALUE_CHANGED)
+    # Griffe prints `<old> -> <new>`. A split inside a string member leaves a side that doesn't parse.
+    for separator in re.finditer(' -> ', values):
+        try:
+            old_alias, old_arms, old_members = _literal_members(values[: separator.start()])
+            new_alias, new_arms, new_members = _literal_members(values[separator.end() :])
+        except SyntaxError:
+            continue
+        if new_arms and (new_alias != old_alias or new_arms != old_arms):
+            return None
+        return new_members - old_members, (old_members - new_members) | (old_arms - new_arms)
+    return None
+
+
+def collection_entry_changes(message: str) -> tuple[list[str], list[str]] | None:
+    """Return the entries a value change adds and removes, if both sides are `dict` or `set` literals of one kind.
+
+    Both sides can also be the same comprehension over a tuple or list literal, whose items are then the entries.
+
+    An entry whose value changed counts as removed, with its new value added.
+    """
+    _, _, values = message.partition(_ATTRIBUTE_VALUE_CHANGED)
+    # Griffe prints `<old> -> <new>`. A split inside a string entry leaves a side that doesn't parse.
+    for separator in re.finditer(' -> ', values):
+        try:
+            old = _collection_entries(values[: separator.start()])
+            new = _collection_entries(values[separator.end() :])
+        except (SyntaxError, ValueError, TypeError):
+            continue
+        if old is None or new is None or old[0] != new[0]:
+            return None
+        return sorted(new[1] - old[1]), sorted(old[1] - new[1])
+    return None
+
+
+def _collection_entries(value: str) -> tuple[str, set[str]] | None:
+    """The kind of a `dict`, `set`, or `frozenset` literal, and its entries as source text.
+
+    For a comprehension over one tuple or list literal, the entries are the sequence's items, and the kind is the
+    rest of the comprehension, which has to be unchanged for a change to add or remove entries.
+    """
+    node = ast.parse(value, mode='eval').body
+    if (
+        isinstance(node, ast.DictComp | ast.SetComp)
+        and len(node.generators) == 1
+        and isinstance(sequence := node.generators[0].iter, ast.Tuple | ast.List)
+    ):
+        entries = {ast.unparse(item) for item in sequence.elts}
+        node.generators[0].iter = ast.Tuple(elts=[], ctx=ast.Load())
+        return ast.dump(node), entries
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in ('set', 'frozenset')
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        node = node.args[0]
+    if isinstance(node, ast.Dict):
+        items: dict[object, object] = ast.literal_eval(node)
+        return 'dict', {f'{key!r}: {item!r}' for key, item in items.items()}
+    if isinstance(node, ast.Set):
+        members: set[object] = ast.literal_eval(node)
+        return 'set', {repr(member) for member in members}
+    return None
+
+
+def _literal_members(value: str) -> tuple[str, set[str], set[str]]:
+    """Split a type alias value into its `TypeAliasType` call without the aliased value, the source of each arm that
+    isn't a string `Literal`, and the string members of its `Literal` arms."""
+    node = ast.parse(value, mode='eval').body
+    alias = ''
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == 'TypeAliasType'
+        and len(node.args) == 2
+    ):
+        *head, aliased = node.args
+        alias = ast.dump(ast.Call(node.func, head, node.keywords))
+        node = aliased
+    other_arms: set[str] = set()
+    members: set[str] = set()
+    arms = [node]
+    while arms:
+        arm = arms.pop()
+        if isinstance(arm, ast.BinOp) and isinstance(arm.op, ast.BitOr):
+            arms += (arm.left, arm.right)
+            continue
+        if isinstance(arm, ast.Subscript) and isinstance(arm.value, ast.Name) and arm.value.id == 'Literal':
+            elements = arm.slice.elts if isinstance(arm.slice, ast.Tuple) else [arm.slice]
+            strings = [
+                element.value
+                for element in elements
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+            members.update(strings)
+            if len(strings) == len(elements):
+                continue
+        other_arms.add(ast.unparse(arm))
+    return alias, other_arms, members
+
+
+def is_field_description_change(message: str) -> bool:
+    """Whether a value change changes nothing but the `description` keyword of a `Field(...)` call."""
+    _, _, values = message.partition(_ATTRIBUTE_VALUE_CHANGED)
+    # Griffe prints `<old> -> <new>`. A split inside a description leaves a side that doesn't parse.
+    for separator in re.finditer(' -> ', values):
+        try:
+            old = _field_without_description(values[: separator.start()])
+            new = _field_without_description(values[separator.end() :])
+        except SyntaxError:
+            continue
+        return old is not None and old == new
+    return False
+
+
+def _field_without_description(value: str) -> str | None:
+    """The dump of a `Field(...)` call without its `description` keyword, or `None` for any other value."""
+    node = ast.parse(value, mode='eval').body
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'Field'):
+        return None
+    node.keywords = [keyword for keyword in node.keywords if keyword.arg != 'description']
+    return ast.dump(node)
+
+
+def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+    result = subprocess.run(
+        [
+            'uvx',
+            '--quiet',
+            '--from',
+            f'griffecli=={GRIFFECLI_VERSION}',
+            '--with',
+            f'griffe-public-redundant-aliases=={GRIFFE_PUBLIC_REDUNDANT_ALIASES_VERSION}',
+            'griffecli',
+            'check',
+            package,
+            '--search',
+            search_path,
+            '--against',
+            against,
+            '--extensions',
+            'griffe_public_redundant_aliases',
+            '--format',
+            'oneline',
+            '--no-color',
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    # `griffecli` prints findings to stderr and exits 1 when there are any, but an uncaught exception also exits 1.
+    # Accept only output that parses and agrees with the exit code, so a crash can never read as a clean check.
+    try:
+        findings = parse_findings(package, result.stderr)
+    except ValueError:
+        findings = None
+    if findings is None or result.returncode != (1 if findings else 0):
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        raise SystemExit(f'griffecli check {package} failed with exit code {result.returncode}')
+    return findings
+
+
+def parse_findings(package: str, output: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for output_line in output.splitlines():
+        match = _FINDING_RE.fullmatch(output_line)
+        if match is None:
+            raise ValueError(f'Unexpected Griffe output: {output_line!r}')
+        findings.append(
+            Finding(
+                package=package,
+                path=match.group('path'),
+                line=int(match.group('line')),
+                message=match.group('message'),
+            )
+        )
+    return findings
+
+
+def emit_annotation(level: str, finding: Finding, message: str) -> None:
+    escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+    print(f'::{level} file={finding.path},line={finding.line}::{escaped}')
+
+
+if __name__ == '__main__':
+    main()

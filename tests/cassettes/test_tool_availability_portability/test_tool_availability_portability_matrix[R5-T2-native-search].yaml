@@ -1,0 +1,163 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1066"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Find the exchange-rate tool.
+            type: text
+        - role: assistant
+          content:
+          - id: search_call_1
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - exchange rate
+        - role: user
+          content:
+          - tool_use_id: search_call_1
+            type: tool_result
+            content:
+            - text: Found one matching tool.
+              type: text
+            is_error: false
+          - text: Acknowledge the available exchange-rate tool without calling it.
+            type: text
+        model: claude-sonnet-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: always_ready
+          description: Provide an always-available tool so provider tool lists remain valid.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: lookup_exchange_rate
+          description: Look up an exchange rate.
+          input_schema:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=98
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1b5cff439d0cea468c04417ef6f51e44-049fd1a5faabba22-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPHVNVdrAVNStVSkDe1M","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":895,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Er0GCtMCCBMYAipAya/awlmSBVYALSVQaardvCnTT6x7J6ciAz+GPPnGnVseNHNlXSFmwTjQCbiFaSKY7kbY0AuZ0TOII3AmJNwGmDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagBseH41gbCAUkICRAAGhsCDSMDTzcFLPoEJq0KZNgDTzcL3MEFnEwEJq0gATIEEnHPJToEODMjikIEKWFZxUoEsX02h1ACWgTZBeFWYARoAXAA2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiBxqjaXCurRksaT6Jea2qXW3bKekCqhDWOe8lPvKv/GbCIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgydfD8YwP81DzAKsvwaDNI0T1PjoCZdPvLRrSIwAiWqBJ+aFB+EKVwG9+5/SRrA9U3J5x3N1tNwXDi7cIzVKgmlYI0gpCo0lsCiHpiJKpYDWBQMzxOPfIn3fhkvawzRRe00t1Lu8ta6vlE4EW0spKtb4wcNUGrZSZdRPSj46jS4r6N4edhlH6hH6GbqU/zHUqwKx8MSwYdOxi4s0MK7rMQVv8k7akbO8MfOf5+r4W+iU7B2dDzs3VaayT/i7gLkKU665xzyTeO+myZxNkMh+R1qyjVam3uoQW2N8V/oEc2j7yeGH7WZf/JA56XQmFB02/K28cYRJYYS9wSHMpc6W+7NQ47cyYRpEIyfkI4meqwdALofhVnoaPUXRdWLq/f5vpR+jgqpzqNHLadBVbwMSufuNSypWlg3qFUGOICuTKtDqESRzZpW96pHU7ZOoXW2kqSVxgwwYvVbdFxCnhcbzYXiR5lsWqmtKGsITUaTbsLY2ehxidWgESuYYsxYzkRb1rve0DiFFwD/4+k1UyoZ3XwgwqjItV/37NSUpmoZBIMs4geJiQSM0ciZMDwOrAw5SM6wJpK772vXefQmjlBUbTqEMJxe7m2DclgARTYpaPIrPtb22XO16AV5XCYWTQEAv9zeMsDI7BgB"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I ac"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"knowledge that an exch"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ange-rate tool is available"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for use,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" but I won't call it right"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" now since no"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" con"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"version is need"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ed y"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"et. Let me know if you"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'d like me to look up"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a specific exchange rate"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":895,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":190,"output_tokens_details":{"thinking_tokens":125}}               }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-25T16:39:13.804825+00:00

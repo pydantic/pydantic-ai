@@ -1,22 +1,28 @@
+---
+description: "Evaluate AI agent tool calls with Pydantic Evals: check the agent called the right tools, in the right order, with the right arguments and within budget."
+---
+
 # Agentic Evaluators
 
 Deterministic, span-based evaluators that grade an agent's *trajectory* — the sequence and arguments of tool calls — rather than just its final output.
 
-!!! note "Requires Logfire"
-    These evaluators read from the OpenTelemetry span tree captured during
-    task execution, so [`logfire`](../how-to/logfire-integration.md) must be
-    installed and configured:
+!!! note "Requires the logfire SDK"
+    These evaluators read the OpenTelemetry span tree captured during the run, so the
+    [`logfire`](../how-to/logfire-integration.md) SDK must be installed and configured. No Pydantic Logfire
+    account is needed: the SDK captures spans locally.
+
     ```bash
     pip install 'pydantic-evals[logfire]'
     ```
+
     If spans aren't available, each evaluator returns a failing result
     (`False` for the boolean evaluators, `0.0` for `TrajectoryMatch`) with
     a reason pointing at logfire configuration, rather than raising.
 
 !!! warning "Locally-executed tools only"
     These evaluators see tools whose execution produces a local OpenTelemetry
-    span — i.e. tools that Pydantic AI invokes itself. Provider-native or
-    server-side builtin tools (such as OpenAI's file search or Anthropic's
+    span — i.e. tools that Pydantic AI invokes itself. Native tools
+    (such as OpenAI's file search or Anthropic's
     web search) don't produce local spans and are therefore invisible to
     these evaluators. Use [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan]
     against the provider's own spans, or the model's output, to assess those.
@@ -42,7 +48,7 @@ Deterministic, span-based evaluators that grade an agent's *trajectory* — the 
 Agentic evaluators answer a class of "did the agent do the right thing?" questions that pure input/output checks can't:
 
 - **Tool coverage** — did the agent call the specific tools it was supposed to? ([`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness])
-- **Trajectory shape** — did it call them in the right order, or at least use the right set? ([`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch])
+- **Tool-call sequence** — did it call them in the right order, or at least use the right set? ([`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch])
 - **Argument quality** — did the tool receive the expected inputs? ([`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness])
 - **Budget discipline** — did the agent finish within a tool-call and/or model-request budget? ([`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls], [`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests])
 
@@ -149,9 +155,76 @@ dataset = Dataset(
 
 **Graceful degradation:** this evaluator doesn't crash when arguments aren't available — for example, when the agent was instrumented with `include_content=False`, the evaluator returns `False` with a reason explaining the situation so your reports still make sense.
 
+### Checking arguments when telemetry excludes content
+
+[`include_content=False`](../../logfire.md#excluding-prompts-and-completions) removes tool arguments from the spans but keeps tool names, so [`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness], [`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch], [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls] and [`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests] work unchanged. Only `ArgumentCorrectness` fails, because it has no arguments to compare. If your deployment has to keep content out of telemetry, you have two options.
+
+**Read the arguments from the run's messages.** The messages an agent run returns hold every tool call with its arguments, whatever the instrumentation settings. Return them from your task alongside the output, and check them with a custom evaluator:
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, ModelMessage, ModelResponse, ToolCallPart
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
+
+support_agent = Agent('{{ openai:medium }}')
+
+
+@support_agent.tool_plain
+def issue_refund(order_id: str) -> str:
+    return f'Refund issued for order {order_id}.'
+
+
+@dataclass
+class SupportRun:
+    output: str
+    messages: list[ModelMessage]
+
+
+async def run_support_agent(query: str) -> SupportRun:
+    result = await support_agent.run(query)
+    return SupportRun(output=result.output, messages=result.all_messages())
+
+
+@dataclass
+class ToolCalledWith(Evaluator[str, SupportRun]):
+    tool_name: str
+    expected_arguments: dict[str, Any]
+
+    def evaluate(self, ctx: EvaluatorContext[str, SupportRun]) -> EvaluationReason:
+        calls = [
+            part
+            for message in ctx.output.messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, ToolCallPart) and part.tool_name == self.tool_name
+        ]
+        if not calls:
+            return EvaluationReason(value=False, reason=f'{self.tool_name!r} was not called.')
+        arguments = [call.args_as_dict() for call in calls]
+        matches = any(
+            all(key in args and args[key] == value for key, value in self.expected_arguments.items())
+            for args in arguments
+        )
+        return EvaluationReason(value=matches, reason=f'Arguments: {arguments!r}')
+
+
+dataset = Dataset(
+    name='refund_arguments',
+    cases=[Case(inputs='Refund order 12345')],
+    evaluators=[ToolCalledWith(tool_name='issue_refund', expected_arguments={'order_id': '12345'})],
+)
+```
+
+The messages record each call the model made, so unlike `ArgumentCorrectness`, which skips failed or retried attempts by default and never sees deferred calls, they include all of these; this evaluator passes if any call has the expected arguments. Evaluators that check the output, such as [`LLMJudge`][pydantic_evals.evaluators.LLMJudge], see the whole `SupportRun`.
+
+**Capture content only where you run evals.** The span-based evaluators read the spans of the process that runs the dataset, so that process can instrument with content while production doesn't. [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] sets the default for agents without instrumentation settings of their own: call `Agent.instrument_all(InstrumentationSettings(include_content=True))` in your eval script, with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] imported from `pydantic_ai`, and `include_content=False` in production. An agent with settings of its own, from an [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability or its `instrument` attribute, keeps them, so build those settings from configuration instead of hard-coding them. The spans with content are exported to wherever the eval process sends its telemetry.
+
 ## MaxToolCalls and MaxModelRequests
 
-Assert that the agent stayed within a tool-call and/or model-request budget. These follow the same shape as [`MaxDuration`][pydantic_evals.evaluators.MaxDuration]: one budget per evaluator, each reported as its own boolean assertion.
+Assert that the agent stayed within a tool-call and/or model-request budget. These work like [`MaxDuration`][pydantic_evals.evaluators.MaxDuration]: one budget per evaluator, each reported as its own boolean assertion.
 
 ```python
 from pydantic_evals import Case, Dataset

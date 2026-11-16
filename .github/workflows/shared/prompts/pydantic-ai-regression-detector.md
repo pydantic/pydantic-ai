@@ -28,6 +28,20 @@ upgrade-blocking bug class for users.
    upgrading", "broke in" to corroborate — but you must still reproduce it
    yourself.
 
+## Candidate Stop Rule
+
+After release-diff triage, choose one specific user-visible candidate. Use one
+minimal reproduction to compare `OLD` and `NEW`, then check whether the change
+was intentional and whether an issue already tracks it. Stop after that
+candidate. Do not switch providers, start another probe, or repair a broad probe
+when the evidence fails.
+
+If the candidate lacks sufficient evidence, or the five-minute remaining-time
+notice appears, call `mcp__safeoutputs__noop` with an honest summary of the
+inspected scope. Reserve the remaining time for publication and verification.
+Use `report_incomplete` only for tool or infrastructure failure, not ordinary
+inconclusive investigation.
+
 ## How to Verify — mandatory
 
 Write a **new** minimal test that exercises the behavior. Demonstrate it
@@ -52,24 +66,25 @@ only "looks risky" in the diff is not a finding.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-First narrow to regression-labelled issues with a tight, server-side filter —
-the `/search/issues` endpoint is blocked by the firewall proxy and there are no
-`mcp__github__*` tools, but the `?labels=` filter on the issue-list endpoint is
-allowed. This covers both prior `[regression-detector]` findings and human-filed
-regression reports:
+Open issues were prefetched before the sandbox started. First narrow the local
+corpus to regression-labelled issues; this covers both prior
+`[regression-detector]` findings and human-filed regression reports:
 
 ```
-gh api 'repos/pydantic/pydantic-ai/issues?state=open&labels=regression&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title}'
+jq '.[] | select(any(.labels[]; .name == "regression")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
 Only if that is inconclusive, widen to a full open-issue scan and grep locally
 for "regression" and the affected symbol:
 
 ```
-gh api --paginate 'repos/pydantic/pydantic-ai/issues?state=open&per_page=100' \
-  --jq '.[] | select(.pull_request == null) | {number, title, labels: [.labels[].name]}'
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 

@@ -16,8 +16,6 @@
 - Flatten nested `if` statements with no intervening code into `if condition1 and condition2:` — Reduces nesting depth and improves readability without changing logic
 <!-- rule:-1 -->
 - Use tuple syntax for `isinstance()` checks, not `|` union — tuples are faster at runtime — Runtime performance optimization: tuple syntax avoids the overhead of union type creation
-<!-- rule:34 -->
-- Link to official provider/project docs instead of duplicating model lists, features, or setup details — prevents stale documentation and reduces maintenance burden — Exhaustive inline lists become outdated quickly; authoritative external sources stay current and reduce maintenance
 <!-- rule:519 -->
 - Use dict comprehensions instead of empty dict + loop — more concise and idiomatic Python — Reduces boilerplate, improves readability, and signals intent more clearly for simple mappings and filtered sequences
 <!-- rule:1001 -->

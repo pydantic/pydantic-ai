@@ -43,7 +43,7 @@ with try_import() as logfire_import_successful:
 
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 

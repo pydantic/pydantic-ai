@@ -1,0 +1,32 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 2+2?"}]}], "inferenceConfig": {"maxTokens": 16, "temperature":
+      0.2}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YTEzNGQzOTgtYmVkZi00NTI3LWFhZjgtNDVlYmM0MDBlZTZk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '129'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.eu-central-1.amazonaws.com/model/eu.anthropic.claude-opus-5/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '99'
+      content-type:
+      - application/json
+    parsed_body:
+      message: 'The model returned the following errors: `temperature` is deprecated for this model.'
+    status:
+      code: 400
+      message: Bad Request
+version: 1

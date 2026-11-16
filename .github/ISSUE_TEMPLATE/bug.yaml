@@ -29,7 +29,7 @@ body:
         Please explain what you're seeing and what you would expect to see.
 
         - **A line of code is worth a thousand words**: you can include minimal, reproducible example code below.
-        - **A trace is worth a thousand log lines**: you can link to a [Pydantic Logfire](https://ai.pydantic.dev/logfire) trace below.
+        - **A trace is worth a thousand log lines**: you can link to a [Pydantic Logfire](https://pydantic.dev/docs/ai/integrations/logfire/) trace below.
     validations:
       required: true
 
@@ -55,7 +55,7 @@ body:
     attributes:
       label: Logfire Trace
       description: >
-        If at all possible, please capture the agent run or model request leading up to the bug or error using [Pydantic Logfire](https://ai.pydantic.dev/logfire)
+        If at all possible, please capture the agent run or model request leading up to the bug or error using [Pydantic Logfire](https://pydantic.dev/docs/ai/integrations/logfire/)
         and share a link to the [public trace](https://logfire.pydantic.dev/docs/guides/web-ui/public-traces/) here.
 
   - type: textarea

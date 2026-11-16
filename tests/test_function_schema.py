@@ -3,7 +3,7 @@ from typing import Any
 from unittest.mock import Mock
 
 from pydantic_ai import RunContext
-from pydantic_ai._function_schema import _takes_ctx  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._function_schema import takes_ctx as _takes_ctx
 
 
 def test_regular_function_with_ctx():

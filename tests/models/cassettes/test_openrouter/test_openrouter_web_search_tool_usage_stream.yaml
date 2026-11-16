@@ -1,0 +1,96 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '332'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use web search to find Pydantic AI's GitHub repository and answer with its URL only.
+        role: user
+      model: openai/gpt-4.1-mini
+      stream: true
+      stream_options:
+        include_usage: true
+      tools:
+      - parameters:
+          max_uses: 1
+          search_context_size: medium
+        type: openrouter:web_search
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: |+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"https","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"://","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"github","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":".com","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"/p","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"yd","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"antic","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"/p","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"yd","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"antic","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"-ai","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":" ","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"completed"}]}
+
+        data: {"id":"gen-1786465029-CAkqUciXgQW34RmFaTck","object":"chat.completion.chunk","created":1786465029,"model":"openai/gpt-4.1-mini","provider":"OpenAI","service_tier":"default","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"completed"}],"usage":{"prompt_tokens":8174,"completion_tokens":30,"total_tokens":8204,"cost":0.0133176,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0133176,"upstream_inference_prompt_cost":0.0032696,"upstream_inference_completions_cost":0.000048},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0},"server_tool_use_details":{"web_search_requests":1}}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "clai2 0.x: `SPECULATIVE_TOOLS` drops the removed `read_clai_customization_guide` tool; the file tools it lists are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11337"
+}

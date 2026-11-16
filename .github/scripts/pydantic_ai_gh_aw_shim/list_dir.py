@@ -8,18 +8,19 @@ workflows live -- invisible to the agent. The Claude `LS` signature is preserved
 and the directory-scoped AGENTS.md / CLAUDE.md context blocks are still prepended.
 """
 
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from ._backends import filesystem
 from .shared import attach_context, clip, resolve
 
 
-async def list_dir(path: str = '.') -> str:
+async def list_dir(ctx: RunContext[object], path: str = '.') -> str:
     """List a workspace directory's entries (directories marked with `/`)."""
     try:
         # `file_info` enforces workspace containment and rejects a missing path;
         # the enumeration then keeps the dot-prefixed entries the harness drops.
-        await filesystem().file_info(path)
+        await filesystem().file_info(path, workspace=ctx.workspace)
         entries = resolve(path).iterdir()
         listing = '\n'.join(sorted(e.name + ('/' if e.is_dir() else '') for e in entries)) or '(empty)'
     except (ModelRetry, OSError) as exc:

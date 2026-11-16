@@ -1,6 +1,6 @@
 import re
 
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -12,7 +12,10 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -26,7 +29,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -50,7 +52,7 @@ def test_ollama_provider_need_base_url(env: TestEnv) -> None:
 
 
 def test_ollama_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = OllamaProvider(http_client=http_client, base_url='http://localhost:11434/v1/')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
@@ -137,7 +139,7 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     harmony_profile = provider.model_profile('gpt-oss')
     harmony_model_profile_mock.assert_called_with('gpt-oss')
     assert harmony_profile is not None
-    assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert harmony_profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
     assert harmony_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     unknown_profile = provider.model_profile('unknown-model')
