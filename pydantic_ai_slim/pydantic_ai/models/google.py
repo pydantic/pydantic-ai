@@ -216,8 +216,11 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
     GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
     GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.TOO_MANY_TOOL_CALLS.value: 'error',
     GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
     GoogleFinishReason.NO_IMAGE.value: 'error',
+    GoogleFinishReason.IMAGE_RECITATION.value: 'content_filter',
+    GoogleFinishReason.IMAGE_OTHER.value: None,
     'MODEL_ARMOR': 'content_filter',
 }
 
@@ -1776,7 +1779,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         parts = candidate.content.parts
         if not parts:
-            return  # pragma: no cover
+            return
 
         if not self._has_tool_invocations:
             self._has_tool_invocations = _has_native_tool_invocations(parts)
