@@ -3108,7 +3108,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = await _prepare_request_parameters(
             ctx, instruction_parts, self._step_loaded_parts, native_tool_factories=self._native_tool_factories
         )
-        self._step_request_instruction_parts = model_request_parameters.instruction_parts
+        # A copy of the list and its parts, so a hook editing them in place, like redacting a part, counts as a change.
+        self._step_request_instruction_parts = (
+            [replace(part) for part in model_request_parameters.instruction_parts]
+            if model_request_parameters.instruction_parts is not None
+            else None
+        )
         model_settings = self._resolve_step_model_settings(ctx, run_context)
 
         request_context = ModelRequestContext(
@@ -3146,8 +3151,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelSettings:
         """Resolve the step's model settings, keeping the layers alone for an attempt at another model."""
         self._step_model_settings = ctx.deps.get_model_settings(run_context)
-        # A copy, so a hook editing the request's settings in place leaves the resolved ones to compare against.
-        model_settings = ModelSettings(**(self._step_model_settings.merged or {}))
+        # A copy, down to the containers inside it, so a hook editing the request's settings in place, like removing a
+        # header from `extra_headers`, leaves the resolved ones to compare against: the edit then counts as the
+        # hook's, and still applies when the settings are resolved again for another model.
+        model_settings = _copy_settings(self._step_model_settings.merged) or ModelSettings()
         run_context.model_settings = model_settings
         return model_settings
 

@@ -3174,20 +3174,103 @@ async def test_returning_to_the_step_model_records_its_own_instructions_again():
 
 
 async def test_a_model_without_instructions_of_its_own_is_sent_none():
-    """A model the instructions resolve to nothing for is sent none, and history records none."""
+    """A model the instructions resolve to nothing for is sent none, and history records none, on every step."""
     sent: list[tuple[str, str | None, float | None]] = []
 
     def instructions(ctx: RunContext[Any]) -> str | None:
         return 'Be brief.' if ctx.model.model_name == 'primary' else None
 
-    agent = Agent(
-        _sent('primary', sent, fails=True),
-        instructions=instructions,
-        capabilities=[ModelFallback(_sent('backup', sent))],
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            instructions=instructions,
+            capabilities=[ModelFallback(_sent('backup', sent))],
+        )
     )
     result = await agent.run('x')
-    assert sent[:2] == snapshot([('primary', 'Be brief.', None), ('backup', None, None)])
-    assert _recorded_instructions(result.all_messages())[0] is None
+    assert result.output == 'backup'
+    assert sent == snapshot(
+        [
+            ('primary', 'Be brief.', None),
+            ('backup', None, None),
+            ('primary', 'Be brief.', None),
+            ('backup', None, None),
+        ]
+    )
+    assert _recorded_instructions(result.all_messages()) == [None, None]
+
+
+@pytest.mark.parametrize('edit', ['redact', 'clear'])
+async def test_instruction_parts_a_hook_edited_in_place_stay_edited_for_every_model(edit: str):
+    """Instruction parts a `before_model_request` hook redacted or cleared in place stay so for a model fallen back to."""
+
+    @dataclass
+    class Redact(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parts = request_context.model_request_parameters.instruction_parts
+            assert parts is not None
+            if edit == 'redact':
+                for part in parts:
+                    part.content = part.content.replace('secret', '[redacted]')
+            else:
+                parts.clear()
+            return request_context
+
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        return f'The secret is 42, {ctx.model.model_name}.'
+
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            instructions=instructions,
+            capabilities=[Redact(), ModelFallback(_sent('backup', sent))],
+        )
+    )
+    result = await agent.run('x')
+    expected = 'The [redacted] is 42, primary.' if edit == 'redact' else None
+    assert {instructions for _, instructions, _ in sent} == {expected}
+    assert _recorded_instructions(result.all_messages()) == [expected, expected]
+
+
+async def test_a_nested_setting_a_hook_removed_in_place_stays_removed_for_every_model():
+    """A header a `before_model_request` hook removed in place from `extra_headers` isn't sent to a model fallen back to,
+    even when the settings are resolved again for it."""
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        return {'extra_headers': {'X-Internal-Token': 'secret', 'X-Model': ctx.model.model_name}}
+
+    @dataclass
+    class DropToken(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            assert request_context.model_settings is not None
+            request_context.model_settings['extra_headers'].pop('X-Internal-Token')
+            return request_context
+
+    headers: list[tuple[str, dict[str, str] | None]] = []
+
+    def respond(name: str, fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            headers.append((name, (info.model_settings or {}).get('extra_headers')))
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(fn, model_name=name)
+
+    agent = Agent(
+        respond('primary', True),
+        model_settings=settings,
+        capabilities=[DropToken(), ModelFallback(respond('backup', False))],
+    )
+    assert (await agent.run('x')).output == 'backup'
+    # The hook's edit is applied to the step's `extra_headers` as a whole, so the backup gets those.
+    assert headers == snapshot([('primary', {'X-Model': 'primary'}), ('backup', {'X-Model': 'primary'})])
 
 
 async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_was_sent():
