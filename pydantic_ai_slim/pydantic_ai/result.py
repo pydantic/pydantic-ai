@@ -1246,7 +1246,10 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def compactions(self) -> list[_messages.CompactionRecord]:
-        """The compactions this run kept so far; see [`StreamedRunResult.compactions`][pydantic_ai.result.StreamedRunResult.compactions]."""
+        """The compactions this run kept so far.
+
+        See [`StreamedRunResult.compactions`][pydantic_ai.result.StreamedRunResult.compactions].
+        """
         return self._streamed_run_result.compactions
 
     @property
