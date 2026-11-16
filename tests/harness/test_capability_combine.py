@@ -338,6 +338,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BoxdSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'AgentCoreSandbox': Anonymous(
+        'two coexist; the first supplies the run workspace, as core picks the first supplier'
+    ),
     'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BoxLiteSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BubblewrappedWorkspace': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),

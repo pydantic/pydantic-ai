@@ -121,6 +121,7 @@ _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release',
 _LEAD_HOOK_NAMES = ('before_model_request', 'after_model_request', 'before_tool_execute', 'after_tool_execute')
 # ClassName-style headings are a smell, except where the class name IS the name.
 _ALLOWED_CLASSNAME_HEADINGS = {
+    'AgentCore',
     'BoxLite',
     'FileSystem',
     'GitHub',
@@ -170,6 +171,7 @@ _CAPABILITY_PAGE_META = {
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
+    'agentcore-sandbox.md': ('agentcore_sandbox', 'AgentCore Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
