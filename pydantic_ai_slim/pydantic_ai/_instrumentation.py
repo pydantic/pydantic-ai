@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from functools import cache
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -16,7 +16,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict, PydanticUserError, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
@@ -645,8 +645,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
     the same flat key it serializes to everywhere else.
     """
-    from pydantic_ai.native_tools import MCPServerTool
+    from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, MCPServerTool
 
+    native_tool_types = tuple(NATIVE_TOOL_TYPES.values())
     url_ids = model_request_telemetry_url_ids(model_request_parameters)
     toolset_ids = model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
     tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
@@ -656,7 +657,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         # Keep the established serializer, including its fallback, byte-for-byte for requests
         # outside the affected MCP paths.
         try:
-            return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+            return _model_request_parameters_adapter(native_tool_types).dump_python(
+                model_request_parameters, mode='json'
+            )
         except Exception:
             return serialize_any(model_request_parameters)
 
@@ -688,7 +691,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         _telemetry_mcp_url_tool_names=set(),
     )
     try:
-        return _model_request_parameters_adapter().dump_python(safe_parameters, mode='json')
+        return _model_request_parameters_adapter(native_tool_types).dump_python(safe_parameters, mode='json')
     except Exception:
         # A tool definition carrying something unserializable must not take the span down with it.
         return serialize_any(safe_parameters)
@@ -750,11 +753,25 @@ def _redact_mcp_instruction_parts(
     return redacted_parts
 
 
-@cache
-def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+@lru_cache(maxsize=1)
+def _model_request_parameters_adapter(
+    native_tool_types: tuple[type[AbstractNativeTool], ...],
+) -> TypeAdapter[ModelRequestParameters]:
+    """Build the adapter from `NATIVE_TOOL_TYPES`, whose current contents `native_tool_types` passes as the cache key.
+
+    The parameters' native tools serialize through a union of the registered types. A type registers when its class
+    is defined, which can be after the first request, and an adapter built before then can't serialize its instances
+    through their own schema. The cache keeps only the adapter for the registry's current contents.
+
+    A registered type pydantic can't build a schema for fails the whole build. The parameters then serialize by
+    inference, as the `serialize_any` fallback does, without retrying the build on every request.
+    """
     from pydantic_ai.models import ModelRequestParameters
 
-    return TypeAdapter(ModelRequestParameters)
+    try:
+        return TypeAdapter(ModelRequestParameters)
+    except PydanticUserError:
+        return ANY_ADAPTER
 
 
 def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
