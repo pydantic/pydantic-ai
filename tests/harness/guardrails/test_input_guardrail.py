@@ -6,7 +6,7 @@ import asyncio
 import dataclasses
 import functools
 import inspect
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, ForwardRef, Optional
 
@@ -69,7 +69,7 @@ from pydantic_ai_harness.subagents import (
 )
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
 from tests.conftest import no_leaked_tasks
-from tests.harness.conftest import IsDatetime
+from tests.harness.conftest import Instrumented, IsDatetime
 
 TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
 TASK_QUESTION_ORIGIN = 'pydantic-ai-harness.subagents.question.v1'
@@ -1481,9 +1481,7 @@ class TestInputGuardrailTracing:
             'guardrail.replacement': '[redacted]',
         }
 
-    async def test_redacted_prompt_reaches_no_span_when_content_is_traced(
-        self, instrumented: Callable[[bool], tuple[Any, Any]]
-    ):
+    async def test_redacted_prompt_reaches_no_span_when_content_is_traced(self, instrumented: Instrumented):
         """With content capture on, every span holds the redacted prompt and none the original."""
         tracing, exporter = instrumented(True)
         agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=redact_secrets), tracing])

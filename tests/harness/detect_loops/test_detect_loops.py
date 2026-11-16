@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import (
     ModelMessage,
@@ -33,6 +33,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import ClearToolResults, DetectLoops, SlidingWindowCompaction
 from pydantic_ai_harness.detect_loops import DetectedLoop, LoopDetectedError
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY, TOOLS_CHANGE_MID_RUN
+from tests.harness.conftest import Instrumented
 
 
 def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
@@ -395,9 +396,7 @@ class TestDetectLoops:
         )
 
     @pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
-    async def test_an_earlier_offer_is_still_a_tool_name(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_an_earlier_offer_is_still_a_tool_name(self, instrumented: Instrumented):
         @dataclass
         class HideReadFileAfterFirst(AbstractCapability[object]):
             requests: int = 0
@@ -462,7 +461,7 @@ class TestDetectLoops:
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_tool_name_the_run_does_not_offer_is_content(
-        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+        self, include_content: bool, instrumented: Instrumented
     ):
         """The model made the name up, so it is model output, not one of the run's tool names."""
         tracing, exporter = instrumented(include_content)
