@@ -40,12 +40,10 @@ from pydantic_ai.messages import ToolReturn, UserContent
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
-    checked_value as _checked_value,
-    content_list as _content_list,
-    detect_content_list_result as _detect_content_list_result,
     detect_return_value as _detect_return_value,
     detect_tool_return_content as _detect_tool_return_content,
     is_tool_return as _is_tool_return,
+    scanned_value as _scanned_value,
 )
 
 _NEWLINE = r'(?:\r?\n|\\+n)'
@@ -450,16 +448,12 @@ def for_tool_result_text(
 
     def guard(info: ToolResultInfo) -> GuardrailResult:
         result = info.result
-        if isinstance(result, str):
-            verdict = detector(result)
-            if verdict.action == 'replace' and not isinstance(verdict.replacement, str):
-                raise UserError(
-                    'A text detector used with for_tool_result_text() must replace a tool result with text.'
-                )
-            return verdict
-        if (parts := _content_list(result)) is not None:
-            return _detect_content_list_result(detector, parts)
-        if _is_tool_return(result) and (value := _checked_value(result.return_value)) is not None:
+        if (value := _scanned_value(result)) is not None:
+            verdict, replacement = _detect_return_value(detector, value)
+            if verdict is not None:
+                return verdict
+            return GuardrailResult.allow() if replacement is None else GuardrailResult.replace(replacement)
+        if _is_tool_return(result) and (value := _scanned_value(result.return_value)) is not None:
             return _tool_return_verdict(detector, result, value)
         if on_other == 'allow':
             return GuardrailResult.allow()
