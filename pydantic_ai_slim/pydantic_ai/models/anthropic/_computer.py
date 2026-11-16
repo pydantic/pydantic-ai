@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, TypeGuard
+from typing import Annotated, Any, NotRequired, TypeGuard
 
 from anthropic.types.beta import (
     BetaComputerToolset20260801Param,
@@ -44,6 +44,8 @@ class ComputerReplay(TypedDict):
     computer_tool: AnthropicComputerToolVersion
     computer_action_counts: list[Annotated[int, Field(ge=1)]]
     """How many actions each call became, so results are matched to calls without mapping them again."""
+    computer_refusal: NotRequired[str]
+    """Why none of the calls ran, sent to Claude in place of the retry's validation errors."""
 
 
 _REPLAY = TypeAdapter(ComputerReplay)
@@ -136,16 +138,18 @@ class NativeComputer:
             )
             for block in blocks
         ]
-        member_actions = [
-            self._member_actions(block, incomplete, split, last=index == len(checked) - 1)
-            for index, block in enumerate(checked)
-        ]
+        member_actions = [self._member_actions(block, incomplete, split) for block in checked]
         actions = [action for member in member_actions for action in member]
         replay = ComputerReplay(
             computer_blocks=checked,
             computer_tool=self.version,
             computer_action_counts=[len(member) for member in member_actions],
         )
+        if between := [f'`{name}`' for names in split.values() for name in names]:
+            replay['computer_refusal'] = (
+                f'No computer action ran: they run together as one batch, and a call of {" and ".join(between)} came '
+                "between them. Make the computer calls before or after the other tools' calls, not between them."
+            )
         return ComputerCallPart(
             self.name,
             # A field Claude left out takes the `computer` tool's default.
@@ -156,7 +160,7 @@ class NativeComputer:
         )
 
     def _member_actions(
-        self, block: ComputerBlock, incomplete: Collection[str], split: Mapping[str, Sequence[str]], *, last: bool
+        self, block: ComputerBlock, incomplete: Collection[str], split: Mapping[str, Sequence[str]]
     ) -> list[dict[str, Any]]:
         """The `computer` tool actions one call becomes, or one the tool refuses if it can't run as asked."""
         name, args = computer_member(block, self.version)
@@ -164,12 +168,6 @@ class NativeComputer:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'incomplete_input': True}]
         if block['id'] in split:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
-        if name == 'screenshot' and not last:
-            # The `computer` tool captures the screen once, after the batch, but each screenshot call needs its image.
-            return [{'type': 'screenshot', 'not_the_last_call': True}]
-        if not self.is_toolset and name in _COMPUTER_CLICKS and 'text' in block['input']:
-            # The earlier tools' clicks take modifier keys only as `key`, so `text` there is refused, not merged into it.
-            return [{'type': 'click', 'unsupported_fields': ['text']}]
         return map_computer_member(name, args)
 
 
@@ -238,17 +236,17 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
     action = block['input'].get('action', '')
     if not isinstance(action, str):
         return '', dict(block['input'])  # names the `action` among the fields that don't map
-    # The earlier tools name a click's held modifier keys `key`, where the toolset and other actions use `text`.
-    args = {
-        'text' if key == 'key' and action in _COMPUTER_CLICKS else key: value
-        for key, value in block['input'].items()
-        if key != 'action'
-    }
-    return action, args
+    return action, {key: value for key, value in block['input'].items() if key != 'action'}
 
 
-RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
-"""The calls whose result has content of its own, before the screenshot every result ends with; each is one action."""
+def returns_output(blocks: list[ComputerBlock], index: int) -> bool:
+    """Whether a call's result has content of its own, before the screen the last call that ran gets.
+
+    A zoom and the pointer position do, and so does a screenshot before the last call, captured where it is.
+    """
+    name = blocks[index]['name']
+    return name in ('zoom', 'cursor_position') or (name == 'screenshot' and index < len(blocks) - 1)
+
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
@@ -277,7 +275,6 @@ class _Click(_Strict):
 
 class _Move(_Strict):
     coordinate: _Coordinate
-    text: str | None = None
 
 
 class _Drag(_Strict):
@@ -315,6 +312,10 @@ class _Zoom(_Strict):
     region: Annotated[list[int], Field(min_length=4, max_length=4)]
 
 
+class _Press(_Strict):
+    coordinate: _Coordinate | None = None
+
+
 class _NoInput(_Strict):
     pass
 
@@ -323,8 +324,8 @@ _MEMBERS: dict[str, type[_Strict]] = {
     **dict.fromkeys(_COMPUTER_CLICKS, _Click),
     'mouse_move': _Move,
     'left_click_drag': _Drag,
-    'left_mouse_down': _NoInput,
-    'left_mouse_up': _NoInput,
+    'left_mouse_down': _Press,
+    'left_mouse_up': _Press,
     'scroll': _Scroll,
     'type': _Type,
     'key': _Key,
@@ -335,11 +336,6 @@ _MEMBERS: dict[str, type[_Strict]] = {
     'cursor_position': _NoInput,
 }
 """The input each computer use member takes that maps onto the `computer` tool."""
-
-
-def takes_no_input(name: str) -> bool:
-    """Whether the computer use member takes no input, so it streams none."""
-    return _MEMBERS.get(name) is _NoInput
 
 
 _COMPUTER_MEMBER_TYPES: dict[str, str] = {
@@ -391,7 +387,7 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
                 }
             ]
         case _Move():
-            return [{'type': 'move', **_point(member.coordinate), 'modifiers': _modifiers(member.text)}]
+            return [{'type': 'move', **_point(member.coordinate)}]
         case _Drag():
             path = [_point(member.start_coordinate), _point(member.coordinate)]
             return [{'type': 'drag', 'path': path, 'modifiers': _modifiers(member.text)}]
@@ -415,8 +411,12 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
             return [{'type': 'hold_key', 'keys': [member.text], 'seconds': member.duration}]
         case _Wait():
             return [{'type': 'wait', 'seconds': member.duration}]
+        case _Press():
+            # Claude's earlier tools press or release at a point: the pointer moves there first.
+            move = [{'type': 'move', **_point(member.coordinate)}] if member.coordinate else []
+            return [*move, {'type': kind}]
         case _Zoom():
             left, top, right, bottom = member.region
             return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]
-        case _:  # `left_mouse_down`, `left_mouse_up`, `screenshot` and `cursor_position` take no input
+        case _:  # `screenshot` and `cursor_position` take no input
             return [{'type': kind}]

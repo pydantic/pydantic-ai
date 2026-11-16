@@ -12,7 +12,6 @@ import anyio
 import pytest
 from dirty_equals import IsPartialDict
 from inline_snapshot import snapshot
-from pydantic import ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -49,7 +48,6 @@ from pydantic_ai.computer_use import (
     MoveMouse,
     Point,
     PressKeys,
-    SafetyCheck,
     Scroll,
     TypeText,
 )
@@ -68,7 +66,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, ComputerUseActionLimits, DisplayAction
+from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, DisplayAction
 from tests.conftest import RequestCapture, try_import
 from tests.harness._recording_durability import RecordingDurability
 
@@ -171,7 +169,8 @@ class TestComputerUse:
         # `screenshot` and `wait` are the tool's own: they never reach the workspace.
         assert provider.actions == [Click(x=10, y=20), TypeText(text='hi'), PressKeys(keys=('ctrl', 's'))]
         first, second = _returns(result.all_messages())
-        assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT]
+        # The leading `screenshot` returns the screen before the click, then the call's closing screenshot.
+        assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT, SCREENSHOT]
         assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
         assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
 
@@ -376,6 +375,28 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert pointer == 'The pointer is at (640, 400).'
         assert screenshot == SCREENSHOT
 
+    async def test_a_screenshot_before_the_last_action_comes_back_where_it_was_taken(self) -> None:
+        taken: list[int] = []
+
+        class Counted(ScreenBackend):
+            async def screenshot(self) -> bytes:
+                # How many actions had run when the screen was captured.
+                taken.append(len(self.screens.actions))
+                return await super().screenshot()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return Counted(self, ref)
+
+        provider = Provider()
+        model = _scripted([{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}, {'type': 'screenshot'}])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        # The first is captured before the click; the last action's is the screenshot the call ends with.
+        assert tool_return.content_items() == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT, SCREENSHOT]
+        assert taken == [0, 1]
+
     @pytest.mark.parametrize(
         'region,zoomed_size',
         [
@@ -397,53 +418,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert isinstance(zoomed, BinaryImage)
         assert struct.unpack('>II', zoomed.data[16:24]) == zoomed_size
         assert pointer == 'The pointer is at (500, 500).'
-
-    @pytest.mark.parametrize('hook', [pytest.param(False, id='alone'), pytest.param(True, id='also-asked-by-a-hook')])
-    async def test_a_call_its_provider_flagged_waits_for_approval(self, hook: bool) -> None:
-        provider = ScreenProvider()
-        # A hook that also asks for approval while validating the call leads to one approval, not two.
-        asks = Hooks[Any]()
-
-        @asks.on.after_tool_validate
-        async def ask(
-            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
-        ) -> ValidatedToolArgs:
-            if not ctx.tool_call_approved:
-                raise ApprovalRequired
-            return args
-
-        check = {'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'The page asks for a password.'}
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-                return ModelResponse(parts=[TextPart('done')])
-            call = ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]})
-            # As the OpenAI adapter records a `computer_call`'s pending safety checks.
-            call.provider_details = {'safety_checks': [check]}
-            # Text before the call, as models often send.
-            return ModelResponse(parts=[TextPart('Clicking.'), call])
-
-        agent = Agent(
-            FunctionModel(respond),
-            capabilities=[provider.capability(), ComputerUse(), *([asks] if hook else [])],
-            output_type=[str, DeferredToolRequests],
-        )
-        paused = await agent.run('Go.')
-        assert isinstance(paused.output, DeferredToolRequests)
-        (approval,) = paused.output.approvals
-        # What an app shows the person deciding.
-        assert isinstance(approval, ComputerCallPart)
-        assert approval.safety_checks == [
-            SafetyCheck(code='malicious_instructions', message='The page asks for a password.', id='sc_1')
-        ]
-        assert provider.actions == []
-
-        resumed = await agent.run(
-            message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={approval.tool_call_id: True}),
-        )
-        assert resumed.output == 'done'
-        assert provider.actions == [Click(x=1, y=1)]
 
     @pytest.mark.parametrize('native', [True, False])
     async def test_the_computer_tool_definition(self, native: bool) -> None:
@@ -533,16 +507,18 @@ Each call runs a list of actions in order and returns a screenshot of the result
         calls = [part.tool_call_id for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
         assert [event.tool_call_id for event in events] == calls
 
+    @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])
     @pytest.mark.parametrize(
         'workspace',
         [pytest.param([], id='no-workspace'), pytest.param([WorkspaceCapability()], id='no-display')],
     )
-    async def test_a_run_without_a_display_fails_at_its_start(self, workspace: list[AbstractCapability[Any]]) -> None:
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            raise AssertionError('The run sent a model request.')  # pragma: no cover
-
-        # Without the native tool, whose size read before the first request would report it too.
-        agent = Agent(FunctionModel(respond), capabilities=[*workspace, ComputerUse(native=False)])
+    async def test_a_run_without_a_display_fails_before_anything_acts(
+        self, workspace: list[AbstractCapability[Any]], native: bool
+    ) -> None:
+        # The native tool's size read before the first request reports it, or the call's own read.
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}]), capabilities=[*workspace, ComputerUse(native=native)]
+        )
         with pytest.raises(UserError) as error:
             await agent.run('Go.')
         assert error.value.message == (
@@ -991,7 +967,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         provider = ScreenProvider()
         capabilities: list[AbstractCapability[Any]] = [turns.capability]
         # What each run is given as its workspace; `None` lets the provider's capability supply it.
-        workspaces: list[Any] = [None, None]
+        workspaces: list[ScreenBackend | WorkspaceRef | None] = [None, None]
         if shared.startswith('display-object'):
             screen = turns.backend(provider, None)
 
@@ -1000,11 +976,12 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 def display(self) -> ScreenBackend:
                     return screen
 
-            workspaces = [OnTheScreen(provider, None), OnTheScreen(provider, None)]  # a backend each
+            backends = [OnTheScreen(provider, None), OnTheScreen(provider, None)]  # a backend each
             if shared == 'display-object-from-two-environments':
-                for workspace in workspaces:
-                    await workspace.display_size()  # creates its own environment, with a ref of its own
-                assert workspaces[0].ref != workspaces[1].ref
+                for backend in backends:
+                    await backend.display_size()  # creates its own environment, with a ref of its own
+                assert backends[0].ref != backends[1].ref
+            workspaces = [*backends]
         else:  # one ref
 
             class Provider(ScreenProvider):
@@ -1169,173 +1146,124 @@ Each call runs a list of actions in order and returns a screenshot of the result
         )
         assert provider.actions == [Click(x=500, y=300)]
 
-    @pytest.mark.parametrize(
-        'actions, message',
-        [
-            pytest.param(
-                [{'type': 'mouse_down'}, {'type': 'move', 'x': 5, 'y': 5}],
-                'This call presses the left mouse button without releasing it, so no action ran. Release every '
-                'button you press with `mouse_up` in the same call.',
-                id='pressed',
-            ),
-            pytest.param(
-                [{'type': 'move', 'x': 5, 'y': 5}, {'type': 'mouse_up', 'button': 'right'}],
-                'Action 2 (mouse_up) releases the right button, which this call did not press, so no action ran.',
-                id='released',
-            ),
-        ],
-    )
-    async def test_a_call_that_does_not_release_what_it_presses_is_refused_before_anything_runs(
-        self, actions: list[dict[str, Any]], message: str
+    async def test_a_button_stays_pressed_across_calls_until_mouse_up(
+        self, durability: list[AbstractCapability[Any]]
     ) -> None:
-        provider = ScreenProvider()
-        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse()])
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-
-        assert tool_return.outcome == 'failed'
-        assert tool_return.content == message
-        assert provider.actions == []
-
-    async def test_actions_have_no_amount_limits_by_default(self) -> None:
-        provider = ScreenProvider()
-        actions = [{'type': 'type', 'text': 'a' * 10_000}, {'type': 'keypress', 'keys': ['a'], 'repeat': 1_000}]
-        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse()])
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-
-        assert tool_return.outcome == 'success'
-        assert provider.actions == [TypeText(text='a' * 10_000), PressKeys(keys=('a',), repeat=1_000)]
-
-    async def test_a_call_at_an_action_limit_runs(self) -> None:
+        # Claude's earlier computer tools press, move and release in separate calls.
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'type', 'text': 'abc'}]),
-            capabilities=[provider.capability(), ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=3))],
+            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}], [{'type': 'mouse_up'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), *durability],
+        )
+        returns = _returns((await agent.run('Go.')).all_messages())
+
+        assert [tool_return.content for tool_return in returns] == [
+            ['Ran 1 action. The left mouse button is still pressed. Screenshot attached (1280x800).', SCREENSHOT],
+            ['Ran 1 action. The left mouse button is still pressed. Screenshot attached (1280x800).', SCREENSHOT],
+            ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT],
+        ]
+        assert provider.actions == [MouseDown(), MoveMouse(x=5, y=5), MouseUp()]
+
+    async def test_a_mouse_up_with_nothing_pressed_runs(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_up', 'button': 'right'}]), capabilities=[provider.capability(), ComputerUse()]
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'success'
-        assert provider.actions == [TypeText(text='abc')]
+        assert provider.actions == [MouseUp(button='right')]
 
-    @pytest.mark.parametrize(
-        'limits, action, message',
-        [
-            pytest.param(
-                ComputerUseActionLimits(max_wait_seconds=5),
-                {'type': 'wait', 'seconds': 7.5},
-                'Action 2 (wait) asks for 7.5 seconds, more than the 5 this agent allows (`max_wait_seconds`), so no '
-                'action ran.',
-                id='wait',
-            ),
-            pytest.param(
-                ComputerUseActionLimits(max_hold_seconds=1),
-                {'type': 'hold_key', 'keys': ['shift'], 'seconds': 2},
-                'Action 2 (hold_key) asks for 2 seconds, more than the 1 this agent allows (`max_hold_seconds`), so no '
-                'action ran.',
-                id='hold',
-            ),
-            pytest.param(
-                ComputerUseActionLimits(max_typed_chars=1_000),
-                {'type': 'type', 'text': 'a' * 1_001},
-                'Action 2 (type) asks for 1,001 characters, more than the 1,000 this agent allows (`max_typed_chars`), '
-                'so no action ran.',
-                id='type',
-            ),
-            pytest.param(
-                ComputerUseActionLimits(max_key_repeat=10),
-                {'type': 'keypress', 'keys': ['a'], 'repeat': 11},
-                'Action 2 (keypress) asks for 11 repeats, more than the 10 this agent allows (`max_key_repeat`), so no '
-                'action ran.',
-                id='repeat',
-            ),
-            pytest.param(
-                ComputerUseActionLimits(max_scroll_amount=5),
-                {'type': 'scroll', 'direction': 'down', 'amount': 6},
-                'Action 2 (scroll) asks for 6 scroll clicks, more than the 5 this agent allows (`max_scroll_amount`), '
-                'so no action ran.',
-                id='scroll',
-            ),
-            pytest.param(
-                ComputerUseActionLimits(max_drag_points=2),
-                {'type': 'drag', 'path': [{'x': 1, 'y': 1}, {'x': 2, 'y': 2}, {'x': 3, 'y': 3}]},
-                'Action 2 (drag) asks for 3 points, more than the 2 this agent allows (`max_drag_points`), so no action '
-                'ran.',
-                id='drag',
-            ),
-        ],
-    )
-    async def test_a_call_over_an_action_limit_is_refused_before_anything_runs(
-        self, limits: ComputerUseActionLimits, action: dict[str, Any], message: str
+    async def test_the_end_of_a_run_releases_the_buttons_it_still_holds(
+        self, durability: list[AbstractCapability[Any]]
     ) -> None:
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'move', 'x': 5, 'y': 5}, action]),
-            capabilities=[provider.capability(), ComputerUse(action_limits=limits)],
+            _scripted([{'type': 'mouse_down'}, {'type': 'mouse_down', 'button': 'right'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), *durability],
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
-        assert tool_return.outcome == 'failed'
-        assert tool_return.content == message
-        assert provider.actions == []
+        assert tool_return.content == [
+            'Ran 2 actions. The left and right mouse buttons are still pressed. Screenshot attached (1280x800).',
+            SCREENSHOT,
+        ]
+        assert provider.actions == [MouseDown(), MouseDown(button='right'), MouseUp(), MouseUp(button='right')]
 
-    def test_action_limits_load_from_an_agent_spec(self) -> None:
-        spec = {'model': 'test', 'capabilities': [{'ComputerUse': {'action_limits': {'max_wait_seconds': 60}}}]}
-        agent = Agent.from_spec(spec, custom_capability_types=[ComputerUse])
-        [computer_use] = [c for c in agent.root_capability.capabilities if isinstance(c, ComputerUse)]
-        assert computer_use.action_limits == ComputerUseActionLimits(max_wait_seconds=60)
+    async def test_a_run_that_fails_or_is_cancelled_releases_the_buttons_it_holds(self) -> None:
+        provider = ScreenProvider()
+        holding = anyio.Event()
 
-    def test_action_limits_refuse_unknown_names(self) -> None:
-        with pytest.raises(ValidationError) as error:
-            ComputerUseActionLimits(**{'max_wait': 60})
-        assert [(e['type'], e['loc']) for e in error.value.errors()] == [('unexpected_keyword_argument', ('max_wait',))]
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
+            raise RuntimeError('the model failed')
 
-    @pytest.mark.parametrize(
-        'name',
-        [
-            'max_wait_seconds',
-            'max_hold_seconds',
-            'max_typed_chars',
-            'max_key_repeat',
-            'max_scroll_amount',
-            'max_drag_points',
-        ],
-    )
-    def test_action_limits_refuse_values_that_are_not_positive(self, name: str) -> None:
-        with pytest.raises(ValidationError) as error:
-            ComputerUseActionLimits(**{name: 0})
-        assert [(e['type'], e['loc']) for e in error.value.errors()] == [('greater_than', (name,))]
+        agent = Agent(FunctionModel(respond), capabilities=[provider.capability(), ComputerUse()])
+        with pytest.raises(RuntimeError, match='the model failed'):
+            await agent.run('Go.')
+        assert provider.actions == [MouseDown(), MouseUp()]
 
-    async def test_two_computer_uses_keep_the_smaller_of_each_limit(self) -> None:
+        async def hold_then_hang(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
+            holding.set()
+            await anyio.sleep_forever()
+            raise AssertionError  # pragma: no cover
+
+        provider.actions.clear()
+        agent = Agent(FunctionModel(hold_then_hang), capabilities=[provider.capability(), ComputerUse()])
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(agent.run, 'Go.')
+            with anyio.fail_after(READY_TIMEOUT):
+                await holding.wait()
+            tasks.cancel_scope.cancel()
+        assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
+        self, durability: list[AbstractCapability[Any]]
+    ) -> None:
         provider = ScreenProvider()
         agent = Agent(
-            _scripted([{'type': 'type', 'text': 'four'}]),
-            capabilities=[
-                provider.capability(),
-                # Each smaller limit on a different side, so neither the first nor the last capability wins outright.
-                ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=3, max_wait_seconds=10)),
-                ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=5, max_wait_seconds=5)),
-            ],
+            _scripted([{'type': 'mouse_down'}, {'type': 'click', 'x': 5000, 'y': 1}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), *durability],
         )
-        [computer_use] = [c for c in agent.root_capability.capabilities if isinstance(c, ComputerUse)]
-        assert computer_use.action_limits == ComputerUseActionLimits(max_typed_chars=3, max_wait_seconds=5)
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
-        assert tool_return.content == (
-            'Action 1 (type) asks for 4 characters, more than the 3 this agent allows (`max_typed_chars`), so no '
-            'action ran.'
-        )
         assert provider.actions == []
 
-    async def test_combining_leaves_a_shared_computer_use_unchanged(self) -> None:
-        shared = ComputerUse()
-        provider = ScreenProvider()
-        agent = Agent(_scripted([{'type': 'type', 'text': 'four'}]), capabilities=[provider.capability(), shared])
-        Agent('test', capabilities=[ComputerUse(action_limits=ComputerUseActionLimits(max_typed_chars=3)), shared])
+    async def test_an_environment_gone_at_the_end_of_a_run_leaves_its_result(self) -> None:
+        class LostOnRelease(ScreenBackend):
+            async def act(self, action: DisplayAction) -> None:
+                if isinstance(action, MouseUp):
+                    raise WorkspaceUnavailableError('the environment was deleted')
+                await super().act(action)
 
-        assert shared.action_limits == ComputerUseActionLimits()
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-        assert tool_return.outcome == 'success'
-        assert provider.actions == [TypeText(text='four')]
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return LostOnRelease(self, ref)
+
+        agent = Agent(_scripted([{'type': 'mouse_down'}]), capabilities=[Provider().capability(), ComputerUse()])
+        assert (await agent.run('Go.')).output == 'done'
+
+    @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
+    async def test_a_deferred_computer_use_releases_the_buttons_its_run_holds(self) -> None:
+        provider = ScreenProvider()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'computer'})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[provider.capability(), ComputerUse(defer_loading=True)])
+        await agent.run('Go.')
+        assert provider.actions == [MouseDown(), MouseUp()]
 
     async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
         provider = ScreenProvider()
@@ -1589,5 +1517,5 @@ async def test_gemini_clicks_on_target_through_its_grid(
     clicks = [action for action in screen.actions if isinstance(action, Click)]
     assert len(clicks) == 1
     left, top, right, bottom = RED_SQUARE
-    assert clicks[0].x is not None and left <= clicks[0].x <= right
-    assert clicks[0].y is not None and top <= clicks[0].y <= bottom
+    assert clicks[0].x is not None and left <= clicks[0].x < right
+    assert clicks[0].y is not None and top <= clicks[0].y < bottom

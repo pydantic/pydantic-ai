@@ -599,21 +599,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case _:
                 pass
 
-    def _computer_call_id(self, item: responses.ResponseComputerToolCall) -> str:
-        """The call's ID, stored as `_map_function_call_done` stores a function call's."""
-        return stored_tool_call_id(
+    def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
+        # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
+        # call starts complete here and keeps its place among the other parts.
+        # The ID is stored as `_map_function_call_done` stores a function call's.
+        call_id = stored_tool_call_id(
             item.call_id,
             response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
             provider_response_id=self.provider_response_id,
             timestamp=self.timestamp,
         )
-
-    def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
-        # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
-        # call starts complete here and keeps its place among the other parts.
-        if call := map_computer_call(
-            item, self.model_request_parameters, self._computer_call_id(item), self.provider_name
-        ):
+        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
             yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(

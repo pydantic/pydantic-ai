@@ -51,6 +51,9 @@ To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-w
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the agent can take screenshots but not act.
 
+A `screenshot` action before a call's last action returns the screen at that point, besides the screenshot the
+call ends with.
+
 ## What the model is told
 
 The instructions tell the model that the screen belongs to the computer its shell and file tools run on, so a program
@@ -64,9 +67,10 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- Claude 4 and later get Anthropic's own computer use tool through `AnthropicModel`, and the function tool
-  through other APIs such as Bedrock Converse; see [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
-- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
+- Claude Haiku 4.5, Opus 4.5, Sonnet 4.6 and later get Anthropic's own computer use tool through `AnthropicModel`,
+  and the function tool through other APIs such as Bedrock Converse; see
+  [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
+- GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
@@ -85,7 +89,6 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 | Setting | Default | What it does |
 |---|---|---|
 | `settle_seconds` | `0` | Wait this long after acting before the screenshot. Set it when screenshots show pages still loading or animating. |
-| `action_limits` | no limits | The most one action may ask for, as a `ComputerUseActionLimits`: `max_wait_seconds`, `max_hold_seconds`, `max_typed_chars`, `max_key_repeat`, `max_scroll_amount` and `max_drag_points`. A call over a limit is refused before any of its actions run, and the model is told which limit it went over. Two `ComputerUse` on one agent keep the smaller value of each limit. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a `ComputerTool` that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
 `ComputerUse` turns on [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/), since every request resends the screenshots. Set
@@ -93,45 +96,8 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
 ## Approving calls
 
-`ComputerUse` runs every call without asking, except one OpenAI flagged.
-
-OpenAI can attach safety checks to a call, such as `malicious_instructions` when the screen seems to carry instructions
-that could hijack the model. OpenAI asks that a person confirm each flagged call, so it waits for approval like any
-[deferred tool](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) call. Its `ComputerCallPart` lists the
-checks in `safety_checks`, each a
-[`SafetyCheck`](https://pydantic.dev/docs/ai/api/pydantic-ai/computer_use/#pydantic_ai.computer_use.SafetyCheck) with
-OpenAI's `code` and `message`. After an approved call runs, the model tells OpenAI the checks were acknowledged. Give
-the agent a deferred tool handler, or add
-`DeferredToolRequests` to its output types to ask a person; without either, a flagged call ends the run with an error.
-
-To decide in code instead, resolve flagged calls with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#resolving-deferred-calls-with-a-handler):
-
-```python {title="computer_use_safety_checks.py"}
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
-from pydantic_ai.capabilities import HandleDeferredToolCalls
-from pydantic_ai.computer_use import ComputerCallPart
-from pydantic_ai_harness import ComputerUse
-
-
-async def review(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
-    approvals: dict[str, bool | ToolDenied] = {}
-    for call in requests.approvals:
-        if isinstance(call, ComputerCallPart) and call.safety_checks:
-            if all(check.code == 'irrelevant_domain' for check in call.safety_checks):
-                approvals[call.tool_call_id] = True
-            else:
-                approvals[call.tool_call_id] = ToolDenied('This page needs a person to check it first.')
-    return requests.build_results(approvals=approvals)
-
-
-agent = Agent(
-    'openai:gpt-5.5',
-    capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=review)],
-)
-```
-
-To ask before every call that does more than look, raise `ApprovalRequired` from a
-[`before_tool_execute` hook](https://pydantic.dev/docs/ai/core-concepts/hooks/):
+`ComputerUse` runs every call without asking. To ask before every call that does more than look, raise
+`ApprovalRequired` from a [`before_tool_execute` hook](https://pydantic.dev/docs/ai/core-concepts/hooks/):
 
 ```python {title="computer_use_ask_before_acting.py"}
 from pydantic_ai import ApprovalRequired
@@ -150,17 +116,24 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
     return args
 ```
 
+The same hook can refuse a call instead, such as one that waits or types more than you allow: [raise `ToolFailed`](https://pydantic.dev/docs/ai/core-concepts/hooks/#triggering-retries-with-modelretry) with a message for the model, and no action runs.
+
 ## Screen size
 
 Some models only take screenshots up to a size, set by `computer_use_screenshot_max_side` and
 `computer_use_screenshot_max_pixels` in their profile:
 
-- Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and 3.6 megapixels.
-- Other Claude 4 models and Claude Mythos Preview: 1568 pixels and about 1.15 megapixels.
-- GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
+- Claude Opus 4.7: 2576 pixels on the longer side and 3.6 megapixels.
+- Claude Opus 4.5 and 4.6, Sonnet 4.6 and Haiku 4.5: 1568 pixels and about 1.15 megapixels.
+
+Their computer use tools scale a larger screenshot down, and Claude then clicks in the smaller image's pixels.
 
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
 largest size that fits. A 1280x800 screen fits every model.
+
+Claude Opus 4.8 and the Claude 5 models refuse a screenshot larger than 2576 pixels on the longer side or 4784 image
+tokens, and the run stops with Anthropic's error. GPT-5.4 and GPT-5.5 take any size, but click less accurately above
+2560x1440 (measured).
 
 ## When something goes wrong
 
@@ -168,7 +141,7 @@ largest size that fits. A 1280x800 screen fits every model.
 - A position outside the screen fails the whole call before anything runs.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A call releases every mouse button it presses with `mouse_down`, so the next call, perhaps another agent's, starts with none pressed. A call that doesn't is refused before any action runs, and a button pressed by a call that fails is released. If that release fails too, the call fails saying the button may still be held.
+- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run, whether it finishes, fails or is cancelled. If a release after a failed action fails too, the call fails saying the button may still be held.
 
 ## Watching a run
 
@@ -191,7 +164,7 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
 - Screenshots are the main cost: about 1,300 input tokens each at 1280x800, resent with every request. Prompt caching
   cuts the resends to about a tenth.
 - Every request carries every earlier screenshot, so a long run reaches the provider's limits: Claude refuses a
-  request with more than 100 images on its 200k-context models, and Gemini one over 20 MB. `ComputerUse` doesn't drop
+  request with more than 100 images on its 200k-context models. `ComputerUse` doesn't drop
   old screenshots, and [`ClearToolResults`](../compaction/) leaves `computer` results alone.
 - Each call is one model request, so long tasks can hit the default [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50.
   Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits).
@@ -253,8 +226,6 @@ assert isinstance(MyDisplay(), Display)
 ## API reference
 
 ::: pydantic_ai_harness.computer_use.ComputerUse
-
-::: pydantic_ai_harness.computer_use.ComputerUseActionLimits
 
 ::: pydantic_ai_harness.computer_use.ActionsPerformedEvent
 
