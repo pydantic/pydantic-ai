@@ -858,38 +858,57 @@ methods: `put`, `get`, `exists`, `public_url`, `get_metadata`) and pass it via
 
 ## Moving sessions to a `ConversationStore`
 
-A run's latest `complete` snapshot holds the history it continued plus what the
-run added, so the newest run of a conversation that has one holds the
-conversation up to that point. Save it to a `ConversationStore` once per
-conversation, then load and save around each run as
+Save each session to a `ConversationStore` once, then load and save around each
+run as
 [Using a conversation store](https://pydantic.dev/docs/ai/core-concepts/persistence/#using-a-conversation-store)
-shows:
+shows. Where a session's history lives decides what to copy:
+
+- If you saved [conversation heads](#conversation-heads-and-background-names)
+  with `SqliteConversationStore`, each head is the conversation, including
+  edits between runs such as compaction. `move_heads` copies every head.
+- Otherwise, a run's latest `complete` snapshot holds the history it continued
+  plus what the run added, so the newest run of a conversation that has one
+  holds the conversation up to that point. Call `move_conversation` for each ID
+  your application passed as `conversation_id=` for a session. `list_runs()`
+  lists every run, but core gives each run a fresh conversation ID when none is
+  passed, so one-shot runs and delegates each have one of their own.
 
 ```python
 from pydantic_ai import Conversation
-from pydantic_ai.conversation_store import ConversationStore
+from pydantic_ai.conversation_store import ConversationConflict, ConversationStore
 from pydantic_ai_harness.step_persistence import StepStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+
+
+async def save_once(conversations: ConversationStore, conversation: Conversation) -> None:
+    try:
+        await conversations.save(conversation)
+    except ConversationConflict:
+        pass  # moved by an earlier pass
 
 
 async def move_conversation(steps: StepStore, conversations: ConversationStore, conversation_id: str) -> None:
     for run in reversed(await steps.list_runs(conversation_id=conversation_id)):
         if snapshot := await steps.latest_snapshot(run_id=run.run_id):
-            await conversations.save(Conversation(messages=snapshot.messages, conversation_id=conversation_id))
+            await save_once(conversations, Conversation(messages=snapshot.messages, conversation_id=conversation_id))
             return
 
 
-async def move_all(steps: StepStore, conversations: ConversationStore) -> None:
-    for conversation_id in {run.conversation_id for run in await steps.list_runs() if run.conversation_id}:
-        await move_conversation(steps, conversations, conversation_id)
+async def move_heads(heads: SqliteConversationStore, conversations: ConversationStore) -> None:
+    offset = 0
+    while page := await heads.listing(offset=offset):
+        for summary in page:
+            saved = await heads.get(conversation_id=summary.id)
+            await save_once(conversations, Conversation(messages=saved.messages, conversation_id=summary.id))
+        offset += len(page)
 ```
 
 - The moved conversation starts with empty `usage` and no
-  `deferred_tool_requests`, since snapshots don't record them.
-- `save` raises `ConversationConflict` for a conversation the store already
-  has, so a second pass doesn't duplicate one. Pass `scope=` to record whose
+  `deferred_tool_requests`, since neither source records them.
+- `save_once` skips a conversation the store already has, so a pass that stops
+  partway can be run again to move the rest, and leaves conversations already
+  moved, or saved since, unchanged. Pass `scope=` to `save` to record whose
   conversation it is.
-- Delegate runs keep their own `conversation_id`, so `move_all` moves their
-  conversations too. Skip runs with a `parent_run_id` to leave them out.
 - Keep `StepPersistence` on the agent if you still need the step-event trail,
   the tool-effect ledger, or
   [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/),
@@ -898,8 +917,12 @@ async def move_all(steps: StepStore, conversations: ConversationStore) -> None:
 ## Conversation heads and background names
 
 `pydantic_ai_harness.step_persistence.conversations` provides
-`SqliteConversationStore`, `ConversationSummary`, and `SavedConversation` for
-multi-turn applications. A conversation head is separate from per-run checkpoints:
+`SqliteConversationStore`, `ConversationSummary`, and `SavedConversation`, the
+local session store behind CLAI's resume browser: alongside the messages it keeps
+CLAI's workspace, title, naming, and busy-process metadata. For conversations in
+an application, use core's `ConversationStore` instead, and see
+[Moving sessions to a `ConversationStore`](#moving-sessions-to-a-conversationstore)
+to copy heads already saved here. A conversation head is separate from per-run checkpoints:
 it includes accepted prompts and between-run edits such as compaction. Do not
 reconstruct it by concatenating overlapping run snapshots.
 

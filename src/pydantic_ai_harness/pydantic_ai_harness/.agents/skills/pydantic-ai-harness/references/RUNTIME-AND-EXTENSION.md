@@ -53,8 +53,9 @@ You continue a run by passing a snapshot's messages to `Agent.run(message_histor
 
 It is not the recommended session store: to store conversations, use core's `ConversationStore`
 (`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
-already stored with `StepPersistence`, save each conversation's newest `complete` snapshot as a
-`Conversation` (see "Moving sessions to a `ConversationStore`" on the Step Persistence page).
+already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has
+(see "Moving sessions to a `ConversationStore`" on the Step Persistence page).
 
 ```python
 import asyncio
