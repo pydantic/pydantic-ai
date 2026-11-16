@@ -28,6 +28,8 @@ from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBack
 from .._docs_examples import python_blocks
 from .fake_opensandbox import FakeOpenSandbox
 
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
+
 
 def _call_pwd_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     returned = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]

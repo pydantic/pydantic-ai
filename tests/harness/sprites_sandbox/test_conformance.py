@@ -10,6 +10,7 @@ filesystem, reattach, and destroy rules all run here.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
@@ -42,6 +43,7 @@ async def _teardown(backend: SpritesSandboxBackend) -> None:  # pragma: no cover
     await backend.aclose()
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
 class TestFakeSpritesSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, transport: SpriteTransport) -> SpritesSandboxBackend:

@@ -1784,6 +1784,15 @@ jobs:
       - name: run tests
         run: uv run --package pydantic-clai2 coverage run -m pytest tests/test_windows_workspace.py tests/harness/coder/test_windows.py
 
+      # The remote-sandbox fakes run commands as POSIX processes on the host, so their suites must skip here.
+      - name: run sandbox backend tests
+        run: >-
+          uv run --package pydantic-ai-harness --group dev
+          --extra coder --extra render --extra modal --extra e2b --extra sprites --extra boxd --extra opensandbox --extra daytona
+          coverage run -m pytest
+          tests/harness/boxd_sandbox tests/harness/daytona_sandbox tests/harness/e2b_sandbox tests/harness/modal_sandbox
+          tests/harness/opensandbox_sandbox tests/harness/render_sandbox tests/harness/sprites_sandbox
+
       # See the matching step in the `test` job.
       - name: combine coverage files
         run: uv run --package pydantic-clai2 coverage combine

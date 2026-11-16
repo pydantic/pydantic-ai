@@ -9,6 +9,7 @@ and the shipped file helper in-process.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
 import pytest
@@ -25,6 +26,7 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
 @pytest.mark.subprocess(reason='Commands run under the shipped supervisor in a child interpreter, as on Render')
 class TestFakeRenderSandboxBackend(WorkspaceBackendSuite):
     # Isolated roots give each fake sandbox its own directory, which termination deletes.

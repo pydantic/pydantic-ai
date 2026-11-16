@@ -7,6 +7,7 @@ and is gated like `test_boxd_live.py`.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -25,6 +26,7 @@ async def _delete(backend: WorkspaceBackend) -> None:
     await BoxdSandbox().destroy(backend.ref)
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
 class TestFakeBoxdSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_boxd: FakeBoxd, tmp_path: Path) -> BoxdSandboxBackend:

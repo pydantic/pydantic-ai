@@ -7,6 +7,7 @@ directory. `TestLiveOpenSandboxBackend` runs the same rules against a real serve
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
@@ -19,6 +20,7 @@ from .fake_opensandbox import FakeOpenSandbox
 from .test_opensandbox_live import LIVE_IMAGE, live_capability
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
 class TestFakeOpenSandboxBackend(WorkspaceBackendSuite):
     @pytest.mark.skip(reason='the shell filesystem pages a large file at a command per 64 KiB; the live tier runs it')
     async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None: ...

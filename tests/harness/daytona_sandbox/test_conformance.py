@@ -7,6 +7,7 @@ runs the same rules against a real sandbox and is gated like `test_daytona_live.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -35,6 +36,7 @@ async def _delete_if_live(sandbox_id: str) -> None:  # pragma: no cover - live t
     await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=sandbox_id))
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
 class TestFakeDaytonaSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_daytona: FakeDaytona, tmp_path: Path) -> DaytonaSandboxBackend:
