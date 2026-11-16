@@ -1,6 +1,7 @@
 """The task panel's theme roles and available action hints."""
 
 import io
+import sys
 import time
 from datetime import UTC, datetime
 from typing import Literal
@@ -130,7 +131,27 @@ def test_humane_duration_boundaries(seconds: float, expected: str) -> None:
 @pytest.mark.parametrize('days', [30, 31, 365])
 def test_old_duration_shows_the_actual_local_start_date(days: int) -> None:
     start = datetime(2026, 1, 2, 12, tzinfo=UTC).timestamp()
-    assert format_duration(days * 86400, started_at=start) == 'Jan 02'
+    expected = datetime.fromtimestamp(start).strftime('%b %d')
+    assert format_duration(days * 86400, started_at=start) == expected
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='time.tzset is unavailable on Windows')
+@pytest.mark.parametrize(
+    ('timezone', 'start_hour', 'local_day'),
+    [('UTC0', 12, 2), ('UTC-14', 12, 3), ('UTC12', 0, 1)],
+)
+def test_old_duration_uses_the_local_date_across_day_boundaries(
+    monkeypatch: pytest.MonkeyPatch, timezone: str, start_hour: int, local_day: int
+) -> None:
+    start = datetime(2026, 1, 2, start_hour, tzinfo=UTC).timestamp()
+    expected = datetime(2026, 1, local_day).strftime('%b %d')
+    try:
+        with monkeypatch.context() as environment:
+            environment.setenv('TZ', timezone)
+            time.tzset()
+            assert format_duration(30 * 86400, started_at=start) == expected
+    finally:
+        time.tzset()
 
 
 def test_completed_duration_freezes_but_panel_expiry_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
