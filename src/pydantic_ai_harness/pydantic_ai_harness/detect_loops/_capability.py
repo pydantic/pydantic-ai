@@ -546,9 +546,10 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         part = check.parts[index]
         loops: list[DetectedLoop] = []
         every = self.stream_check_every
-        while text:
-            split = every - part.unchecked
-            piece, text = text[:split], text[split:]
+        start = 0
+        while start < len(text):
+            piece = text[start : start + every - part.unchecked]
+            start += len(piece)
             part.text = (part.text + piece)[-part.keep :]
             part.total += len(piece)
             part.unchecked += len(piece)

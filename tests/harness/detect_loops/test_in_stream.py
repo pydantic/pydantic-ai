@@ -7,7 +7,7 @@ import contextlib
 import json
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, SupportsIndex
 
 import anyio
 import pytest
@@ -360,18 +360,46 @@ class TestDetectLoops:
 
         assert result.output == LOOP * 40
 
+    async def test_a_long_part_is_fed_without_copying_its_rest(self):
+        slices: list[int] = []
+
+        class Text(str):
+            def __getitem__(self, key: SupportsIndex | slice, /) -> str:
+                piece = super().__getitem__(key)
+                slices.append(len(piece))
+                return piece
+
+        content = Text(PROGRESS * 20)
+        agent = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content)])), capabilities=[DetectLoops()]
+        )
+
+        await agent.run('Explain')
+
+        assert sum(slices) == len(content)
+        assert max(slices) == 256
+
     async def test_a_pending_parallel_input_guard_decides_before_the_retry(self):
         async def slow_block(prompt: str) -> GuardrailResult:
             await asyncio.sleep(0.05)
             return GuardrailResult.block('Not allowed.')
 
-        script = _script([*(_thinking(LOOP) for _ in range(60)), 'answer'], ['second'])
+        reads: list[str] = []
+        script = _script(
+            [*(_thinking(LOOP) for _ in range(60)), 'answer'], [_args('{"path": "a.txt"}', name='read_file')]
+        )
         agent = Agent(script.model(), capabilities=[DetectLoops(), InputGuardrail(guard=slow_block, parallel=True)])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            reads.append(path)
+            return 'contents'
 
         result = await agent.run('Explain', event_stream_handler=_drain)
 
         assert result.output == 'Not allowed.'
         assert len(script.requests) == 1
+        assert reads == []
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)
