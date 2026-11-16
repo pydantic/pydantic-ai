@@ -40,7 +40,7 @@ from .conftest import try_import
 from .durable_exec.test_durable_exec_compat import JournalDurability
 
 with try_import() as imports_successful:
-    from botocore.awsrequest import AWSResponse, HTTPHeaders
+    from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
 
     # Imported here rather than when the gateway hands a request to an Anthropic model, which is in the event loop.
     from pydantic_ai.models.anthropic import AnthropicModel as AnthropicModel
@@ -54,6 +54,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.gateway import (
         _accepts_http_client,  # pyright: ignore[reportPrivateUsage]
         _fallback_provider,  # pyright: ignore[reportPrivateUsage]
+        _fallback_target,  # pyright: ignore[reportPrivateUsage]
         gateway_provider,
         normalize_gateway_provider,
     )
@@ -189,6 +190,21 @@ async def test_the_gateway_sends_the_request_to_a_model_in_another_format(allow_
     assert isinstance(response, ModelResponse)
     assert (response.model_name, response.provider_name) == ('claude-sonnet-4-5', 'anthropic')
     assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [('gpt-5', 'error')]
+
+
+@pytest.mark.parametrize(
+    'named, followed',
+    [
+        ('gateway/gemini:gemini-2.5-flash', 'gateway/google:gemini-2.5-flash'),
+        ('gateway/bedrock-converse:amazon.nova-micro-v1:0', 'gateway/bedrock:amazon.nova-micro-v1:0'),
+        ('gateway/openai-chat:qwen-3', 'gateway/openai-chat:qwen-3'),
+    ],
+)
+def test_the_gateways_format_ids_map_to_pydantic_ai_providers(named: str, followed: str):
+    """The format IDs the client advertises can also name the hand-back's target; each maps to a provider name."""
+    headers = {'pydantic-ai-gateway-fallback-model': named, 'pydantic-ai-gateway-fallback-state': 'state-1'}
+
+    assert _fallback_target(headers) == (followed, 'state-1')
 
 
 async def test_a_hand_back_can_name_the_format_by_the_gateways_id_for_it(allow_model_requests: None):
@@ -550,7 +566,7 @@ def converse_responses(
 ) -> Generator[None]:
     """Answer `operation` requests without sending them, recording the headers of the request that would go out."""
 
-    def send(request: Any, **_: Any) -> AWSResponse:
+    def send(request: AWSPreparedRequest, **_: object) -> AWSResponse:
         seen.append(
             {name.lower(): _text(value) for name, value in request.headers.items() if 'fallback' in name.lower()}
         )
