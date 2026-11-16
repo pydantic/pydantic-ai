@@ -120,10 +120,10 @@ class ScriptedDesktop(DockerContainerBackend):
         (
             Drag(path=(Point(x=0, y=0), Point(x=500, y=0), Point(x=500, y=10))),
             # Each leg is moved along in steps of at most 200 pixels, and at least two.
-            ['xdotool', 'mousemove', '0', '0', 'mousedown', '1']
+            ['xdotool', 'mousemove', '0', '0', 'mousedown', '1', 'sleep', '0.1']
             + ['sleep', '0.05', 'mousemove', '166', '0', 'sleep', '0.05', 'mousemove', '333', '0']
             + ['sleep', '0.05', 'mousemove', '500', '0', 'sleep', '0.05', 'mousemove', '500', '5']
-            + ['sleep', '0.05', 'mousemove', '500', '10', 'mouseup', '1'],
+            + ['sleep', '0.05', 'mousemove', '500', '10', 'sleep', '0.1', 'mouseup', '1'],
         ),
         (MouseDown(button='middle'), ['xdotool', 'mousedown', '2']),
         (MouseUp(), ['xdotool', 'mouseup', '1']),
@@ -189,7 +189,7 @@ async def test_x11_computer_splits_a_long_drag_holding_the_button_across_command
     # Pressed in the first, let go in the last: X keeps the button and the key down between commands.
     pressed = ['keydown', 'alt', 'mousemove', '100', '100', 'mousedown', '1']
     assert chains[0][: len(pressed)] == pressed
-    assert chains[-1][-4:] == ['mouseup', '1', 'keyup', 'alt']
+    assert chains[-1][-6:] == ['sleep', '0.1', 'mouseup', '1', 'keyup', 'alt']
     held = [arg for chain in chains for arg in chain if arg in ('mousedown', 'mouseup', 'keydown', 'keyup')]
     assert held == ['keydown', 'mousedown', 'mouseup', 'keyup']
     # Every step of every leg, ending on the last point: each 300-pixel leg is two steps.
@@ -215,8 +215,8 @@ async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() 
         (PressKeys(keys=('a',), repeat=1_000), 162),
         (PressKeys(keys=('ctrl', 'shift', 'a'), repeat=1_000), 186),
         (TypeText(text='a' * 1_000), 162),
-        # 0.05 s before each of the 2 moves.
-        (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.1),
+        # 0.1 s before the first move and after the last, and 0.05 s before each of the 2 moves.
+        (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.3),
         (Click(x=1, y=1), 150),
     ],
 )

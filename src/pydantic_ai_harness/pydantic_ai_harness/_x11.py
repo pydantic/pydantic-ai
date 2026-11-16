@@ -22,7 +22,7 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.workspaces import CommandResult, SupportsCommands, WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import LazyDisplay, png_from_base64
-from pydantic_ai_harness._drag import DRAG_STEP_PAUSE, drag_steps
+from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 DISPLAY = ':1'
@@ -351,13 +351,13 @@ class X11Computer:
                 start = path[0]
                 steps = drag_steps(path)
                 chains = _commands([['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)] for point in steps])
-                chains[0][:0] = [*_move(start.x, start.y), 'mousedown', '1']
-                chains[-1] += ['mouseup', '1']
+                chains[0][:0] = [*_move(start.x, start.y), 'mousedown', '1', 'sleep', str(DRAG_PRESS_PAUSE)]
+                chains[-1] += ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1']
                 await self._xdotool(
                     *chains,
                     hold=modifiers,
                     release=('mouseup', '1'),
-                    pauses=len(steps) * DRAG_STEP_PAUSE,
+                    pauses=2 * DRAG_PRESS_PAUSE + len(steps) * DRAG_STEP_PAUSE,
                 )
             case MouseDown(button=button):
                 await self._xdotool(['mousedown', _BUTTONS[button]])
