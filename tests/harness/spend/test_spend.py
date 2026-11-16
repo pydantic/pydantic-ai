@@ -1348,7 +1348,39 @@ class TestTracing:
 
         span = _only_span(exporter)
         assert span.name == 'spend budget exhausted'
-        assert dict(span.attributes or {}) == {'spend.budget': 'default', 'spend.window': 'day'}
+        assert dict(span.attributes or {}) == {
+            'spend.budget': 'default',
+            'spend.window': 'day',
+            'spend.limit_kind': 'usd',
+            'spend.limit': 0.001,
+            'spend.spent': 1.0,
+        }
+
+    async def test_a_token_refusal_records_the_token_ceiling(self):
+        tracer, exporter = _recording_tracer()
+        guard = SpendLimits(budgets=[Budget(tokens=1000)])
+        await _record(guard)
+
+        with pytest.raises(SpendLimitExceeded):
+            await _gate(guard, ctx=_run_ctx(tracer=tracer))
+
+        attributes = dict(_only_span(exporter).attributes or {})
+        assert (attributes['spend.limit_kind'], attributes['spend.limit'], attributes['spend.spent']) == (
+            'tokens',
+            1000,
+            1100,
+        )
+
+    async def test_both_ceilings_exceeded_records_the_dollar_one(self):
+        """The dollar ceiling is checked first, so it is the one that refuses."""
+        tracer, exporter = _recording_tracer()
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('0.001'), tokens=1000)], price=lambda r: Decimal('1'))
+        await _record(guard)
+
+        with pytest.raises(SpendLimitExceeded, match=r'spent \$1'):
+            await _gate(guard, ctx=_run_ctx(tracer=tracer))
+
+        assert dict(_only_span(exporter).attributes or {})['spend.limit_kind'] == 'usd'
 
     async def test_the_scope_key_is_content(self):
         tracer, exporter = _recording_tracer()
@@ -1362,6 +1394,19 @@ class TestTracing:
             await _gate(guard, ctx=_run_ctx(deps='acme', tracer=tracer, trace_include_content=True))
 
         assert dict(_only_span(exporter).attributes or {})['spend.scope'] == 'acme'
+
+    async def test_the_scope_key_is_left_out_by_default(self):
+        tracer, exporter = _recording_tracer()
+        guard = SpendLimits(
+            budgets=[Budget(usd=Decimal('0.001'), scope=lambda ctx: str(ctx.deps))],
+            price=lambda r: Decimal('1'),
+        )
+        await _record(guard, ctx=_run_ctx(deps='acme'))
+
+        with pytest.raises(SpendLimitExceeded):
+            await _gate(guard, ctx=_run_ctx(deps='acme', tracer=tracer))
+
+        assert 'spend.scope' not in dict(_only_span(exporter).attributes or {})
 
     async def test_accrual_records_nothing(self):
         tracer, exporter = _recording_tracer()
