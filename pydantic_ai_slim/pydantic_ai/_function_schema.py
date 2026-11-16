@@ -98,9 +98,9 @@ class FunctionSchema:
                 core_schema.typed_dict_schema({name: td_field}), self.definitions
             )
             for alias in GenerateJsonSchema().generate(field_schema).get('properties', {}):
-                # A property named after a parameter's Python name keeps naming it when it is also another parameter's
-                # alias. Pydantic accepts that clash and `validator` gives both the value; remapping or rejecting it
-                # would change runs that succeed: https://github.com/pydantic/pydantic-ai/issues/13438
+                # A property named after a parameter's Python name names only that parameter, even when it is another
+                # one's alias and `validator` gives both the value. Pydantic accepts the clash; remapping or rejecting
+                # it would change runs that succeed: https://github.com/pydantic/pydantic-ai/issues/13438
                 if alias not in self.parameter_fields:
                     parameter_names[alias] = name
         return parameter_names
