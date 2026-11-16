@@ -10,7 +10,6 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     check_env_types,
     check_integer,
@@ -82,7 +81,6 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             check_env_types(self.env)
         except TypeError:
             raise UserError('`env` keys and values must be strings.') from None
-        desktop_size(self.desktop)
 
     @classmethod
     def from_spec(

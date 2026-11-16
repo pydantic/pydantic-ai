@@ -115,10 +115,8 @@ _KEYSYMS = {
     '[': 'bracketleft',
     ']': 'bracketright',
 }
-"""Key names whose X keysym is spelled differently; `_PLAIN_KEYSYMS` and ASCII letters and digits are keysyms already."""
-
-_PLAIN_KEYSYMS = frozenset({'ctrl', 'shift', 'alt', 'super', 'space'})
-"""Key names xdotool takes as they are."""
+"""Key names whose X keysym is spelled differently; the other names, such as `ctrl`, and ASCII letters and digits are
+keysyms already."""
 
 _COMMAND_TIMEOUT = 150
 """Seconds one display command may take, on top of the pauses it asks for, such as a `hold_key`'s seconds."""
@@ -138,13 +136,6 @@ parameters."""
 
 _ARGUMENT_BYTES = 6
 """What a transport adds to each argument, such as the `&cmd=` Sprites' exec URL puts before each."""
-
-_RELEASE_MODIFIERS = ('keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R')
-"""Starts every `xdotool` chain that acts: lets go of modifiers an earlier action left down, such as one cancelled
-mid-press, since a stuck Shift types `a` as `A`.
-
-Mouse buttons stay down, since `MouseDown` holds one across actions, and so does Caps Lock, which the model may have
-turned on."""
 
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks; `xdotool`'s default is 100."""
@@ -185,13 +176,10 @@ outlive its call and press keys again after they were released."""
 def _keysym(key: str) -> str:
     if key in _KEYSYMS:
         return _KEYSYMS[key]
-    if len(key) == 1:
+    if len(key) == 1 and not (key.isascii() and key.isalnum()):
         # A character such as `!`: xdotool presses shift when the layout needs it.
-        return key if key.isascii() and key.isalnum() else _character(key)
-    if key in _PLAIN_KEYSYMS:
-        return key
-    # Validation refuses other names already; this also keeps out a name xdotool reads as a command, such as `exec`.
-    raise UnsupportedActionError(f'The display cannot press the key {key!r}.')
+        return _character(key)
+    return key
 
 
 def _character(character: str) -> str:
@@ -321,7 +309,7 @@ class X11Computer:
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
         commands = [['xdotool', *chain] for chain in chains]
-        commands[0][1:1] = [*_RELEASE_MODIFIERS, *keydown]
+        commands[0][1:1] = keydown
         commands[-1] += keyup
         try:
             for command in commands:
@@ -358,11 +346,8 @@ class X11Computer:
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(_DISPLAY_SIZE)).stdout
-        # `[ \t]*` stays on one line; `\s*` would take time growing with the square of the output's length. X screen
-        # sizes are 16-bit, so at most 5 digits: a sandbox can't report one that splits a drag into millions of moves.
-        width, height = (
-            re.search(rf'^[ \t]*{name}: (\d{{1,5}})$', output, re.MULTILINE) for name in ('Width', 'Height')
-        )
+        # `[ \t]*` stays on one line; `\s*` would take time growing with the square of the output's length.
+        width, height = (re.search(rf'^[ \t]*{name}: (\d+)$', output, re.MULTILINE) for name in ('Width', 'Height'))
         if width is None or height is None:
             raise WorkspaceError(f'Unexpected display size output: {output.strip()!r}')
         return int(width[1]), int(height[1])

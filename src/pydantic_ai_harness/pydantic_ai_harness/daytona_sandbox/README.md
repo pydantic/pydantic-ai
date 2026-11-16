@@ -127,7 +127,7 @@ Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 128
 
 Daytona's desktop can't press F13 to F24, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji; the agent is told when it asks. On Daytona's Tier 1 and 2, a sandbox can only reach package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
 
-There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run). A public sandbox's desktop is refused, since anyone could open it through the sandbox's preview link: make it private with `set_public(False)` first.
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run). A public sandbox serves its desktop to anyone with its preview link.
 
 ## Reattach later
 

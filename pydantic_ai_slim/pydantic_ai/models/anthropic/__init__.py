@@ -312,12 +312,12 @@ try:
     from ._computer import (
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
-        RETURNS_OUTPUT,
         ComputerBatch,
         ComputerBlock,
         ComputerReplay,
         NativeComputer,
         computer_replay,
+        returns_output,
     )
     from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
@@ -421,10 +421,6 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# Bedrock gets the earlier beta tool, which Anthropic documents its toolset models also accept there. The other
-# platforms serve the toolset like the Claude API.
-# https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
-_COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1185,12 +1181,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
-        computer_tool_version = _profile.get('anthropic_computer_tool_version')
-        if computer_tool_version == 'computer_toolset_20260801' and isinstance(
-            client, _COMPUTER_BETA_TOOLS_ONLY_CLIENTS
-        ):
-            computer_tool_version = 'computer_20251124'  # Bedrock gets the earlier beta tool
-        if computer_tool_version is None:
+        if _profile.get('anthropic_computer_tool_version') is None:
             supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
@@ -1222,7 +1213,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                anthropic_computer_tool_version=computer_tool_version,
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
                 and not isinstance(client, _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS),
             ),
@@ -2725,8 +2715,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
         code_execution_may_call = _code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
+        native_tools = model_request_parameters.native_tools
+        if self._forces_the_computer(model_settings, model_request_parameters):
+            # Requiring a tool would let Claude call a native one instead, such as web search, and never the computer.
+            native_tools = []
 
-        for tool in model_request_parameters.native_tools:
+        for tool in native_tools:
             match tool:
                 case WebSearchTool():
                     tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, code_execution_may_call))
@@ -3305,10 +3299,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 is_error=False,
             )
 
-        # A `computer` result is read as validated, so content stored as a JSON string keeps its screenshot.
-        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-        items = list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
-        tool_result_content = [await self._map_tool_result_item(item, map_context) for item in items]
+        tool_result_content = [await self._map_tool_result_item(item, map_context) for item in _result_items(part)]
 
         return beta_tool_result_block_param.BetaToolResultBlockParam(
             tool_use_id=_guard_tool_call_id(t=part),
@@ -3395,21 +3386,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # The first call goes back under the part's ID as fitted for the request, as its result does.
             part_id = _guard_tool_call_id(t=part)
             first, *rest = replay['computer_blocks']
-            replay = ComputerReplay(
-                computer_blocks=[ComputerBlock(id=part_id, name=first['name'], input=first['input']), *rest],
-                computer_tool=replay['computer_tool'],
-                computer_action_counts=replay['computer_action_counts'],
-            )
-            toolset: dict[str, Any] = {}
+            replay['computer_blocks'] = [ComputerBlock(id=part_id, name=first['name'], input=first['input']), *rest]
             if sent_computer.is_toolset:
                 map_context.computer_calls[part_id] = replay
-                toolset = {'toolset_name': 'computer'}
-            assistant_content_params.extend(
-                BetaToolUseBlockParam(
-                    id=block['id'], type='tool_use', name=block['name'], input=block['input'], **toolset
-                )
-                for block in replay['computer_blocks']
-            )
+            for block in replay['computer_blocks']:
+                call = BetaToolUseBlockParam(id=block['id'], type='tool_use', name=block['name'], input=block['input'])
+                if sent_computer.is_toolset:
+                    call['toolset_name'] = 'computer'
+                assistant_content_params.append(call)
         else:
             assistant_content_params.append(
                 BetaToolUseBlockParam(
@@ -4092,6 +4076,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         declared = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
         return native_computer if native_computer.name in declared else None
 
+    def _forces_the_computer(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether the request requires a tool call and offers only the Anthropic computer use tool."""
+        native_computer = self._native_computer(model_request_parameters)
+        tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
+        return (
+            native_computer is not None and tool_choice['type'] == 'any' and tool_defs.keys() == {native_computer.name}
+        )
+
     async def _map_computer_results(
         self, part: ToolReturnPart, replay: ComputerReplay, map_context: _MapMessagesContext
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
@@ -4106,12 +4100,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
-            text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
+            refusal = replay.get('computer_refusal') if part.outcome == 'retried' else None
+            text = BetaTextBlockParam(text=refusal or part.model_response_str(wrap_if_error=False), type='text')
             return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
-        # A summary, what each action returned, then the screen, unless something such as a history processor dropped
-        # it or left a note in its place. Read as validated, so content stored as a JSON string still reads as a list.
-        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-        content: list[str | MultiModalContent] = list(typed) if typed is not None else part.content_items(mode='str')
+        content = _result_items(part)
         if not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
             # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: each call gets
             # the summary instead of `OK`, and the last one the rest. With no content at all, each still gets a result.
@@ -4120,14 +4112,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 _computer_result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
                 for index, block in enumerate(blocks)
             ]
-        return await self._map_computer_outcome(replay, metadata, content, part.screenshot, map_context)
+        return await self._map_computer_outcome(replay, metadata, content, map_context)
 
     async def _map_computer_outcome(
         self,
         replay: ComputerReplay,
         metadata: ComputerResult,
         content: list[str | MultiModalContent],
-        screen: BinaryImage | None,
         map_context: _MapMessagesContext,
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """The results of the calls once the outcome says how many of their actions ran."""
@@ -4135,22 +4126,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The number of actions up to and including each call's: each call may have become several, such as keys.
         ends = list(itertools.accumulate(counts))
         performed, error = metadata['performed'], metadata.get('error')
-        # The index of the last call whose actions all ran, or -1.
-        last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
-        summary = content[0] if content and isinstance(content[0], str) else None
-        # What each action returned, such as a zoom's image, in order, then any note left in the screenshot's place.
-        outputs = content[summary is not None : len(content) - (screen is not None)]
+        ran = [index for index, end in enumerate(ends) if end <= performed]
+        returned = sum(returns_output(blocks, index) for index in ran)
+        outputs, screen, note = _split_computer_content(content, returned)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, (block, end, count) in enumerate(zip(blocks, ends, counts)):
             if end <= performed:
-                is_last_ran = index == last_ran
-                results.append(
-                    await self._map_ran_computer_call(block, is_last_ran, screen, summary, outputs, map_context)
-                )
+                output = next(outputs, None) if returns_output(blocks, index) else None
+                is_last_ran = index == ran[-1]
+                results.append(await self._map_ran_computer_call(block, is_last_ran, screen, note, output, map_context))
             elif error is not None and end - count <= performed:
                 # Its first action was reached, so one of its actions is the one that failed.
                 # Only when no call before it ran does it carry the screen.
-                screen_carrier = screen if last_ran == -1 else None
+                screen_carrier = None if ran else screen
                 results.append(await self._map_failed_computer_call(block, error, screen_carrier, map_context))
             else:
                 results.append(
@@ -4163,23 +4151,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         block: ComputerBlock,
         is_last_ran: bool,
         screen: BinaryImage | None,
-        summary: str | None,
-        outputs: list[str | MultiModalContent],
+        note: str,
+        output: str | MultiModalContent | None,
         map_context: _MapMessagesContext,
     ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """`OK` and what the call's action returned, taken from `outputs`; the last call that ran also gets the screen."""
-        returned = (
-            [await self._map_tool_result_item(outputs.pop(0), map_context)]
-            if block['name'] in RETURNS_OUTPUT and outputs
-            else []
-        )
+        """`OK` and what the call's action returned; the last call that ran also gets the screen, or `note` without it."""
+        returned = [await self._map_tool_result_item(output, map_context)] if output is not None else []
         ok = BetaTextBlockParam(text='OK', type='text')
         if not is_last_ran:
             return _computer_result(block, False, ok, *returned)
         if screen is None:
-            # The screenshot was left out of this request: the call gets the summary and any note saying why.
-            text = ' '.join(item for item in (summary, *outputs) if isinstance(item, str)) or 'OK'
-            return _computer_result(block, False, BetaTextBlockParam(text=text, type='text'), *returned)
+            return _computer_result(block, False, BetaTextBlockParam(text=note, type='text'), *returned)
         return _computer_result(block, False, ok, *returned, await self._map_tool_result_item(screen, map_context))
 
     async def _map_failed_computer_call(
@@ -4558,6 +4540,28 @@ def _computer_tool_params(
             'cannot be sent beside a function tool named `computer`. Rename one of them.'
         )
     return [native_computer.tool_param()]
+
+
+def _split_computer_content(
+    content: list[str | MultiModalContent], returned: int
+) -> tuple[Iterator[str | MultiModalContent], BinaryImage | None, str]:
+    """A `computer` result's outputs, its screen, and the text the last call that ran gets without the screen.
+
+    The content is a summary, what the `returned` calls with an output returned, such as a zoom's image, then the
+    screen, unless something such as a history processor dropped it or left a note in its place.
+    """
+    summary = content[0] if content and isinstance(content[0], str) else None
+    start = int(summary is not None)
+    rest = content[start + returned :]
+    screen = rest[0] if rest and isinstance(rest[0], BinaryImage) else None
+    note = ' '.join(item for item in (summary, *rest) if isinstance(item, str)) or 'OK'
+    return iter(content[start : start + returned]), screen, note
+
+
+def _result_items(part: ToolReturnPart) -> list[str | MultiModalContent]:
+    """A result's content items; a `computer` result's as validated, so content stored as a JSON string keeps its images."""
+    typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
+    return list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
 
 
 def _computer_result(

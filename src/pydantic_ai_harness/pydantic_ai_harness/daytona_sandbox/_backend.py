@@ -20,7 +20,6 @@ import anyio
 import anyio.lowlevel
 import anyio.to_thread
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -883,14 +882,6 @@ class DaytonaSandboxBackend(
     async def _start_display(self) -> None:
         """Start the desktop unless it's running."""
         sandbox = await self.get_sandbox()
-        # It may have been made public since it was fetched.
-        await sandbox.refresh_data(request_timeout=_REQUEST_TIMEOUT)
-        if sandbox.public:
-            # Daytona's own desktop viewer runs whenever the desktop does, and a public sandbox serves it without a token.
-            raise UserError(
-                f"The Daytona sandbox {sandbox.id!r} is public, so anyone could open its desktop through the sandbox's "
-                'preview link. Make it private with `await sandbox.set_public(False)` to use its desktop.'
-            )
         computer_use = sandbox.computer_use
         try:
             status = await computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)

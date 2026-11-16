@@ -662,8 +662,6 @@ def test_model_profile_fable_5_1():
                     WebSearchTool,
                 }
             ),
-            'computer_use_screenshot_max_side': 2576,
-            'computer_use_screenshot_max_pixels': 3600000,
         }
     )
 
@@ -779,8 +777,6 @@ def test_model_profile_opus_5():
                     WebSearchTool,
                 }
             ),
-            'computer_use_screenshot_max_side': 2576,
-            'computer_use_screenshot_max_pixels': 3600000,
         }
     )
 
