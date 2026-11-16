@@ -1054,20 +1054,20 @@ class PlaywrightBrowserSession:
         storage_state: StorageState | None = None,
         cdp_url: str | None = None,
         cdp_url_factory: CdpUrlFactory | None = None,
-        cdp_context: Literal['new', 'existing'] = 'new',
+        cdp_context: Literal['new', 'default'] = 'new',
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         launch_timeout_ms: int = DEFAULT_NAVIGATION_TIMEOUT_MS,
     ) -> None:
         if cdp_url is not None and cdp_url_factory is not None:
             raise UserError('Pass either `cdp_url` or `cdp_url_factory`, not both.')
-        if cdp_context not in ('new', 'existing'):
-            raise UserError('`cdp_context` must be `new` or `existing`.')
-        if cdp_context == 'existing':
+        if cdp_context not in ('new', 'default'):
+            raise UserError('`cdp_context` must be `new` or `default`.')
+        if cdp_context == 'default':
             if cdp_url is None and cdp_url_factory is None:
-                raise UserError('`cdp_context="existing"` requires `cdp_url` or `cdp_url_factory`.')
+                raise UserError('`cdp_context="default"` requires `cdp_url` or `cdp_url_factory`.')
             if storage_state is not None:
-                raise UserError('`storage_state` cannot be applied to an existing CDP context.')
+                raise UserError('`storage_state` cannot be applied to the default CDP context.')
         self.policy = policy if policy is not None else EgressPolicy()
         """Egress policy the route guard enforces, and the default for a toolset built on this session."""
         self._headless = headless
@@ -1227,11 +1227,11 @@ class PlaywrightBrowserSession:
                 raise BrowserUnavailableError(self.launch_error)
             if self.page is None:
                 raise BrowserUnavailableError('Browser failed to launch.')  # pragma: no cover
-        if self._cdp_context == 'existing':
-            await self._validate_existing_pages(self.pages)
+        if self._cdp_context == 'default':
+            await self._validate_default_context_pages(self.pages)
         return self.page
 
-    async def _validate_existing_pages(self, pages: Sequence[_Page]) -> None:
+    async def _validate_default_context_pages(self, pages: Sequence[_Page]) -> None:
         """Check loaded documents before listeners or tools can expose their contents.
 
         Request routes cannot check documents loaded before attachment. Recheck
@@ -1246,7 +1246,7 @@ class PlaywrightBrowserSession:
                 document = EgressRequest(url=frame.url, kind='navigation' if index == 0 else 'subframe')
                 if (reason := await self.decide(document)) is not None:
                     raise BrowserUnavailableError(
-                        f'The existing CDP context contains a document blocked by the browser policy '
+                        f'The default CDP context contains a document blocked by the browser policy '
                         f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
                         'or navigate that tab to an allowed URL, then retry.'
                     )
@@ -1283,16 +1283,16 @@ class PlaywrightBrowserSession:
         # Assigned before the context and page are built, so teardown closes Chromium
         # even when a later setup step raises.
         self._browser = browser
-        if self._cdp_context == 'existing':
+        if self._cdp_context == 'default':
             if not browser.contexts:
-                raise BrowserUnavailableError('The CDP browser has no existing context.')
+                raise BrowserUnavailableError('The CDP browser has no default context.')
             context = browser.contexts[0]
             pages = list(context.pages)
             if len(pages) > _MAX_TABS:
                 raise BrowserUnavailableError(
-                    f'The existing CDP context has more than {_MAX_TABS} tabs. Close some first.'
+                    f'The default CDP context has more than {_MAX_TABS} tabs. Close some first.'
                 )
-            await self._validate_existing_pages(pages)
+            await self._validate_default_context_pages(pages)
         else:
             # These creation-time controls cannot be applied to an existing context.
             # Service workers bypass routes; downloads have no tool-level contract.

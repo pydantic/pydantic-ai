@@ -346,8 +346,8 @@ either), `chromium_sandbox=True`, `auto_install_chromium=False`, `storage_state=
 cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium). Set
 `cdp_url_factory` to an async endpoint supplier to create/resume the provider browser only on the
 first browser tool call. Its endpoint is cached per run; the caller owns provider cleanup. Set
-`cdp_context='existing'` to reuse the default context's sign-ins and tabs; the default remains
-`'new'`. Existing mode requires a CDP endpoint and rejects `storage_state`. Loaded tab and frame
+`cdp_context='default'` to reuse the default context's sign-ins and tabs; the default remains
+`'new'`. `'default'` mode requires a CDP endpoint and rejects `storage_state`. Loaded tab and frame
 URLs must pass the egress policy before page tools run. Native session handlers and request guards
 still run; the browser owner controls service workers and downloads.
 

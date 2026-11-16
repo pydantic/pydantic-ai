@@ -238,7 +238,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     `storage_state` and the egress guards apply as they do for a launched
     browser, and the run does not inherit the sessions already open in that
     Chrome. Provider endpoints sometimes carry an auth token in the URL; treat
-    those as secrets. Set `cdp_context='existing'` to opt into the default
+    those as secrets. Set `cdp_context='default'` to opt into the default
     context's existing state instead.
     """
 
@@ -254,10 +254,10 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     Cannot be combined with `cdp_url` or supplied through a serializable spec.
     """
 
-    cdp_context: Literal['new', 'existing'] = 'new'
+    cdp_context: Literal['new', 'default'] = 'new'
     """Create an isolated context, or use the CDP browser's existing default context.
 
-    `existing` requires `cdp_url` or `cdp_url_factory` and excludes `storage_state`.
+    `default` requires `cdp_url` or `cdp_url_factory` and excludes `storage_state`.
     It inherits saved sign-ins and open tabs. Loaded tab and frame URLs must pass
     the egress policy before handlers are attached and before tools read or act
     on a page. Egress guards and native session handlers still apply, but the
@@ -383,7 +383,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         cdp_url: str | None = None,
-        cdp_context: Literal['new', 'existing'] = 'new',
+        cdp_context: Literal['new', 'default'] = 'new',
         id: str | None = 'playwright_browser',
         description: str | None = None,
         defer_loading: bool = False,

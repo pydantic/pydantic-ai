@@ -2107,7 +2107,7 @@ class TestPlaywrightBrowserHooks:
             navigation_timeout_ms=5000,
             auto_install_chromium=True,
             cdp_url='http://localhost:9222',
-            cdp_context='existing',
+            cdp_context='default',
         )
         assert browser.headless is False
         assert browser.allowed_domains == ['x.com']
@@ -2118,7 +2118,7 @@ class TestPlaywrightBrowserHooks:
         assert browser.navigation_timeout_ms == 5000
         assert browser.auto_install_chromium is True
         assert browser.cdp_url == 'http://localhost:9222'
-        assert browser.cdp_context == 'existing'
+        assert browser.cdp_context == 'default'
 
     def test_from_spec_defaults_to_open_egress(self) -> None:
         browser = PlaywrightBrowser[None].from_spec()
@@ -2241,7 +2241,7 @@ class TestPlaywrightBrowserLifecycle:
             'https://blocked.example/?access_token=inherited-secret',
         ],
     )
-    async def test_existing_context_refuses_loaded_documents_before_exposing_them(
+    async def test_default_context_refuses_loaded_documents_before_exposing_them(
         self, monkeypatch: pytest.MonkeyPatch, tool_name: str, location: str, blocked_url: str
     ) -> None:
         page = _FakePage(url=blocked_url if location == 'first_tab' else 'about:blank', body='INHERITED_SECRET')
@@ -2272,7 +2272,7 @@ class TestPlaywrightBrowserLifecycle:
             capabilities=[
                 PlaywrightBrowser(
                     cdp_url='http://localhost:9222',
-                    cdp_context='existing',
+                    cdp_context='default',
                     policy=EgressPolicy(blocked_domains=['blocked.example']),
                 )
             ],
@@ -2286,9 +2286,9 @@ class TestPlaywrightBrowserLifecycle:
         assert browser is not None
         assert all(not existing.closed and not existing.handlers for existing in browser.contexts[0].pages)
 
-    async def test_existing_context_rechecks_inactive_tabs_before_close(self) -> None:
+    async def test_default_context_rechecks_inactive_tabs_before_close(self) -> None:
         page = _FakePage(url='about:blank', body='Allowed content')
-        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='existing')
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default')
         async with session:
             tools = _toolset(page, session=session)
             assert await tools.get_text() == 'Allowed content'
@@ -2297,12 +2297,12 @@ class TestPlaywrightBrowserLifecycle:
             assert 'blocked by the browser policy' in await tools.tabs(action='close', index=0)
             assert not page.closed and not inherited.closed
 
-    async def test_existing_context_preserves_subframe_policy(self) -> None:
+    async def test_default_context_preserves_subframe_policy(self) -> None:
         page = _FakePage(url='https://example.com/', body='Allowed content')
         page.frames.append(_FakeFrameContent(url='https://embed.example.org/', text='Allowed embedded content'))
         session = PlaywrightBrowserSession(
             cdp_url='http://localhost:9222',
-            cdp_context='existing',
+            cdp_context='default',
             policy=EgressPolicy(allowed_domains=['example.com'], block_private_addresses=False),
         )
         async with session:
@@ -2310,7 +2310,7 @@ class TestPlaywrightBrowserLifecycle:
         assert 'Allowed embedded content' in result
 
     @pytest.mark.parametrize('page_count', [0, 2])
-    async def test_existing_cdp_context_keeps_pages_and_native_handlers(
+    async def test_default_cdp_context_keeps_pages_and_native_handlers(
         self, monkeypatch: pytest.MonkeyPatch, page_count: int
     ) -> None:
         page = _FakePage()
@@ -2329,7 +2329,7 @@ class TestPlaywrightBrowserLifecycle:
         monkeypatch.setattr(_FakeChromium, 'connect_over_cdp', populated)
         agent = Agent(
             TestModel(call_tools=['screenshot']),
-            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='existing')],
+            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default')],
         )
         await agent.run('inspect the existing browser')
         chromium = cm.driver.chromium
@@ -2347,21 +2347,21 @@ class TestPlaywrightBrowserLifecycle:
         assert browser.closed
         assert cm.exited
 
-    async def test_existing_cdp_context_does_not_fall_back_to_an_empty_context(
+    async def test_default_cdp_context_does_not_fall_back_to_an_empty_context(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
         agent = Agent(
             TestModel(call_tools=['screenshot']),
-            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='existing')],
+            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default')],
         )
         result = await agent.run('inspect the existing browser')
-        assert 'no existing context' in str(result.all_messages())
+        assert 'no default context' in str(result.all_messages())
         browser = cm.driver.chromium.browser
         assert browser is not None and browser.contexts == [] and browser.closed
         assert cm.exited
 
-    async def test_existing_context_tab_limit_does_not_close_inherited_tabs(
+    async def test_default_context_tab_limit_does_not_close_inherited_tabs(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
@@ -2379,7 +2379,7 @@ class TestPlaywrightBrowserLifecycle:
         monkeypatch.setattr(_FakeChromium, 'connect_over_cdp', populated)
         agent = Agent(
             TestModel(call_tools=['screenshot']),
-            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='existing')],
+            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default')],
         )
         result = await agent.run('inspect the existing browser')
         assert 'more than 8 tabs' in str(result.all_messages())
@@ -2480,9 +2480,10 @@ class TestPlaywrightBrowserLifecycle:
         'kwargs, message',
         [
             ({'cdp_url': 'http://localhost:9222', 'cdp_url_factory': lambda: None}, 'not both'),
-            ({'cdp_context': 'existing'}, 'requires'),
+            ({'cdp_context': 'default'}, 'requires'),
+            ({'cdp_context': 'existing'}, 'must be'),
             ({'cdp_context': 'invalid'}, 'must be'),
-            ({'cdp_url': 'http://localhost:9222', 'cdp_context': 'existing', 'storage_state': {}}, 'storage_state'),
+            ({'cdp_url': 'http://localhost:9222', 'cdp_context': 'default', 'storage_state': {}}, 'storage_state'),
         ],
     )
     def test_cdp_options_reject_ambiguous_configuration(self, kwargs: dict[str, object], message: str) -> None:
