@@ -4157,6 +4157,41 @@ async def test_empty_reasoning_efforts_omits_reasoning_effort(allow_model_reques
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
+@pytest.mark.parametrize(
+    'reasoning_efforts, thinking, expected_reasoning_effort',
+    [
+        pytest.param(frozenset({'none', 'high'}), False, 'none', id='false-none-accepted'),
+        pytest.param(frozenset({'none', 'high'}), 'low', 'high', id='lowest-at-or-above'),
+        pytest.param(frozenset({'low', 'medium'}), 'high', 'medium', id='highest-below'),
+        pytest.param(frozenset[str](), True, None, id='empty-omits'),
+    ],
+)
+async def test_reasoning_efforts_profile_override_stream(
+    allow_model_requests: None,
+    reasoning_efforts: frozenset[MistralReasoningEffort],
+    thinking: ThinkingLevel,
+    expected_reasoning_effort: str | None,
+) -> None:
+    """A user's `profile=` sets `reasoning_effort` in streaming mode as in `request`; `None` expects it omitted.
+
+    A unit test: these effort sets come only from a user `profile=`, which no Mistral model serves to record.
+    """
+    stream = [text_chunk('hello '), text_chunk('world', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel(
+        'mistral-large-4',
+        provider=MistralProvider(mistral_client=cast(Mistral, mock_client)),
+        profile=MistralModelProfile(mistral_reasoning_efforts=reasoning_efforts),
+    )
+    agent = Agent(m)
+
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking=thinking)) as result:
+        text = await result.get_output()
+    assert text == 'hello world'
+    sent = mock_client.chat_completion_kwargs[-1]['reasoning_effort']
+    assert (None if isinstance(sent, MistralUnset) else sent) == expected_reasoning_effort
+
+
 #####################
 ## Prompt cache key / parallel tool calls
 #####################

@@ -257,34 +257,6 @@ _MISTRAL_REASONING_EFFORT_ORDER: tuple[MistralReasoningEffort, ...] = get_args(M
 """Every `reasoning_effort` value, from least to most reasoning."""
 
 
-def _closest_reasoning_effort(
-    thinking: ThinkingLevel, accepted: frozenset[MistralReasoningEffort]
-) -> MistralReasoningEffort | MistralUnset:
-    """Map the unified `thinking` setting to the closest `reasoning_effort` the model accepts.
-
-    `thinking=False` maps to `'none'` if accepted, else the lowest accepted effort.
-    """
-    requested: MistralReasoningEffort
-    if thinking is False:
-        requested = 'none'
-    elif thinking in ('minimal', 'low'):
-        requested = 'low'
-    elif thinking == 'medium':
-        requested = 'medium'
-    # `True` asks for `'high'`, Mistral's recommended default.
-    elif thinking is True or thinking in ('high', 'xhigh', 'max'):
-        requested = 'high'
-    else:
-        assert_never(thinking)
-    order = _MISTRAL_REASONING_EFFORT_ORDER
-    accepted_in_order: list[MistralReasoningEffort] = [effort for effort in order if effort in accepted]
-    # The lowest accepted effort at or above the requested one, else the highest.
-    for effort in accepted_in_order:
-        if order.index(effort) >= order.index(requested):
-            return effort
-    return accepted_in_order[-1] if accepted_in_order else UNSET
-
-
 class MistralModelSettings(ModelSettings, total=False):
     """Settings used for a Mistral model request."""
 
@@ -754,10 +726,38 @@ class MistralModel(Model[Mistral]):
         if thinking is None:
             return UNSET
         if (accepted := self.profile.get('mistral_reasoning_efforts')) is not None:
-            return _closest_reasoning_effort(thinking, accepted)
+            return self._closest_reasoning_effort(thinking, accepted)
         if self.profile.get('thinking_always_enabled', False):
             return UNSET
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
+
+    @staticmethod
+    def _closest_reasoning_effort(
+        thinking: ThinkingLevel, accepted: frozenset[MistralReasoningEffort]
+    ) -> MistralReasoningEffort | MistralUnset:
+        """Map the unified `thinking` setting to the closest `reasoning_effort` the model accepts.
+
+        `thinking=False` maps to `'none'` if accepted, else the lowest accepted effort.
+        """
+        requested: MistralReasoningEffort
+        if thinking is False:
+            requested = 'none'
+        elif thinking in ('minimal', 'low'):
+            requested = 'low'
+        elif thinking == 'medium':
+            requested = 'medium'
+        # `True` asks for `'high'`, Mistral's recommended default.
+        elif thinking is True or thinking in ('high', 'xhigh', 'max'):
+            requested = 'high'
+        else:
+            assert_never(thinking)
+        order = _MISTRAL_REASONING_EFFORT_ORDER
+        accepted_in_order: list[MistralReasoningEffort] = [effort for effort in order if effort in accepted]
+        # The lowest accepted effort at or above the requested one, else the highest.
+        for effort in accepted_in_order:
+            if order.index(effort) >= order.index(requested):
+                return effort
+        return accepted_in_order[-1] if accepted_in_order else UNSET
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
