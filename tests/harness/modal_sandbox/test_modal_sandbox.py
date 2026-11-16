@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 import warnings
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend,
 from .._tool_calls import call_tools
 from .conftest import skip_or_fail_live_tier
 from .fake_modal import FakeModal
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 async def test_client_reaches_create_attach_and_destroy(fake_modal: FakeModal) -> None:
@@ -144,6 +147,7 @@ async def test_backend_attaches_explicit_ref_without_create(fake_modal: FakeModa
     assert not fake_modal.create_kwargs
 
 
+@posix_only
 async def test_attaching_with_a_missing_working_dir_says_what_to_do(fake_modal: FakeModal, tmp_path: Path) -> None:
     fake_modal.host_root = tmp_path
     missing = str(tmp_path / 'srv' / 'app')
@@ -156,6 +160,7 @@ async def test_attaching_with_a_missing_working_dir_says_what_to_do(fake_modal: 
     )
 
 
+@posix_only
 async def test_a_command_exiting_128_in_an_existing_working_dir_is_its_result(
     fake_modal: FakeModal, tmp_path: Path
 ) -> None:
@@ -653,6 +658,7 @@ async def test_agent_with_custom_workspace_tool_does_not_warn(fake_modal: FakeMo
         await agent.run('go')
 
 
+@posix_only
 async def test_coder_tools_run_in_the_sandbox(fake_modal: FakeModal, tmp_path: Path) -> None:
     # The fake's host mode runs the sandbox's commands and file operations under `tmp_path`.
     fake_modal.host_root = tmp_path.resolve()

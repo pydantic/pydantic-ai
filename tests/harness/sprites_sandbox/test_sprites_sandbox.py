@@ -55,6 +55,8 @@ from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBa
 from .conftest import live_token
 from .fake_sprites import FakeExecSocket, SpriteTransport
 
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
+
 
 def context(conversation: str = 'chat') -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage(), conversation_id=conversation, run_id='run')

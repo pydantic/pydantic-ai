@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,10 @@ from pydantic_ai_harness.shell import Shell
 from .._tool_calls import call_tools
 from .fake_boxd import FakeBoxd, wait_until_gone
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
+pytestmark = [
+    pytest.mark.anyio(backends=['asyncio']),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
+]
 
 
 def _ctx() -> RunContext[None]:
