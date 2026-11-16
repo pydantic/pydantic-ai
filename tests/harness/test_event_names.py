@@ -172,3 +172,17 @@ def test_renamed_field(event: CapabilityEvent, old: str, new: str) -> None:
     assert _EVENTS.validate_python(payload) == event
 
     assert not hasattr(event, old)
+
+
+def test_delegation_duration_seconds_payload_still_loads() -> None:
+    event = sub_agents.DelegationFinishedEvent(
+        agent_name='worker', outcome='ok', output='done', truncated=False, usage=None, duration_ms=1500
+    )
+    payload = _EVENTS.dump_python(event, mode='json')
+    assert 'duration_seconds' not in payload
+    assert _EVENTS.validate_python(payload) == event
+
+    assert _EVENTS.validate_python({**payload, 'duration_seconds': 9}) == event
+    del payload['duration_ms']
+    assert _EVENTS.validate_python({**payload, 'duration_seconds': 1.5}) == event
+    assert not hasattr(event, 'duration_seconds')
