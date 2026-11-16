@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Harness 1.0 removes the 0.x deprecation shims (#12997): `pydantic_ai_harness.shell._capability`, Shell.__init__(denied_commands): Parameter kind was changed: positional or keyword -> keyword-only. Each removed path emitted a `HarnessDeprecationWarning` naming its replacement during 0.x. `Shell` and `FileSystem` options are keyword-only so an old positional call fails instead of shifting.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13687"
+}
