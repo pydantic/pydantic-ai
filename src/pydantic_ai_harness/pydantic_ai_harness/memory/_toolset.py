@@ -54,6 +54,7 @@ MAIN_FILENAME = 'MEMORY.md'
 """The main notebook file injected as bounded user-role context."""
 
 _FILENAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}')
+_CRLF_OR_LF_RE = re.compile(r'\r?\n')
 _MAX_CAS_ATTEMPTS = 16
 _MAX_SEARCH_QUERY_CHARS = 1_000
 _MAX_SEARCH_TERMS = 32
@@ -220,6 +221,9 @@ def _apply_write(
         return f'{content.rstrip()}\n', 'created'
     if existing is None:
         raise ModelRetry(f'There is no memory file named {name!r} to edit -- omit `old_text` to create it.')
+    if old_text and old_text not in existing and '\r\n' in existing:
+        # The injected snapshot shows the file's lines joined with `\n`, so match its `\r\n` line endings.
+        old_text, content = (_CRLF_OR_LF_RE.sub('\r\n', text) for text in (old_text, content))
     occurrences = existing.count(old_text) if old_text else 0
     if occurrences == 0:
         raise ModelRetry(f'`old_text` was not found in {name!r} -- call `{read_current}` to see its current content.')
