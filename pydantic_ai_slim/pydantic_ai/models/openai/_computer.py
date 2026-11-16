@@ -9,15 +9,7 @@ from openai.types import responses
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
-from ...computer_use import (
-    _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
-    COMPUTER_KIND,
-    ComputerCallPart,
-    ComputerResult,
-    ComputerReturnPart,
-    SafetyCheck,
-    _safety_checks,  # pyright: ignore[reportPrivateUsage]
-)
+from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart
 from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
 from .. import ModelRequestParameters
 
@@ -221,12 +213,6 @@ def map_computer_call(
         return None
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
-    provider_details: dict[str, Any] = {'computer_call': dumped}
-    # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved. A value that
-    # isn't a list of checks, even a falsy one like `{}` or an explicit `null`, is kept so the call still waits for
-    # approval.
-    if 'pending_safety_checks' in item.model_fields_set and (checks := dumped.get('pending_safety_checks')) != []:
-        provider_details[_SAFETY_CHECKS] = checks
     args: dict[str, Any] | str
     if item.status != 'completed':
         # Cut off or still being generated: like a truncated function call, its arguments don't parse, so none of it
@@ -234,7 +220,7 @@ def map_computer_call(
         args = '{"actions": ['
     else:
         # A call with no actions only asks to look.
-        actions = [action for action, _ in _map_actions(dumped, sent=item.model_fields_set)]
+        actions = [action for action, _ in _map_actions(dumped)]
         args = {'actions': actions or [{'type': 'screenshot'}]}
     return ComputerCallPart(
         tool_name,
@@ -242,27 +228,14 @@ def map_computer_call(
         tool_call_id=tool_call_id,
         id=item.id,
         provider_name=provider_name,
-        provider_details=provider_details,
+        provider_details={'computer_call': dumped},
     )
 
 
-def _map_actions(dumped: dict[str, Any], *, sent: set[str]) -> list[tuple[dict[str, Any], str | None]]:
-    """A `computer_call` item's actions as `computer` tool actions, each with its note on how a pixel scroll runs.
-
-    `sent` names the fields the response had, including those it sent as `null`, which `dumped` leaves out.
-    """
-    given = sent & {'action', 'actions'}
-    if len(given) > 1 or not given <= dumped.keys():
-        raw = None  # As in OpenAI's SDK, a call needs one of the two, not as `null`: none of a malformed call runs.
-    elif 'actions' in dumped:
-        raw = dumped['actions']
-    elif 'action' in dumped:
-        # As in OpenAI's SDK, a single-action call without its safety checklist is refused: its checks may be lost.
-        raw = [dumped['action']] if 'pending_safety_checks' in dumped else None
-    else:
-        raw = []
+def _map_actions(dumped: dict[str, Any]) -> list[tuple[dict[str, Any], str | None]]:
+    """A `computer_call` item's actions as `computer` tool actions, each with its note on how a pixel scroll runs."""
     try:
-        actions = _LIST.validate_python(raw)
+        actions = _LIST.validate_python(dumped.get('actions', []))
     except ValidationError:
         # Not a list, even if it is one action: the call is malformed, so none of it runs.
         actions = [None]
@@ -295,7 +268,7 @@ def _scroll_notes(call: ToolCallPart, result: ComputerResult | None) -> list[str
     """
     if result is None or result.get('changed') or not (stored := stored_computer_call(call)):
         return []
-    notes = [note for _, note in _map_actions(stored, sent=set(stored))]
+    notes = [note for _, note in _map_actions(stored)]
     return [note for note in notes[: result['performed']] if note]
 
 
@@ -313,8 +286,7 @@ def map_computer_call_output(
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
 
-    The API needs a screenshot in every output, so a result without one sends a blank image instead. The call's
-    safety checks are acknowledged only when it ran, which means it was approved.
+    The API needs a screenshot in every output, so a result without one sends a blank image instead.
     """
     # A failed or denied call is a base part, without a screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
@@ -330,10 +302,6 @@ def map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    # Read from the stored details, as the approval gate does: a restored call whose arguments didn't validate is a
-    # plain `ToolCallPart`, and may still have run with corrected arguments.
-    if computer_return and (checks := _safety_checks(call.provider_details)):
-        output['acknowledged_safety_checks'] = _acknowledged(checks)
     items: list[responses.ResponseInputItemParam] = [output]
     # A successful result is read as validated content, so content stored as a JSON string reads the same as a list.
     content = (computer_return.typed_content if computer_return else None) or part.content_items()
@@ -350,17 +318,6 @@ def map_computer_call_output(
     ):
         items.append(_summary_message(part, content, extra_images, scroll_notes))
     return items
-
-
-def _acknowledged(
-    checks: list[SafetyCheck],
-) -> list[responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck]:
-    return [
-        responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
-            id=check.id or '', code=check.code, message=check.message
-        )
-        for check in checks
-    ]
 
 
 def _summary_message(
