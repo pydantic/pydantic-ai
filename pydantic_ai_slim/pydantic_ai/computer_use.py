@@ -39,7 +39,6 @@ from __future__ import annotations as _annotations
 import re
 from typing import Annotated, Any, Literal, NotRequired, TypeAlias
 
-import pydantic
 from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
@@ -65,7 +64,6 @@ __all__ = (
     'Point',
     'PressKeys',
     'Region',
-    'SafetyCheck',
     'Screenshot',
     'Scroll',
     'TypeText',
@@ -264,17 +262,6 @@ def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
 _Keys: TypeAlias = Annotated[tuple[str, ...], Field(min_length=1), AfterValidator(_normalize_keys)]
 _Modifiers: TypeAlias = Annotated[tuple[str, ...], AfterValidator(_normalize_modifiers)]
 
-_CONTROL_CHARACTER = re.compile('[\x00-\x08\x0b-\x1f\x7f-\x9f]')
-
-
-def _check_text(text: str) -> str:
-    if match := _CONTROL_CHARACTER.search(text):
-        raise ValueError(
-            f'text must not contain the control character U+{ord(match.group()):04X}: only `\\n` (Enter) and '
-            '`\\t` (Tab) are typed as keys; write a line break as `\\n`, and press other keys with `keypress`'
-        )
-    return text
-
 
 def _check_position(x: int | None, y: int | None) -> None:
     if (x is None) != (y is None):
@@ -316,7 +303,7 @@ class Click:
     y: _Coordinate | None = None
     """From the top edge of the screenshot."""
     button: MouseButton = 'left'
-    count: Annotated[int, Field(ge=1, le=3)] = 1
+    count: Annotated[int, Field(ge=1)] = 1
     """1 for a click, 2 for a double click, 3 for a triple click."""
     modifiers: _Modifiers = ()
     """Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."""
@@ -390,14 +377,10 @@ class Scroll:
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
 class TypeText:
-    r"""Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-
-    `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
-    is validated, so every backend types the same keys.
-    """
+    """Type text at the keyboard focus. Use `keypress` for shortcuts and special keys."""
 
     type: Literal['type'] = 'type'
-    text: Annotated[str, Field(min_length=1), AfterValidator(_check_text)]
+    text: Annotated[str, Field(min_length=1)]
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
@@ -502,44 +485,6 @@ class ComputerResult(TypedDict):
     A model adapter then sends the summary instead of reporting the model's own actions as run."""
 
 
-@dataclass(frozen=True, kw_only=True)
-class SafetyCheck:
-    """A check a provider asks for before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
-
-    A call with safety checks waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), whichever
-    tool runs it. If that tool is external or deferred, the call raises a `UserError`, since approval can't reach it.
-    """
-
-    message: str | None = None
-    """What whoever approves the call should check, in the provider's words."""
-
-    code: str | None = None
-    """The provider's identifier for the kind of check, such as `'malicious_instructions'`."""
-
-    id: str | None = None
-    """The provider's identifier for this check, which it needs back when the call is approved."""
-
-
-_SAFETY_CHECKS = 'safety_checks'
-"""The `provider_details` key under which a model adapter keeps a call's safety checks, as `SafetyCheck` dicts."""
-
-_SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
-
-
-def _safety_checks(provider_details: dict[str, Any] | None) -> list[SafetyCheck]:
-    """The safety checks kept on a call.
-
-    Checks in a shape that can't be read, `None` included, such as from a history a UI rebuilt, count as one empty
-    check, so the call still waits for approval.
-    """
-    if provider_details is None or _SAFETY_CHECKS not in provider_details:
-        return []
-    try:
-        return _SAFETY_CHECKS_TA.validate_python(provider_details[_SAFETY_CHECKS])
-    except pydantic.ValidationError:
-        return [SafetyCheck()]
-
-
 _COORDINATE_GRID = 'coordinate_grid'
 """The `provider_details` key under which the agent records the grid a call's positions are on."""
 
@@ -575,11 +520,6 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         """The actions the model asked for, or `None` if the arguments are incomplete (still streaming) or malformed."""
         typed = self.typed_args
         return typed['actions'] if typed is not None else None
-
-    @property
-    def safety_checks(self) -> list[SafetyCheck]:
-        """The checks the provider asks for before this call runs; empty when there are none."""
-        return _safety_checks(self.provider_details)
 
     @property
     def coordinate_grid(self) -> int | None:

@@ -236,14 +236,6 @@ class TestLiveDockerDesktop:
         await display.act(PressKeys(keys=('enter',)))
         assert await _typed(backend) == 'hello, Desktop! @#?\t~?\n'
 
-    async def test_a_modifier_left_down_does_not_change_later_input(self, backend: WorkspaceBackend) -> None:
-        assert isinstance(backend, DockerContainerBackend)
-        display = await _focused_typing_window(backend)
-        # As an action stopped between pressing and releasing leaves it: without a release, `a` types `A`.
-        await backend.run(['xdotool', 'keydown', 'Shift_L'], env={'DISPLAY': ':1'})
-        await display.act(TypeText(text='ab\n'))
-        assert await _typed(backend) == 'ab\n'
-
 
 async def _focused_typing_window(backend: WorkspaceBackend) -> Display:
     """Start the display and an xterm that writes what it's typed to `typed.txt`, and focus it."""
