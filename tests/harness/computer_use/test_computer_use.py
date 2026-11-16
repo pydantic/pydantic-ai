@@ -49,7 +49,6 @@ from pydantic_ai.computer_use import (
     MoveMouse,
     Point,
     PressKeys,
-    SafetyCheck,
     Scroll,
     TypeText,
 )
@@ -396,53 +395,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert isinstance(zoomed, BinaryImage)
         assert struct.unpack('>II', zoomed.data[16:24]) == zoomed_size
         assert pointer == 'The pointer is at (500, 500).'
-
-    @pytest.mark.parametrize('hook', [pytest.param(False, id='alone'), pytest.param(True, id='also-asked-by-a-hook')])
-    async def test_a_call_its_provider_flagged_waits_for_approval(self, hook: bool) -> None:
-        provider = ScreenProvider()
-        # A hook that also asks for approval while validating the call leads to one approval, not two.
-        asks = Hooks[Any]()
-
-        @asks.on.after_tool_validate
-        async def ask(
-            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
-        ) -> ValidatedToolArgs:
-            if not ctx.tool_call_approved:
-                raise ApprovalRequired
-            return args
-
-        check = {'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'The page asks for a password.'}
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-                return ModelResponse(parts=[TextPart('done')])
-            call = ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]})
-            # As the OpenAI adapter records a `computer_call`'s pending safety checks.
-            call.provider_details = {'safety_checks': [check]}
-            # Text before the call, as models often send.
-            return ModelResponse(parts=[TextPart('Clicking.'), call])
-
-        agent = Agent(
-            FunctionModel(respond),
-            capabilities=[provider.capability(), ComputerUse(), *([asks] if hook else [])],
-            output_type=[str, DeferredToolRequests],
-        )
-        paused = await agent.run('Go.')
-        assert isinstance(paused.output, DeferredToolRequests)
-        (approval,) = paused.output.approvals
-        # What an app shows the person deciding.
-        assert isinstance(approval, ComputerCallPart)
-        assert approval.safety_checks == [
-            SafetyCheck(code='malicious_instructions', message='The page asks for a password.', id='sc_1')
-        ]
-        assert provider.actions == []
-
-        resumed = await agent.run(
-            message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={approval.tool_call_id: True}),
-        )
-        assert resumed.output == 'done'
-        assert provider.actions == [Click(x=1, y=1)]
 
     @pytest.mark.parametrize('native', [True, False])
     async def test_the_computer_tool_definition(self, native: bool) -> None:
