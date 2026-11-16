@@ -71,12 +71,14 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         """Answer a tool-call batch that would exceed `tool_calls_limit` as not executed, so the next request wraps up.
 
         Decided as the model request hands its response on, before anything can run the batch. None of its
-        calls run, as with core's own check. With no request left, core raises as usual.
+        calls run, as with core's own check. With no request left, or when the batch came from the final
+        request itself, core raises as usual.
         """
         limits = ctx.usage_limits
         if (
             not isinstance(node, ModelRequestNode)
             or not isinstance(result, CallToolsNode)
+            or _answers_wrap_up(ctx.messages)
             or limits is None
             or limits.tool_calls_limit is None
             or (limits.request_limit is not None and ctx.usage.requests >= limits.request_limit)
@@ -133,8 +135,25 @@ def wrapped_up_by(messages: Sequence[ModelMessage]) -> LimitName | None:
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, SystemPromptPart) and part.metadata and part.metadata.get('origin') == _ORIGIN:
-                    return part.metadata['limit']
+                if (limit := _wrap_up_limit(part)) is not None:
+                    return limit
+    return None
+
+
+def _answers_wrap_up(messages: list[ModelMessage]) -> bool:
+    """Whether the last response in `messages` answers a final request `WrapUpAtLimits` made."""
+    for message in reversed(messages[:-1]):
+        if isinstance(message, ModelResponse):
+            return False
+        if any(_wrap_up_limit(part) is not None for part in message.parts):
+            return True
+    return False
+
+
+def _wrap_up_limit(part: ModelRequestPart) -> LimitName | None:
+    """The limit on a final prompt `WrapUpAtLimits` added, or `None` for any other part."""
+    if isinstance(part, SystemPromptPart) and part.metadata and part.metadata.get('origin') == _ORIGIN:
+        return part.metadata['limit']
     return None
 
 

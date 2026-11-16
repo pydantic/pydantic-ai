@@ -10,7 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
@@ -186,6 +186,29 @@ class TestWrapUpAtLimits:
             if isinstance(part, ToolReturnPart)
         ]
         assert returns == ['notes on a1', 'notes on b1', NOT_EXECUTED, NOT_EXECUTED]
+
+    async def test_final_request_gets_one_chance(self) -> None:
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step = sum(isinstance(message, ModelResponse) for message in messages) + 1
+            # Ignores `tool_choice='none'`, as a provider that doesn't enforce it can.
+            return ModelResponse(
+                parts=[ToolCallPart('look_up', {'topic': f'a{step}'}), ToolCallPart('look_up', {'topic': f'b{step}'})]
+            )
+
+        looked_up: list[str] = []
+        agent = Agent(FunctionModel(model), capabilities=[WrapUpAtLimits()])
+
+        @agent.tool_plain
+        def look_up(topic: str) -> str:
+            looked_up.append(topic)
+            return topic
+
+        with capture_run_messages() as messages, pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
+            await agent.run('Research', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert sorted(looked_up) == ['a1', 'b1']
+        assert wrapped_up_by(messages) == 'tool_calls_limit'
+        assert sum(isinstance(message, ModelResponse) for message in messages) == 3
 
     async def test_records_spans(self) -> None:
         exporter = InMemorySpanExporter()
