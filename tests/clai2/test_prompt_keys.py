@@ -10,7 +10,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
-from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
+from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
 
 
 async def test_decoding_meta_paste_arrows_and_lone_escape() -> None:
@@ -90,6 +90,22 @@ def test_csi_partial_unknown_and_oversized_sequences_do_not_become_draft_text() 
 
 
 @pytest.mark.parametrize(
+    ('platform', 'environ', 'expected'),
+    [
+        ('win32', {}, True),
+        ('linux', {'WT_SESSION': '0b5c4e1a'}, True),
+        ('linux', {}, False),
+        ('darwin', {}, False),
+    ],
+)
+def test_ctrl_enter_steers_on_windows_and_in_windows_terminal(
+    platform: str, environ: dict[str, str], expected: bool
+) -> None:
+    """Windows Terminal, also around WSL, takes Alt+Enter for full screen (#13399)."""
+    assert ctrl_enter_steers(platform=platform, environ=environ) is expected
+
+
+@pytest.mark.parametrize(
     'sequence',
     ['\x1b\x7f', '\x1b\x08', '\x1b[27;3;127~', '\x1b[27;3;8~', '\x1b[127;3u', '\x1b[8;3u'],
 )
@@ -125,7 +141,7 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         (13, 1, 'enter'),
         (13, 2, 'shift-enter'),
         (13, 3, 'alt-enter'),
-        (13, 5, 'enter'),
+        (13, 5, 'ctrl-enter'),
         (13, 6, 'enter'),
         (13, 66, 'shift-enter'),
         (13, 130, 'shift-enter'),

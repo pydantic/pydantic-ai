@@ -46,6 +46,7 @@ from pydantic_ai import (
     ModelRequestTimeout,
     ModelResponse,
     MultiModalContent,
+    NativeOutput,
     PartDeltaEvent,
     PartStartEvent,
     PendingModelResponse,
@@ -76,6 +77,7 @@ from pydantic_ai.capabilities import (
     BatchModelRequests,
     Capability,
     DynamicCapability,
+    HandleDeferredToolCalls,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -240,6 +242,14 @@ with workflow.unsafe.imports_passed_through():
     from ...conftest import IsDatetime, IsInt, IsList, IsSameStr, IsStr
     from ...workspace_fakes import FakeWorkspace
     from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+    from ..preamble_text import (
+        RunAndStreamResult,
+        StructuredOutput,
+        plain_run_and_stream,
+        preamble_text_agents,
+        preamble_text_before_output_tool,
+        run_and_stream,
+    )
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -1980,6 +1990,60 @@ async def test_durability_wrap_run_disables_threads(client: Client):
         assert output == 'Echo: test'
 
 
+# --- Durability wrap_run refuses external-event waits ---
+
+
+def _approval_needed_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
+
+
+def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+_external_event_agent = Agent(
+    FunctionModel(_approval_needed_fn),
+    name='external_event_test',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
+        HandleDeferredToolCalls[None](_ask_in_process),
+    ],
+)
+
+
+@_external_event_agent.tool_plain(name='delete', requires_approval=True)
+def _delete_needs_approval(path: str) -> str:
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+@workflow.defn
+class ExternalEventWaitWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _external_event_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
+    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExternalEventWaitWorkflow],
+        plugins=[AgentPlugin(_external_event_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExternalEventWaitWorkflow.run,
+                args=['clean up'],
+                id=ExternalEventWaitWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
+
+
 # --- Durability validation ---
 
 
@@ -2132,8 +2196,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 6
+    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 7
 
 
 def test_durability_temporal_registrations_before_binding():
@@ -2151,8 +2215,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for both function toolsets
-    assert len(bound.temporal_activities) == 8
+    # 5 base activities + call/validation activities for both function toolsets
+    assert len(bound.temporal_activities) == 9
 
 
 def test_durability_temporal_activities_rejects_omitting_child_workflows():
@@ -2232,8 +2296,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 4 base activities + call/validation activities for <agent> and the shared toolset (once)
-    assert len(bound.temporal_activities) == 8
+    # 5 base activities + call/validation activities for <agent> and the shared toolset (once)
+    assert len(bound.temporal_activities) == 9
 
 
 def test_durability_activity_config_not_mutated():
@@ -2900,10 +2964,14 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
 
-    # Only `in_workflow` is faked, so keep the default-ID hook off the real workflow APIs.
+    # Only `in_workflow` is faked, so keep the default-ID hook and replay telemetry off the real workflow APIs.
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.unsafe.is_replaying_history_events',
+            return_value=False,
+        ),
     ):
         result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
         assert result.output == 'skipped'
@@ -3401,6 +3469,80 @@ class RunStreamEventsDurableAgentWorkflow:
     async def run(self, prompt: str) -> list[str]:
         async with _run_stream_events_durable_agent.run_stream_events(prompt) as stream:
             return [type(event).__name__ async for event in stream]
+
+
+_preamble_text_agents = preamble_text_agents(lambda: TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+
+
+@workflow.defn
+class StructuredOutputAfterPreambleTextWorkflow:
+    @workflow.run
+    async def run(self) -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in _preamble_text_agents]
+
+
+async def test_durability_structured_output_after_preamble_text_in_workflow(client: Client) -> None:
+    """Text streamed before a tool call isn't the final result when the output type is structured.
+
+    The workflow replays the activity's stream against the parameters the activity's model prepared, in which `'auto'`
+    has resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
+    replayed events; one set on the capability runs in the activity and would see the live stream.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StructuredOutputAfterPreambleTextWorkflow],
+        plugins=[AgentPlugin(agent) for agent in _preamble_text_agents],
+    ):
+        output = await client.execute_workflow(
+            StructuredOutputAfterPreambleTextWorkflow.run,
+            id=StructuredOutputAfterPreambleTextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == await plain_run_and_stream()
+
+
+_rejected_native_output_agent = Agent(
+    FunctionModel(
+        stream_function=preamble_text_before_output_tool, profile=ModelProfile(supports_json_schema_output=False)
+    ),
+    name='durability_rejected_native_output',
+    output_type=NativeOutput(StructuredOutput),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RejectedNativeOutputWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        async with _rejected_native_output_agent.run_stream_events('hello') as stream:
+            return [type(event).__name__ async for event in stream]
+
+
+async def test_durability_streamed_request_the_model_rejects_fails_in_the_activity(client: Client) -> None:
+    """A streamed request the model rejects fails in the activity, as a request that isn't streamed does.
+
+    The workflow prepares the request again for the replay only once the activity has returned, so
+    `prepare_request` rejecting native output for this model reaches the workflow as an `ActivityError`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RejectedNativeOutputWorkflow],
+        plugins=[AgentPlugin(_rejected_native_output_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RejectedNativeOutputWorkflow.run,
+                id=RejectedNativeOutputWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert str(activity_error.cause) == snapshot('UserError: Native structured output is not supported by this model.')
 
 
 async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
@@ -4199,22 +4341,22 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -4316,7 +4458,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -4337,7 +4479,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -4397,7 +4539,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -4523,7 +4665,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -7822,7 +7964,7 @@ class RetryFeedbackAnswer:
 _retry_feedback_shown: list[list[SystemPromptPart | UserPromptPart]] = []
 """The retry feedback the model was shown, one entry per model request."""
 
-_RETRY_FEEDBACK_TAGS = ('<system>', '<validation_errors>')
+_RETRY_FEEDBACK_TAGS = ('<system>', '<pyai:validation_errors>')
 """The two tags a translated `RetryFeedbackPart` can arrive under; a `SystemPromptPart` needs none."""
 
 
@@ -7893,9 +8035,10 @@ class WorkspaceProbePolicy(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         assert activity.in_activity()
-        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
+        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
         assert self.ref is not None
         return replace(result, stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}')
 
@@ -7958,7 +8101,7 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
     The resuming model is reached by an alias only the `ResolveModelId` capability can build, so the
     workflow leaves the history untouched and the raw part is what crosses the activity boundary
     there. Keeping the presentation out of the history is what lets each execution build the sendable
-    part for the model it is actually using — here the same `<validation_errors>` fence both times,
+    part for the model it is actually using — here the same `<pyai:validation_errors>` fence both times,
     because a `'validation_error'`'s voice comes from its `cause` rather than from the profile.
     """
     _retry_feedback_shown.clear()
@@ -8015,9 +8158,9 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
                 UserPromptPart(
                     content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                     timestamp=IsDatetime(),
                 )
@@ -8026,9 +8169,9 @@ Your previous response failed the application's validation (this is automated fe
                 UserPromptPart(
                     content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                     timestamp=IsDatetime(),
                 )

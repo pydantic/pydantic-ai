@@ -29,8 +29,8 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
-from pydantic_ai_harness.memory._file import FileStore
-from pydantic_ai_harness.memory._in_memory import InMemoryStore
+from pydantic_ai_harness.memory._file import FileMemoryStore
+from pydantic_ai_harness.memory._in_memory import InMemoryMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
@@ -82,17 +82,17 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     A snapshot of `MEMORY.md` is recorded in the conversation as user-role data,
     once per run in which it changed, and longer topic files are available
-    through `read_memory` and `search_memory`. When a `FileStore` keeps the
+    through `read_memory` and `search_memory`. When a `FileMemoryStore` keeps the
     files in the run's workspace, `read_memory` steps aside for `FileSystem`'s
     `read_file`, and the snapshot gives the directory. Automatic snapshot
     loading is journaled by durability engines that support capability
     operations.
     """
 
-    store: MemoryStore = field(default_factory=InMemoryStore)
+    store: MemoryStore = field(default_factory=InMemoryMemoryStore)
     """Storage backend. The default persists only for the process lifetime.
 
-    `FileStore` keeps Markdown files in the run's workspace, or in a workspace of its own."""
+    `FileMemoryStore` keeps Markdown files in the run's workspace, or in a workspace of its own."""
 
     store_resolver: Callable[[RunContext[AgentDepsT]], MemoryStore] | None = None
     """Optional per-run store resolver. Resolver failures always propagate."""
@@ -195,11 +195,11 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone._run_started = False
         clone._run_continues = False
         store, scope = clone._resolve_scope(ctx)
-        clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
+        clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileMemoryStore) else store, scope)
         return clone
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Note what the run starts from, and fail it when a `FileStore` has no workspace to keep its files in.
+        """Note what the run starts from, and fail it when a `FileMemoryStore` has no workspace to keep its files in.
 
         Read here rather than in `for_run`, which a durable engine also calls to rebuild the capability inside an
         activity, where the run's prompt and history aren't carried.
@@ -210,20 +210,20 @@ class Memory(AbstractCapability[AgentDepsT]):
         # that continues earlier work can put back the same one after the boundary. Taken from the whole history:
         # a provider can compact in the very response that asked for the approval being resumed.
         self._run_snapshot = _latest_snapshot(ctx.messages, snapshot_metadata(scope, self.id))
-        if isinstance(store, FileStore) and store.workspace is None and not ctx.workspace.attached:
+        if isinstance(store, FileMemoryStore) and store.workspace is None and not ctx.workspace.attached:
             raise UserError(
-                "`Memory(store=FileStore(...))` keeps memory files in the run's workspace, but none is attached "
+                "`Memory(store=FileMemoryStore(...))` keeps memory files in the run's workspace, but none is attached "
                 "to this run. Attach one, such as `LocalWorkspace('.')`, or pass "
-                '`FileStore(..., workspace=LocalWorkspaceBackend(...))` to keep them somewhere else.'
+                '`FileMemoryStore(..., workspace=LocalWorkspaceBackend(...))` to keep them somewhere else.'
             )
 
     def resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         """Return the cached run scope, or resolve one for direct toolset use.
 
-        A `FileStore` without a workspace of its own is bound to `ctx.workspace`.
+        A `FileMemoryStore` without a workspace of its own is bound to `ctx.workspace`.
         """
         store, scope = self._resolved_scope if self._resolved_scope is not None else self._resolve_scope(ctx)
-        return (store.bind(ctx.workspace) if isinstance(store, FileStore) else store), scope
+        return (store.bind(ctx.workspace) if isinstance(store, FileMemoryStore) else store), scope
 
     def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         store = self.store_resolver(ctx) if self.store_resolver is not None else self.store
@@ -502,9 +502,9 @@ class Memory(AbstractCapability[AgentDepsT]):
             raise ValueError('database is only valid with backend="sqlite"')
 
         if backend == 'memory':
-            store: MemoryStore = InMemoryStore()
+            store: MemoryStore = InMemoryMemoryStore()
         elif backend == 'file':
-            store = FileStore(directory)
+            store = FileMemoryStore(directory)
         elif backend == 'sqlite':
             store = SqliteMemoryStore(database=database)
         else:

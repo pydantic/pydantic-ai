@@ -109,9 +109,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
             sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `sequential=False` still gets `True`.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
@@ -120,11 +122,12 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading: Whether to hide tools from the model until they're revealed by tool search,
                 `load_capability`, or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
+                A `Tool` instance built with `defer_loading=False` still gets `True`.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
                 If `None`, defaults to `False` unless the
                 [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
             instructions: Instructions for this toolset that are automatically included in the model request.
@@ -723,31 +726,49 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
-        # `add_tool` stores a copy with the toolset's defaults applied; an explicit `requires_approval=False`
-        # passed here overrides the toolset's `requires_approval=True` on that copy.
+        # `add_tool` stores a copy with the toolset's defaults applied, and applies its `sequential`,
+        # `requires_approval`, and `defer_loading` when they're `True`; a `Tool`'s plain booleans can't
+        # distinguish an explicit `False`, so restore the overrides passed here on that copy.
         added = self.tools[tool.name]
-        if requires_approval is False:
-            added.requires_approval = False
+        added.sequential = sequential
+        added.requires_approval = requires_approval
+        added.defer_loading = defer_loading
+        added._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        added._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
         return added
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `requires_approval=True` and `metadata` apply to a copy of the tool, and so does its
-        `max_retries` when the tool sets none. The tool passed in keeps its own values, so the same `Tool` can be
-        added to several toolsets without one toolset's defaults leaking into another's.
+        The toolset's `strict` and `include_return_schema` apply to the tool when the tool leaves them unset,
+        its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
+        `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none. All of
+        that applies to a copy of the tool, so the tool passed in keeps its own values and the same `Tool` can
+        be added to several toolsets without one toolset's defaults leaking into another's.
 
         Args:
             tool: The tool to add.
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        self.tools[tool.name] = replace(
-            tool,
-            max_retries=tool.max_retries if tool.max_retries is not None else self.max_retries,
-            requires_approval=tool.requires_approval or self.requires_approval,
-            metadata=self.metadata | (tool.metadata or {}) if self.metadata is not None else tool.metadata,
-        )
+        added = replace(tool)
+        if added.max_retries is None and self.max_retries is not None:
+            added.max_retries = self.max_retries
+        if added.strict is None and self.strict is not None:
+            added.strict = self.strict
+        if added.include_return_schema is None and self.include_return_schema is not None:
+            added.include_return_schema = self.include_return_schema
+        if self.sequential and not added.sequential:
+            added.sequential = True
+            added._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        if self.requires_approval:
+            added.requires_approval = True
+        if self._defer_loading and not added.defer_loading:
+            added.defer_loading = True
+            added._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        if self.metadata is not None:
+            added.metadata = self.metadata | (added.metadata or {})
+        self.tools[tool.name] = added
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:

@@ -421,9 +421,17 @@ async def test_run_sync_token_cancel_from_another_thread():
         raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
-    run_thread = asyncio.create_task(
-        asyncio.to_thread(Agent(FunctionModel(model_function)).run_sync, 'hello', cancellation_token=token)
-    )
+
+    def run_sync_and_close_its_loop() -> None:
+        try:
+            Agent(FunctionModel(model_function)).run_sync('hello', cancellation_token=token)
+        finally:
+            # `run_sync` sets a new event loop on this worker thread that nothing else closes. Left open, the teardown
+            # collection can finalize its self-pipe socket first, and closing the loop then raises
+            # `ValueError: Invalid file descriptor: -1`.
+            asyncio.get_event_loop().close()
+
+    run_thread = asyncio.create_task(asyncio.to_thread(run_sync_and_close_its_loop))
     await asyncio.to_thread(started.wait)
     token.cancel()
 
@@ -973,6 +981,28 @@ async def test_threadsafe_cancel_delivery_after_finish_is_noop():
 
     assert _task_cancelling(task) == baseline
     assert controller.cancel_requested  # the request itself was recorded, just never delivered
+
+
+def test_token_cancels_reachable_runs_when_another_run_is_unreachable():
+    """A token shared by several runs still cancels every reachable run when one run's loop can't be
+    reached, and stays uncancelled so it can be fired again for the run it missed — a controller unit
+    test because only a Temporal workflow loop is unreachable, and it hosts a single run."""
+
+    class UnreachableRunCancellation(RunCancellation):
+        def cancel(self) -> None:
+            raise UserError("This run's event loop can't be reached from another thread or loop.")
+
+    reachable_runs = [RunCancellation(), RunCancellation()]
+    token = CancellationToken()
+    reachable_runs[0].attach_token(token)
+    UnreachableRunCancellation().attach_token(token)
+    reachable_runs[1].attach_token(token)
+
+    with pytest.raises(UserError, match="can't be reached"):
+        token.cancel()
+
+    assert [run.cancel_requested for run in reachable_runs] == [True, True]
+    assert not token.cancelled
 
 
 async def test_release_issued_on_finished_task_is_noop():
@@ -1988,9 +2018,8 @@ async def test_nested_run_stream_events_binding_isolated_under_outer_cancellatio
         except RunCancelled:  # pragma: no cover - the inner handle must not claim the outer cancel
             inner_outcome.append('inner run cancelled')
             raise
-        # Never executed (the inner run blocks until cancelled), but coverage's exception-table
-        # attribution counts this exit arc as covered, so it must not carry a `no cover` pragma.
-        return 'never reached'
+        # The inner run blocks until cancelled.
+        return 'never reached'  # pragma: no cover
 
     async with outer_agent.run_stream_events('outer') as outer_events:
         consumer = asyncio.create_task(_consume_events(outer_events))

@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-slim[groq]"
 
 To use [Groq](https://groq.com/) through their API, go to [console.groq.com/keys](https://console.groq.com/keys) and follow your nose until you find the place to generate an API key.
 
-`GroqModelName` contains a list of available Groq models.
+`GroqModelName` lists the latest Groq models for autocomplete. Any other model id the API accepts works too.
 
 ## Environment variable
 
@@ -79,6 +79,33 @@ model = GroqModel(
 agent = Agent(model)
 ...
 ```
+
+## Service tier
+
+Groq supports controlling the [service tier](https://console.groq.com/docs/service-tiers) to trade off throughput and reliability.
+You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`groq_service_tier`][pydantic_ai.models.groq.GroqModelSettings.groq_service_tier] field. `groq_service_tier` takes precedence over the unified field when both are set, and accepts Groq's native values (`'auto'`, `'on_demand'`, `'flex'` or `'performance'`).
+
+The unified field maps as follows for Groq:
+
+- `'auto'`: passed through as `'auto'`, so Groq picks the best tier available to you.
+- `'default'`: maps to `'on_demand'`, Groq's standard tier.
+- `'flex'`: passed through as `'flex'`. Flex requests [fail fast with a 498 error](https://console.groq.com/docs/flex-processing) when flex capacity is unavailable.
+- `'priority'`: not part of Groq's tier model and silently ignored.
+
+Groq's enterprise `'performance'` tier is only reachable through `groq_service_tier`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.groq import GroqModelSettings
+
+agent = Agent(
+    'groq:llama-3.3-70b-versatile',
+    model_settings=GroqModelSettings(service_tier='flex'),
+)
+...
+```
+
+The tier that served a non-streamed request is stored in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['service_tier']`.
 
 ## SDK retries {#sdk-retries}
 

@@ -86,7 +86,7 @@ def test_invalid_model_suggestion(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
             'Error initializing claude:sonnet-5:',
-            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
         ]
     )
 
@@ -911,7 +911,7 @@ async def test_ask_agent_accumulates_usage(env: TestEnv):
 
     # Usage is the sum of both runs: the first turn calls the tool (2 requests, 1 tool call), the second
     # replays that history without re-calling it (1 request). Prior usage is not re-counted from history.
-    assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=14, requests=3, tool_calls=1))
+    assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=15, requests=3, tool_calls=1))
 
 
 async def test_ask_agent_counts_usage_on_failed_turn(env: TestEnv):

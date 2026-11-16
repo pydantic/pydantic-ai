@@ -13,11 +13,14 @@ API.** Paths below are relative to that directory.
 
 - `pr-details.json` — title, body, author, branches, labels, draft/state.
 - `pr-size.txt` — `{N} files, {M} diff lines`.
-- `changed-files.txt` — paths in this PR with `+N -M` change counts and the
-  matching `diff/<path>.diff` filename.
+- `changed-files.txt` — paths in this PR with `+N -M` change counts and, in
+  the third column, the path's diff file. Its name percent-encodes the
+  path's `%`, `\`, `/`, tab, newline, carriage return and a leading `.`:
+  `pydantic_ai_slim/pydantic_ai/agent.py` →
+  `diff/pydantic_ai_slim%2Fpydantic_ai%2Fagent.py.diff`.
 - `file-orderings/az.txt`, `file-orderings/za.txt`,
   `file-orderings/largest.txt` — the same file list in three orderings.
-- `diff/<path>.diff` — per-file diffs with function context, annotated
+- `diff/` — per-file diffs with function context, annotated
   with `NL:<n>` for new-side and `OL:<n>` for old-side line numbers.
   **Inline comments require an `NL:` line.**
 - `pr-comments.txt` — issue-style PR discussion.
