@@ -2823,16 +2823,19 @@ async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None
     ]
 
 
-@pytest.mark.parametrize('ended_by', ['quiet', 'next-frame', 'drop'])
+@pytest.mark.parametrize('ended_by', ['quiet', 'next-frame', 'drop', 'malformed-frame'])
 async def test_a_replys_parallel_tool_calls_are_one_response(ended_by: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Verified live: a reply's parallel calls come as separate frames, back to back, and nothing follows until their
     # results are in. They are one response, which ends once no more come.
     monkeypatch.setattr(rt_elevenlabs, '_TOOL_CALL_BATCH_WINDOW', 0.01)
-    after: list[dict[str, Any]] = {'quiet': [], 'next-frame': [_VOICED], 'drop': []}[ended_by]
+    bad_audio = {'type': 'audio', 'audio_event': {'audio_base_64': '!!!!', 'event_id': 2}}
+    after: list[dict[str, Any]] = {'quiet': [], 'next-frame': [_VOICED], 'drop': [], 'malformed-frame': [bad_audio]}[
+        ended_by
+    ]
     connection, ws = _connection(
         [_tool_call_frame('get_weather'), _tool_call_frame('get_time', tool_call_id='call_2'), *after]
     )
-    ws.hold_open = ended_by != 'drop'
+    ws.hold_open = ended_by in ('quiet', 'next-frame')
     frames = connection.frames()
     seen: list[Any] = []
     while not any(isinstance(event, ResponseEnded) for event in seen):
@@ -3580,6 +3583,43 @@ async def test_a_dropped_connection_loses_the_response_under_way() -> None:
             ),
         ]
     )
+
+
+async def test_a_malformed_frame_leaves_no_reply_open_to_merge_into() -> None:
+    # A frame whose payload fails validation is a recoverable error. When it comes as a reply's audio is finishing,
+    # the reply still ends, so the next one is a response of its own, after the user's words.
+    connection, ws = _connection()
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _agent_response('Hi.'),
+            {'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}},
+            {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Again.'}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': 'Done.', 'event_id': 2, 'response_id': 'resp_2'},
+            },
+            _VOICED,
+        ],
+    )
+    events = [event for frame in frames for event in frame]
+    turns = [
+        (type(event).__name__, event.response_id if isinstance(event, (ResponseStarted, ResponseEnded)) else event.text)
+        for event in events
+        if isinstance(event, (ResponseStarted, ResponseEnded, InputTranscript, OutputTranscript))
+    ]
+    assert turns == [
+        ('ResponseStarted', 'pydantic_ai_response_1'),
+        ('OutputTranscript', 'Hi.'),
+        ('ResponseEnded', 'pydantic_ai_response_1'),
+        ('InputTranscript', 'Again.'),
+        ('ResponseStarted', 'pydantic_ai_response_2'),
+        ('OutputTranscript', 'Done.'),
+        ('ResponseEnded', 'pydantic_ai_response_2'),
+    ]
+    [error] = [event for event in events if isinstance(event, RealtimeSessionErrorEvent)]
+    assert error.recoverable
 
 
 async def test_the_greeting_answers_no_microphone_audio() -> None:
