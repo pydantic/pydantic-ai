@@ -594,10 +594,14 @@ def test_json_schema_test_data_narrow_exclusive_bounds():
     )
 
 
-def test_gen_unknown_type():
-    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly."""
-    with pytest.raises(NotImplementedError, match='Unknown type: foo'):
-        _JsonSchemaTestData({'type': 'foo'}).generate()
+@pytest.mark.parametrize('type_', ['foo', []])
+def test_gen_unknown_type(type_: str | list[str]):
+    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly.
+
+    An empty `type` list names no type to generate from.
+    """
+    with pytest.raises(NotImplementedError, match=re.escape(f'Unknown type: {type_}')):
+        _JsonSchemaTestData({'type': type_}).generate()
 
 
 def test_json_schema_number_uses_strictest_bounds():
@@ -851,6 +855,47 @@ def test_int_hand_written_bounds_tool_args() -> None:
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'seed,expected',
+    [
+        (0, snapshot({'nullable': 'a', 'null_first': None, 'multi': 3, 'list': [0], 'obj': {'x': False}})),
+        (1, snapshot({'nullable': None, 'null_first': 'b', 'multi': 'bb', 'list': None, 'obj': None})),
+    ],
+)
+def test_tool_type_list_args(seed: int, expected: dict[str, object]) -> None:
+    """The seed picks one member of a JSON Schema `type` list, as it picks an `anyOf` member.
+
+    The picked type keeps the sibling keywords (`minimum`, `minLength`, `items`, `properties`), and type lists
+    nested under `items` and an object property are generated the same way. `TestModel` makes no provider
+    request, so there is nothing to record.
+    """
+    calls: list[dict[str, object]] = []
+
+    def lookup(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema: dict[str, object] = {
+        'type': 'object',
+        'properties': {
+            'nullable': {'type': ['string', 'null']},
+            'null_first': {'type': ['null', 'string']},
+            'multi': {'type': ['integer', 'string'], 'minimum': 3, 'minLength': 2},
+            'list': {'type': ['array', 'null'], 'minItems': 1, 'items': {'type': ['integer', 'null']}},
+            'obj': {
+                'type': ['object', 'null'],
+                'properties': {'x': {'type': ['boolean', 'null']}},
+                'required': ['x'],
+            },
+        },
+        'required': ['nullable', 'null_first', 'multi', 'list', 'obj'],
+    }
+    tool = Tool.from_schema(lookup, name='lookup', description='Look something up.', json_schema=schema)
+    Agent(TestModel(seed=seed), tools=[tool]).run_sync('hello')
+
+    assert calls == [expected]
 
 
 @pytest.mark.parametrize(
