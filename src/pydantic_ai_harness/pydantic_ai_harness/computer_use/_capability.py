@@ -6,6 +6,7 @@ import math
 import weakref
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, field, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -14,7 +15,7 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field
 
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
@@ -100,12 +101,34 @@ _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakVa
 turns a whole call at a time, so one's clicks never land between another's. A lock can't wake a waiter on another event
 loop, so calls on separate loops don't take turns. A lock goes once no call holds or waits for it."""
 
-_RELEASE_TIMEOUT = 5
-"""Maximum time spent releasing each mouse button a failed or cancelled call, or a run's end, leaves pressed."""
+_HOLDERS: dict[object, str | None] = {}
+"""The run holding a mouse button on each screen, by the keys of its locks. While one does, other runs only look."""
 
-_HELD_BUTTONS: dict[str | None, list[MouseButton]] = {}
-"""The mouse buttons each run pressed with `mouse_down` and hasn't released, by run ID. A button stays pressed across
-calls until a `mouse_up`, so a drag can span them, and the run's end releases the rest."""
+_RELEASE_TIMEOUT = 5
+"""Maximum time spent waiting for the screen, and releasing each mouse button, when a call or a run's end releases."""
+
+
+@dataclass
+class _RunButtons:
+    """The mouse buttons a run holds, kept by its `computer` calls for its `wrap_run` to release.
+
+    The run's hooks see its messages only as the run began, and a run left early may end before its last call's result
+    is in them.
+    """
+
+    run_id: str | None
+    held: list[MouseButton] = field(default_factory=list[MouseButton])
+
+
+_RUN_BUTTONS: ContextVar[_RunButtons | None] = ContextVar('_RUN_BUTTONS', default=None)
+"""The buttons of the run whose `wrap_run` releases them at its end."""
+
+
+def _run_buttons(ctx: RunContext[Any]) -> _RunButtons | None:
+    """This run's buttons, unless its `wrap_run` didn't run, such as for a capability loaded mid-run."""
+    run = _RUN_BUTTONS.get()
+    # Another run's are an outer run's, such as the one whose tool started this run.
+    return run if run is not None and run.run_id == ctx.run_id else None
 
 
 @dataclass(frozen=True)
@@ -137,6 +160,8 @@ _READ_ONLY = (
     'position and wait. No action ran.'
 )
 
+_ANOTHER_HOLDS = 'Another agent is holding a mouse button on this screen; try again after it lets go.'
+
 _INTERRUPTED = (
     'The call was interrupted before it finished, so some of its actions may have run. Take a screenshot before '
     'acting again.'
@@ -156,6 +181,8 @@ class _Plan:
     limit: _ScreenshotLimit
     """The largest screenshot both that model and the run's model take; a larger screen is refused."""
     model_name: str
+    held: list[MouseButton]
+    """The mouse buttons the run's earlier calls left pressed."""
 
 
 @dataclass
@@ -377,18 +404,28 @@ async def _run_in_order(
 ) -> tuple[int, str | None]:
     """Run the actions until one fails, keeping `held` up to date: how many ran, and why the next one failed."""
     for index, action in enumerate(actions):
-        if isinstance(action, MouseDown) and action.button not in held:
-            # Counted before it runs, since a press can take effect and still fail.
-            held.append(action.button)
-        try:
-            await steps.run(action, last=index == len(actions) - 1)
-        except WorkspaceUnavailableError:
-            raise
-        except WorkspaceError as e:
-            return index, str(e) or type(e).__name__
-        if isinstance(action, MouseUp) and action.button in held:
-            held.remove(action.button)
+        if (error := await _run_one(steps, action, held, last=index == len(actions) - 1)) is not None:
+            return index, error
     return len(actions), None
+
+
+async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[MouseButton], *, last: bool) -> str | None:
+    """Run one action, keeping `held` up to date: why it failed, if it did."""
+    pressing = action.button if isinstance(action, MouseDown) and action.button not in held else None
+    if pressing:
+        # Counted before it runs, since a press can take effect and still fail.
+        held.append(pressing)
+    try:
+        await steps.run(action, last=last)
+    except WorkspaceUnavailableError:
+        raise
+    except WorkspaceError as e:
+        if pressing and isinstance(e, UnsupportedActionError):
+            held.remove(pressing)  # the display refused the press, so nothing is pressed
+        return str(e) or type(e).__name__
+    if isinstance(action, MouseUp) and action.button in held:
+        held.remove(action.button)
+    return None
 
 
 async def _release(display: Display, held: list[MouseButton]) -> None:
@@ -405,6 +442,44 @@ async def _release(display: Display, held: list[MouseButton]) -> None:
             except Exception:
                 continue
             held.remove(button)
+
+
+def _held_buttons(messages: Sequence[ModelMessage], run_id: str | None) -> list[MouseButton]:
+    """The mouse buttons the run's `computer` calls left pressed, replayed from its messages.
+
+    A call that returned ran all its actions, or failed partway and released every button. A failed call leaves them as
+    they were: it was refused before acting, or releasing failed.
+    """
+    calls: dict[str, ComputerCallPart] = {}
+    held: list[MouseButton] = []
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ComputerCallPart):
+                calls[part.tool_call_id] = part
+            elif (
+                isinstance(part, ComputerReturnPart)
+                and message.run_id == run_id
+                and part.outcome == 'success'
+                and (result := part.result) is not None
+                and (call := calls.get(part.tool_call_id)) is not None
+            ):
+                held = _held_after(call.actions or [], result, held)
+    return held
+
+
+def _held_after(
+    actions: list[ComputerToolAction], result: ComputerResult, held: list[MouseButton]
+) -> list[MouseButton]:
+    """The buttons pressed after a call that returned `result`, with `held` pressed before it."""
+    if 'error' in result:
+        return []  # it failed partway and released them
+    held = list(held)
+    for action in actions:
+        if isinstance(action, MouseDown) and action.button not in held:
+            held.append(action.button)
+        elif isinstance(action, MouseUp) and action.button in held:
+            held.remove(action.button)
+    return held
 
 
 def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
@@ -479,15 +554,29 @@ async def _display_size(display: Display) -> tuple[int, int]:
         raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
 
 
-@asynccontextmanager
-async def _taking_turns(ctx: RunContext[Any], display: Display) -> AsyncGenerator[None]:
-    """Hold the screen for one call: its display object's lock, then its environment's, always in that order."""
+def _screen_keys(ctx: RunContext[Any], display: Display) -> list[object]:
+    """The keys of a screen's locks and holder: its display object's, then its environment's."""
     # One environment's backends share its ref, but two environments may reach one display object, so neither key
     # alone finds every call on a screen.
     token = anyio.lowlevel.current_token()
     keys: list[object] = [(token, 'display', id(display))]
     if (ref := ctx.workspace.ref) is not None:
         keys.append((token, 'ref', ref))
+    return keys
+
+
+def _set_holder(keys: list[object], run_id: str | None, holds: bool) -> None:
+    """Record whether the run holds a mouse button on the screen with these keys."""
+    for key in keys:
+        if holds:
+            _HOLDERS[key] = run_id
+        elif key in _HOLDERS and _HOLDERS[key] == run_id:
+            del _HOLDERS[key]
+
+
+@asynccontextmanager
+async def _taking_turns(keys: list[object]) -> AsyncGenerator[None]:
+    """Hold the screen for one call: the lock of each of its keys, always in that order."""
     locks: list[anyio.Lock] = []
     for key in keys:
         if (lock := _DISPLAY_LOCKS.get(key)) is None:
@@ -497,6 +586,19 @@ async def _taking_turns(ctx: RunContext[Any], display: Display) -> AsyncGenerato
         for lock in locks:
             await stack.enter_async_context(lock)
         yield
+
+
+def _failure(
+    actions: list[ComputerToolAction], performed: int, error: str, *, released: list[MouseButton]
+) -> list[str]:
+    """What a call whose action after the `performed` ones failed tells the model, saying which buttons it released."""
+    summary = [f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error.rstrip(".")}.']
+    if skipped := len(actions) - performed - 1:
+        summary.append(f'The {_plural(skipped, "action")} after it did not run.')
+    if released:
+        buttons = 'button was' if len(released) == 1 else 'buttons were'
+        summary.append(f'The {" and ".join(released)} mouse {buttons} released.')
+    return summary
 
 
 def _plural(count: int, noun: str) -> str:
@@ -575,9 +677,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
-        if any(isinstance(action, MouseDown) for action in actions):
-            # Marks the run, so its end releases what it holds. Under durable execution the list fills in the worker.
-            _HELD_BUTTONS.setdefault(ctx.run_id, [])
+        run = _run_buttons(ctx)
         made = _the_call(ctx)
         call = made[1] if made else None
         # The grid and screenshot limit of the model that made the call, as the agent recorded them.
@@ -591,6 +691,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
             limit=_min_limit(made_limit, _model_limit(ctx.model)),
             model_name=ctx.model.model_name,
+            held=list(run.held) if run else _held_buttons(ctx.messages, ctx.run_id),
         )
         if not ctx.in_durable_context:
             # Run here, so an error keeps its traceback.
@@ -611,6 +712,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         assert size is not None  # a call that returns has taken its screenshot
         width, height = size  # a list once a durable unit's result has been through JSON
         result['screenshot_size'] = (width, height)
+        if run is not None:
+            run.held = _held_after(actions, result, plan.held)
         # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
         await ctx.emit(ActionsPerformedEvent(result=result))
         return outcome
@@ -629,8 +732,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn:
         display = _required_display(ctx)
+        keys = _screen_keys(ctx, display)
         # Measured while this call holds the screen, so a call that waited sees the size the one before it left.
-        async with _taking_turns(ctx, display):
+        async with _taking_turns(keys):
+            if any(_HOLDERS.get(key, ctx.run_id) != ctx.run_id for key in keys) and any(
+                action.type not in _OBSERVING_ACTIONS for action in actions
+            ):
+                raise ToolFailed(_ANOTHER_HOLDS)
             # Also starts a display that stopped, before anything acts.
             size = await _display_size(display)
             # The call ends with a screenshot at the screen's size, so a screen the model can't see ends the run
@@ -642,12 +750,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             if refused := _off_screen(actions, *mapping.space, 'grid' if plan.grid else 'screen'):
                 raise ToolFailed(refused)
             pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
-            held = _HELD_BUTTONS.pop(ctx.run_id, [])
+            held = list(plan.held)
             try:
                 return await self._act_and_look(display, pixels, mapping, plan, held)
             finally:
-                if held:
-                    _HELD_BUTTONS[ctx.run_id] = held
+                _set_holder(keys, ctx.run_id, bool(held))
 
     async def _act_and_look(
         self,
@@ -671,11 +778,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 summary.append(f'The {" and ".join(held)} mouse {buttons} still pressed.')
         else:
             result['error'] = error
-            summary.append(
-                f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error.rstrip(".")}.'
-            )
-            if skipped := len(actions) - performed - 1:
-                summary.append(f'The {_plural(skipped, "action")} after it did not run.')
+            summary.extend(_failure(actions, performed, error, released=plan.held))
 
         try:
             png = await display.screenshot()
@@ -736,31 +839,38 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             return _NotRun.of(e)
         return width, height
 
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        """Release the mouse buttons the run still holds however it ends, including a caller leaving it early."""
+        run = _RunButtons(ctx.run_id)
+        _RUN_BUTTONS.set(run)
+        try:
+            return await handler()
+        finally:
+            await self._release_held(ctx, run.held)
+
     async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        await self._release_held(ctx)
+        if _run_buttons(ctx) is None:
+            # Loaded mid-run with `defer_loading=True`, after `wrap_run` was chosen.
+            await self._release_held(ctx, _held_buttons(result.all_messages(), ctx.run_id))
         return result
 
-    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
-        await self._release_held(ctx)
-        raise error
-
-    async def _release_held(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Release the mouse buttons the run still holds, as it ends, fails or is cancelled."""
-        if ctx.run_id not in _HELD_BUTTONS:
-            return
-        with anyio.CancelScope(shield=True):
-            await self._release_on_display(ctx)
-        _HELD_BUTTONS.pop(ctx.run_id, None)
+    async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
+        if held:
+            with anyio.CancelScope(shield=True):
+                await self._release_on_display(ctx, held)
 
     @durable_operation('release')
-    async def _release_on_display(self, ctx: RunContext[AgentDepsT]) -> None:
-        held = _HELD_BUTTONS.pop(ctx.run_id, [])
-        if held and (display := _display(ctx)) is not None:
-            async with _taking_turns(ctx, display):
-                try:
+    async def _release_on_display(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
+        display = _required_display(ctx)
+        keys = _screen_keys(ctx, display)
+        try:
+            with anyio.move_on_after(_RELEASE_TIMEOUT):
+                async with _taking_turns(keys):
                     await _release(display, held)
-                except WorkspaceUnavailableError:
-                    pass  # the environment is gone, and its buttons with it
+        except WorkspaceUnavailableError:
+            pass  # the environment is gone, and its buttons with it
+        finally:
+            _set_holder(keys, ctx.run_id, False)
 
     async def prepare_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

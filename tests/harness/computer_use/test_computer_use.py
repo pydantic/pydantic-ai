@@ -66,7 +66,12 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, DisplayAction
+from pydantic_ai_harness.computer_use import (
+    ActionsPerformedEvent,
+    ComputerUse,
+    DisplayAction,
+    UnsupportedActionError,
+)
 from tests.conftest import RequestCapture, try_import
 from tests.harness._recording_durability import RecordingDurability
 
@@ -1291,6 +1296,114 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.metadata is not None and tool_return.metadata['performed'] == 1
+        assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_failed_call_says_it_released_the_button_an_earlier_call_pressed(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        _, failed = _returns((await agent.run('Go.')).all_messages())
+
+        assert failed.content == [
+            snapshot(
+                "Action 1 of 1 (hold_key) failed: the fake display cannot perform 'hold_key'. The left mouse button was released. Screenshot attached (1280x800)."
+            ),
+            SCREENSHOT,
+        ]
+        assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_press_the_display_refuses_leaves_nothing_held(self) -> None:
+        class NoRightButton(ScreenBackend):
+            async def act(self, action: DisplayAction) -> None:
+                # Its release is refused too, so a press counted as held would be reported as maybe still held.
+                raise UnsupportedActionError('this display has no right button')
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return NoRightButton(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down', 'button': 'right'}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.content == [
+            snapshot(
+                'Action 1 of 1 (mouse_down) failed: this display has no right button. Screenshot attached (1280x800).'
+            ),
+            SCREENSHOT,
+        ]
+        assert provider.actions == []
+
+    async def test_leaving_a_run_early_releases_the_buttons_it_holds(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'screenshot'}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        async with agent.iter('Go.') as run:
+            async for _ in run:
+                if provider.actions:
+                    break
+        assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_run_replayed_from_its_journal_releases_the_button_its_call_pressed(self) -> None:
+        provider, recorded = ScreenProvider(), RecordingDurability()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), recorded],
+        )
+        await agent.run('Go.')
+        journal = {name: result for name, result in recorded.results if name.endswith('.call')}
+        provider.actions.clear()
+
+        # As on a fresh worker: a new capability, and an engine that replays the call without acting.
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), RecordingDurability(journal=journal, isolated=True)],
+        )
+        await agent.run('Go.')
+        assert provider.actions == [MouseUp()]
+
+    async def test_another_run_on_the_screen_can_only_look_while_one_holds_a_button(self) -> None:
+        provider = ScreenProvider()
+        screen = provider.backend(None)
+        holding, tried = anyio.Event(), anyio.Event()
+
+        async def hold(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
+            holding.set()
+            await tried.wait()
+            return ModelResponse(parts=[TextPart('done')])
+
+        holder = Agent(FunctionModel(hold), capabilities=[ComputerUse()])
+        other = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}]), capabilities=[ComputerUse()]
+        )
+
+        async def hold_the_button() -> None:
+            await holder.run('Go.', workspace=screen)
+
+        returns: list[ToolReturnPart] = []
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(hold_the_button)
+            with anyio.fail_after(READY_TIMEOUT):
+                await holding.wait()
+            returns = _returns((await other.run('Go.', workspace=screen)).all_messages())
+            tried.set()
+        refused, looked = returns
+
+        assert refused.content == snapshot(
+            'Another agent is holding a mouse button on this screen; try again after it lets go.'
+        )
+        assert looked.outcome == 'success'
         assert provider.actions == [MouseDown(), MouseUp()]
 
     async def test_a_button_whose_press_took_effect_but_failed_is_released(self) -> None:
