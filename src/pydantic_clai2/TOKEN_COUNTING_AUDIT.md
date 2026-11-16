@@ -22,7 +22,7 @@ already includes cache reads and writes; no CLAI sum adds them again.
 
 | Surface | Source | What the number means |
 | --- | --- | --- |
-| Status row `context: X/Y`, before each request | `compaction` `_ContextGauge` on harness `ContextUsageEvent` (`ReportContextUsage`, `estimate_context_tokens`) | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output), plus a heuristic for the messages and newly revealed tool schemas since, minus the reclaim of a compaction in this request. With no reported usage yet, the heuristic alone, without most tool definitions, shown with `~` |
+| Status row `context: X/Y`, before each request | `compaction` `_ContextGauge` on harness `ContextUsageMeasuredEvent` (`ReportContextUsage`, `estimate_context_tokens`) | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output), plus a heuristic for the messages and newly revealed tool schemas since, minus the reclaim of a compaction in this request. With no reported usage yet, the heuristic alone, without most tool definitions, shown with `~` |
 | Status row `context`, during streaming | `Session._stream`, every event | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output) |
 | Status row `context`, end of turn | `_run_prompt` | Last response's `context_tokens` |
 | Status row `context`, resumed conversation before a turn | `SessionRuntime.show_model` | Last retained response's `context_tokens` |
@@ -88,7 +88,7 @@ which leaves files out, as `FilePart` and user-prompt images already were.
 4. **Gauge readings from subagents and forks.** Plugins are bound into the stock agent, so a
    self-delegated child and a `/fork` session run the `compaction` gauge and the `herdr` reporter
    too. A replay with `SubAgents(include_self=True)` confirmed that the parent's capability
-   instance receives the child's `ContextUsageEvent`. Both handlers write the foreground status, so
+   instance receives the child's `ContextUsageMeasuredEvent`. Both handlers write the foreground status, so
    a background child can repaint the main row, and its alert, while the user is at the prompt. The handlers need a signal for which run is the
    foreground one. `ctx.conversation_id` against `host.session_id` would cover subagents but not
    forks.

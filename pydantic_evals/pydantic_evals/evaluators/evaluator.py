@@ -227,10 +227,9 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
             of evaluation names to either of those.
         """
         output = self.evaluate(ctx)
-        if inspect.iscoroutine(output):  # pragma: no cover
+        if inspect.isawaitable(output):
             return run_until_complete(output)
-        else:
-            return cast(EvaluatorOutput, output)
+        return output
 
     async def evaluate_async(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
         """Run the evaluator asynchronously, handling both sync and async implementations.
@@ -248,10 +247,9 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         # Note: If self.evaluate is synchronous, but you need to prevent this from blocking, override this method with:
         # return await anyio.to_thread.run_sync(self.evaluate, ctx)
         output = self.evaluate(ctx)
-        if inspect.iscoroutine(output):
+        if inspect.isawaitable(output):
             return await output
-        else:
-            return cast(EvaluatorOutput, output)
+        return output
 
 
 EvaluatorFunc: TypeAlias = Callable[
@@ -304,19 +302,6 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
         self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]
     ) -> EvaluatorOutput | Awaitable[EvaluatorOutput]:
         return self.function(ctx)
-
-    # `EvaluatorFunc` allows any awaitable (e.g. an `asyncio.Task`), not just the coroutines the base class handles.
-    def evaluate_sync(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
-        output = self.evaluate(ctx)
-        if inspect.isawaitable(output):
-            return run_until_complete(output)
-        return output
-
-    async def evaluate_async(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
-        output = self.evaluate(ctx)
-        if inspect.isawaitable(output):
-            return await output
-        return output
 
     def get_default_evaluation_name(self) -> str:
         return self.evaluation_name or self._function_name()

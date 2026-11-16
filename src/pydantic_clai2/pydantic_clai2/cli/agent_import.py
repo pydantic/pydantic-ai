@@ -2,6 +2,7 @@
 
 import importlib
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 
 from pydantic_ai.agent import AbstractAgent
@@ -10,15 +11,19 @@ from pydantic_ai.agent import AbstractAgent
 def import_agent(path: str) -> AbstractAgent[None, object]:
     """Import `MODULE:ATTR` and return the agent instance it names.
 
-    The launch directory is appended to `sys.path`, so a module there resolves without installing it and
-    installed modules keep precedence. (`python -m pydantic_clai2` already puts it first, as for any script.)
+    The launch directory is appended to `sys.path`, after installed packages, only when nothing installed has the
+    module's top-level name, so a module there resolves without installing it and an installed agent's later
+    imports cannot resolve to it. A launch directory module whose top-level name is also installed resolves
+    against the installed package instead, so it usually fails with "module not found".
+    (`python -m pydantic_clai2` already puts it first, as for any script.)
     The agent runs with `deps=None`.
     """
     module_name, _, attr = path.partition(':')
     if not module_name or not attr:
         raise ValueError(f'--agent expects MODULE:ATTR, for example pydantic_ai.main:my_cool_agent; got {path!r}')
+    top_level = module_name.partition('.')[0]
     cwd = str(Path.cwd())
-    if cwd not in sys.path:
+    if top_level not in sys.modules and find_spec(top_level) is None and cwd not in sys.path:
         sys.path.append(cwd)
     try:
         module = importlib.import_module(module_name)

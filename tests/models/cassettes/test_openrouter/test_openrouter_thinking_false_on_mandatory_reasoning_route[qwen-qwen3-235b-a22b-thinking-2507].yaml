@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "154"
+      - "158"
       content-type:
       - application/json
       host:
@@ -25,14 +25,17 @@ interactions:
         - role: user
           content: "Reply with exactly: OK"
         reasoning:
-          effort: low
+          effort: minimal
   response:
     status: 200
     headers:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -48,9 +51,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793032230-xIQj2xlEUo8bq8rPybn0
+        id: gen-1794001744-Fr11dS1PKaqh3avcgd8p
         object: chat.completion
-        created: 1793032230
+        created: 1794001744
         model: qwen/qwen3-235b-a22b-thinking-2507
         provider: Venice
         system_fingerprint: null
@@ -70,56 +73,28 @@ interactions:
             reasoning: |
               Here's a thinking process:
 
-              1.  **Analyze User Input:**
-                 - User says: "Reply with exactly: OK"
-                 - This is a direct instruction requiring a specific, exact response.
-
-              2.  **Identify Constraints:**
-                 - The response must be exactly "OK"
-                 - No extra text, no punctuation beyond what's specified (though "OK" typically has no punctuation, I'll stick to exactly "OK")
-                 - Case sensitivity matters: "OK" not "ok" or "Ok"
-
-              3.  **Formulate Response:**
-                 - Simply output: OK
-
-              4.  **Verify Constraints:**
-                 - Does it match exactly? Yes.
-                 - Any extra words? No.
-                 - Meets the requirement? Yes.
-
-              5.  **Output Generation:**
-                 - OK✅
+              1.  **Analyze User Input:** The user said: "Reply with exactly: OK"
+              2.  **Identify Constraint:** The constraint is explicit: "Reply with exactly: OK"
+              3.  **Determine Response:** I need to output only "OK" and nothing else, as per the instruction.
+              4.  **Verify Constraint:** Does "OK" match the requirement? Yes.
+              5.  **Generate Output:** OK
             reasoning_details:
             - type: reasoning.text
               text: |
                 Here's a thinking process:
 
-                1.  **Analyze User Input:**
-                   - User says: "Reply with exactly: OK"
-                   - This is a direct instruction requiring a specific, exact response.
-
-                2.  **Identify Constraints:**
-                   - The response must be exactly "OK"
-                   - No extra text, no punctuation beyond what's specified (though "OK" typically has no punctuation, I'll stick to exactly "OK")
-                   - Case sensitivity matters: "OK" not "ok" or "Ok"
-
-                3.  **Formulate Response:**
-                   - Simply output: OK
-
-                4.  **Verify Constraints:**
-                   - Does it match exactly? Yes.
-                   - Any extra words? No.
-                   - Meets the requirement? Yes.
-
-                5.  **Output Generation:**
-                   - OK✅
+                1.  **Analyze User Input:** The user said: "Reply with exactly: OK"
+                2.  **Identify Constraint:** The constraint is explicit: "Reply with exactly: OK"
+                3.  **Determine Response:** I need to output only "OK" and nothing else, as per the instruction.
+                4.  **Verify Constraint:** Does "OK" match the requirement? Yes.
+                5.  **Generate Output:** OK
               format: unknown
               index: 0
         usage:
           prompt_tokens: 15
-          completion_tokens: 184
-          total_tokens: 199
-          cost: 0.00065075
+          completion_tokens: 106
+          total_tokens: 121
+          cost: 0.00037775
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -127,11 +102,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.00065075
+            upstream_inference_cost: 0.00037775
             upstream_inference_prompt_cost: 6.75e-6
-            upstream_inference_completions_cost: 0.000644
+            upstream_inference_completions_cost: 0.000371
           completion_tokens_details:
-            reasoning_tokens: 165
+            reasoning_tokens: 95
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T16:30:32.177547+00:00
+  recorded_at: 2026-11-06T21:49:05.714532+00:00

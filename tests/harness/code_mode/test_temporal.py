@@ -530,7 +530,7 @@ async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> N
     Every Monty call inside a workflow goes through the blocking portal, so this covers that
     path for both bindings, including `os_access` seeing the workflow's contextvars, and a
     sandbox sleep becoming a durable timer rather than blocking the workflow, still capped by the
-    `max_duration_secs` allowance even though the execution-time limit is off in a workflow.
+    `max_duration_seconds` allowance even though the execution-time limit is off in a workflow.
     """
     workflow_id = 'test_code_mode_temporal_remote_1'
     async with Worker(

@@ -551,7 +551,7 @@ So when the frontend holds the message history through `@ag-ui/client`, these re
 
 The model then sees a different conversation than it did on the earlier run, and the request no longer starts with the same bytes, so the [prompt cache](../capabilities/caching.md) misses as well.
 
-To keep these records, [keep the history on the server](#keeping-the-history-on-the-server): persist the agent's messages keyed by the thread ID, pass them to the adapter as `message_history`, and set `manage_message_history='server'`, so that only the client's new turn is used. The records then never depend on the client.
+To keep these records, [keep the history on the server](#keeping-the-history-on-the-server): persist the agent's messages keyed by the thread ID, pass them to the adapter as `message_history`, and set `manage_message_history='server'`, so that only the client's new turn is used. The records then never depend on the client. Or have the adapter load and save the conversation for you through a [conversation store](./overview.md#saving-to-a-conversation-store).
 
 If the frontend must hold the history, it can send the records back itself. This middleware puts the `pydantic_ai_*` activity messages from `agent.messages` back into each request, in their original positions:
 

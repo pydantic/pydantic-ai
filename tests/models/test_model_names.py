@@ -34,6 +34,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
+    from pydantic_ai.models.google_decisions import GoogleDecisionsModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
@@ -53,7 +54,7 @@ if not imports_successful():  # pragma: lax no cover
     LatestOpenAIEmbeddingModelNames = LatestOpenAIImageModelNames = LatestXaiImageGenerationModelNames = None
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CerebrasModelName = CohereModelName = None
     GoogleModelName = GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
-    OpenAIDecisionsModelName = None
+    OpenAIDecisionsModelName = GoogleDecisionsModelName = None
     DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
@@ -85,6 +86,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,
+    'google-decisions': GoogleDecisionsModelName,
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
@@ -123,9 +125,7 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         # Gateway rejects it with "The provided model identifier is invalid."; native Bedrock serves it.
         'gateway/bedrock:us.deepseek.r1-v1:0',
-        # Gateway has no price data for these yet, so it refuses them with "No cost data available".
-        'gateway/bedrock:global.moonshotai.kimi-k3',
-        'gateway/bedrock:global.moonshotai.kimi-k3.1',
+        # Gateway rejects it with a 403 "The provider denied access to model `global.zai.glm-5.3`."
         'gateway/bedrock:global.zai.glm-5.3',
     }
 )
@@ -209,9 +209,15 @@ class SdkModelLiteral:
 
 SDK_MODEL_LITERALS = [
     SdkModelLiteral('openai', 'openai', AllModels, OpenAIModelName, frozenset({'gpt-6.1-terra'})),
-    SdkModelLiteral('openai-image', 'openai', ImageModel, LatestOpenAIImageModelNames),
+    SdkModelLiteral(
+        'openai-image',
+        'openai',
+        ImageModel,
+        LatestOpenAIImageModelNames,
+        frozenset({'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'}),
+    ),
     SdkModelLiteral('openai-embedding', 'openai', EmbeddingModel, LatestOpenAIEmbeddingModelNames),
-    SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName),
+    SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName, frozenset({'claude-fable-5-2'})),
     SdkModelLiteral('xai', 'xai-sdk', ChatModel, XaiModelName, frozenset({'grok-4.7'})),
     SdkModelLiteral(
         'xai-image',

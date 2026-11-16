@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import sqlite3
 import threading
 from collections.abc import Callable, Mapping
@@ -51,8 +52,19 @@ _SQLITE_METADATA_SCHEMA = (
 )
 
 
-def _create_schema(connection: sqlite3.Connection) -> None:
-    """Create the tables, adding the `memory_files` columns that earlier releases' databases lack."""
+_Decoder = Callable[[bytes, str, bool], tuple[str, int]]
+_DECODERS: dict[str, _Decoder] = {
+    'UTF-8': codecs.utf_8_decode,
+    'UTF-16le': codecs.utf_16_le_decode,
+    'UTF-16be': codecs.utf_16_be_decode,
+}
+# SQLite text slicing stops at NUL. Four bytes per code point bounds the prefix in UTF-8 and UTF-16,
+# including one extra character to detect truncation; the decoder leaves an incomplete tail unread.
+_BOUNDED_CONTENT_BLOB_SQL = 'substr(CAST(content AS BLOB), 1, 4 * (? + 1))'
+
+
+def _create_schema(connection: sqlite3.Connection) -> _Decoder:
+    """Create the tables, migrate earlier releases' `memory_files` columns, and return the database encoding decoder."""
     connection.execute('BEGIN IMMEDIATE')
     connection.execute(_SQLITE_MEMORY_SCHEMA)
     columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(memory_files)').fetchall()}
@@ -67,7 +79,9 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         'INSERT OR IGNORE INTO memory_metadata(id, generation) SELECT 1, COALESCE(MAX(version), 0) FROM memory_files'
     )
+    encoding = connection.execute('PRAGMA encoding').fetchone()[0]
     connection.commit()
+    return _DECODERS[str(encoding)]
 
 
 def _prefix_end(prefix: str) -> str:
@@ -93,11 +107,12 @@ class SqliteMemoryStore:
         if database is not None and str(database) in ('', ':memory:'):
             raise ValueError(
                 'an in-memory SQLite database does not work with per-call connections -- '
-                'use `InMemoryStore`, or pass a caller-owned `connection=`'
+                'use `InMemoryMemoryStore`, or pass a caller-owned `connection=`'
             )
         self._database = database
         self._connection = connection
         self._schema_ready = False
+        self._decode: _Decoder = codecs.utf_8_decode
         self._thread_lock = threading.RLock()
 
     def _connect(self) -> tuple[sqlite3.Connection, bool]:
@@ -115,7 +130,7 @@ class SqliteMemoryStore:
             if owned:
                 _enable_wal(connection)
             if not self._schema_ready:
-                _create_schema(connection)
+                self._decode = _create_schema(connection)
                 self._schema_ready = True
             return connection, owned
         except BaseException:
@@ -161,6 +176,11 @@ class SqliteMemoryStore:
         assert row is not None
         return int(row[0])
 
+    def _decode_prefix(self, blob: bytes | None, max_chars: int) -> tuple[str, bool]:
+        # SQLite substr() on a zero-length BLOB returns NULL (None in sqlite3).
+        content = self._decode(blob or b'', 'strict', False)[0]
+        return content[:max_chars], len(content) > max_chars
+
     async def read(self, path: str, *, max_chars: int) -> MemoryFile | None:
         validate_store_path(path)
         if max_chars <= 0:
@@ -168,18 +188,19 @@ class SqliteMemoryStore:
 
         def op(connection: sqlite3.Connection) -> MemoryFile | None:
             row = connection.execute(
-                'SELECT substr(content, 1, ?), version, last_operation_id, length(content), write_metadata '
+                f'SELECT {_BOUNDED_CONTENT_BLOB_SQL}, version, last_operation_id, write_metadata '
                 'FROM memory_files WHERE path = ?',
                 (max_chars, path),
             ).fetchone()
             if row is None:
                 return None
+            content, truncated = self._decode_prefix(row[0], max_chars)
             return MemoryFile(
-                content=str(row[0]),
+                content=content,
                 version=str(row[1]),
                 operation_id=str(row[2]) if row[2] is not None else None,
-                truncated=int(row[3]) > max_chars,
-                metadata=decode_metadata(row[4]),
+                truncated=truncated,
+                metadata=decode_metadata(row[3]),
             )
 
         return await anyio.to_thread.run_sync(self._run, op)
@@ -332,15 +353,15 @@ class SqliteMemoryStore:
         if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
 
-        def op(connection: sqlite3.Connection) -> list[tuple[str, str, int]]:
+        def op(connection: sqlite3.Connection) -> list[tuple[str, str, bool]]:
             # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = connection.execute(
-                'SELECT path, substr(content, 1, ?), length(content) FROM memory_files '
+                f'SELECT path, {_BOUNDED_CONTENT_BLOB_SQL} FROM memory_files '
                 'WHERE path >= ? AND path < ? AND instr(substr(path, length(?) + 1), ?) = 0 '
                 'ORDER BY path LIMIT ?',
                 (max_file_chars, prefix, _prefix_end(prefix), prefix, '/', max_files + 1),
             ).fetchall()
-            return [(str(row[0]), str(row[1]), int(row[2])) for row in rows]
+            return [(str(row[0]), *self._decode_prefix(row[1], max_file_chars)) for row in rows]
 
         rows = await anyio.to_thread.run_sync(self._run, op)
         result = await lexical_search(
@@ -354,5 +375,5 @@ class SqliteMemoryStore:
         return MemorySearchResult(
             matches=result.matches,
             scanned=result.scanned,
-            truncated=result.truncated or any(length > max_file_chars for _, _, length in rows),
+            truncated=result.truncated or any(truncated for _, _, truncated in rows),
         )

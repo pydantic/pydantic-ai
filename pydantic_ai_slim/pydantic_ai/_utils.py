@@ -42,6 +42,7 @@ from typing import (
     get_origin,
     overload,
 )
+from urllib.parse import urlparse
 
 import anyio
 from anyio.to_thread import run_sync
@@ -1301,6 +1302,16 @@ def is_google_files_api_url(url: str) -> bool:
     suffixes without a path separator also match.
     """
     return url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
+
+
+def host_derived_id(url: str) -> str | None:
+    """An id taken from `url`'s hostname, or `None` when it has none.
+
+    `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled `--1`.
+    Shared by `MCPToolset` and the `MCP` capability so both derive the same id from one URL.
+    """
+    host = urlparse(url).hostname
+    return host.replace(':', '-') if host else None
 
 
 def is_text_like_media_type(media_type: str) -> bool:
