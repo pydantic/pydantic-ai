@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, assert_never, cast, overload
 
+from typing_extensions import TypedDict
+
 from .. import ModelAPIError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -180,12 +182,13 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
     """Include log probabilities in the response.
 
     These will be included in `ModelResponse.provider_details['logprobs']`.
+    Support depends on the selected inference provider and model.
     """
 
     huggingface_top_logprobs: int
     """Include log probabilities for the top 0 to 5 tokens at each position.
 
-    Requires `huggingface_logprobs=True`.
+    Requires `huggingface_logprobs=True`. Support depends on the selected inference provider and model.
     """
 
 
@@ -612,6 +615,17 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         return ChatCompletionInputMessageChunk(type='image_url', image_url=url)
 
 
+class _TopLogprob(TypedDict):
+    token: str
+    logprob: float
+
+
+class _TokenLogprob(TypedDict):
+    token: str
+    logprob: float
+    top_logprobs: list[_TopLogprob]
+
+
 @dataclass
 class HuggingFaceStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Hugging Face models."""
@@ -624,7 +638,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _usage_received: bool | None = field(default=False, init=False)
-    _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
+    _logprobs: list[_TokenLogprob] = field(default_factory=list[_TokenLogprob], init=False)
 
     async def close_stream(self) -> None:
         await self._response.aclose()
@@ -702,7 +716,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
 def _map_logprobs(
     logprobs: ChatCompletionOutputLogprobs | ChatCompletionStreamOutputLogprobs,
-) -> list[dict[str, Any]]:
+) -> list[_TokenLogprob]:
     """Convert Hugging Face logprobs to a serializable format.
 
     Shaped like the OpenAI and xAI mappings so `provider_details['logprobs']` is consistent across
