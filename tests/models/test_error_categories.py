@@ -9,7 +9,7 @@ Mock transports use `localhost` base URLs, which VCR ignores.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -2368,16 +2368,6 @@ _AZURE_CONTENT_FILTER_BODY: dict[str, Any] = {
 }
 
 
-def _azure_provider(client: httpx2.AsyncClient) -> AzureProvider:
-    return AzureProvider(
-        azure_endpoint='https://example.openai.azure.com', api_version='2024-10-21', api_key='test', http_client=client
-    )
-
-
-def _retrying_openai_responses(client: httpx2.AsyncClient) -> OpenAIResponsesModel:
-    return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test', http_client=client))
-
-
 async def _compact(model: Model) -> ModelResponse:
     return await model.compact_messages(
         ModelRequestContext(
@@ -2389,50 +2379,43 @@ async def _compact(model: Model) -> ModelResponse:
     )
 
 
-async def _azure_chat_content_filter(client: httpx2.AsyncClient) -> object:
-    model = OpenAIChatModel('gpt-5.2', provider=_azure_provider(client))
-    return await model.request([ModelRequest.user_text_prompt('hello')], {'max_retries': 0}, ModelRequestParameters())
-
-
-async def _azure_responses_content_filter(client: httpx2.AsyncClient) -> object:
-    model = OpenAIResponsesModel('gpt-5.2', provider=_azure_provider(client))
-    return await model.request([ModelRequest.user_text_prompt('hello')], {'max_retries': 0}, ModelRequestParameters())
-
-
-async def _azure_compaction_content_filter(client: httpx2.AsyncClient) -> object:
-    return await _compact(OpenAIResponsesModel('gpt-5.2', provider=_azure_provider(client)))
-
-
-async def _resume_expired_response(client: httpx2.AsyncClient) -> object:
-    suspended = ModelResponse(
-        parts=[], model_name='gpt-5.2', provider_name='openai', provider_response_id='resp_expired', state='suspended'
-    )
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello'), suspended]
-    return await _retrying_openai_responses(client).request(messages, {'max_retries': 0}, ModelRequestParameters())
-
-
 @pytest.mark.parametrize(
-    ('send', 'status_code', 'body', 'category'),
+    ('call', 'azure', 'history', 'status_code', 'body', 'category'),
     [
         pytest.param(
-            _azure_chat_content_filter, 400, _AZURE_CONTENT_FILTER_BODY, ModelRequestRejectedError, id='azure-chat'
+            'chat',
+            True,
+            [ModelRequest.user_text_prompt('hello')],
+            400,
+            _AZURE_CONTENT_FILTER_BODY,
+            ModelRequestRejectedError,
+            id='azure-chat',
         ),
         pytest.param(
-            _azure_responses_content_filter,
+            'responses',
+            True,
+            [ModelRequest.user_text_prompt('hello')],
             400,
             _AZURE_CONTENT_FILTER_BODY,
             ModelRequestRejectedError,
             id='azure-responses',
         ),
         pytest.param(
-            _azure_compaction_content_filter,
-            400,
-            _AZURE_CONTENT_FILTER_BODY,
-            ModelRequestRejectedError,
-            id='azure-compaction',
+            'compact', True, [], 400, _AZURE_CONTENT_FILTER_BODY, ModelRequestRejectedError, id='azure-compaction'
         ),
         pytest.param(
-            _resume_expired_response,
+            'responses',
+            False,
+            [
+                ModelRequest.user_text_prompt('hello'),
+                ModelResponse(
+                    parts=[],
+                    model_name='gpt-5.2',
+                    provider_name='openai',
+                    provider_response_id='resp_expired',
+                    state='suspended',
+                ),
+            ],
             404,
             {'error': {'message': "Response with id 'resp_expired' not found.", 'type': 'invalid_request_error'}},
             ModelNotFoundError,
@@ -2442,7 +2425,9 @@ async def _resume_expired_response(client: httpx2.AsyncClient) -> object:
 )
 async def test_retrying_transport_gave_up_is_not_recovered_from_so_fallback_moves_on(
     allow_model_requests: None,
-    send: Callable[[httpx2.AsyncClient], Awaitable[object]],
+    call: Literal['chat', 'responses', 'compact'],
+    azure: bool,
+    history: list[ModelMessage],
     status_code: int,
     body: dict[str, Any],
     category: type[ModelHTTPError],
@@ -2458,8 +2443,28 @@ async def test_retrying_transport_gave_up_is_not_recovered_from_so_fallback_move
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(status_code, json=body)
 
+    client = retrying_client(handler)
+    provider = (
+        AzureProvider(
+            azure_endpoint='https://example.openai.azure.com',
+            api_version='2024-10-21',
+            api_key='test',
+            http_client=client,
+        )
+        if azure
+        else OpenAIProvider(api_key='test', http_client=client)
+    )
     with pytest.raises(category) as exc_info:
-        await send(retrying_client(handler))
+        if call == 'chat':
+            await OpenAIChatModel('gpt-5.2', provider=provider).request(
+                history, {'max_retries': 0}, ModelRequestParameters()
+            )
+        elif call == 'responses':
+            await OpenAIResponsesModel('gpt-5.2', provider=provider).request(
+                history, {'max_retries': 0}, ModelRequestParameters()
+            )
+        else:
+            await _compact(OpenAIResponsesModel('gpt-5.2', provider=provider))
 
     assert exc_info.value.status_code == status_code
     assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
@@ -2497,7 +2502,7 @@ async def test_compaction_transport_gave_up_status_error_category(
 
     async def error(client: httpx2.AsyncClient) -> ModelHTTPError:
         with pytest.raises(ModelHTTPError) as exc_info:
-            await _compact(_retrying_openai_responses(client))
+            await _compact(OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test', http_client=client)))
         return exc_info.value
 
     def summary(exc: ModelHTTPError) -> tuple[object, ...]:
