@@ -404,6 +404,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             machine's own default when `None`.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
+        secrets: Names of existing boxd secrets a newly created machine gets, applied as
+            `boxd.spec.secrets(*secrets)` in its machine spec. Each is set in the machine's
+            environment as a placeholder that boxd's proxy, outside the machine, replaces with the
+            real value on requests to the secret's domains. An attached machine keeps the ones it
+            was created with.
     """
 
     def __init__(
@@ -417,6 +422,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Sequence[str] | None = None,
     ) -> None:
         if ref is not None:
             _check_ref(ref)
@@ -431,6 +437,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._vcpu = vcpu
         self._auto_suspend_timeout = auto_suspend_timeout
         self._env = dict(env or {})
+        self._secrets = tuple(secrets or ())
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
         self._missing_cwd_marker = f'pydantic-ai-missing-working-dir-{uuid.uuid4().hex}'
@@ -530,6 +537,12 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         if self._create_name is None:
             self._create_name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
         name = self._create_name
+        spec = None
+        if self._secrets:
+            # boxd refuses `isolated` and `vcpu` next to a spec, so the spec carries them.
+            spec = boxd.spec.spec().isolated().with_(boxd.spec.secrets(*self._secrets))
+            if self._vcpu is not None:
+                spec = spec.size(f'{self._vcpu}x{4 * self._vcpu}')
         machine = await _launch(
             client,
             name,
@@ -537,9 +550,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                 name,
                 org=self._org,
                 from_snapshot=self._snapshot,
-                isolated=True,
-                vcpu=self._vcpu,
+                isolated=spec is None,
+                vcpu=self._vcpu if spec is None else None,
                 auto_suspend_timeout=self._auto_suspend_timeout,
+                spec=spec,
             ),
             org=self._org,
             verb='create',

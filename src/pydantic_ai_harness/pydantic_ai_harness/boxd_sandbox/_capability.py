@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -89,6 +89,12 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached machine; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    secrets: Sequence[str] | None = None
+    """Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in
+    its machine spec. Each is set in the machine's environment as a placeholder that boxd's proxy,
+    outside the machine, replaces with the real value on requests to the secret's domains, so the agent's
+    commands can use a credential they cannot read. An attached machine keeps the ones it was created with."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
@@ -113,6 +119,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Sequence[str] | None = None,
     ) -> BoxdSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -130,6 +137,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=auto_suspend_timeout,
             working_dir=working_dir,
             env=env,
+            secrets=secrets,
         )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
@@ -173,6 +181,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=self.auto_suspend_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            secrets=self.secrets,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

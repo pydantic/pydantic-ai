@@ -81,9 +81,31 @@ class TestCreate:
             assert await backend.run(['echo', 'hi']) == CommandResult(exit_code=0, stdout='hi\n', stderr='')
         machine = host.only
         assert _NAME.fullmatch(machine.name)
-        assert machine.create_kwargs == {'org': 'acme', 'isolated': True, 'auto_suspend_timeout': 0, **forwarded}
+        assert machine.create_kwargs == {
+            'org': 'acme',
+            'isolated': True,
+            'auto_suspend_timeout': 0,
+            'spec': None,
+            **forwarded,
+        }
         assert backend.ref == _ref(machine.id)
         assert caplog.messages == [f'Created boxd machine {machine.id} ({machine.name})']
+
+    @pytest.mark.parametrize(
+        ('options', 'size'),
+        [({}, {}), ({'vcpu': 2}, {'size': '2x8'})],
+        ids=['default-size', 'vcpu'],
+    )
+    async def test_secrets_go_in_the_machine_spec(
+        self, host: FakeBoxd, options: dict[str, Any], size: dict[str, str]
+    ) -> None:
+        await BoxdSandboxBackend(secrets=['GH_TOKEN'], **options).run(['true'])
+        machine = host.only
+        # The spec carries isolation and size, so they are not passed beside it.
+        assert machine.create_kwargs['isolated'] is False
+        assert machine.create_kwargs['vcpu'] is None
+        assert machine.create_kwargs['spec'] == {'version': 1, 'isolated': True, 'secrets': ['GH_TOKEN'], **size}
+        assert machine.isolated
 
     async def test_a_lost_create_reply_finds_the_machine_instead_of_creating_another(self, host: FakeBoxd) -> None:
         host.lose_create_reply = True

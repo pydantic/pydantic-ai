@@ -192,6 +192,37 @@ async def run_in_prepared_machine() -> str:
 
 The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
 
+## Give commands a credential they cannot read
+
+`secrets` names existing boxd secrets, applied as `boxd.spec.secrets(*secrets)` in a new machine's spec. A secret bound to domains reaches the machine only as an opaque `bxds_` placeholder in its environment, and boxd's proxy, outside the machine, replaces it with the real value in the URL, headers, Basic auth and body of HTTPS requests to those domains. Set the secret before the machine is created, since boxd refuses a spec naming a secret that does not exist:
+
+```python {test="skip"}
+import boxd
+
+from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
+
+
+async def set_github_secret(token: str) -> None:  # a GitHub token, such as the output of `gh auth token`
+    async with boxd.AsyncBoxd() as client:
+        await client.secrets.set(
+            'GH_TOKEN',
+            token,
+            scope='private-unattached',  # reaches only machines whose spec names it
+            domains=['github.com', 'api.github.com', 'uploads.github.com'],
+        )
+
+
+sandbox = BoxdSandbox(secrets=['GH_TOKEN'])
+```
+
+`gh` then acts as the token's owner, while `echo $GH_TOKEN` in the machine prints only the placeholder. For `git push`, have a command in the machine send the placeholder as the HTTPS password:
+
+```bash
+git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+```
+
+A remote such as `git@github.com:owner/repo.git` gets no credential: use the `https://` URL. The agent can still use the token for anything it allows, on any repository it reaches. boxd scrubs the value from responses only in its plain form, so a host that echoes the Basic auth header back would return the real value: name only hosts that never echo request headers. `secrets` applies to a machine `BoxdSandbox` creates; an attached machine keeps the ones it was created with. Calling `secrets.set` again rotates the value at once, and the placeholder stays the same.
+
 ## Clean up
 
 Pydantic AI never stops or deletes the machine. boxd suspends, and later hibernates, a machine that has had no network activity for as long as your organization's defaults say (set `auto_suspend_timeout=` in seconds to change suspending for new machines, or `0` to turn it off). `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines an idle-destroy or delete-after timer; `boxd machine get` shows a machine's timers. Delete it with the ref you stored:
@@ -250,6 +281,7 @@ Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the 
 | `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the machine's own (`/home/boxd`, where commands run as non-root `boxd`); set a project directory, or use relative paths for portable code. Created on a new machine; on an attached machine it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the machine. |
+| `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Give commands a credential they cannot read](#give-commands-a-credential-they-cannot-read). |
 
 boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 
