@@ -8,7 +8,7 @@ import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, cast
+from typing import Any
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
@@ -29,7 +29,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._models import is_request_response_model
-from pydantic_ai_harness._typeguards import is_mapping, is_object_list
+from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.file_system import READ_FILE_KIND
@@ -769,19 +769,15 @@ def _with_handles(
     if content_handle is not None:
         handles['overflow_content_handle'] = content_handle
 
-    if isinstance(existing, list | tuple):
-        items: list[object] = list(cast('list[object] | tuple[object, ...]', existing))
-        return [*items, handles]
+    if is_mapping(existing):
+        return {**{str(key): existing[key] for key in existing}, **handles}
+    if is_object_list_or_tuple(existing):
+        return [*existing, handles]
     if _is_ui_event(existing):
         return [existing, handles]
-
-    base: dict[str, object] = {}
-    if is_mapping(existing):
-        base.update({str(key): existing[key] for key in existing})
-    elif existing is not None:
-        base['original_metadata'] = existing
-    base.update(handles)
-    return base
+    if existing is not None:
+        return {'original_metadata': existing, **handles}
+    return handles
 
 
 def _is_ui_event(value: object) -> bool:
