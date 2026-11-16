@@ -1240,7 +1240,7 @@ except UsageLimitExceeded as e:
     """
 ```
 
-By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent.
+By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent. Under [durable execution](durable_execution/overview.md), the count runs in a durable unit of its own ahead of the request, so a recovered run reuses the recorded count instead of counting again.
 
 ##### Capping run cost
 
