@@ -109,6 +109,19 @@ Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and C
 
 Upgrading from an earlier release? The [Coder page](coder.md#upgrading) lists what changed.
 
+## From problem to capability
+
+Look up a capability by the problem it solves. The Capabilities section below lists all of them by what they give your agent.
+
+| If your problem is... | Capability | How it works |
+|---|---|---|
+| The model's output must pass a check, and bad output should be retried or blocked | [`OutputGuardrail`](guardrails.md) | Its `guard` returns `GuardrailResult.retry(...)` to send the output back to the model, or `False` to raise `OutputBlocked`. `retry` needs `run()`: under `run_stream()` it raises `UnexpectedModelBehavior`. |
+| One tool result is flooding the context window | [`ToolOutputLimits`](tool-output-limits.md) | By default, a result of 10,000 characters or more spills to a file in the run's workspace, and the model gets a preview plus a handle to read the rest. If the write fails, the result is truncated to 4,000 characters. Without a workspace, pass `store=LocalFileOverflowStore()`. |
+| The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](../workspace.md), or a sandbox | Set the directory on the workspace: `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox. Every capability that works in the workspace starts there; `Shell(cwd=)` and `FileSystem(cwd=)` warn and are ignored. In your own tool, `ctx.workspace.run(..., cwd='subdir')` starts one command elsewhere. |
+| A run, a day, or a tenant needs a spend ceiling | Core [`UsageLimits`](../agent.md#usage-limits), or [`SpendLimits`](spend.md) | For one run, pass `usage_limits=UsageLimits(cost_limit=Decimal('5'))`: the run raises `UsageLimitExceeded` after the response that crosses the limit. For a day or month, per tenant, or across worker processes, `SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])` refuses the next request once a window is spent. |
+| The model repeats the same tool call without making progress | [`DetectLoops`](detect-loops.md) | The default `action='nudge'` adds a system prompt asking the model to change approach; `action='error'` stops the run with `LoopDetectedError`. |
+| The model sends malformed JSON in a tool call | [`RepairToolArguments`](repair-tool-arguments.md) | Runs `json-repair` on the arguments before validation, fixing trailing commas, single-quoted keys and truncated JSON; valid arguments pass through unchanged. Import it from `pydantic_ai_harness.repair_tool_arguments` and install the `repair-tool-arguments` extra. `Coder` includes `RepairToolArguments`, so its `coder` extra installs `json-repair` too. |
+
 ## Capabilities
 
 Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 90+ in all, grouped by what they give your agent:

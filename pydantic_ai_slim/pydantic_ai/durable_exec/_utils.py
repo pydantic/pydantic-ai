@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypeAlias, TypeVar
 
+from pydantic_ai._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -248,6 +249,14 @@ class DurableModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+
+        def replay_request_parameters() -> ModelRequestParameters:
+            # The replay classifies each part against the parameters the unit's model sent, such as the output mode
+            # `'auto'` resolves to. They're prepared once the unit returns, so a request the model rejects still fails
+            # inside the unit; the unit's model already warned about the settings it ignores.
+            with suppress_unsupported_setting_warnings():
+                return self.wrapped.prepare_request(model_settings, model_request_parameters)[1]
+
         try:
             result = await self._request_stream_segment(segment_context)
         except Exception as error:
@@ -256,10 +265,10 @@ class DurableModel(WrapperModel):
             # The stream failed after it produced output, so it's handed over as a stream that fails partway
             # through rather than one that failed to open.
             stream: CompletedStreamedResponse = _StreamedThenFailed(
-                partial, model_request_parameters=model_request_parameters, error=error
+                partial, model_request_parameters=replay_request_parameters(), error=error
             )
         else:
-            stream = _completed_stream(result, model_request_parameters)
+            stream = _completed_stream(result, replay_request_parameters())
         yield stream
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:

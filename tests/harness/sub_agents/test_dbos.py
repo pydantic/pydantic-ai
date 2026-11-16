@@ -17,7 +17,7 @@ from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents, TaskControl
-from tests.conftest import detach_dbos_logging, try_import, without_admin_server
+from tests.conftest import try_import
 from tests.harness._deferred_tools import QUESTION, call_then_echo
 from tests.harness.sub_agents._background import (
     WORKER_CALLS,
@@ -45,13 +45,12 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         'name': 'subagents_dynamic',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 async def test_created_agent_survives_recovery(dbos: DBOS) -> None:
