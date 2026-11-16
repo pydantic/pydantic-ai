@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 from opentelemetry.trace import INVALID_SPAN
+from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
@@ -38,10 +38,10 @@ def instrumented(include_content: bool) -> tuple[Instrumentation, InMemorySpanEx
 
 
 @dataclass
-class TraceWhenPrepared(AbstractCapability[Any]):
+class TraceWhenPrepared(AbstractCapability[object]):
     """Records a span and a decision from `for_run`, which runs before the run publishes its telemetry."""
 
-    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
         with open_span(
             ctx, 'example prepare', attributes={'example.kind': 'setup'}, content={'example.input': 'a'}
         ) as span:
@@ -50,7 +50,7 @@ class TraceWhenPrepared(AbstractCapability[Any]):
         return self
 
 
-def example_spans(exporter: InMemorySpanExporter) -> list[dict[str, Any]]:
+def example_spans(exporter: InMemorySpanExporter) -> list[dict[str, AttributeValue]]:
     return [
         {'name': span.name, **(span.attributes or {})}
         for span in exporter.get_finished_spans()
@@ -94,15 +94,15 @@ async def test_content_is_left_out_without_include_content():
 
 
 @dataclass
-class MarkToolCall(AbstractCapability[Any]):
+class MarkToolCall(AbstractCapability[object]):
     async def before_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
         current_span(ctx).set_attribute('example.marked', True)
         return args
 
 
-def agent_with_tool(*capabilities: AbstractCapability[Any]) -> Agent[None, str]:
+def agent_with_tool(*capabilities: AbstractCapability[object]) -> Agent[None, str]:
     agent = Agent(TestModel(call_tools=['noop']), capabilities=[MarkToolCall(), *capabilities])
 
     @agent.tool_plain
