@@ -463,21 +463,21 @@ active on the **next** run, and only if you pass it in:
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness import CapabilityCreation
 
+workspace = LocalWorkspaceBackend('.')
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[creation])
 
 
 
 async def main():
     history = None
     for prompt in ['Add a capability that logs tool calls.', 'Now refactor utils.py.']:
-        result = await agent.run(
-            prompt, message_history=history, capabilities=creation.store.load_active()
-        )
+        extra = await creation.load_active(workspace)
+        result = await agent.run(prompt, message_history=history, capabilities=extra, workspace=workspace)
         history = result.all_messages()
 ```
 
@@ -485,8 +485,11 @@ Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorks
 authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
 `ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
 a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
-With `defer_loading=True` these checks refuse each authoring tool call instead. `store.load_active()` runs outside this check, since it has no workspace. Only use it where you would run the
-model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+With `defer_loading=True` these checks refuse each authoring tool call instead. `creation.load_active(workspace)`
+makes them against `workspace` before loading, and only against it, so pass the same workspace as `agent.run(workspace=...)`
+instead of a `LocalWorkspace` capability (for a directory outside the working directory,
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('.')), authority='operator', path_authority={'/abs/path': 'operator'})`); `creation.store.load_active()` has no workspace and skips them, so only
+use it where you would run the model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
 a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
