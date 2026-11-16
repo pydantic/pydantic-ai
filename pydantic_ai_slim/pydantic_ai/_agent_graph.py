@@ -4050,7 +4050,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_name=model.model_name,
             provider_name=model.system,
             provider_url=model.base_url,
-            timestamp=_compaction_timestamp(holder, prepared.messages[-1]),
+            timestamp=_compaction_timestamp(holder, history[-1]),
         )
         self._record_response_usage(ctx, compaction.billed, request_context=request_context)
         # Before the request is sent, like the check a later attempt gets for an earlier one's rejected response.
