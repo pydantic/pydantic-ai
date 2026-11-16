@@ -380,8 +380,8 @@ events and delegation.
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. Workspace calls from workflow code use
   `activity_config`; if you set it, keep a `start_to_close_timeout` in it.
 - A sticky `cd` is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the run,
-  so a new worker continues in the same directory. Commands in one run that change directory at the same
-  time can overwrite each other's state.
+  so a new worker continues in the same directory, and removed when the run ends. Commands in one run that
+  change directory at the same time can overwrite each other's state.
 - A retried `start_command` reattaches to its job instead of starting a second process. If a launch failed
   partway, the retry reports a pending launch; once the process has stopped, remove its files under
   `.pydantic-ai-harness/shell/`.
