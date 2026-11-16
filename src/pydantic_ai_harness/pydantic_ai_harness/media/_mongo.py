@@ -30,13 +30,12 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from importlib.metadata import version
 
 from bson.binary import Binary
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.driver_info import DriverInfo
 
+from pydantic_ai_harness._mongo_client import harness_driver_info
 from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
@@ -46,8 +45,6 @@ from pydantic_ai_harness.media._store import (
     parse_media_uri,
     resolve_public_url,
 )
-
-_HARNESS_VERSION = version('pydantic-ai-harness')
 
 _DEFAULT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024
 # 16MiB BSON document cap minus headroom for the chunk document's own framing
@@ -116,10 +113,7 @@ class MongoMediaStore:
             self._own_client = False
         else:
             assert db_url is not None
-            self._client = AsyncMongoClient[_MongoDocument](
-                db_url,
-                driver=DriverInfo(name='pydantic-ai-harness', version=_HARNESS_VERSION),
-            )
+            self._client = AsyncMongoClient[_MongoDocument](db_url, driver=harness_driver_info())
             self._own_client = True
 
         self._db: AsyncDatabase[_MongoDocument] = self._client[database]
