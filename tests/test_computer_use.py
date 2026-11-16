@@ -72,15 +72,14 @@ def test_a_computer_result_reads_its_outcome_and_screenshot() -> None:
             ToolReturnPart(
                 'my_computer',
                 ['Clicked.', SCREEN],
-                # A history loaded from JSON holds the size as a list.
-                metadata={'performed': 1, 'screenshot_size': [1280, 800]},
+                metadata={'performed': 1},
                 tool_kind=COMPUTER_KIND.id,
             )
         ]
     )
     result = request.parts[0]
     assert isinstance(result, ComputerReturnPart)
-    assert result.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert result.result == {'performed': 1}
     assert result.screenshot == SCREEN
 
 

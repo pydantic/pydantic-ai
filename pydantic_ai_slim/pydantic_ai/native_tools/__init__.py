@@ -899,7 +899,7 @@ class ComputerTool(AbstractNativeTool):
     """
 
     display_size: tuple[int, int]
-    """The `(width, height)` of the screenshots the model sees, which may be smaller than the display."""
+    """The `(width, height)` of the screenshots the model sees."""
 
     kind: str = 'computer'
     """The kind of tool."""

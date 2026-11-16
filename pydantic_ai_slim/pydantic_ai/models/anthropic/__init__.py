@@ -4142,13 +4142,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         performed, error = metadata['performed'], metadata.get('error')
         ran = [index for index, end in enumerate(ends) if end <= performed]
         returned = sum(returns_output(blocks, index) for index in ran)
-        outputs, screen, note = _split_computer_content(content, returned)
+        outputs, screen, note, extra = _split_computer_content(content, returned)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, (block, end, count) in enumerate(zip(blocks, ends, counts)):
             if end <= performed:
                 output = next(outputs, None) if returns_output(blocks, index) else None
                 is_last_ran = index == ran[-1]
-                results.append(await self._map_ran_computer_call(block, is_last_ran, screen, note, output, map_context))
+                results.append(
+                    await self._map_ran_computer_call(block, is_last_ran, screen, note, extra, output, map_context)
+                )
             elif error is not None and end - count <= performed:
                 # Its first action was reached, so one of its actions is the one that failed.
                 # Only when no call before it ran does it carry the screen.
@@ -4166,14 +4168,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         is_last_ran: bool,
         screen: BinaryImage | None,
         note: str,
+        extra: list[str | MultiModalContent],
         output: str | MultiModalContent | None,
         map_context: _MapMessagesContext,
     ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """`OK` and what the call's action returned; the last call that ran also gets the screen, or `note` without it."""
+        """`OK` and what the call's action returned.
+
+        The last call that ran also gets `extra`, the rest of the result, and the screen, or `note` without it.
+        """
         returned = [await self._map_tool_result_item(output, map_context)] if output is not None else []
         ok = BetaTextBlockParam(text='OK', type='text')
         if not is_last_ran:
             return _computer_result(block, False, ok, *returned)
+        returned += [await self._map_tool_result_item(item, map_context) for item in extra]
         if screen is None:
             return _computer_result(block, False, BetaTextBlockParam(text=note, type='text'), *returned)
         return _computer_result(block, False, ok, *returned, await self._map_tool_result_item(screen, map_context))
@@ -4554,18 +4561,23 @@ def _computer_tool_params(
 
 def _split_computer_content(
     content: list[str | MultiModalContent], returned: int
-) -> tuple[Iterator[str | MultiModalContent], BinaryImage | None, str]:
-    """A `computer` result's outputs, its screen, and the text the last call that ran gets without the screen.
+) -> tuple[Iterator[str | MultiModalContent], BinaryImage | None, str, list[str | MultiModalContent]]:
+    """A `computer` result's outputs, its screen, the text the last call that ran gets without the screen, and the rest.
 
     The content is a summary, what the `returned` calls with an output returned, such as a zoom's image, then the
-    screen, unless something such as a history processor dropped it or left a note in its place.
+    screen, unless something such as a history processor dropped it or left a note in its place. Anything else, such as
+    an image a hook added, is the rest, for the last call that ran; without the screen, its text is in the note.
     """
     summary = content[0] if content and isinstance(content[0], str) else None
     start = int(summary is not None)
     rest = content[start + returned :]
-    screen = rest[0] if rest and isinstance(rest[0], BinaryImage) else None
+    last = rest[-1] if rest else None
+    screen = last if isinstance(last, BinaryImage) else None
+    if screen is not None:
+        rest = rest[:-1]
     note = ' '.join(item for item in (summary, *rest) if isinstance(item, str)) or 'OK'
-    return iter(content[start : start + returned]), screen, note
+    extra: list[str | MultiModalContent] = [item for item in rest if screen is not None or not isinstance(item, str)]
+    return iter(content[start : start + returned]), screen, note, extra
 
 
 def _result_items(part: ToolReturnPart) -> list[str | MultiModalContent]:

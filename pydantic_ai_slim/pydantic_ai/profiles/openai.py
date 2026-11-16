@@ -16,7 +16,6 @@ from .._json_schema import (
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
-    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -30,11 +29,11 @@ if TYPE_CHECKING:
     from ..realtime.profiles import RealtimeModelProfile
 
 _OPENAI_BASE_BUILTINS = frozenset(
-    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ComputerTool}
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below, and `ComputerTool` by `openai_supports_computer_tool`."""
+profile below, and `OpenAIResponsesModel` adds `ComputerTool` by `openai_supports_computer_tool`."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""

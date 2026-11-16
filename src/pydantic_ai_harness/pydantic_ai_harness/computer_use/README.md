@@ -171,8 +171,7 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
 
 ## Limitations
 
-- Screenshots are the main cost: about 1,300 input tokens each at 1280x800, resent with every request. Prompt caching
-  cuts the resends to about a tenth.
+- Screenshots are the main cost, resent with every request. Prompt caching makes the resends cheaper.
 - Every request carries every earlier screenshot, so a long run reaches the provider's limits: Claude refuses a
   request with more than 100 images on its 200k-context models. `ComputerUse` doesn't drop
   old screenshots, and [`ClearToolResults`](../compaction/) leaves `computer` results alone.

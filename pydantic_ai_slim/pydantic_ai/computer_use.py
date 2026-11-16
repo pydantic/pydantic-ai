@@ -476,10 +476,6 @@ class ComputerResult(TypedDict):
     error: NotRequired[str]
     """Why the action after the performed ones failed; the rest did not run."""
 
-    screenshot_size: NotRequired[tuple[int, int]]
-    """The `(width, height)` of this result's screenshot as the model saw it, which may be smaller than the display.
-    The model's next coordinates are in this space."""
-
     changed: NotRequired[bool]
     """Set when the actions that ran differ from those the model asked for, such as after an approval changed them.
     A model adapter then sends the summary instead of reporting the model's own actions as run."""
