@@ -80,6 +80,21 @@ agent = Agent(model)
 ...
 ```
 
+## Structured output {#structured-output}
+
+[`NativeOutput`][pydantic_ai.output.NativeOutput] sends Groq's [`json_schema` response format](https://console.groq.com/docs/structured-outputs) on the models below. Unless you pass `strict` to `NativeOutput`, the model decides whether the request uses strict mode:
+
+| Models | `strict` sent |
+|---|---|
+| `openai/gpt-oss-*`, `qwen/qwen3.8-*` | `true` when the schema meets strict mode's requirements (for example, no field has a default), otherwise `false` |
+| `qwen/qwen3.6-*` | `false` |
+| `meta-llama/llama-4-scout-17b-16e-instruct`, `meta-llama/llama-4-maverick-17b-128e-instruct` | `true` |
+| `moonshotai/*`, `meta-models/muse-spark-open` | `null`; Groq documents best effort as the default |
+
+Other Groq models raise a [`UserError`][pydantic_ai.exceptions.UserError] for `NativeOutput`. [`PromptedOutput`][pydantic_ai.output.PromptedOutput] uses Groq's JSON mode (`json_object`) on every model when the request has no function tools.
+
+Groq can't combine `json_schema` with function tools, so `NativeOutput` on an agent with function tools raises a [`UserError`][pydantic_ai.exceptions.UserError] before the request is sent. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] instead.
+
 ## SDK retries {#sdk-retries}
 
 The `AsyncGroq` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, like the OpenAI client it is modelled on. Pass `groq_client=AsyncGroq(max_retries=0)` to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
