@@ -103,7 +103,8 @@ def open_span(
     which can quote what the span is about, only when the run captures content. Both are set at the
     start, so Logfire's console and pending spans show them. An uncaught error is recorded by its type
     only, unless the run captures content, as its message can quote content. An exception in
-    `not_errors`, such as an expected `FileNotFoundError`, is not recorded as a failure.
+    `not_errors`, such as an expected `FileNotFoundError`, is still recorded as an `exception` event,
+    but the span's status is left unset rather than marked ERROR.
     """
     if (telemetry := _telemetry_of(ctx)) is None:
         yield INVALID_SPAN

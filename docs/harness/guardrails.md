@@ -528,9 +528,30 @@ A durable operation is addressed by the capability's `id`, so a guardrail on a d
 
 ## Tracing
 
-`replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in [Logfire](https://pydantic.dev/logfire) traces (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes. Content attributes -- the replacement value for a redaction and the refusal `message` for a block -- are attached only when `RunContext.trace_include_content` is enabled, since these can quote the content the guard exists to keep out of traces. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace. `retry` records no guardrail span: the retry request it causes appears in the trace as a normal model request.
+`block`, `replace`, `approve` and an output `retry` are recorded as spans on the run's tracer, so a guardrail decision shows up in [Logfire](https://pydantic.dev/logfire) traces with `guardrail.*` attributes:
 
-Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `guardrail deferred tool args`, which always carries `guardrail.tool_call_id` so the span can be correlated with the `DeferredToolRequests` the application answers, and carries `guardrail.arguments` under the same `trace_include_content` rule as the other content attributes. A deferred call never executes, so there is no `execute_tool` span recording what was asked for.
+| Span | Recorded when |
+| --- | --- |
+| `guardrail blocked input`, `guardrail blocked output`, `guardrail blocked tool args`, `guardrail blocked tool result` | a guard returns `block` |
+| `guardrail redacted input`, `guardrail redacted output`, `guardrail redacted tool args`, `guardrail redacted tool result` | a guard returns `replace` |
+| `guardrail retried output` | an `OutputGuardrail` guard returns `retry` |
+| `guardrail deferred tool args` | a `ToolGuardrail` argument guard returns `approve` |
+
+| Attribute | On | Value |
+| --- | --- | --- |
+| `guardrail.direction` | every span | `input`, `output`, `tool args` or `tool result` |
+| `guardrail.action` | every span | the verdict: `block`, `replace`, `retry` or `approve` |
+| `guardrail.guard` | every span | the deciding guard's qualified name, such as `no_secrets` (a `functools.partial` is named by the function it wraps, a callable object by its class name) |
+| `guardrail.position` | every span | the deciding guard's index in its chain, starting at 0; for a redaction several guards made, the last of them |
+| `guardrail.tool` | tool spans | the tool's name |
+| `guardrail.tool_call_id` | `guardrail deferred tool args` | the call id, to correlate with the `DeferredToolRequests` the application answers |
+| `guardrail.message` | blocked and retried spans, content only | the refusal or retry message |
+| `guardrail.replacement` | redacted spans, content only | the replacement value as text |
+| `guardrail.arguments` | `guardrail deferred tool args`, content only | the call's arguments |
+
+Content attributes are attached only when `RunContext.trace_include_content` is enabled, since they can quote the content the guard exists to keep out of traces, and are not built otherwise, so a replacement whose `str()` fails cannot fail a run that doesn't record it. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace. When an outer capability sends the model a changed copy of the prompt and the guard redacts both the copy and the history's original (see [Capability ordering](#capability-ordering)), each of the two redactions gets its own `guardrail redacted input` span. A `retry` on tool arguments or a tool result records no guardrail span: core records the retry on the call's `execute_tool` span, with `pydantic_ai.tool.retry.*` attributes.
+
+A deferred call never executes, so there is no `execute_tool` span recording what was asked for; `guardrail deferred tool args` is the only record of it.
 
 `OutputGuardrail` declares `position='outermost', wrapped_by=[Instrumentation]`, so an enclosing `Instrumentation` span captures its block and redact spans whatever order the capabilities are listed in.
 

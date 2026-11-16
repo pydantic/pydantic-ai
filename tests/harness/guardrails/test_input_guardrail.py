@@ -1417,6 +1417,14 @@ class TestInputGuardrailParallel:
         assert unwound.is_set()
 
 
+def _refuse_nope(_: object) -> GuardrailResult:
+    return GuardrailResult.block('nope')
+
+
+def _redact_all(_: object) -> GuardrailResult:
+    return GuardrailResult.replace('[redacted]')
+
+
 class TestInputGuardrailTracing:
     """Spans emitted on block and redaction."""
 
@@ -1424,7 +1432,7 @@ class TestInputGuardrailTracing:
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer, trace_include_content=True)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.block('nope'))
+        ig = InputGuardrail(guard=_refuse_nope)
         with pytest.raises(SkipModelRequest):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_unreachable_handler)
 
@@ -1433,6 +1441,8 @@ class TestInputGuardrailTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'input',
             'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_nope',
+            'guardrail.position': 0,
             'guardrail.message': 'nope',
         }
 
@@ -1441,19 +1451,24 @@ class TestInputGuardrailTracing:
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.block('nope'))
+        ig = InputGuardrail(guard=_refuse_nope)
         with pytest.raises(SkipModelRequest):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_unreachable_handler)
 
         span = _only_span(exporter)
         assert span.name == 'guardrail blocked input'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'input', 'guardrail.action': 'block'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'input',
+            'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_nope',
+            'guardrail.position': 0,
+        }
 
     async def test_redaction_span_records_only_the_replacement_when_enabled(self):
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer, trace_include_content=True)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))
+        ig = InputGuardrail(guard=_redact_all)
         await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_sentinel_handler)
 
         span = _only_span(exporter)
@@ -1461,6 +1476,8 @@ class TestInputGuardrailTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'input',
             'guardrail.action': 'replace',
+            'guardrail.guard': '_redact_all',
+            'guardrail.position': 0,
             'guardrail.replacement': '[redacted]',
         }
 
@@ -1484,12 +1501,28 @@ class TestInputGuardrailTracing:
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))
+        ig = InputGuardrail(guard=_redact_all)
         await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_sentinel_handler)
 
         span = _only_span(exporter)
         assert span.name == 'guardrail redacted input'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'input', 'guardrail.action': 'replace'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'input',
+            'guardrail.action': 'replace',
+            'guardrail.guard': '_redact_all',
+            'guardrail.position': 0,
+        }
+
+    async def test_the_span_names_the_deciding_guard_in_a_chain(self):
+        tracer, exporter = _recording_tracer()
+        run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer)
+
+        ig = InputGuardrail(guard=[redact_secrets, _refuse_nope])
+        with pytest.raises(SkipModelRequest):
+            await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_unreachable_handler)
+
+        attributes = dict(_only_span(exporter).attributes or {})
+        assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_refuse_nope', 1)
 
 
 class TestInputGuardrailStreaming:
