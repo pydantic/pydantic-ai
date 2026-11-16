@@ -527,6 +527,23 @@ async def test_a_queued_prompt_being_edited_becomes_the_draft_once_idle() -> Non
         assert await live.read() == 'only again'
 
 
+@pytest.mark.parametrize(('edit', 'expected'), [(' again', 'only again\ndraft'), ('', 'only')])
+async def test_an_edit_left_once_idle_keeps_the_draft_up_set_aside(edit: str, expected: str) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.buffer.replace('draft')
+        live.feed('up')
+        live.buffer.insert(edit)
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert (live.buffer.text, live.queued_messages) == (expected, ())
+        # Still walking, the draft is where Down finds it, not added to the input as well.
+        if not edit:
+            live.feed('down')
+            assert live.buffer.text == 'draft'
+
+
 @asynccontextmanager
 async def running(live: LivePrompt) -> AsyncGenerator[list[bool]]:
     """Run an operation Esc and Ctrl-C can cancel, yielding whether it completed once it ends."""
@@ -939,10 +956,11 @@ async def test_removing_the_prompt_being_edited_keeps_the_edit_as_the_draft() ->
             live.buffer.insert('2')
             # As the web UI removes the queued prompt the terminal is editing.
             live.discard(live.queued_prompts()[1])
-            assert (live.buffer.text, live.queued_messages) == ('b2', ('a',))
+            # The draft set aside by Up follows the edit, as an interrupt leaves them.
+            assert (live.buffer.text, live.queued_messages) == ('b2\ndraft', ('a',))
             # No edit remains, so Enter queues the draft as a new prompt.
             live.feed('enter')
-            assert live.queued_messages == ('a', 'b2')
+            assert live.queued_messages == ('a', 'b2\ndraft')
             live.feed('ctrl-c')
 
 

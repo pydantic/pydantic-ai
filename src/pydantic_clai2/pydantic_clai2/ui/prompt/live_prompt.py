@@ -206,6 +206,18 @@ class LivePrompt:
             self._editing = None
             self.queue_changed()
 
+    def _keep_edit_as_draft(self) -> None:
+        """Leave the prompt being edited in the draft only, followed by the draft Up set aside.
+
+        While the recall walk lasts, Down still restores that draft, so it is not added twice.
+        """
+        if self._editing is None:
+            return
+        if self.buffer.history_index is None and self._shelved_draft:
+            self.buffer.replace('\n'.join(filter(None, [self.buffer.text, self._shelved_draft])))
+            self.refresh_completions()
+        self._drop_editing()
+
     def take_queued(self) -> list[QueuedPrompt]:
         """Remove the queued prompts and return them, as when another session reads this editor next."""
         self._edit(None)
@@ -230,7 +242,7 @@ class LivePrompt:
         Dropping the one being edited ends the edit: the draft stays, and Enter queues it as a new prompt.
         """
         if entry is self._editing:
-            self._drop_editing()
+            self._keep_edit_as_draft()
         else:
             if entry is self._editing_after:
                 # The prompt being edited returns after the one before this, not to the front.
@@ -263,14 +275,14 @@ class LivePrompt:
         With nothing else queued the shell is idle, so a queued prompt being edited is just the draft now.
         """
         if not self._submissions:
-            self._drop_editing()
+            self._keep_edit_as_draft()
         self.paint()
         await self._submitted.wait()
         # What a read returns starts work, whose spinner animates from its first frame, not the next idle one.
         self._animated_at = self.clock()
         self._animate.set()
         if not self._submissions:
-            self._drop_editing()
+            self._keep_edit_as_draft()
             self._wake_pending = False
             self._submitted.clear()
             raise PromptWakeup
