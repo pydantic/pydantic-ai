@@ -12,6 +12,7 @@ import pytest
 
 from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, CompactionRequest, CompactionResult
+from pydantic_ai.exceptions import ModelContextWindowExceededError
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
@@ -31,6 +32,10 @@ pytestmark = [pytest.mark.xdist_group(name='temporal-compaction')]
 
 
 def _model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # The first request overflows; once a context-overflow compaction is in the history, the next one fits.
+    summaries = [p.content for m in messages for p in m.parts if isinstance(p, CompactionPart)]
+    if summaries == ['threshold summary']:
+        raise ModelContextWindowExceededError('m', 'context_length_exceeded')
     return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=10, output_tokens=2))
 
 
@@ -44,7 +49,7 @@ class _RequestCompaction(AbstractCapability[Any]):
 
 class _Summarize(AbstractCapability[Any]):
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
-        part = CompactionPart(content='summary')
+        part = CompactionPart(content=f'{request.reason} summary')
         return CompactionResult(
             messages=[ModelRequest(parts=[part]), request.messages[-1]],
             part=part,
@@ -66,11 +71,14 @@ class CompactionWorkflow:
     async def run(self, prompt: str) -> tuple[list[str], int, int]:
         result = await _agent.run(prompt)
         usage = result.usage
-        return [record.handler for record in result.compactions], usage.input_tokens, usage.output_tokens
+        return [record.reason for record in result.compactions], usage.input_tokens, usage.output_tokens
 
 
 async def test_compaction_runs_in_the_workflow_and_replays(client: Client):
-    """The compaction's usage is committed in workflow code, and replaying the recorded history reproduces it.
+    """A hook's requested compaction and a context overflow's compaction run in workflow code, and replay.
+
+    The requested compaction's attempt overflows, so it's discarded and the overflow's compaction is kept; both are
+    billed.
 
     The compaction's priced timestamp comes from the history, not the clock (see
     `test_compaction_usage_is_priced_at_a_timestamp_from_the_history`), so the replay commits the same record.
@@ -85,7 +93,7 @@ async def test_compaction_runs_in_the_workflow_and_replays(client: Client):
         )
         handlers, input_tokens, output_tokens = await handle.result()
         history = await handle.fetch_history()
-    # The compaction's usage counts once, next to the model request's.
-    assert (handlers, input_tokens, output_tokens) == (['summarize'], 110, 7)
+    # Both compactions are billed (100 + 5 each), next to the one model request that answered (10 + 2).
+    assert (handlers, input_tokens, output_tokens) == (['context_overflow'], 210, 12)
 
     await Replayer(workflows=[CompactionWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
