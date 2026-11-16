@@ -398,14 +398,21 @@ def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
 
 
 def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
-    """The task `resume` names, if the delegating run, and not another task, started it.
+    """The task `resume` names, if the delegating run started it, or is above it and every task in between finished.
 
     Raises:
-        ModelRetry: the task can't be resumed, or another task started it.
+        ModelRetry: the task can't be resumed, or a task that can still resume it is running.
     """
     previous = owner.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
-    if previous.parent_id != DelegationTasks.child_id():
-        raise ModelRetry(f'Task {resume} was started by another task; only the agent that started it can resume it.')
+    caller, parent = DelegationTasks.child_id(), previous.parent_id
+    while parent != caller:
+        above = owner.records.get(parent) if parent is not None else None
+        if above is None or above.status == 'running':
+            raise ModelRetry(
+                f'Task {resume} was started by another task; only the agent that started it can resume it, '
+                'or one above it once every task in between has finished.'
+            )
+        parent = above.parent_id
     return previous
 
 
@@ -1132,7 +1139,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return '\n'.join(lines)
 
     async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
-        """Send a message to a running task you started, to steer it. It reads the message at its next model request.
+        """Send a message to a task you started, to steer it.
+
+        A running task reads the message at its next model request. A finished task resumes with the message as
+        its next prompt, in the background if it ran there, and this returns what `delegate_task` would.
 
         Args:
             ctx: The run context.
@@ -1141,15 +1151,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """
         owner = self._owner()
         record = self._visible(ctx, owner, task_id)
+        if record.status != 'running':
+            return await self.delegate_task(
+                ctx, record.agent_name, message, background=record.background, resume=task_id
+            )
         if record.parent_id != DelegationTasks.child_id():
             raise ModelRetry(f'Task {task_id} is steered by the task that started it, {record.parent_id}, not you.')
         if ctx.in_durable_context:
             raise ModelRetry(f'Task {task_id} runs in a durable unit of its own, which messages cannot reach.')
-        if record.status != 'running':
-            raise ModelRetry(
-                f'Task {task_id} has finished ({record.outcome}), and messages only reach running tasks. '
-                'To continue it, delegate again with `resume`.'
-            )
         event = await self._announce(
             ctx, owner, record, TaskSteeredEvent(task_id=task_id, agent_name=record.agent_name, message=message)
         )

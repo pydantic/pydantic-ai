@@ -567,6 +567,69 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         assert 'cannot resume; it is one-shot' in result.output
 
+    async def test_a_message_to_a_finished_task_resumes_it(self) -> None:
+        recorder = Recorder()
+        seen: list[int] = []
+
+        def respond(messages: list[ModelMessage]) -> ModelResponse:
+            seen.append(len(messages))
+            return text(f'answer {len(seen)}')
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled(researcher(Agent(scripted(respond, respond)))), recorder],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(ok):\nanswer 2')
+        assert seen == [1, 3]
+        [resumed] = recorder.of(TaskResumedEvent)
+        assert (resumed.task_id, resumed.prompt) == (recorder.of(TaskAssignedEvent)[0].task_id, 'And then?')
+
+    async def test_a_message_to_a_finished_background_task_resumes_it_in_the_background(self) -> None:
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[0]), message='Again.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='First.', background=True),
+                text('Waiting.'),
+                follow_up,
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            capabilities=[controlled()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert 'is running in the background' in tool_returns(result.all_messages())[-1]
+        assert len(task_texts(result.all_messages())) == 2
+
+    async def test_an_ancestor_resumes_a_task_once_the_task_that_started_it_finished(self) -> None:
+        recorder = Recorder()
+        middle = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Deep.'), echo_last_return),
+            name='middle',
+            capabilities=[SubAgents(agents=[researcher()], task_control=TaskControl())],
+        )
+
+        def resume_grandchild(messages: list[ModelMessage]) -> ModelResponse:
+            grandchild = tool_returns(messages)[-1].split()[4]
+            return call('delegate_task', agent_name='researcher', task='Mine now.', resume=grandchild)
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='middle', task='Go.'), resume_grandchild, echo_last_return),
+            capabilities=[controlled(researcher(), SubAgent(middle)), recorder],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(ok):\nchild output')
+        [resumed] = recorder.of(TaskResumedEvent)
+        assert resumed.parent_task_id is None
+
     async def test_list_tasks_shows_each_task_once_with_its_status(self) -> None:
         gate = Gate()
         slow = Agent(scripted(call('pause'), text('slow')), tools=[gate.pause])
@@ -863,7 +926,6 @@ class TestSubAgentsTaskControl:
             task_id = task_id_in(tool_returns(messages)[-1])
             return ModelResponse(
                 parts=[
-                    ToolCallPart('message_task', {'task_id': task_id, 'message': 'hi'}),
                     ToolCallPart('answer_task', {'task_id': task_id, 'answer': 'x'}),
                     ToolCallPart('cancel_task', {'task_id': task_id}),
                     ToolCallPart('cancel_task', {'task_id': 'unknown'}),
@@ -877,10 +939,9 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         returns = tool_returns(result.all_messages())[1:]
-        assert 'has finished (ok), and messages only reach running tasks' in returns[0]
-        assert 'is not waiting for an answer' in returns[1]
-        assert returns[2].endswith('already finished (ok); there is nothing to cancel.')
-        assert "Unknown task 'unknown'" in returns[3]
+        assert 'is not waiting for an answer' in returns[0]
+        assert returns[1].endswith('already finished (ok); there is nothing to cancel.')
+        assert "Unknown task 'unknown'" in returns[2]
 
     async def test_listing_passes_a_parent_whose_saved_file_was_damaged(self, tmp_path: Path) -> None:
         """A loaded task whose parent's file was skipped as damaged does not break the walk up its ancestry."""
