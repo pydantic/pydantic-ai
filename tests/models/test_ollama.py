@@ -20,19 +20,14 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput
-from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
-    from openai.types.chat.chat_completion_message import ChatCompletionMessage
-
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.ollama import OllamaProvider
-
-    from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -141,22 +136,6 @@ def test_ollama_provider_name_routes_through_ollama_model(monkeypatch: pytest.Mo
     agent = Agent('ollama:gpt-oss:20b')
     assert isinstance(agent.model, OllamaModel)
     assert agent.model.profile.get('supports_json_schema_output', False) is False
-
-
-@pytest.mark.parametrize(('thinking', 'reasoning_effort'), [(False, 'none'), ('high', 'high')])
-async def test_ollama_gemma_4_maps_thinking(
-    allow_model_requests: None, thinking: ThinkingLevel, reasoning_effort: str
-) -> None:
-    """Gemma 4 on Ollama takes unified `thinking` as `reasoning_effort`.
-
-    Mocked because no Ollama Cloud key is available to record Gemma 4 with.
-    """
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='4', role='assistant')))
-    model = OllamaModel('gemma4:31b', provider=OllamaProvider(openai_client=mock_client))
-
-    await Agent(model).run('What is 2+2?', model_settings=ModelSettings(thinking=thinking))
-
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['reasoning_effort'] == reasoning_effort
 
 
 # ---------- VCR integration tests against live Ollama ----------
