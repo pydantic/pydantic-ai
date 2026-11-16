@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -1489,6 +1489,36 @@ class TestEndToEnd:
 
         assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1, 1, 1, 2]
         assert [_sent_texts(messages).count('<system>Be brief.</system>') for messages in seen] == [1, 2, 3, 3, 4]
+
+    async def test_unchanged_reminder_is_recorded_again_after_a_history_processor_listed_before_it_trims_it(
+        self,
+    ) -> None:
+        """A `ProcessHistory` listed before `SystemReminders` trims the history the skip check reads."""
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        def keep_last(messages: list[ModelMessage]) -> list[ModelMessage]:
+            return messages[-1:]
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            deps_type=type(None),
+            capabilities=[
+                ProcessHistory[None](keep_last),
+                SystemReminders[None](
+                    reminders=[Reminder('Run the tests.', tag=None, scope='conversation', skip_unchanged=True)]
+                ),
+            ],
+        )
+
+        history: list[ModelMessage] = []
+        for prompt in ('one', 'two'):
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1]
 
     async def test_unchanged_generated_reminder_is_not_recorded_again(self) -> None:
         """A `skip_unchanged` `LLMReminder` records generated text only when it differs from the latest record."""

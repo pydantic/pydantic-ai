@@ -157,6 +157,7 @@ class Reminder(Generic[AgentDepsT]):
 
     Requires `scope='conversation'`. The reminder is recorded again once compaction drops its copy or its text
     changes, so the history holds one copy per distinct text instead of one per firing, across runs too.
+    List a `ProcessHistory` or compaction capability that drops messages before `SystemReminders`.
     """
 
     def __post_init__(self) -> None:
