@@ -39,7 +39,6 @@ from __future__ import annotations as _annotations
 import re
 from typing import Annotated, Any, Literal, NotRequired, TypeAlias
 
-import pydantic
 from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
@@ -65,7 +64,6 @@ __all__ = (
     'Point',
     'PressKeys',
     'Region',
-    'SafetyCheck',
     'Screenshot',
     'Scroll',
     'TypeText',
@@ -502,44 +500,6 @@ class ComputerResult(TypedDict):
     A model adapter then sends the summary instead of reporting the model's own actions as run."""
 
 
-@dataclass(frozen=True, kw_only=True)
-class SafetyCheck:
-    """A check a provider asks for before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
-
-    A call with safety checks waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), whichever
-    tool runs it. If that tool is external or deferred, the call raises a `UserError`, since approval can't reach it.
-    """
-
-    message: str | None = None
-    """What whoever approves the call should check, in the provider's words."""
-
-    code: str | None = None
-    """The provider's identifier for the kind of check, such as `'malicious_instructions'`."""
-
-    id: str | None = None
-    """The provider's identifier for this check, which it needs back when the call is approved."""
-
-
-_SAFETY_CHECKS = 'safety_checks'
-"""The `provider_details` key under which a model adapter keeps a call's safety checks, as `SafetyCheck` dicts."""
-
-_SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
-
-
-def _safety_checks(provider_details: dict[str, Any] | None) -> list[SafetyCheck]:
-    """The safety checks kept on a call.
-
-    Checks in a shape that can't be read, `None` included, such as from a history a UI rebuilt, count as one empty
-    check, so the call still waits for approval.
-    """
-    if provider_details is None or _SAFETY_CHECKS not in provider_details:
-        return []
-    try:
-        return _SAFETY_CHECKS_TA.validate_python(provider_details[_SAFETY_CHECKS])
-    except pydantic.ValidationError:
-        return [SafetyCheck()]
-
-
 _COORDINATE_GRID = 'coordinate_grid'
 """The `provider_details` key under which the agent records the grid a call's positions are on."""
 
@@ -575,11 +535,6 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         """The actions the model asked for, or `None` if the arguments are incomplete (still streaming) or malformed."""
         typed = self.typed_args
         return typed['actions'] if typed is not None else None
-
-    @property
-    def safety_checks(self) -> list[SafetyCheck]:
-        """The checks the provider asks for before this call runs; empty when there are none."""
-        return _safety_checks(self.provider_details)
 
     @property
     def coordinate_grid(self) -> int | None:
