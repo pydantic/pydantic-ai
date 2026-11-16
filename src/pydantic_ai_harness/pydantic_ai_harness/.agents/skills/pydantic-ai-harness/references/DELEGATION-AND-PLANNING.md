@@ -410,6 +410,8 @@ Gotchas:
   `local=False`, `local=False` without an `anthropic:`/`openrouter:` string, OpenRouter native
   with `max_uses`. `local=False` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
+- `max_uses` can be a callable `(ctx) -> int`, resolved per executor request, for a budget across runs
+  kept in `deps`. Below 1, the native tool is omitted and the local tool returns its limit message.
 - Local path: the advisor sees only the consultation prompt (plus completed history, including
   `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward

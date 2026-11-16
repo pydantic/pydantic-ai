@@ -19,7 +19,7 @@ from pydantic_ai.models import AbstractModel, KnownModelName, Model, ModelReques
 from pydantic_ai.native_tools import AdvisorTool
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
@@ -114,11 +114,14 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     consultations return the validated output directly to the executor.
     """
 
-    max_uses: int | None
+    max_uses: int | Callable[[RunContext[AgentDepsT]], int] | None
     """Maximum consultations in one executor model request.
 
-    The limit resets on the next executor request. OpenRouter's native advisor
-    does not honor this option, so setting it consults locally there.
+    The limit resets on the next executor request. A callable is called with the
+    run context for each request and returns that request's limit, for example
+    what is left of a budget shared by several runs. Below 1, the native advisor
+    is omitted and the local tool returns its limit message. OpenRouter's native
+    advisor does not honor this option, so setting it consults locally there.
     """
 
     max_tokens: int | None
@@ -149,6 +152,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     """
 
     _local_uses: int = field(init=False, repr=False, compare=False, default=0)
+    _local_max_uses: int | None = field(init=False, repr=False, compare=False, default=None)
 
     # TODO(harness 1.0, #12997): remove `_MODE_DECLARATIONS` and `_MODE_REPLACEMENTS` along with `mode`.
     _MODE_DECLARATIONS: ClassVar[dict[_Mode, tuple[bool, bool]]] = {
@@ -173,7 +177,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | bool | None = True,
         output_type: OutputSpec[object] = str,
-        max_uses: int | None = None,
+        max_uses: int | Callable[[RunContext[AgentDepsT]], int] | None = None,
         max_tokens: int | None = None,
         caching: Literal['5m', '1h'] | None = None,
         forward_history: bool = False,
@@ -329,7 +333,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         Runs on construction and again on every merged or per-run copy, so a merge can't reach a
         combination no constructor accepts.
         """
-        if self.max_uses is not None and self.max_uses < 1:
+        if isinstance(self.max_uses, int) and self.max_uses < 1:
             raise ValueError('Advisor.max_uses must be at least 1')
         if self.max_tokens is not None and self.max_tokens < 1024:
             raise ValueError('Advisor.max_tokens must be at least 1024')
@@ -384,11 +388,11 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
     def _default_local(self) -> Tool[AgentDepsT]:
         """Build the `advisor` tool, which consults `model` through a separate agent."""
-        output_type, max_uses, forward_history = self.output_type, self.max_uses, self.forward_history
+        output_type, forward_history = self.output_type, self.forward_history
 
         async def advisor(ctx: RunContext[AgentDepsT], prompt: str) -> object:
-            if max_uses is not None:
-                if self._local_uses >= max_uses:
+            if self._local_max_uses is not None:
+                if self._local_uses >= self._local_max_uses:
                     return _LIMIT_REACHED
                 self._local_uses += 1
 
@@ -397,6 +401,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
         return Tool(
             advisor,
+            prepare=self._prepare_local,
             description=(
                 'Consult a stronger model about a difficult or high-impact decision. '
                 + ('' if output_type is str else 'Returns a validated answer in the configured output format. ')
@@ -506,6 +511,15 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         """Identify the native tool paired with the local fallback."""
         return AdvisorTool.kind
 
+    def _max_uses_for(self, ctx: RunContext[AgentDepsT]) -> int | None:
+        """The consultation limit for the executor request `ctx` belongs to."""
+        return self.max_uses(ctx) if callable(self.max_uses) else self.max_uses
+
+    async def _prepare_local(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
+        """Fix the local limit once per request, so parallel calls share it."""
+        self._local_max_uses = self._max_uses_for(ctx)
+        return tool_def
+
     def _native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build a native tool only when an explicit advisor model name is lossless."""
         native_provider, native_model_name = self._parse_native_model(self.model)
@@ -516,23 +530,26 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         # no `restricting_settings` for `AdvisorTool` yet, which is where this check belongs.
         if provider == 'openrouter' and self.max_uses is not None:
             return None
-        return self._advisor_tool(native_model_name)
+        return self._advisor_tool(ctx, native_model_name)
 
-    def _required_native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool:
+    def _required_native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build the native tool for `local=False`, rejecting a cross-provider executor.
 
-        With no local fallback, omitting the native tool would leave the executor without an advisor.
+        With no local fallback, a cross-provider executor would be left without an advisor.
         """
         native_provider, native_model_name = self._parse_native_model(self.model)
         if _executor_service(ctx.model) != native_provider:
             raise UserError(f'`Advisor(local=False)` requires a {native_provider} executor, not {ctx.model.system}')
         assert native_model_name is not None
-        return self._advisor_tool(native_model_name)
+        return self._advisor_tool(ctx, native_model_name)
 
-    def _advisor_tool(self, model_name: str) -> AdvisorTool:
+    def _advisor_tool(self, ctx: RunContext[AgentDepsT], model_name: str) -> AdvisorTool | None:
+        max_uses = self._max_uses_for(ctx)
+        if max_uses is not None and max_uses < 1:
+            return None
         return AdvisorTool(
             model=model_name,
-            max_uses=self.max_uses,
+            max_uses=max_uses,
             max_tokens=self.max_tokens,
             provider_settings={'anthropic': {'caching': self.caching}} if self.caching is not None else None,
         )

@@ -109,7 +109,7 @@ By default, a `Model` instance runs locally and keeps its own provider, client, 
 | `native` | `True` | The provider-native advisor. `False` disables it; an `AdvisorTool` instance or a function returning one replaces the one built from these options, which then don't apply to it. |
 | `local` | `True` | The local fallback. `True` builds the `advisor` tool; `False` disables it; a `Tool` or function replaces it and, like the built tool, is left out of requests where the native advisor applies. A replacement keeps its own tool name. It can't be combined with `output_type`, `forward_history=True`, or, on OpenRouter, `max_uses`, which only the built tool applies; otherwise `max_uses`, `max_tokens` and `caching` still shape the native advisor. |
 | `output_type` | `str` | Local advisor output specification. Non-default values require local execution. |
-| `max_uses` | `None` | Maximum consultations in one executor model request. Must be at least `1`. |
+| `max_uses` | `None` | Maximum consultations in one executor model request. An int must be at least `1`; a callable returns the limit for each request. |
 | `max_tokens` | `None` | Maximum output tokens for each consultation. Must be at least `1024`. |
 | `caching` | `None` | Native-only prompt-cache TTL: `'5m'` or `'1h'`. Supported by Anthropic; OpenRouter and the local fallback have no equivalent control. |
 | `forward_history` | `False` | Forward completed executor message history to local consultations. |
@@ -124,6 +124,8 @@ Pass `local=False` when the consultation must stay inside the executor provider,
 The earlier `mode` option still works until pydantic-ai-harness 1.0, with a `HarnessDeprecationWarning`: `mode='native'` is `local=False`, `mode='local'` is `native=False`, and `mode='auto'` is the default.
 
 `max_uses` has the same per-request scope as Anthropic's native tool and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails. Parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits bound local consultations within one request.
+
+A callable `max_uses` takes the `RunContext` and returns the limit for each executor request, so a budget shared by several runs can live in `deps`, as in `max_uses=lambda ctx: 5 - ctx.deps.consulted`. The native tool is sent with that limit. The local tool reads it once per request, when the tool is prepared. Below `1`, the native tool is omitted from the request, and the local tool stays visible and returns its limit message. A callable is Python-only, like `output_type`, and should be cheap and deterministic, since it runs for each request and, under durable execution, in workflow code.
 
 OpenRouter's native tool ignores `max_uses` and applies its own fixed per-request limit. By default, setting `max_uses` with an OpenRouter advisor therefore selects the local fallback. With `local=False` and the built native advisor, it raises `ValueError`.
 
@@ -155,7 +157,7 @@ Invalid option combinations fail when `Advisor` is constructed, or when merging 
 
 ## Composition
 
-The advisor tool is visible from the start unless `defer_loading=True` makes `Advisor` an [on-demand capability](../capabilities/on-demand.md). Keep its `id` stable once deployed: loading and history replay key on it. The built tool is named `advisor`, a `local=` replacement keeps its own name, and the toolset ID defaults to `advisor`. Two `Advisor` capabilities with the same `id` merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. `native` and `local` both default to `True`, so a later `Advisor` left at its defaults restores the built native advisor and local tool, replacing an earlier `False` or replacement, as the earlier default `mode='auto'` did. If the merge gives an OpenRouter `Advisor` with `local=False` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `UserWarning`.
+The advisor tool is visible from the start unless `defer_loading=True` makes `Advisor` an [on-demand capability](../capabilities/on-demand.md). With `local=False`, a request where the `max_uses` callable returns less than `1` has no advisor tool. Keep its `id` stable once deployed: loading and history replay key on it. The built tool is named `advisor`, a `local=` replacement keeps its own name, and the toolset ID defaults to `advisor`. Two `Advisor` capabilities with the same `id` merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. `native` and `local` both default to `True`, so a later `Advisor` left at its defaults restores the built native advisor and local tool, replacing an earlier `False` or replacement, as the earlier default `mode='auto'` did. If the merge gives an OpenRouter `Advisor` with `local=False` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `UserWarning`.
 
 During streaming, the executor stream pauses while an advisor consultation runs and resumes when the completed advice is available. The local fallback does not splice the advisor model's token deltas into the executor stream.
 
