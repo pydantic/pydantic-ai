@@ -601,6 +601,22 @@ async def test_huggingface_logprobs_not_requested(allow_model_requests: None):
     assert 'logprobs' not in provider_details
 
 
+async def test_huggingface_logprobs_null_top_logprobs(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionOutputMessage(content='hello', role='assistant'),
+        logprobs={'content': [{'token': 'hello', 'logprob': -0.25, 'top_logprobs': None}]},
+    )
+    mock_client = MockHuggingFace.create_mock(c)
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m, model_settings=HuggingFaceModelSettings(huggingface_logprobs=True))
+
+    result = await agent.run('hello')
+
+    provider_details = result.response.provider_details
+    assert provider_details is not None
+    assert provider_details['logprobs'] == snapshot([{'token': 'hello', 'logprob': -0.25, 'top_logprobs': []}])
+
+
 def logprobs_chunk(text: str, logprob: float, finish_reason: FinishReason | None = None) -> ChatCompletionStreamOutput:
     """A streamed chunk carrying the logprobs for its own token, as the API returns them."""
     return ChatCompletionStreamOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]

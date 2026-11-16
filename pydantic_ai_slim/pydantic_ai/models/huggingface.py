@@ -713,7 +713,8 @@ def _map_logprobs(
         {
             'token': lp.token,
             'logprob': lp.logprob,
-            'top_logprobs': [{'token': tlp.token, 'logprob': tlp.logprob} for tlp in lp.top_logprobs],
+            # The SDK declares `top_logprobs` as required but doesn't validate responses, so a `null` gets through.
+            'top_logprobs': [{'token': tlp.token, 'logprob': tlp.logprob} for tlp in lp.top_logprobs or []],
         }
         for lp in logprobs.content
     ]

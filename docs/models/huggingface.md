@@ -114,7 +114,8 @@ settings = HuggingFaceModelSettings(huggingface_logprobs=True, huggingface_top_l
 agent = Agent(model, model_settings=settings)
 
 result = agent.run_sync('Your prompt here')
-logprobs = result.response.provider_details.get('logprobs')
+provider_details = result.response.provider_details or {}
+logprobs = provider_details.get('logprobs')
 ```
 
 Support depends on the selected inference provider and model. `huggingface_top_logprobs` must be between 0 and 5 and requires `huggingface_logprobs=True`; see the [Hugging Face chat completion parameters](https://huggingface.co/docs/inference-providers/tasks/chat-completion#request).
