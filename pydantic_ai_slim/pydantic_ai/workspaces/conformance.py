@@ -7,15 +7,16 @@ Requires pytest and the anyio pytest plugin.
 
 from __future__ import annotations
 
-import posixpath
+import base64
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
 
 import anyio
 import pytest
 
 from .protocol import (
+    CommandResult,
     SupportsCommands,
     SupportsRealpath,
     WorkspaceBackend,
@@ -37,11 +38,70 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
 _FINISH_ONCE_RELEASED = 'while [ -d "${1%/*}" ] && [ ! -f "$1" ]; do sleep 0.1; done; printf finished > "$2"'
 """Shell that waits for the file `$1`, then writes the file `$2`. It gives up once `$1`'s directory is gone."""
 
+_POWERSHELL_FINISH_ONCE_RELEASED = (
+    'while ((Test-Path -LiteralPath (Split-Path -LiteralPath $a0)) -and -not (Test-Path -LiteralPath $a0)) '
+    "{ Start-Sleep -Milliseconds 100 }; [IO.File]::WriteAllText($a1, 'finished')"
+)
+"""`_FINISH_ONCE_RELEASED` in PowerShell, with `$a0` and `$a1` for `$1` and `$2`."""
+
+
+_POWERSHELL_PWD = '[Console]::Out.Write((Get-Location).ProviderPath + "`n")'
+"""`pwd -P` in PowerShell."""
+
+
+def _windows(backend: WorkspaceBackend) -> bool:
+    return Workspace(backend).platform == 'windows'
+
+
+def _powershell_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _powershell_assignments(args: tuple[str, ...]) -> str:
+    return ''.join(f'$a{index} = {_powershell_literal(arg)}\n' for index, arg in enumerate(args))
+
+
+def _powershell_start(script: str, *args: str, window: str) -> str:
+    """PowerShell that starts `script`, with `args` as `$a0`, ..., in a PowerShell of its own, without waiting."""
+    encoded = base64.b64encode((_powershell_assignments(args) + script).encode('utf-16-le')).decode('ascii')
+    return (
+        f'Start-Process {window} -FilePath (Get-Process -Id $PID).Path '
+        f"-ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', '{encoded}'"
+    )
+
+
+async def _script(
+    backend: WorkspaceBackend,
+    sh: str,
+    powershell: str,
+    *args: str,
+    env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
+) -> CommandResult:
+    """Run `sh` with `args` as `$1`, `$2`, ...; on a `'windows'` backend, run `powershell` with them as `$a0`, `$a1`, ..."""
+    commands = _commands(backend)
+    if _windows(backend):
+        return await commands.run(_powershell_assignments(args) + powershell, shell=True, env=env, timeout=timeout)
+    return await commands.run(['sh', '-c', sh, 'sh', *args], env=env, timeout=timeout)
+
+
+async def _symlink(backend: WorkspaceBackend, target: str, link: str, *, directory: bool = False) -> bool:
+    """Whether a symlink at `link` to `target`, kept as written, could be created."""
+    windows = _windows(backend)
+    result = await _script(
+        backend,
+        'ln -s "$1" "$2"',
+        f'cmd /c mklink {"/D " if directory else ""}"$a1" "$a0" | Out-Null',
+        target.replace('/', '\\') if windows else target,
+        link,
+    )
+    return result.exit_code == 0
+
 
 @asynccontextmanager
 async def _scratch_dir(workspace: Workspace) -> AsyncGenerator[str]:
     """A fresh directory under the working directory, removed afterwards."""
-    root = posixpath.join(await workspace.working_dir(), f'.pydantic-ai-conformance-{uuid.uuid4().hex}')
+    root = workspace.paths.join(await workspace.working_dir(), f'.pydantic-ai-conformance-{uuid.uuid4().hex}')
     await workspace.make_dir(root)
     try:
         yield root
@@ -100,7 +160,12 @@ class WorkspaceBackendSuite:
     async def test_stdin_is_at_eof(self, backend: WorkspaceBackend) -> None:
         """Noninteractive commands never wait for input from the caller."""
         # This is a command deadline, not a latency assertion on remote dispatch.
-        result = await _commands(backend).run(['sh', '-c', 'read value || printf eof'], timeout=30)
+        result = await _script(
+            backend,
+            'read value || printf eof',
+            "if ($null -eq [Console]::In.ReadLine()) { [Console]::Out.Write('eof') }",
+            timeout=30,
+        )
         assert (result.exit_code, result.stdout) == (0, 'eof')
 
     async def test_undecodable_command_bytes_are_replaced(
@@ -108,14 +173,21 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell:
             pytest.skip('fake has no command byte stream')
-        result = await _commands(backend).run(['sh', '-c', "printf '\\377'; printf '\\376' >&2"])
+        result = await _script(
+            backend,
+            "printf '\\377'; printf '\\376' >&2",
+            '[Console]::OpenStandardOutput().Write([byte[]](255), 0, 1); '
+            '[Console]::OpenStandardError().Write([byte[]](254), 0, 1)',
+        )
         assert (result.stdout, result.stderr) == ('\ufffd', '\ufffd')
 
     async def test_command_output_is_complete(self, backend: WorkspaceBackend) -> None:
         """If output cannot be collected in full, the backend must raise rather than return a truncated success."""
         output = 'workspace' * 1024
-        result = await _commands(backend).run(
-            ['sh', '-c', 'i=0; while [ "$i" -lt 1024 ]; do printf workspace; printf workspace >&2; i=$((i+1)); done']
+        result = await _script(
+            backend,
+            'i=0; while [ "$i" -lt 1024 ]; do printf workspace; printf workspace >&2; i=$((i+1)); done',
+            "for ($i = 0; $i -lt 1024; $i++) { [Console]::Out.Write('workspace'); [Console]::Error.Write('workspace') }",
         )
         assert (result.exit_code, result.stdout, result.stderr) == (0, output, output)
 
@@ -131,14 +203,20 @@ class WorkspaceBackendSuite:
             pytest.skip('backend cannot observe the direct command exit independently of inherited output pipes')
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            release = posixpath.join(root, 'release')
-            finished = posixpath.join(root, 'finished')
+            release = workspace.paths.join(root, 'release')
+            finished = workspace.paths.join(root, 'finished')
             # The background child holds stdout open until released. A backend waiting for
             # pipe EOF cannot complete this run, regardless of control-plane latency.
             try:
                 with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
-                    result = await _commands(backend).run(
-                        ['sh', '-c', f'({_FINISH_ONCE_RELEASED}) & printf done', 'sh', release, finished]
+                    result = await _script(
+                        backend,
+                        f'({_FINISH_ONCE_RELEASED}) & printf done',
+                        # `-NoNewWindow` hands the child this command's output handles.
+                        _powershell_start(_POWERSHELL_FINISH_ONCE_RELEASED, release, finished, window='-NoNewWindow')
+                        + "; [Console]::Out.Write('done')",
+                        release,
+                        finished,
                     )
                 assert (result.exit_code, result.stdout) == (0, 'done')
                 assert not await workspace.exists(finished)
@@ -151,7 +229,12 @@ class WorkspaceBackendSuite:
 
     async def test_result_reports_exit_code_stdout_and_stderr(self, backend: WorkspaceBackend) -> None:
         """A non-zero exit is a normal result, not an error."""
-        result = await _commands(backend).run('printf out; printf err >&2; exit 7', shell=True)
+        script = (
+            "[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit 7"
+            if _windows(backend)
+            else 'printf out; printf err >&2; exit 7'
+        )
+        result = await _commands(backend).run(script, shell=True)
         assert (result.exit_code, result.stdout, result.stderr) == (7, 'out', 'err')
 
     async def test_a_missing_program_exits_127(self, backend: WorkspaceBackend) -> None:
@@ -161,15 +244,29 @@ class WorkspaceBackendSuite:
 
     async def test_argv_items_are_literal(self, backend: WorkspaceBackend) -> None:
         payload = ' literal $() `quoted`; && '
-        result = await _commands(backend).run(['sh', '-c', 'printf "%s" "$1"', 'sh', payload])
+        commands = _commands(backend)
+        if not _windows(backend):
+            result = await commands.run(['sh', '-c', 'printf "%s" "$1"', 'sh', payload])
+            assert (result.exit_code, result.stdout) == (0, payload)
+            return
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            # `-File` hands the script its arguments as given, without parsing them as PowerShell.
+            script = workspace.paths.join(root, 'echo.ps1')
+            await workspace.write_text(script, '[Console]::Out.Write($args[0])')
+            powershell = (await commands.run('[Console]::Out.Write((Get-Process -Id $PID).Path)', shell=True)).stdout
+            result = await commands.run(
+                [powershell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, payload]
+            )
         assert (result.exit_code, result.stdout) == (0, payload)
 
     async def test_working_dir_is_canonical(self, backend: WorkspaceBackend) -> None:
         """Absolute, symlinks resolved, no `.`/`..`: the directory commands actually start in."""
+        paths = Workspace(backend).paths
         working_dir = await backend.working_dir()
-        assert posixpath.isabs(working_dir) and posixpath.normpath(working_dir) == working_dir
+        assert paths.isabs(working_dir) and paths.normpath(working_dir) == working_dir
         if isinstance(backend, SupportsCommands):
-            assert (await backend.run(['sh', '-c', 'pwd -P'])).stdout == f'{working_dir}\n'
+            assert (await _script(backend, 'pwd -P', _POWERSHELL_PWD)).stdout == f'{working_dir}\n'
 
     async def test_run_starts_in_cwd(self, backend: WorkspaceBackend) -> None:
         """`Workspace.run(cwd=...)` starts the command there, relative paths resolving against the working directory."""
@@ -177,12 +274,15 @@ class WorkspaceBackendSuite:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
             expected = f'{await workspace.realpath(root)}\n'
-            assert (await workspace.run(['sh', '-c', 'pwd -P'], cwd=posixpath.basename(root))).stdout == expected
-            assert (await workspace.run('pwd -P', shell=True, cwd=root)).stdout == expected
+            windows = _windows(backend)
+            argv = ['cmd', '/d', '/c', 'cd'] if windows else ['sh', '-c', 'pwd -P']
+            assert (await workspace.run(argv, cwd=workspace.paths.basename(root))).stdout.replace('\r', '') == expected
+            script = _POWERSHELL_PWD if windows else 'pwd -P'
+            assert (await workspace.run(script, shell=True, cwd=root)).stdout == expected
 
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         with pytest.raises(WorkspaceTimeoutError):
-            await _commands(backend).run(['sh', '-c', 'sleep 3600'], timeout=1.0)
+            await _script(backend, 'sleep 3600', 'Start-Sleep -Seconds 3600', timeout=1.0)
 
     async def test_cancellation_stops_foreground_work(
         self, backend: WorkspaceBackend, has_real_posix_shell: bool
@@ -191,10 +291,15 @@ class WorkspaceBackendSuite:
             pytest.skip('fake has no foreground process to cancel')
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            pid_file = posixpath.join(root, 'pid')
+            pid_file = workspace.paths.join(root, 'pid')
 
             async def command() -> None:
-                await _commands(backend).run(['sh', '-c', 'echo $$ > "$1"; exec sleep 3600', 'sh', pid_file])
+                await _script(
+                    backend,
+                    'echo $$ > "$1"; exec sleep 3600',
+                    '[IO.File]::WriteAllText($a0, "$PID"); Start-Sleep -Seconds 3600',
+                    pid_file,
+                )
 
             async with anyio.create_task_group() as tg:
                 tg.start_soon(command)
@@ -204,11 +309,17 @@ class WorkspaceBackendSuite:
                 tg.cancel_scope.cancel()
             pid = (await workspace.read_text(pid_file)).strip()
             with anyio.fail_after(60):
-                while (await _commands(backend).run(['sh', '-c', 'kill -0 "$1"', 'sh', pid])).exit_code == 0:
+                while (
+                    await _script(
+                        backend, 'kill -0 "$1"', 'if (-not (Get-Process -Id $a0 -ErrorAction Ignore)) { exit 1 }', pid
+                    )
+                ).exit_code == 0:
                     await anyio.sleep(0.05)  # pragma: lax no cover - depends on how fast the process dies
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
-        result = await _commands(backend).run(['sh', '-c', 'printf %s "$CONFORMANCE"'], env={'CONFORMANCE': 'value'})
+        result = await _script(
+            backend, 'printf %s "$CONFORMANCE"', '[Console]::Out.Write($env:CONFORMANCE)', env={'CONFORMANCE': 'value'}
+        )
         assert result.stdout == 'value'
 
     async def test_ref_exists_after_the_first_operation_and_is_stable(self, backend: WorkspaceBackend) -> None:
@@ -250,7 +361,7 @@ class WorkspaceBackendSuite:
         """A shell-derived filesystem must page reads rather than hit a command-output cap."""
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            path = posixpath.join(root, 'large.bin')
+            path = workspace.paths.join(root, 'large.bin')
             data = b'x' * (8 * 1024 * 1024)
             await workspace.write_bytes(path, data)
             assert await workspace.read_bytes(path) == data
@@ -258,7 +369,7 @@ class WorkspaceBackendSuite:
     async def test_bytes_round_trip_and_write_creates_parents(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            path = posixpath.join(root, 'nested', 'data.bin')
+            path = workspace.paths.join(root, 'nested', 'data.bin')
             await workspace.write_bytes(path, b'\x00workspace\xff')
             assert await workspace.read_bytes(path) == b'\x00workspace\xff'
             await workspace.write_bytes(path, b'replaced')
@@ -267,16 +378,16 @@ class WorkspaceBackendSuite:
     async def test_exists(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            await workspace.write_bytes(posixpath.join(root, 'file'), b'data')
-            assert await workspace.exists(posixpath.join(root, 'file'))
+            await workspace.write_bytes(workspace.paths.join(root, 'file'), b'data')
+            assert await workspace.exists(workspace.paths.join(root, 'file'))
             assert await workspace.exists(root)
-            assert not await workspace.exists(posixpath.join(root, 'absent'))
+            assert not await workspace.exists(workspace.paths.join(root, 'absent'))
 
     async def test_stat_and_list_dir(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            child = posixpath.join(root, 'child')
-            path = posixpath.join(child, 'data.bin')
+            child = workspace.paths.join(root, 'child')
+            path = workspace.paths.join(child, 'data.bin')
             await workspace.write_bytes(path, b'data')
             file_entry = await workspace.stat(path)
             assert (file_entry.name, file_entry.path, file_entry.is_dir) == ('data.bin', path, False)
@@ -289,25 +400,29 @@ class WorkspaceBackendSuite:
     async def test_make_dir_creates_parents_and_is_idempotent(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            path = posixpath.join(root, 'a', 'b')
+            path = workspace.paths.join(root, 'a', 'b')
             await workspace.make_dir(path)
             await workspace.make_dir(path)
             assert (await workspace.stat(path)).is_dir
 
     async def test_commands_and_files_share_one_environment(self, backend: WorkspaceBackend) -> None:
-        commands = _commands(backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            path = posixpath.join(root, 'shared.txt')
+            path = workspace.paths.join(root, 'shared.txt')
             await workspace.write_bytes(path, b'in\n')
-            script = 'IFS= read -r value < "$1" && [ "$value" = in ] && printf "out\\n" > "$1"'
-            assert (await commands.run(['sh', '-c', script, 'sh', path])).exit_code == 0
+            result = await _script(
+                backend,
+                'IFS= read -r value < "$1" && [ "$value" = in ] && printf "out\\n" > "$1"',
+                'if ([IO.File]::ReadAllText($a0) -ne "in`n") { exit 1 }; [IO.File]::WriteAllText($a0, "out`n")',
+                path,
+            )
+            assert result.exit_code == 0
             assert await workspace.read_bytes(path) == b'out\n'
 
     async def test_missing_paths_raise_file_not_found(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            missing = posixpath.join(root, 'missing')
+            missing = workspace.paths.join(root, 'missing')
             for operation in (workspace.read_bytes, workspace.stat, workspace.list_dir, workspace.remove):
                 with pytest.raises(FileNotFoundError):
                     await operation(missing)
@@ -321,7 +436,7 @@ class WorkspaceBackendSuite:
     async def test_listing_a_file_raises_not_a_directory(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            file = posixpath.join(root, 'file')
+            file = workspace.paths.join(root, 'file')
             await workspace.write_bytes(file, b'x')
             with pytest.raises(NotADirectoryError):
                 await workspace.list_dir(file)
@@ -342,24 +457,24 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell:
             pytest.skip('in-memory fake cannot create symlinks')
-        commands = _commands(backend)
+        _commands(backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            loop = posixpath.join(root, 'loop')
-            if (await commands.run(['ln', '-s', 'loop', loop])).exit_code != 0:
-                pytest.skip('the environment cannot create symlinks with `ln -s`')  # pragma: no cover
+            loop = workspace.paths.join(root, 'loop')
+            if not await _symlink(backend, 'loop', loop):
+                pytest.skip('the environment cannot create symlinks')  # pragma: no cover
             entries = await workspace.list_dir(root)
             assert [(entry.name, entry.is_dir) for entry in entries] == [('loop', False)]
 
     async def test_fifo_read_does_not_wait_for_writer(
         self, backend: WorkspaceBackend, has_real_posix_shell: bool
     ) -> None:
-        if not has_real_posix_shell:
-            pytest.skip('in-memory fake cannot create FIFOs')
+        if not has_real_posix_shell or _windows(backend):
+            pytest.skip('in-memory fakes and Windows have no FIFOs')
         commands = _commands(backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            fifo = posixpath.join(root, 'fifo')
+            fifo = workspace.paths.join(root, 'fifo')
             if (await commands.run(['mkfifo', fifo])).exit_code != 0:
                 pytest.skip('the environment does not provide `mkfifo`')  # pragma: no cover
             with anyio.fail_after(30):
@@ -381,12 +496,14 @@ class WorkspaceBackendSuite:
     ) -> None:
         if not has_real_posix_shell or not filesystem_honors_shell_permissions:
             pytest.skip('in-memory fake has no permissions')
+        if _windows(backend):
+            pytest.skip('Windows permissions are access control lists, which `chmod` does not set')
         commands = _commands(backend)
         if (await commands.run(['id', '-u'])).stdout.strip() == '0':
             pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            file = posixpath.join(root, 'unreadable')
+            file = workspace.paths.join(root, 'unreadable')
             await workspace.write_bytes(file, b'data')
             assert (await commands.run(['chmod', '000', file])).exit_code == 0
             with pytest.raises(PermissionError):
@@ -401,17 +518,17 @@ class WorkspaceBackendSuite:
             pytest.skip('in-memory fake has no real path traversal')
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            file = posixpath.join(root, 'file')
+            file = workspace.paths.join(root, 'file')
             await workspace.write_bytes(file, b'data')
             with pytest.raises(NotADirectoryError):
-                await workspace.write_bytes(posixpath.join(file, 'child'), b'data')
+                await workspace.write_bytes(workspace.paths.join(file, 'child'), b'data')
             with pytest.raises(NotADirectoryError):
-                await workspace.make_dir(posixpath.join(file, 'child'))
+                await workspace.make_dir(workspace.paths.join(file, 'child'))
 
     async def test_making_a_directory_over_a_file_raises_file_exists(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            path = posixpath.join(root, 'file')
+            path = workspace.paths.join(root, 'file')
             await workspace.write_bytes(path, b'data')
             with pytest.raises(FileExistsError):
                 await workspace.make_dir(path)
@@ -419,9 +536,9 @@ class WorkspaceBackendSuite:
     async def test_remove_deletes_a_file_or_a_tree(self, backend: WorkspaceBackend) -> None:
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            file, tree = posixpath.join(root, 'file'), posixpath.join(root, 'tree')
+            file, tree = workspace.paths.join(root, 'file'), workspace.paths.join(root, 'tree')
             await workspace.write_bytes(file, b'x')
-            await workspace.write_bytes(posixpath.join(tree, 'nested', 'file'), b'x')
+            await workspace.write_bytes(workspace.paths.join(tree, 'nested', 'file'), b'x')
             await workspace.remove(file)
             await workspace.remove(tree)
             assert not await workspace.exists(file) and not await workspace.exists(tree)
@@ -430,39 +547,38 @@ class WorkspaceBackendSuite:
         # A model asking to remove `.` must not wipe the environment it works in.
         workspace = Workspace(backend)
         working_dir = await workspace.working_dir()
-        for path in ('.', working_dir, posixpath.dirname(working_dir), '/'):
+        for path in ('.', working_dir, workspace.paths.dirname(working_dir), '/'):
             with pytest.raises(ValueError):
                 await workspace.remove(path)
         assert await workspace.exists(working_dir)
 
     async def test_realpath_and_entries_follow_symlinks(self, backend: WorkspaceBackend) -> None:
-        commands = _commands(backend)
+        _commands(backend)
         workspace = Workspace(backend)
+        join = workspace.paths.join
         async with _scratch_dir(workspace) as root:
-            target, link = posixpath.join(root, 'target'), posixpath.join(root, 'link')
+            target, link = join(root, 'target'), join(root, 'link')
             await workspace.make_dir(target)
-            if (await commands.run(['ln', '-s', target, link])).exit_code != 0 or not await workspace.exists(link):
-                pytest.skip('the environment cannot create symlinks with `ln -s`')  # pragma: no cover
-            assert await workspace.realpath(posixpath.join(link, 'missing')) == posixpath.join(target, 'missing')
-            a = posixpath.join(root, 'a')
+            if not await _symlink(backend, target, link, directory=True) or not await workspace.exists(link):
+                pytest.skip('the environment cannot create symlinks')  # pragma: no cover
+            assert await workspace.realpath(join(link, 'missing')) == join(target, 'missing')
+            a = join(root, 'a')
             await workspace.make_dir(a)
-            await workspace.make_dir(posixpath.join(a, 'b'))
+            await workspace.make_dir(join(a, 'b'))
             for name, target_name in (('rel', 'b'), ('up', '../out'), ('loop1', 'loop2'), ('loop2', 'loop1')):
-                result = await commands.run(['ln', '-s', target_name, posixpath.join(a, name)])
-                assert result.exit_code == 0
-            assert await workspace.realpath(posixpath.join(a, 'rel', 'missing')) == posixpath.join(a, 'b', 'missing')
-            assert await workspace.realpath(posixpath.join(a, 'up', 'missing')) == posixpath.join(
-                root, 'out', 'missing'
-            )
-            assert await workspace.realpath(posixpath.join(a, 'rel', '..')) == a
-            assert await workspace.realpath(posixpath.join(a, 'up', '..')) == root
+                assert await _symlink(backend, target_name, join(a, name), directory=True)
+            assert await workspace.realpath(join(a, 'rel', 'missing')) == join(a, 'b', 'missing')
+            assert await workspace.realpath(join(a, 'up', 'missing')) == join(root, 'out', 'missing')
+            assert await workspace.realpath(join(a, 'rel', '..')) == a
+            # Windows takes `..` off the path before following links; POSIX climbs from the link's target.
+            assert await workspace.realpath(join(a, 'up', '..')) == (a if _windows(backend) else root)
             with anyio.fail_after(30):
                 try:
-                    loop_path = await workspace.realpath(posixpath.join(a, 'loop1', 'q'))
+                    loop_path = await workspace.realpath(join(a, 'loop1', 'q'))
                 except OSError:
                     pass
                 else:
-                    assert loop_path.startswith(a + '/')
+                    assert loop_path.startswith(join(a, ''))
             assert (await workspace.stat(link)).is_dir
             assert {entry.name: entry.is_dir for entry in await workspace.list_dir(root)} == {
                 'a': True,
@@ -471,13 +587,13 @@ class WorkspaceBackendSuite:
             }
 
     async def test_writes_go_through_a_symlink(self, backend: WorkspaceBackend) -> None:
-        commands = _commands(backend)
+        _commands(backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            target, link = posixpath.join(root, 'target'), posixpath.join(root, 'link')
+            target, link = workspace.paths.join(root, 'target'), workspace.paths.join(root, 'link')
             await workspace.write_bytes(target, b'old')
-            if (await commands.run(['ln', '-s', target, link])).exit_code != 0 or not await workspace.exists(link):
-                pytest.skip('the environment cannot create symlinks with `ln -s`')  # pragma: no cover
+            if not await _symlink(backend, target, link) or not await workspace.exists(link):
+                pytest.skip('the environment cannot create symlinks')  # pragma: no cover
             await workspace.write_bytes(link, b'new')
             assert await workspace.read_bytes(target) == b'new'
             assert await workspace.realpath(link) == target
@@ -488,7 +604,7 @@ class WorkspaceBackendSuite:
             pytest.skip('backend does not implement SupportsRealpath')
         working_dir = await backend.working_dir()
         assert await backend.realpath(working_dir) == working_dir
-        missing = posixpath.join(working_dir, f'.pydantic-ai-conformance-missing-{uuid.uuid4().hex}')
+        missing = Workspace(backend).paths.join(working_dir, f'.pydantic-ai-conformance-missing-{uuid.uuid4().hex}')
         assert await backend.realpath(missing) == missing
 
     async def test_a_backend_attached_by_ref_reaches_the_same_environment(
@@ -499,14 +615,15 @@ class WorkspaceBackendSuite:
             pytest.skip('provide the `attach_backend` fixture to enable this rule')
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            path = posixpath.join(root, 'file')
+            path = workspace.paths.join(root, 'file')
             await workspace.write_bytes(path, b'reattached')
             ref = backend.ref
             assert ref is not None
             attached = attach_backend(ref)
             assert await Workspace(attached).read_bytes(path) == b'reattached'
             if isinstance(attached, SupportsCommands):
-                assert (await attached.run(['cat', path])).stdout == 'reattached'
+                result = await _script(attached, 'cat "$1"', '[Console]::Out.Write([IO.File]::ReadAllText($a0))', path)
+                assert result.stdout == 'reattached'
             # Attaching never replaces the environment it names.
             assert attached.ref == ref
 
@@ -521,19 +638,31 @@ class WorkspaceBackendSuite:
             pytest.skip('provide the `attach_backend` fixture to enable this rule')
         if not has_real_posix_shell:
             pytest.skip('backend does not run real POSIX processes')
-        commands = _commands(backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
-            release, finished, started = (posixpath.join(root, name) for name in ('release', 'finished', 'started'))
+            release, finished, started = (
+                workspace.paths.join(root, name) for name in ('release', 'finished', 'started')
+            )
             # The launcher returns once the process is in its own session: a backend may stop the command's own group.
             launch = (
                 'command -v setsid > /dev/null || exit 127; '
                 f'setsid sh -c \': > "$3"; {_FINISH_ONCE_RELEASED}\' sh "$@" < /dev/null > /dev/null 2>&1 & '
                 'i=0; while [ ! -f "$3" ]; do i=$((i + 1)); [ "$i" -le 100 ] || exit 1; sleep 0.1; done'
             )
+            powershell_launch = (
+                _powershell_start(
+                    f"[IO.File]::WriteAllText($a2, ''); {_POWERSHELL_FINISH_ONCE_RELEASED}",
+                    release,
+                    finished,
+                    started,
+                    window='-WindowStyle Hidden',
+                )
+                + '; $i = 0; while (-not (Test-Path -LiteralPath $a2)) '
+                '{ $i++; if ($i -gt 300) { exit 1 }; Start-Sleep -Milliseconds 100 }'
+            )
             try:
                 with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
-                    result = await commands.run(['sh', '-c', launch, 'sh', release, finished, started])
+                    result = await _script(backend, launch, powershell_launch, release, finished, started)
                 if result.exit_code == 127:
                     pytest.skip('the environment does not provide `setsid`')  # pragma: no cover
                 assert result.exit_code == 0, 'the detached process never started'
@@ -560,17 +689,22 @@ class WorkspaceBackendSuite:
         if not has_real_posix_shell:
             pytest.skip('backend has no running POSIX command to interrupt')
         backend = destructive_backend()
-        commands = _commands(backend)
+        _commands(backend)
         workspace = Workspace(backend)
         root = await backend.working_dir()
-        started = posixpath.join(root, f'.pydantic-ai-started-{uuid.uuid4().hex}')
+        started = workspace.paths.join(root, f'.pydantic-ai-started-{uuid.uuid4().hex}')
 
         async def run_command() -> None:
             with pytest.raises(WorkspaceUnavailableError):
                 # A local directory deletion does not kill a process already inside it; exit when
                 # the directory disappears so the rule also checks the result classification.
-                await commands.run(
-                    ['sh', '-c', 'printf ready > "$1"; while [ -d "$2" ]; do sleep 0.1; done', 'sh', started, root],
+                await _script(
+                    backend,
+                    'printf ready > "$1"; while [ -d "$2" ]; do sleep 0.1; done',
+                    "[IO.File]::WriteAllText($a0, 'ready'); "
+                    'while (Test-Path -LiteralPath $a1) { Start-Sleep -Milliseconds 100 }',
+                    started,
+                    root,
                     timeout=30,
                 )
 
