@@ -231,9 +231,10 @@ async def test_worker_tree_calls_from_one_run_take_turns_across_store_objects() 
     await backing.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
     # A shallow copy is a new store object over the same items.
     planning = Planning[None](store_resolver=lambda ctx: copy(backing), enable_subtasks=True)
-    toolset = cast(PlanningToolset[None], planning.get_toolset())
+    toolset = planning.get_toolset()
+    assert not callable(toolset) and isinstance(toolset, PlanningToolset)
     ctx = _run_ctx(planning)
-    object.__setattr__(ctx, 'run_id', 'run-1')
+    ctx.run_id = 'run-1'
     tool = (await toolset.get_tools(ctx))['set_dependency']
 
     async with anyio.create_task_group() as tg:
