@@ -37,7 +37,15 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import neutralize_tags
-from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import (
+    ModelRequest,
+    TextContent,
+    ToolCallPart,
+    ToolRetryCause,
+    ToolReturn,
+    ToolReturnPart,
+    UserContent,
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -124,12 +132,21 @@ _RETRIED_ERRORS = (ToolRetryError, ModelRetry, ValidationError)
 _FAILED_ERRORS = (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed)
 """Errors a background task reports to the model as a failed result that is not retried."""
 
-_BackgroundOutcome = Literal['success', 'retried', 'failed', 'interrupted', 'error']
+_SIGNALLED_ERRORS = _RETRIED_ERRORS + _FAILED_ERRORS
+"""Errors a background task reports to the model instead of ending the run."""
+
+_SignalledError = (
+    ToolRetryError | ModelRetry | ValidationError | ApprovalRequired | CallDeferred | ToolFailedError | ToolFailed
+)
+"""`_RETRIED_ERRORS` and `_FAILED_ERRORS` as a type: errors reported to the model instead of ending the run."""
+
+
+_OutcomeLabel = Literal['success', 'retried', 'failed', 'interrupted', 'error']
 """How a background call ended, recorded as `background_tools.outcome`."""
 
 
-def _outcome_of_error(error: BaseException) -> _BackgroundOutcome:
-    """Classify an error raised by a background call; `_run` handles it by this outcome.
+def _outcome_of_error(error: BaseException) -> _OutcomeLabel:
+    """Classify an error raised by a background call for its execution span.
 
     The names are `ToolReturnPart.outcome`'s, plus `error` for an exception that ends the run.
     """
@@ -171,12 +188,8 @@ async def _execute_traced(
         return result
 
 
-def _failed_call_outcome(ctx: RunContext[Any], call: ToolCallPart, error: Exception) -> _Outcome:
-    """What a background call that raised `error` hands to the run, by the error's `_outcome_of_error`."""
-    outcome = _outcome_of_error(error)
-    if outcome not in ('retried', 'failed'):
-        # Unexpected failures, including an exhausted retry budget, end the run as they would for a sequential tool.
-        return error
+def _failed_call_outcome(ctx: RunContext[Any], call: ToolCallPart, error: _SignalledError) -> _Completion:
+    """What a background call that raised a signalled `error` hands to the run."""
     if isinstance(error, ToolRetryError):
         # Core charged the tool body's `ModelRetry` to the issuing step, whose count the next step may
         # already have carried over. `_settle` charges it on delivery instead, so it counts exactly once.
@@ -185,24 +198,25 @@ def _failed_call_outcome(ctx: RunContext[Any], call: ToolCallPart, error: Except
     # Core counts a retry raised by an execute hook such as `before_tool_execute` outside
     # `wrap_tool_execute`, so `_settle` does.
     content = (_format_background_failure(call.tool_name, call.tool_call_id, error),)
-    return _Completion(call.tool_name, ctx.max_retries, content, retry=error if outcome == 'retried' else None)
+    return _Completion(
+        call.tool_name, ctx.max_retries, content, retry=error if isinstance(error, _RETRIED_ERRORS) else None
+    )
 
 
-def _retry_cause(error: BaseException) -> str | None:
+def _retry_cause(error: BaseException) -> ToolRetryCause | None:
     """Why a `retried` error has the call made again, in the words of core's `RetryInfo.cause`."""
     if isinstance(error, ToolRetryError):
-        retry = error.tool_retry.retry
+        retry = error.tool_retry.retry if isinstance(error.tool_retry, ToolReturnPart) else None
         # `None` only on a legacy part whose cause its content can't tell.
         return retry.cause if retry is not None else None
     return 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
 
 
-def _format_background_failure(tool_name: str, task_id: str, error: Exception) -> TextContent:
+def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> TextContent:
     """Describe a `retried` or `failed` error to the model, framed as the call's failed result."""
     if isinstance(error, (ApprovalRequired, CallDeferred)):
         message = f'{type(error).__name__} was raised; background tools cannot defer a running task.'
     else:
-        content: object = None
         if isinstance(error, (ModelRetry, ToolFailed)):
             content = error.message
         elif isinstance(error, ValidationError):
@@ -211,7 +225,7 @@ def _format_background_failure(tool_name: str, task_id: str, error: Exception) -
             ).decode()
         elif isinstance(error, ToolRetryError):
             content = error.tool_retry.content
-        elif isinstance(error, ToolFailedError):  # pragma: no branch - the last of `_FAILED_ERRORS`
+        else:
             content = error.tool_failed.content
         message = neutralize_tags(content) if isinstance(content, str) and content else type(error).__name__
     open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
@@ -437,8 +451,10 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 _backgrounded_call.set(call)
                 try:
                     result = await _execute_traced(ctx, call, handler, args)
-                except Exception as e:
+                except _SIGNALLED_ERRORS as e:
                     outcome = _failed_call_outcome(ctx, call, e)
+                except Exception as e:
+                    outcome = e
                 except BaseException as e:
                     if isinstance(e, anyio.get_cancelled_exc_class()):
                         # Propagate cancellation delivered by any enclosing scope. If none is pending,
