@@ -62,22 +62,29 @@ def _replacement_check(part: StreamGuardrailPart) -> Callable[[object, int], Str
     return check
 
 
+def _latest_start(events: list[AgentStreamEvent], index: int) -> int:
+    """Where the latest part at `index` starts in `events`, leaving an earlier part at that index alone."""
+    return max(i for i, event in enumerate(events) if isinstance(event, PartStartEvent) and event.index == index)
+
+
 def _replace_part(events: list[AgentStreamEvent], index: int, part: StreamGuardrailPart) -> list[AgentStreamEvent]:
-    """`events` with the part at `index` replaced by `part`, its deltas dropped."""
-    return [
+    """`events` with the latest part at `index` replaced by `part`, its deltas dropped."""
+    start = _latest_start(events, index)
+    return events[:start] + [
         replace(event, part=part)
         if isinstance(event, PartStartEvent | PartEndEvent) and event.index == index
         else event
-        for event in events
+        for event in events[start:]
         if not (isinstance(event, PartDeltaEvent) and event.index == index)
     ]
 
 
 def _drop_part(events: list[AgentStreamEvent], index: int) -> list[AgentStreamEvent]:
-    """`events` without those of the part at `index`."""
-    return [
+    """`events` without those of the latest part at `index`."""
+    start = _latest_start(events, index)
+    return events[:start] + [
         event
-        for event in events
+        for event in events[start:]
         if not (isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent) and event.index == index)
     ]
 

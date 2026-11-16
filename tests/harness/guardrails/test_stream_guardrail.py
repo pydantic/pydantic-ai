@@ -323,6 +323,33 @@ class TestStreamGuardrail:
             ]
         )
 
+    async def test_a_verdict_on_a_restarted_part_leaves_its_earlier_screened_events_alone(self):
+        call = ToolCallPart(tool_name='weather', args='{"city": "Paris"}')
+
+        async def events() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=1, part=call)
+            yield PartEndEvent(index=1, part=call)
+            yield PartStartEvent(index=0, part=TextPart(content='fine'))
+            yield PartEndEvent(index=0, part=TextPart(content='fine'))
+            yield PartStartEvent(index=0, part=TextPart(content='abandoned'))
+            yield PartStartEvent(index=0, part=TextPart(content='SSN'))
+            yield PartEndEvent(index=0, part=TextPart(content='SSN'))
+
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        guardrail = StreamGuardrail(guard=_redact_ssn)
+        released = [event async for event in guardrail.wrap_run_event_stream(ctx, stream=events())]
+
+        assert [_describe(event) for event in released] == snapshot(
+            [
+                'PartStartEvent 1 tool-call \'{"city": "Paris"}\'',
+                'PartEndEvent 1 tool-call \'{"city": "Paris"}\'',
+                "PartStartEvent 0 text 'fine'",
+                "PartEndEvent 0 text 'fine'",
+                "PartStartEvent 0 text '[redacted]'",
+                "PartEndEvent 0 text '[redacted]'",
+            ]
+        )
+
     async def test_other_parts_pass_through_unscreened(self):
         async def events() -> AsyncIterator[AgentStreamEvent]:
             yield PartStartEvent(index=0, part=NativeToolCallPart(tool_name='web_search'))
