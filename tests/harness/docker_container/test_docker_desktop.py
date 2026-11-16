@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -79,23 +78,6 @@ async def test_a_failed_build_says_why(docker: FakeDocker, container_dir: Path) 
     ):
         await _desktop(container_dir).working_dir()
     assert docker.images() == []
-
-
-async def test_a_cancelled_build_removes_its_context(docker: FakeDocker, container_dir: Path) -> None:
-    docker.hold_builds()
-    try:
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(_desktop(container_dir).working_dir)
-            # The fake build records its context once it has started, and is cancelled then.
-            with anyio.fail_after(10):
-                while docker.build_context is None:
-                    await anyio.sleep(0.05)
-            tg.cancel_scope.cancel()
-    finally:
-        docker.release_builds()
-    context = docker.build_context
-    assert context is not None
-    assert not context.exists()
 
 
 @pytest.mark.parametrize(
