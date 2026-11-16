@@ -9,7 +9,7 @@ from __future__ import annotations
 import importlib
 import os
 from collections.abc import AsyncIterable
-from typing import Any
+from typing import TypeGuard
 
 import pytest
 from inline_snapshot import snapshot
@@ -94,6 +94,10 @@ def _objects(body: dict[str, JsonValue], key: str) -> list[dict[str, JsonValue]]
     value = body[key]
     assert isinstance(value, list)
     return [item for item in value if isinstance(item, dict)]
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
 
 
 def _items(body: dict[str, JsonValue], type: str) -> list[dict[str, JsonValue]]:
@@ -690,6 +694,58 @@ async def test_gpt_compacts_a_history_of_computer_calls_through_the_compact_endp
 
 @needs_openai
 @pytest.mark.vcr
+async def test_gpt_compacts_computer_and_function_calls_through_the_compact_endpoint(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+
+    def note(text: str) -> str:
+        """Write down a note."""
+        return 'Noted.'
+
+    agent = Agent(model, tools=[note], capabilities=[provider.capability(), ComputerUse()])
+    result = await agent.run(
+        'Take a screenshot, then call `note` with "seen", click at x=100 y=200, and reply "done". Do nothing else.'
+    )
+    assert provider.actions == [Click(x=100, y=200)]
+    context = ModelRequestContext(
+        model=model,
+        messages=result.all_messages(),
+        model_settings=None,
+        model_request_parameters=_computer_request('note'),
+    )
+    compacted = await model.compact_messages(context)
+
+    assert isinstance(compacted.parts[0], CompactionPart)
+    compact = request_capture.body('/responses/compact')
+    # The endpoint takes the function calls with only the computer tool declared.
+    assert compact['tools'] == [{'type': 'computer'}]
+    kinds = _kinds(compact)
+    assert 'computer_call_output' in kinds and 'function_call' in kinds and 'function_call_output' in kinds
+
+
+@pytest.mark.vcr
+async def test_gpt_gets_only_the_outputs_in_a_conversation(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    from openai import AsyncOpenAI
+
+    conversation = await AsyncOpenAI(api_key=openai_api_key, http_client=request_capture.client).conversations.create()
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    settings = OpenAIResponsesModelSettings(openai_conversation_id=conversation.id)
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()], model_settings=settings).run(TASK)
+
+    assert provider.actions == DONE
+    _, *later = request_capture.bodies('/responses')
+    # The conversation holds each call, so a request carries only the call's output.
+    assert later and all(
+        body['conversation'] == conversation.id and _kinds(body) == ['computer_call_output'] for body in later
+    )
+
+
+@pytest.mark.vcr
 async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_endpoint(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
@@ -841,9 +897,15 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
 
     @hooks.on.after_tool_execute
     async def add_picture(
-        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: Any
-    ) -> Any:
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: ToolReturn,
+    ) -> ToolReturn:
         # As an app might add an image of its own to the result, before the screenshot.
+        assert _is_object_list(result.return_value)
         return ToolReturn([picture, *result.return_value], metadata=result.metadata)
 
     agent = Agent(

@@ -312,12 +312,14 @@ try:
     from ._computer import (
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
+        SPLIT_BATCH_REFUSAL,
         ComputerBatch,
         ComputerBlock,
         ComputerReplay,
         NativeComputer,
         computer_replay,
         returns_output,
+        splits_batch,
     )
     from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
@@ -3392,6 +3394,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             replay['computer_blocks'] = [ComputerBlock(id=part_id, name=first['name'], input=first['input']), *rest]
             if sent_computer.is_toolset:
                 map_context.computer_calls[part_id] = replay
+                if splits_batch(part):
+                    map_context.split_computer_calls.add(part_id)
             for block in replay['computer_blocks']:
                 call = BetaToolUseBlockParam(id=block['id'], type='tool_use', name=block['name'], input=block['input'])
                 if sent_computer.is_toolset:
@@ -4103,8 +4107,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
-            refusal = replay.get('computer_refusal') if part.outcome == 'retried' else None
-            text = BetaTextBlockParam(text=refusal or part.model_response_str(wrap_if_error=False), type='text')
+            # Only the marker's own refusal: a call a hook let run past it gets its real retry text.
+            split = (
+                part.retry is not None
+                and part.retry.cause == 'validation_error'
+                and _guard_tool_call_id(t=part) in map_context.split_computer_calls
+            )
+            text = BetaTextBlockParam(
+                text=SPLIT_BATCH_REFUSAL if split else part.model_response_str(wrap_if_error=False), type='text'
+            )
             return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
         content = _result_items(part)
         if not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
@@ -4425,6 +4436,8 @@ class _MapMessagesContext:
     rendered_tool_additions: set[str] = field(default_factory=set[str])
     # The `provider_details` of calls sent back as toolset member calls, by call ID, since each member needs a result.
     computer_calls: dict[str, ComputerReplay] = field(default_factory=dict[str, ComputerReplay])
+    # The IDs of those calls refused because another tool call came between their members.
+    split_computer_calls: set[str] = field(default_factory=set[str])
 
 
 @dataclass
@@ -4536,12 +4549,6 @@ def _computer_tool_params(
     """Anthropic's computer use tool, sent in the `computer` tool's place when it's declared."""
     if native_computer is None or native_computer.name not in tool_defs:
         return []
-    if native_computer.name != 'computer' and 'computer' in tool_defs:
-        # Its calls would be told apart from the function tool's by name alone.
-        raise UserError(
-            f"Anthropic's computer use tool is named `computer`, so the `{native_computer.name}` computer tool "
-            'cannot be sent beside a function tool named `computer`. Rename one of them.'
-        )
     return [native_computer.tool_param()]
 
 

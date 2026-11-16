@@ -179,8 +179,10 @@ class AbstractNativeTool(ABC):
     executed_by: ClassVar[frozenset[ToolKind]] = frozenset()
     """The kinds of the local tools that run this native tool's calls; empty when the provider runs them.
 
-    The native tool is only sent when the request has a non-deferred tool of each kind. Otherwise it is left out when
-    it is [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't.
+    The native tool is only sent when the request has exactly one tool of each kind that the model can call: not
+    deferred, or revealed by history. With none, it is left out when it is
+    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't. With
+    more than one, the request is refused.
     """
 
     @property

@@ -16,7 +16,6 @@ from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     ComputerResult,
     ComputerToolAction,
-    CursorPosition,
     HoldKeys,
     Screenshot,
     Wait,
@@ -53,7 +52,7 @@ _LOOKING = (Wait, Screenshot)
 class FakeComputer(AbstractCapability[Any]):
     """A `computer` tool that records the actions it runs, refusing to act on a read-only workspace.
 
-    It refuses `hold_key`, so tests can see an action refused, and returns what zoom, cursor-position and screenshot
+    It refuses `hold_key`, so tests can see an action refused, and returns what zoom and screenshot
     actions before the last one read, before its screenshot. With `native`, it also adds a `ComputerTool` declaring `display_size`, as
     `ComputerUse` does.
     """
@@ -77,8 +76,6 @@ class FakeComputer(AbstractCapability[Any]):
         for index, action in enumerate(actions):
             if isinstance(action, Zoom) or (isinstance(action, Screenshot) and index < len(actions) - 1):
                 outputs.append(BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png'))
-            elif isinstance(action, CursorPosition):
-                outputs.append('The pointer is at (640, 400).')
             elif not isinstance(action, _LOOKING):
                 if ctx.workspace.read_only:
                     result['error'] = 'This workspace is read-only.'

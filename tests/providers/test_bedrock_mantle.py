@@ -366,6 +366,7 @@ def test_bedrock_mantle_profiles() -> None:
         is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'
+    assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('openai_supports_computer_tool') is False
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get('bedrock_mantle_interface') == 'chat'
     # Non-OpenAI and unknown models fall back to the default profile (best-effort).
     assert infer_model_profile('bedrock-mantle:anthropic.claude-sonnet-5') == DEFAULT_PROFILE

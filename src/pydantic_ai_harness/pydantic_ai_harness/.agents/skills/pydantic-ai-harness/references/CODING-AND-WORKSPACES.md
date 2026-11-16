@@ -393,6 +393,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd), use `Workspace(backend)` (`write_text`,
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
+- `E2BSandbox(desktop=True)` gives a new sandbox E2B's `desktop` template (Ubuntu, XFCE, a terminal, Chrome) at
+  1280x800 for `ComputerUse()`, or pass `desktop=(w, h)`. XFCE takes `printscreen` and the media and volume keys
+  itself. The agent can type only ASCII. A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot`, `setsid`
+  and `startxfce4`.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
@@ -402,9 +406,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
-- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or
-  `desktop=(w, h)` of at least 1024x768, fixed at creation. It can't press F13 to F24, print screen, pause, scroll
-  lock, the menu key, media keys, side mouse buttons or emoji. A public sandbox's desktop is refused.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or pass
+  `desktop=(w, h)`; the size is fixed at creation. It can't press F13 to F24, keypad Enter, the keypad operators,
+  print screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond
+  U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 

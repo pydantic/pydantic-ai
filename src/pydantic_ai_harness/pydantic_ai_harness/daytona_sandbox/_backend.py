@@ -46,7 +46,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay, UnsupportedActionError
 
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse, AsyncDaytona, AsyncSandbox
@@ -858,7 +858,7 @@ class DaytonaSandboxBackend(
                 async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
                     try:
                         yield
-                    except WorkspaceUnavailableError:
+                    except (WorkspaceUnavailableError, UnsupportedActionError):
                         raise
                     except WorkspaceError as error:
                         # The desktop's own failure, such as keys it couldn't let go of, may come from a lost sandbox.

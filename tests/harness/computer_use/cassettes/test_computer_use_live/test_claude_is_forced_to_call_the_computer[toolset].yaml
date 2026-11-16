@@ -77,28 +77,28 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6SXVwsNCAwWFyNcx67b","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":14,"cache_creation_input_tokens":0,"cache_read_input_tokens":5286,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01SFRtajTxnjU5ZTW6TEn6qt","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}   }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}       }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}             }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0 }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":14,"cache_creation_input_tokens":0,"cache_read_input_tokens":5286,"output_tokens":49,"output_tokens_details":{"thinking_tokens":0}}           }
-        
+
         event: message_stop
         data: {"type":"message_stop"            }
-        
+
   recorded_at: 2026-11-16T10:22:04.011784+00:00
 - request:
     method: POST
@@ -209,23 +209,23 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6SXaCrMDuQL6PPm3CE4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":6685,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":6685,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}             }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}           }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0       }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":6685,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}        }
-        
+
         event: message_stop
         data: {"type":"message_stop"             }
-        
+
   recorded_at: 2026-11-16T10:22:04.763245+00:00

@@ -136,7 +136,7 @@ largest size that fits. A 1280x800 screen fits every model.
 Claude Opus 4.8 and the Claude 5 models refuse a screenshot larger than 2576 pixels on the longer side or 4784 image
 tokens, and the run stops with Anthropic's error.
 
-GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 clicked within a pixel up to 2560x1440 and missed by hundreds of pixels at 3840x2160, while GPT-5.4 already missed one target by 40 pixels at 2560x1440.
+GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 clicked within a pixel up to 2560x1440 and missed by hundreds of pixels at 3840x2160, while GPT-5.4 already missed one target by 40 pixels at 2560x1440. Keep the screen at or below 2560x1440 for GPT-5.5 and 1920x1200 for GPT-5.4.
 
 ## When something goes wrong
 
@@ -144,7 +144,7 @@ GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 c
 - A position outside the screen fails the whole call before anything runs.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run however it ends, so a drag must finish within one run, which matters when calls wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of each call instead. If a release after a failed action fails too, the call fails saying the button may still be held.
+- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run however it ends, so a drag must finish within one run, which matters when calls wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of each call instead. A failed call says which buttons it released, or that a button may still be held if its release failed too.
 
 ## Watching a run
 

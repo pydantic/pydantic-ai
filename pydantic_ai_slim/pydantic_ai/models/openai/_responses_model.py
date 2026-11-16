@@ -843,7 +843,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             store=self._resolve_store(model_settings),
             allow_no_new_messages=True,
         )
-        calls = self._held_computer_calls(restored, new_messages, model_request_parameters)
+        # The `computer_call`s the server holds before `new_messages`, whose outputs go as `computer_call_output`s.
+        calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
         messages = new_messages
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
@@ -1527,7 +1528,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         restored = self._restore_response_scoped_tool_call_ids(messages)
         previous_response_id, conversation_id, new_messages = self._resolve_server_side_state(model_settings, messages)
-        calls = self._held_computer_calls(restored, new_messages, wire_request_parameters)
+        # The `computer_call`s the server holds before `new_messages`, whose outputs go as `computer_call_output`s.
+        calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
         messages = new_messages
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -2242,32 +2244,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
 
-    def _held_computer_calls(
-        self,
-        restored: list[ModelMessage],
-        new_messages: list[ModelMessage],
-        model_request_parameters: ModelRequestParameters,
-    ) -> dict[str, ToolCallPart]:
-        """The `computer_call`s the server holds before `new_messages`, whose outputs go as `computer_call_output`s.
-
-        The API refuses a `computer_call_output` without its computer tool, so answering a held call without it raises.
-        """
-        held = len(restored) - len(new_messages)
-        calls = computer_calls_by_id(restored[:held])
-        answered = any(
-            isinstance(part, ToolReturnPart) and part.tool_call_id in calls
-            for message in restored[held:]
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        )
-        if answered and self._native_computer_name(model_request_parameters) is None:
-            raise UserError(
-                'The stored response or conversation holds a native computer call, so its result must be sent with '
-                'the native computer tool: the API refuses it otherwise. Keep the native computer tool for this run, '
-                'or continue without `openai_previous_response_id` and `openai_conversation_id`.'
-            )
-        return calls
-
     @staticmethod
     def _native_computer_name(model_request_parameters: ModelRequestParameters) -> str | None:
         """The name of the `computer` tool when the request sends a `ComputerTool` in its place."""
@@ -2757,8 +2733,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     async def _map_tool_return_part(self, part: ToolReturnPart, context: _ResponsesMapMessagesContext) -> None:
         call_id = _guard_tool_call_id(t=part)
         call_id, _ = split_combined_tool_call_id(call_id)
-        # The latest call with this ID, sent again here or held in the stored response or conversation, decides:
-        # this model made it as a `computer_call`, whatever the tool is now.
+        # The call with this ID, sent again here or held in the stored response or conversation, decides: this model
+        # made it as a `computer_call`, whatever the tool is now.
         computer_call = context.computer_calls.get(part.tool_call_id)
         if computer_call is not None and computer_call.provider_name == self.system:
             context.openai_messages.extend(map_computer_call_output(part, call_id, computer_call))
@@ -2944,8 +2920,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         call_id = _guard_tool_call_id(t=item)
         call_id, id = split_combined_tool_call_id(call_id)
         id = id or item.id
-        # A provider can reuse a call ID in a later response, so the latest call with it decides how its result goes.
-        context.computer_calls.pop(item.tool_call_id, None)
 
         if computer_call := self._replayed_computer_call(
             item, call_id, context, should_send_item_id=should_send_item_id
@@ -3453,11 +3427,7 @@ class _ResponsesMapMessagesContext:
     client_tool_search_active: bool
     client_replay_call_ids: set[str] = field(default_factory=set[str])
     computer_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
-    """The latest `computer_call` with each tool call ID so far, so its output can read it.
-
-    It starts as the calls the server holds and follows each call sent again, which replaces the one before it:
-    a provider may reuse a call ID in a later response.
-    """
+    """The `computer_call`s by tool call ID, so their outputs can read them: the ones the server holds, then each one sent."""
     computer_is_native: bool = False
     # Mirrors the Anthropic renderer's per-request `tool_addition` dedupe: several history
     # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta

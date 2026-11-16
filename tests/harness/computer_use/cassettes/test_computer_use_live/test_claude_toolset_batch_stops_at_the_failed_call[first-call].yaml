@@ -77,40 +77,40 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6SjVSwsS3SiW7G8c1NL","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":127,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":127,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01TqRYXTmSqsapN6Z2Ff91oB","name":"hold_key","input":{},"toolset_name":"computer","caller":{"type":"direct"}}      }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}               }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"shift\",\"duration\":1}"} }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0         }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01MzSY7sSE6WsQiyKhnR5wAT","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}       }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"b\"}"}   }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1               }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":127,"cache_read_input_tokens":5098,"output_tokens":87,"output_tokens_details":{"thinking_tokens":0}}         }
-        
+
         event: message_stop
         data: {"type":"message_stop"     }
-        
+
   recorded_at: 2026-11-16T10:24:46.875362+00:00
 - request:
     method: POST
@@ -226,95 +226,95 @@ interactions:
       content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6SjaS5Ggz3BKZ5TRijH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1606,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":1606,"ephemeral_1h_input_tokens":0},"output_tokens":9,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}               }
-        
+
         event: ping
         data: {"type": "ping"}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}           }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSyQcKEAgTGAI4AUIIdGhpbmtpbmcSDPQ4Lv6gIjwfFg82BhoMSdgFfUkWFdOnp9f3IjC/rBbF2RAKUuWN8ISEKB3mXczTpF47d9h9MzGQhU603r0a1+oWxCIM6lydkKL3bHoq5ga1FULMnSt7RLPJXXgD97aRJFbn0kAv3Zidxum9XBYMIorGmgWpyXmEuheQQBxQTEiQ8KuTyJy10nWfSSkLF5nWnfvQWPoXxM4rwQrCVDkgjQWxOLKgeyCdZVCa2fJI863R1VGVsfoMNow1Cq3o/bM2gw35MvYHsaIoZyZiQ9oGRjikjSQ43lIfo/4GqTFFcayTbLRIwNv3lVjriHPqBZSByFes9FJaLfgLIKd8IXk4xAfYPz6UAWv1GNL96IbLyl91Be0YsFYW2mqYalO3K410LjrDPPfJEezdR+LRgOHK0Gjnxhy3pDHL+Bq3kjEXCTiBaEUOtH3v85vLb8v+qD3iBGpwVYVp6xmUnNS5Ynq8RD8yVbMkE9tbo08LiyeV/4UaTk3YxezrknpSiisC8L4Aoz3x+jqDHMhRdnH6iZxTp/Tcd7swMjxXf/vuOd3mMhn/yYbVVZyF8wEBMZC2bnYcIid7GTcuoku+ZoOAhYMNdaCwwGbbqc/ChzGQtlWTwehyTJb/OFiiFm3W1msBw/blA8SaLZszRJFIZBAMEBX46rYbc+JUBW/f6YDyawOSd6jvSzuiIw/tLl35+OdPM7ZZgnbodpTgJU3+GzN7cZ0dwtBMmVHo3fOIwtyN5QqHkszIaaV0V1QYU2xa82ogrsjYUmVVDTpLJxlwRaULBgT6am1nFQrTKss4gUvHWVMBmE2t73KsFgPmFidMSSDHoqO/q598K5xOx1OjDzJ8EpDtCCw8oot2H6hH1rssi1l0wYn8k+jjPshJChKJTXwDP+6ARAftTVWzsmYYyuShH136/EkKaXjuzaDayKYHqy0dz9fjUrJVtFxsOuJP1xC4QLJE2r2hUphpMX4gx2naaAOTOAXkFdUSnM2n4eu1xIIFF1j6hMfocvA2Dn0AL9GX72ppEnzYIRvdD4v3SlDzvOS6n3e9kbJ3MOldEmL40jtD6aMfm+xjYFVEe3AHCp3QOKq87rtIF+5WMYjyqlnlYr6VnR1EK7uWqNn8TjfTX0wKfPLEoZQwZnrGHE9oPymkQ+fhmVndzqRlKTZ4oHAEMTggOqyHCPKiBN+3/AmDNwOIB9xNigajIQ5gc0IoxgoP5G4dsiPK7hUdOOLz8XxMEOteqf9wjYICRI7i/ZYKDoah8itHt8r/h9wYAQ=="}      }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":0}
-        
+
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The"}   }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" hold-"}     }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"shift action failed, so"}  }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the \""}   }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"b"}      }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\" was"}    }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" never typed. I didn't"}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" retry, as you asked."}           }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" The screen is black, which"}           }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I did"} }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"n't exp"}       }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ect.\n\nI can't re"}  }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ply \""}   }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"done\" because"}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the s"}      }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"equence didn't compl"}   }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ete. Do"}              }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you want me to try"}             }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" again, or le"}}
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ave it as"}           }
-        
+
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is?"}          }
-        
+
         event: content_block_stop
         data: {"type":"content_block_stop","index":1           }
-        
+
         event: message_delta
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":1606,"cache_read_input_tokens":5098,"output_tokens":192,"output_tokens_details":{"thinking_tokens":108}}            }
-        
+
         event: message_stop
         data: {"type":"message_stop"}
-        
+
   recorded_at: 2026-11-16T10:24:48.449464+00:00
