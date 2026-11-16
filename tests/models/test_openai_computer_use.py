@@ -15,15 +15,14 @@ from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, Tool, ToolCallPart
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai import Agent, ToolCallPart
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     ComputerCallPart,
     ComputerToolAction,
     Screenshot,
 )
-from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -31,7 +30,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartStartEvent,
-    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -234,25 +232,6 @@ async def test_a_held_call_made_as_a_function_call_gets_a_function_call_output(a
     # The call stays in the stored response, as the function call it was.
     assert request['previous_response_id'] == 'resp_1'
     assert [item.get('type') for item in request['input'] if 'type' in item] == ['function_call_output']
-
-
-async def test_tool_choice_naming_the_computer_names_the_native_tool(allow_model_requests: None) -> None:
-    client = MockOpenAIResponses.create_mock([_done(), _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
-    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
-    other = ToolDefinition(name='other', parameters_json_schema={'type': 'object'})
-    params = ModelRequestParameters(
-        function_tools=[computer, note, other], native_tools=[COMPUTER_TOOL], allow_text_output=True
-    )
-    prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Look.')]
-
-    await model.request(prompt, {'tool_choice': ['computer']}, params)
-    await model.request(prompt, {'tool_choice': ['computer', 'note']}, params)
-
-    forced, allowed = get_mock_responses_kwargs(client)
-    assert forced['tool_choice'] == {'type': 'computer'}
-    assert allowed['tool_choice']['tools'] == [{'type': 'computer'}, {'type': 'function', 'name': 'note'}]
 
 
 async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requests: None) -> None:
@@ -562,29 +541,6 @@ async def test_a_malformed_call_runs_nothing(allow_model_requests: None, actions
     assert computer.actions == []
     call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
     assert call.args_as_dict() == {'actions': [{'type': None, 'unsupported_fields': []}]}
-
-
-async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_requests: None) -> None:
-    async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
-        raise ToolFailed('Taking the screenshot failed: scrot: not found')
-
-    client = MockOpenAIResponses.create_mock(
-        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
-    )
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)], capabilities=[NativeTool(COMPUTER_TOOL)]).run(
-        'Go.'
-    )
-
-    _, second = get_mock_responses_kwargs(client)
-    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert _is_a_valid_png(output['output']['image_url'])
-    note = second['input'][second['input'].index(output) + 1]
-    assert note == {
-        'role': 'user',
-        'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">'
-        'Taking the screenshot failed: scrot: not found</pyai:tool_result>',
-    }
 
 
 def _without_native_tools(profile: ModelProfile) -> ModelProfile:

@@ -7,24 +7,64 @@ these recordings run the real capability, with its instructions, scaling and res
 from __future__ import annotations
 
 from collections.abc import AsyncIterable
+from typing import Any
 
 import pytest
 from pydantic import JsonValue
 
-from pydantic_ai import Agent, AgentStreamEvent, RunContext
-from pydantic_ai.computer_use import Click, PressKeys, TypeText
-from pydantic_ai_harness.computer_use import ComputerUse
+from pydantic_ai import (
+    Agent,
+    AgentStreamEvent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    Tool,
+    ToolCallPart,
+    ToolDenied,
+    ToolReturn,
+)
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
+from pydantic_ai.computer_use import (
+    COMPUTER_KIND,
+    Click,
+    ComputerCallPart,
+    Drag,
+    MoveMouse,
+    Point,
+    PressKeys,
+    Scroll,
+    TypeText,
+)
+from pydantic_ai.messages import BinaryImage, CompactionPart, ModelRequest
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.native_tools import ComputerTool
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction
 
 from ...conftest import RequestCapture, try_import
-from ..display_fakes import ScreenProvider
+from ..display_fakes import FAKE_DISPLAY_SIZE, ScreenProvider, png
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
+
+@pytest.fixture(scope='module')
+def vcr_config(vcr_config: dict[str, object], pytestconfig: pytest.Config) -> dict[str, object]:
+    """Replay matches each request's body too, so a request the code no longer sends fails instead of replaying.
+
+    Recording keeps the default match: recorded with the body matcher, cassetter writes the interactions out of order.
+    """
+    if pytestconfig.getoption('--record-mode', default=None) not in (None, 'none'):
+        return vcr_config
+    return {**vcr_config, 'match_on': ['method', 'uri', 'body']}
+
+
 TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "done". Do nothing else.'
+DONE = [Click(x=100, y=200), TypeText(text='hello')]
 
 
 def _objects(body: dict[str, JsonValue], key: str) -> list[dict[str, JsonValue]]:
@@ -38,8 +78,23 @@ def _items(body: dict[str, JsonValue], type: str) -> list[dict[str, JsonValue]]:
     return [item for item in _objects(body, 'input') if item.get('type') == type]
 
 
-def _gpt(openai_api_key: str, capture: RequestCapture) -> OpenAIResponsesModel:
-    return OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key, http_client=capture.client))
+def _gpt(openai_api_key: str, capture: RequestCapture, name: str = 'gpt-5.5') -> OpenAIResponsesModel:
+    return OpenAIResponsesModel(name, provider=OpenAIProvider(api_key=openai_api_key, http_client=capture.client))
+
+
+def _kinds(body: dict[str, JsonValue]) -> list[JsonValue]:
+    return [item.get('type', item.get('role')) for item in _objects(body, 'input')]
+
+
+def _computer_request(*extra_tools: str) -> ModelRequestParameters:
+    """A request with a `computer` tool sent as the native one, beside function tools with these names."""
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    others = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in extra_tools]
+    return ModelRequestParameters(
+        function_tools=[computer, *others],
+        native_tools=[ComputerTool(display_size=FAKE_DISPLAY_SIZE)],
+        allow_text_output=True,
+    )
 
 
 @pytest.mark.vcr
@@ -141,3 +196,268 @@ async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
     assert calls and all(call['name'] == 'computer' for call in calls)
     assert not any(str(call.get('id', '')).startswith('cu_') for call in calls)
     assert 'reasoning' in kinds
+
+
+@pytest.mark.vcr
+async def test_gpt_gets_the_whole_history_back_with_store_off(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    settings = OpenAIResponsesModelSettings(openai_store=False)
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()], model_settings=settings).run(TASK)
+
+    assert provider.actions == DONE
+    last = request_capture.bodies('/responses')[-1]
+    # Nothing is stored, so every call goes back with its output.
+    assert last['store'] is False and 'previous_response_id' not in last
+    assert _kinds(last) == ['user', 'computer_call', 'computer_call_output', 'computer_call', 'computer_call_output']
+
+
+@pytest.mark.vcr
+async def test_gpt_gets_only_the_outputs_after_a_stored_response(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()], model_settings=settings).run(TASK)
+
+    assert provider.actions == DONE
+    _, *later = request_capture.bodies('/responses')
+    # The server holds each call, so a request carries only the call's output.
+    assert later and all('previous_response_id' in body and _kinds(body) == ['computer_call_output'] for body in later)
+
+
+@pytest.mark.vcr
+async def test_gpt_compacts_a_history_of_computer_calls_through_the_compact_endpoint(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    result = await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
+    # `OpenAICompaction` compacts all but the newest request, which leaves a call without its output mid-run, and the
+    # endpoint refuses that for any tool, so this compacts the finished run.
+    context = ModelRequestContext(
+        model=model, messages=result.all_messages(), model_settings=None, model_request_parameters=_computer_request()
+    )
+    compacted = await model.compact_messages(context)
+
+    assert isinstance(compacted.parts[0], CompactionPart)
+    compact = request_capture.body('/responses/compact')
+    # The endpoint refuses a `computer_call_output` unless the computer tool is enabled.
+    assert compact['tools'] == [{'type': 'computer'}]
+    assert 'computer_call_output' in _kinds(compact)
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='compaction replaces the history')
+async def test_gpt_compacts_a_history_of_computer_calls_on_the_server(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    capabilities = [provider.capability(), ComputerUse(), OpenAICompaction(token_threshold=1000)]
+    result = await Agent(model, capabilities=capabilities).run(TASK)
+
+    assert provider.actions == DONE
+    assert any(isinstance(part, CompactionPart) for message in result.all_messages() for part in message.parts)
+    # A later request starts from the compaction and goes on with the computer calls after it.
+    last = request_capture.bodies('/responses')[-1]
+    assert _kinds(last)[0] == 'compaction' and 'computer_call_output' in _kinds(last)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    ('tool_choice', 'tools', 'sent'),
+    [
+        pytest.param(['computer'], ('note',), {'type': 'computer'}, id='only-the-computer'),
+        pytest.param(
+            ['computer', 'note'],
+            ('note', 'other'),
+            {
+                'type': 'allowed_tools',
+                'mode': 'required',
+                'tools': [{'type': 'computer'}, {'type': 'function', 'name': 'note'}],
+            },
+            id='the-computer-and-a-function',
+        ),
+    ],
+)
+async def test_gpt_calls_the_computer_when_tool_choice_names_it(
+    allow_model_requests: None,
+    openai_api_key: str,
+    request_capture: RequestCapture,
+    tool_choice: list[str],
+    tools: tuple[str, ...],
+    sent: dict[str, JsonValue],
+) -> None:
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    response = await model.request(
+        [ModelRequest.user_text_prompt('Look at the screen.')], {'tool_choice': tool_choice}, _computer_request(*tools)
+    )
+
+    assert request_capture.body('/responses')['tool_choice'] == sent
+    assert [type(part) for part in response.parts if not part.part_kind == 'thinking'] == [ComputerCallPart]
+
+
+@pytest.mark.vcr
+async def test_gpt_uses_the_computer_beside_a_function_found_by_tool_search(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+
+    def get_weather(city: str) -> str:
+        """The weather in a city."""
+        return 'sunny'
+
+    agent = Agent(
+        _gpt(openai_api_key, request_capture, 'gpt-5.4'),
+        tools=[Tool(get_weather, defer_loading=True)],
+        capabilities=[provider.capability(), ComputerUse()],
+    )
+    await agent.run('First find and call the weather tool for Paris. Then click at x=100 y=200, and reply "done".')
+
+    assert provider.actions == [Click(x=100, y=200)]
+    first, *_, last = request_capture.bodies('/responses')
+    assert {'type': 'computer'} in _objects(first, 'tools')
+    assert {'tool_search_call', 'function_call', 'computer_call_output'} <= set(_kinds(last))
+
+
+@pytest.mark.vcr
+async def test_gpt_is_told_why_a_denied_call_has_a_blank_screenshot(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    hooks = Hooks[object]()
+
+    @hooks.on.before_tool_execute
+    async def ask_before_acting(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
+            if any(action.type != 'screenshot' for action in args['actions']):
+                raise ApprovalRequired
+        return args
+
+    agent = Agent(
+        _gpt(openai_api_key, request_capture, 'gpt-5.4-mini'),
+        capabilities=[provider.capability(), ComputerUse(), hooks],
+        output_type=[str, DeferredToolRequests],
+    )
+    paused = await agent.run('Click at x=100 y=200. If you cannot, reply with the reason you were given.')
+    assert isinstance(paused.output, DeferredToolRequests)
+    (approval,) = paused.output.approvals
+    denied = DeferredToolResults(approvals={approval.tool_call_id: ToolDenied('The user said no.')})
+    result = await agent.run(message_history=paused.all_messages(), deferred_tool_results=denied)
+
+    assert provider.actions == []
+    assert isinstance(result.output, str) and 'no' in result.output.lower()
+    last = request_capture.bodies('/responses')[-1]
+    (output,) = [item for item in _items(last, 'computer_call_output') if item['call_id'] == approval.tool_call_id]
+    note = _objects(last, 'input')[_objects(last, 'input').index(output) + 1]
+    # The API needs an image, so a 1x1 one stands in, and the note says why.
+    assert isinstance(screenshot := output['output'], dict)
+    assert str(screenshot['image_url']).startswith('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB')
+    assert note['role'] == 'user' and 'The user said no.' in str(note['content'])
+
+
+@pytest.mark.vcr
+async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    hooks = Hooks[object]()
+    picture = BinaryImage(data=png(64, 64, red_box=(0, 0, 64, 64)), media_type='image/png')
+
+    @hooks.on.after_tool_execute
+    async def add_picture(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: Any
+    ) -> Any:
+        # As an app might add an image of its own to the result, before the screenshot.
+        return ToolReturn([picture, *result.return_value], metadata=result.metadata)
+
+    agent = Agent(
+        _gpt(openai_api_key, request_capture, 'gpt-5.4-mini'),
+        capabilities=[provider.capability(), ComputerUse(), hooks],
+    )
+    result = await agent.run(
+        'Take one screenshot. Besides the screenshot you get a small square image: reply with its colour only.'
+    )
+
+    assert 'red' in result.output.lower()
+    last = request_capture.bodies('/responses')[-1]
+    message = _objects(last, 'input')[-1]
+    # The output can carry only the screenshot, so the image goes in a message after it.
+    assert isinstance(content := message['content'], list)
+    assert [part['type'] for part in content if isinstance(part, dict)] == ['input_text', 'input_image']
+
+
+@pytest.mark.vcr
+async def test_gpt_is_told_how_a_pixel_scroll_ran(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    agent = Agent(
+        _gpt(openai_api_key, request_capture, 'gpt-5.4-mini'), capabilities=[provider.capability(), ComputerUse()]
+    )
+    await agent.run('Scroll down by exactly 250 pixels at x=640 y=400 in one scroll action, then reply "done".')
+
+    assert provider.actions == [Scroll(x=640, y=400, direction='down', amount=3)]
+    last = request_capture.bodies('/responses')[-1]
+    assert 'scroll_y=250 ran as 3 wheel clicks of about 100 pixels each.' in str(_objects(last, 'input')[-1])
+
+
+@pytest.mark.vcr
+async def test_gpt_computer_call_cut_off_by_the_token_limit_runs_nothing(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.5')
+    task = 'Click the search box and type this exact text: ' + ' '.join(f'word{i}' for i in range(200))
+    settings = OpenAIResponsesModelSettings(max_tokens=16, openai_reasoning_effort='none', tool_choice=['computer'])
+    response = await model.request([ModelRequest.user_text_prompt(task)], settings, _computer_request())
+
+    assert response.finish_reason == 'length'
+    (call,) = [part for part in response.parts if isinstance(part, ComputerCallPart)]
+    # OpenAI sends the cut-off call with no actions; its arguments don't parse, so nothing would run.
+    assert call.actions is None
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    ('task', 'expected'),
+    [
+        pytest.param('Double-click at x=100 y=200.', Click(x=100, y=200, count=2), id='double-click'),
+        pytest.param('Right-click at x=100 y=200.', Click(x=100, y=200, button='right'), id='right-click'),
+        pytest.param('Middle-click at x=100 y=200.', Click(x=100, y=200, button='middle'), id='middle-click'),
+        pytest.param('Press the mouse back button at x=100 y=200.', Click(x=100, y=200, button='back'), id='back'),
+        pytest.param(
+            'Hold shift and click at x=100 y=200.', Click(x=100, y=200, modifiers=('shift',)), id='shift-click'
+        ),
+        pytest.param('Move the pointer to x=100 y=200 without clicking.', MoveMouse(x=100, y=200), id='move'),
+        pytest.param(
+            'Scroll down by 300 pixels at x=100 y=200.',
+            Scroll(x=100, y=200, direction='down', amount=3),
+            id='scroll',
+        ),
+        pytest.param(
+            'Drag in a straight line from x=100 y=200 to x=300 y=200.',
+            Drag(path=(Point(x=100, y=200), Point(x=300, y=200))),
+            id='drag',
+        ),
+        pytest.param('Press ctrl+a.', PressKeys(keys=('ctrl', 'a')), id='keypress'),
+        pytest.param('Type "hello".', TypeText(text='hello'), id='type'),
+    ],
+)
+async def test_gpt_actions_reach_the_screen(
+    allow_model_requests: None,
+    openai_api_key: str,
+    request_capture: RequestCapture,
+    task: str,
+    expected: DisplayAction,
+) -> None:
+    provider = ScreenProvider()
+    agent = Agent(_gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse()])
+    await agent.run(f'{task} Do only that, then reply "done".')
+
+    assert provider.actions == [expected]
