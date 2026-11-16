@@ -39,7 +39,7 @@ from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
 from . import ModelRequestParameters, StreamedResponse
 from ._in_memory_batch import InMemoryBatchModel
-from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
+from .function import _estimate_response_part_tokens, _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -406,6 +406,7 @@ class TestStreamedResponse(StreamedResponse):
             case TextPart():
                 yield from self._map_text_part(index, part)
             case ToolCallPart():
+                self._usage += RequestUsage(output_tokens=_estimate_response_part_tokens(part))
                 # `ToolCallPart` subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a
                 # `TypedDict`, which is structurally a `dict[str, Any]` but pyright keeps
                 # the narrower union here.
@@ -441,14 +442,21 @@ class TestStreamedResponse(StreamedResponse):
         if len(words) == 1 and len(text) > 2:
             mid = len(text) // 2
             words = [text[:mid], text[mid:]]
-        self._usage += _get_string_usage('')
         yield from self._parts_manager.handle_text_delta(vendor_part_id=index, content='')
+        # The token estimate isn't additive (`'a, '` and `'b'` count 2 and 1, `'a, b'` counts 2), so each fragment
+        # adds the change in the estimate of the text streamed so far, ending on the estimate `TestModel.request`
+        # gives. That change depends only on the last non-whitespace character streamed and whether whitespace
+        # follows it, so `tail` carries just those and the estimate stays linear in the text's length.
+        tail = ''
         for word in words:
             # Simulate the transport error that real providers raise
             # when the HTTP connection is closed mid-stream by cancel().
             if self._cancelled:
                 raise _StreamCancelled()
-            self._usage += _get_string_usage(word)
+            extended = tail + word
+            self._usage += RequestUsage(output_tokens=_estimate_string_tokens(extended) - _estimate_string_tokens(tail))
+            stripped = extended.rstrip()
+            tail = stripped[-1:] + extended[len(stripped) :][:1]
             yield from self._parts_manager.handle_text_delta(vendor_part_id=index, content=word)
 
     @property
@@ -521,6 +529,9 @@ class _JsonSchemaTestData:
             case None:
                 # if there's no type or ref, we can't generate anything
                 return self._char()
+            case [_, *_] as types:
+                # a JSON Schema type list: the seed picks one member, as an `anyOf` does
+                return self._gen_any({**schema, 'type': types[self.seed % len(types)]})
             case 'object':
                 return self._object_gen(schema)
             case 'string':
@@ -712,8 +723,3 @@ class _JsonSchemaTestData:
             rem //= chars
         s += _chars[self.seed % chars]
         return s
-
-
-def _get_string_usage(text: str) -> RequestUsage:
-    response_tokens = _estimate_string_tokens(text)
-    return RequestUsage(output_tokens=response_tokens)

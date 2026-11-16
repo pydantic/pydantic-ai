@@ -197,11 +197,13 @@ network-backed ones. See [Testing and Debugging](./references/TESTING-AND-DEBUGG
 
 ## Task Routing Table
 
-Load the references for the capabilities the task uses; each is self-contained.
+Load the references for the capabilities the task uses; each is self-contained. When the task names a
+problem but not a capability, load the reference whose row covers the problem and pick from the
+chooser table at its top.
 
 | I want to... | Reference |
 |---|---|
-| Build a coding agent, give an agent file or shell tools, run it in a Modal/E2B/Render/Sprites/Daytona/boxd/smolvm/BoxLite sandbox, or load repo instructions | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) |
+| Build a coding agent, give an agent file or shell tools, work in a specific directory, run it in a Modal/E2B/Render/Sprites/Daytona/boxd/smolvm/BoxLite sandbox, or load repo instructions | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) |
 | Let the model run Python that calls tools, or sandbox model-written code | [Code Mode](./references/CODE-MODE.md) |
 | Add sub-agents, peer-session messaging, planning, a model-written workflow over sub-agents, an advisor model, or background tools | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) |
 | Keep a long run within its context window, trim or summarize history, limit large tool outputs, or catch prompt-cache busts | [Context Management](./references/CONTEXT-MANAGEMENT.md) |
