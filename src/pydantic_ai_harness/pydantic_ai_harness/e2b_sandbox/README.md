@@ -225,7 +225,7 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 ## Give commands a credential they cannot read
 
-`network` takes E2B's network options, passed to `Sandbox.create` unchanged. Their `rules` keep a token out of the sandbox while its commands still use it: E2B's proxy, outside the sandbox, sets the headers on every request to the named host and replaces any header of that name the request carried. Here `gh` and `git push` act as the token's owner, while `echo $GH_TOKEN` in the sandbox prints only `placeholder`:
+`network` takes E2B's network options, passed to `Sandbox.create` unchanged. Their `rules` let commands use a token the sandbox never holds: E2B's proxy, outside the sandbox, sets the headers on each HTTPS request to the named host, replacing a header of the same name. Here `gh` and `git push` act as the token's owner, while `echo $GH_TOKEN` in the sandbox prints only `placeholder`:
 
 ```python {test="skip"}
 import base64
@@ -246,7 +246,14 @@ sandbox = E2BSandbox(
 )
 ```
 
-The proxy applies the headers only over HTTP and HTTPS, so a remote such as `git@github.com:owner/repo.git` gets no credential: use the `https://` URL. The agent can still use the token for anything it allows, on any repository it reaches. Name only hosts you trust not to send request headers back in a response, or a command can read the value there. E2B keeps the rules for the sandbox's whole life, including after a reattach. To change them on a running sandbox, such as to rotate the token, call `update_network` on `await backend.get_sandbox()`; it replaces every network option at once. To keep the token out of the request that creates the sandbox too, save it as an E2B secret and use `e2b.Secret.fill(name)` as the header's value.
+E2B marks these rules [public beta](https://docs.e2b.dev/sandbox/internet-access), so their shape may change.
+
+- Only HTTPS requests get the headers. Plain HTTP and SSH remotes such as `git@github.com:owner/repo.git` get none, so use the `https://` URL.
+- A rule does not allow traffic by itself. If you set `allow_out` or `allow_internet_access=False`, list each rule's host in `allow_out` too.
+- The agent cannot read the token, but can use it for anything it allows, on every repository it reaches.
+- Name only hosts you trust not to echo request headers back in a response, or a command can read the value there.
+- The rules last as long as the sandbox, including after a reattach. To change them, such as to rotate the token, call `update_network` on `await backend.get_sandbox()`; it replaces every network option at once.
+- To keep the token out of the request that creates the sandbox too, save the whole header value (such as `Basic ...` for `github.com`) as an E2B secret, and use `e2b.Secret.fill(name)` as that value. The proxy swaps only the exact placeholder `fill` returns, so do not encode or wrap it.
 
 ## Preview a dev server
 
