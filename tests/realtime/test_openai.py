@@ -5335,7 +5335,8 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(
     user's speech starts.
 
     A `response.done` the connection can't read, or one without an id, still ends the calling response: its
-    status is unknown or completed, so the result is answered as after a completed one.
+    status is unknown or completed, so the result is answered as after a completed one. No recorded session
+    has such a frame, so these cases are scripted.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]

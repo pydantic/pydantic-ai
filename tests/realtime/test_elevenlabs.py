@@ -672,7 +672,8 @@ async def test_tool_calls_abandoned_by_a_later_response(readable: bool, expected
 
     Its result never reaches the model, and a `response.create` after it goes unanswered, so the connection
     doesn't ask for one: the result's input is settled as lost instead of leaving `wait_for_reply()` waiting.
-    A `response.done` the connection can't read ends the calling response all the same.
+    A `response.done` the connection can't read ends the calling response all the same; no recorded session has
+    one, so it is scripted.
     """
     first_done = done('resp_1') if readable else {'type': 'response.done', 'response': 'garbled'}
     ws = FakeWebSocket(

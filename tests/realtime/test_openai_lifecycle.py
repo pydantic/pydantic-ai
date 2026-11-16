@@ -365,7 +365,10 @@ async def test_a_response_never_announced_is_started_by_its_first_frame() -> Non
 
 
 async def test_responses_without_ids_get_ids_of_their_own() -> None:
-    """A response the provider names no id for gets one of its own; an id-less terminal ends the one under way."""
+    """A response the provider names no id for gets one of its own; an id-less terminal ends the one under way.
+
+    Recorded sessions always carry ids, so this is scripted.
+    """
     stream = Stream(created('resp_1'), done(None), created(None), done(None), done(None))
     assert await stream.rest() == snapshot(
         [
