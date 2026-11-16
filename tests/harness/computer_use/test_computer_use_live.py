@@ -453,12 +453,10 @@ async def test_claude_zoom_and_cursor_position_answer_their_own_calls(
 
     assert '640' in result.output and '400' in result.output
     last = request_capture.bodies('/v1/messages')[-1]
-    calls = content_blocks(last, 'tool_use')
-    results = content_blocks(last, 'tool_result')
-    assert [
-        (call['name'], [block['type'] for block in json_objects(result['content'])])
-        for call, result in zip(calls, results)
-    ] == snapshot([('zoom', ['text', 'image']), ('cursor_position', ['text', 'text', 'image'])])
+    assert [call['name'] for call in content_blocks(last, 'tool_use')] == snapshot(['zoom', 'cursor_position'])
+    assert _results(last) == snapshot(
+        [(False, ['OK', 'image']), (False, ['OK', 'The pointer is at (640, 400).', 'image'])]
+    )
 
 
 def _force_the_computer_until_it_is_called(ctx: RunContext[object]) -> ModelSettings:
