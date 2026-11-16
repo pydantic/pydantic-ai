@@ -726,11 +726,14 @@ from pydantic_ai_harness.compaction import pin
 
 # In a ModelRequest placed in the run's message history (by a capability or the user):
 pinned = pin('Durable task state the model must never lose across compaction.')
+
+# Content a tool or the model wrote, framed so the model doesn't read it as the user's words:
+scratchpad = pin('Port 8421 is taken; use 8422.', source='model')
 ```
 
 A pinned part is never summarized away or dropped; if a strategy would have discarded it, the strategy re-injects it near the top of the surviving history. `is_pinned` reports whether a given part carries the marker.
 
-Pins use model-invisible `TextContent.metadata`, so their contents remain ordinary user context while compaction can distinguish them from user turns.
+Pins use model-invisible `TextContent.metadata`, so compaction can distinguish them from user turns. A pin with the default `source='user'` reaches the model as ordinary user context. Pass `source='tool'` or `source='model'` for content the user didn't write: it reaches the model on the user channel as `<pinned source="tool">` or `<pinned source="model">` data, with any framing tags inside it escaped.
 
 The `Planning` capability does not need pinning: when compaction removes or clears the plan tools' results that show the latest plan, the next request records the plan from its store. Pinning is for durable task state and scratchpads that live *in* the history.
 
@@ -802,6 +805,8 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 ::: pydantic_ai_harness.compaction.ContextUsage
 
 ::: pydantic_ai_harness.compaction.pin
+
+::: pydantic_ai_harness.compaction.PinSource
 
 ::: pydantic_ai_harness.compaction.is_pinned
 
