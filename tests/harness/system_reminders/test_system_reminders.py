@@ -1485,13 +1485,14 @@ class TestEndToEnd:
         for prompt in ('one', 'two', 'three'):
             history = (await agent.run(prompt, message_history=history)).all_messages()
         await agent.run('four', message_history=history[2:])
+        await agent.run('five', message_history=[*history, ModelResponse(parts=[CompactionPart(content='earlier')])])
 
-        assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1, 1, 1]
-        assert [_sent_texts(messages).count('<system>Be brief.</system>') for messages in seen] == [1, 2, 3, 3]
+        assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1, 1, 1, 2]
+        assert [_sent_texts(messages).count('<system>Be brief.</system>') for messages in seen] == [1, 2, 3, 3, 4]
 
     async def test_unchanged_generated_reminder_is_not_recorded_again(self) -> None:
         """A `skip_unchanged` `LLMReminder` records generated text only when it differs from the latest record."""
-        outputs = iter(['same', 'same', 'new', 'same'])
+        outputs = iter(['same', 'same', 'new', 'same', 'same'])
         requests = 0
 
         def generate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1522,6 +1523,13 @@ class TestEndToEnd:
             _llm_data('same', model=model),
             _llm_data('new', model=model),
             _llm_data('same', model=model),
+        ]
+
+        compacted = [*result.all_messages(), ModelResponse(parts=[CompactionPart(content='earlier')])]
+        result = await agent.run('again', message_history=compacted)
+
+        assert [text for text in _sent_texts(result.new_messages()) if text.startswith('<generated_reminder')] == [
+            _llm_data('same', model=model)
         ]
 
     @pytest.mark.parametrize(('interval', 'firings'), [(None, [10, 20]), (1, list(range(1, 22))), (8, [8, 16])])
