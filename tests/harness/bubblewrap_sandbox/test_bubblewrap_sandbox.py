@@ -728,7 +728,7 @@ async def test_deprecated_bubblewrap_sandbox_alias_warns_and_wraps(tmp_path: Pat
     ('works', 'require_live', 'outcome'),
     [(True, '1', None), (False, '', pytest.skip.Exception), (False, '1', pytest.fail.Exception)],
 )
-def test_require_bwrap_fails_only_where_the_sandbox_probes_need_it(
+def test_require_bwrap_fails_only_where_ci_needs_it(
     monkeypatch: pytest.MonkeyPatch, works: bool, require_live: str, outcome: type[BaseException] | None
 ) -> None:
     """Without `bwrap` the real-sandbox tests skip, unless `BWRAP_REQUIRE_LIVE` is set, where they must fail."""

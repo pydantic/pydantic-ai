@@ -18,7 +18,7 @@ BWRAP_WORKS = (
 
 
 def require_bwrap() -> None:
-    """Skip a test without a working `bwrap`, or fail it where `BWRAP_REQUIRE_LIVE` is set (CI's sandbox probes do)."""
+    """Skip a test without a working `bwrap`, or fail it where `BWRAP_REQUIRE_LIVE` is set (CI does)."""
     if BWRAP_WORKS:
         return
     reason = 'needs a working `bwrap` (Linux with user namespaces)'
