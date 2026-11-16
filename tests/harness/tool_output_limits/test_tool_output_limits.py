@@ -160,10 +160,17 @@ class TestPayloadHelpers:
         assert strip_ansi(text) == expected
 
     def test_strip_ansi_is_linear_on_unterminated_osc(self):
+        """A run of unterminated OSC openers is scanned once, not once per opener.
+
+        A time bound, like `test_a_run_of_header_lines_is_scanned_in_linear_time`'s: `re` reports no step count to
+        assert on. On this input, a pattern that rescans to the end for each opener takes far longer.
+        """
         text = '\x1b]' * 50_000
         start = time.perf_counter()
-        assert strip_ansi(text) == text
+        result = strip_ansi(text + '\x1b[1m')
+
         assert time.perf_counter() - start < 1
+        assert result == text
 
     def test_is_binary(self):
         assert is_binary(b'x') is True
@@ -1336,24 +1343,34 @@ class TestReadBack:
     async def test_read_slice_stops_reading_once_the_window_is_full(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        payload = '\n'.join(f'line {i}' for i in range(100_000)).encode('utf-8')
+        class CountingReader(io.BufferedReader):
+            served = 0
+
+            def read(self, size: int | None = -1, /) -> bytes:
+                data = super().read(size)
+                self.served += len(data)
+                return data
+
+        monkeypatch.setattr('pydantic_ai_harness.tool_output_limits._store._CHUNK_SIZE', 8)
+        payload = '\n'.join(f'line {i}' for i in range(1_000)).encode('utf-8')
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', payload)
-        opened: list[io.BufferedReader] = []
+        opened: list[CountingReader] = []
         open_file = LocalFileOverflowStore._open  # pyright: ignore[reportPrivateUsage]
 
         def spy(self: LocalFileOverflowStore, handle: str) -> io.BufferedReader:
-            opened.append(open_file(self, handle))
+            opened.append(CountingReader(open_file(self, handle).detach()))
             return opened[-1]
 
         monkeypatch.setattr(LocalFileOverflowStore, '_open', spy)
-        monkeypatch.setattr(LocalFileOverflowStore, 'read', AsyncMock(side_effect=AssertionError('read whole payload')))
         out = await _read_slice(store, 'h/1.0', offset=10, limit=3, from_end=False, pattern=None)
         assert out == "[handle 'h/1.0': 13+ matching line(s); showing 3]\nline 10\nline 11\nline 12"
-        assert [file.closed for file in opened] == [True]
+        # Lines 0 to 13 and their newlines are 102 bytes, read in 8-byte chunks: line 13 shows more lines exist.
+        assert [(file.served, file.closed) for file in opened] == [(104, True)]
 
         out = await _read_slice(store, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
-        assert out == "[handle 'h/1.0': 100,000 matching line(s); showing 2]\nline 99998\nline 99999"
+        assert out == "[handle 'h/1.0': 1,000 matching line(s); showing 2]\nline 998\nline 999"
+        assert [(file.served, file.closed) for file in opened[1:]] == [(len(payload), True)]
 
     async def test_read_slice_reads_other_stores_whole(self):
         store = AsyncMock()
