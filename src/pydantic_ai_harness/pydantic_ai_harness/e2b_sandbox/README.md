@@ -253,7 +253,7 @@ E2B marks these rules [public beta](https://docs.e2b.dev/sandbox/internet-access
 - The agent cannot read the token, but can use it for anything it allows, on every repository it reaches.
 - Name only hosts you trust not to echo request headers back in a response, or a command can read the value there.
 - The rules last as long as the sandbox, including after a reattach. To change them, such as to rotate the token, call `update_network` on `await backend.get_sandbox()`; it replaces every network option at once.
-- To keep the token out of the request that creates the sandbox too, save it as an E2B secret and use `e2b.Secret.fill(name)` as the header's value.
+- To keep the token out of the request that creates the sandbox too, save the whole header value (such as `Basic ...` for `github.com`) as an E2B secret, and use `e2b.Secret.fill(name)` as that value. The proxy swaps only the exact placeholder `fill` returns, so do not encode or wrap it.
 
 ## Preview a dev server
 
