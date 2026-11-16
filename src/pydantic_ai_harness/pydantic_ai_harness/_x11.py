@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 import anyio
 
@@ -58,7 +58,7 @@ _MAX_REPEAT = 2**31 - 1
 def _repeat(count: int) -> str:
     """`count` as xdotool's `--repeat`, refused when xdotool can't take it."""
     if count > _MAX_REPEAT:
-        raise UnsupportedActionError(f'The display can repeat a scroll or key at most {_MAX_REPEAT} times.')
+        raise UnsupportedActionError(f'The display can repeat a click, scroll or key at most {_MAX_REPEAT} times.')
     return str(count)
 
 
@@ -127,15 +127,8 @@ _TYPING_DELAY_MS = '12'
 _KEY_SECONDS = int(_TYPING_DELAY_MS) / 1000
 """The pause one typed character or one key press asks for."""
 
-_COMMAND_BYTES = 60_000
-"""The longest one input command may be, counting each argument as its bytes plus `_ARGUMENT_BYTES`. Longer input,
-such as long text or a drag through many points, is split into several commands.
-
-Sprites and Modal refuse commands over 64 KiB; the rest is room for the command's start and the URL's other
-parameters."""
-
-_ARGUMENT_BYTES = 6
-"""What a transport adds to each argument, such as the `&cmd=` Sprites' exec URL puts before each."""
+_CLICK_SECONDS = 0.1
+"""The pause between the clicks of a repeated click, `xdotool click`'s default delay."""
 
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks; `xdotool`'s default is 100."""
@@ -195,20 +188,6 @@ def _character(character: str) -> str:
     if character == '\t':
         return 'Tab'
     return f'U{ord(character):04X}'
-
-
-def _commands(steps: Sequence[list[str]]) -> list[list[str]]:
-    """`steps`, each arguments that go together, packed in order into as few commands as keep within `_COMMAND_BYTES`."""
-    commands: list[list[str]] = [[]]
-    size = 0
-    for step in steps:
-        step_size = sum(len(arg) + _ARGUMENT_BYTES for arg in step)
-        if commands[-1] and size + step_size > _COMMAND_BYTES:
-            commands.append([])
-            size = 0
-        commands[-1] += step
-        size += step_size
-    return commands
 
 
 def _move(x: int | None, y: int | None) -> list[str]:
@@ -297,23 +276,18 @@ class X11Computer:
         return result
 
     async def _xdotool(
-        self, *chains: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
+        self, chain: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
     ) -> None:
-        """Run `xdotool` command chains in turn with `hold` held down; if one fails or is cancelled, let go of everything.
+        """Run an `xdotool` command chain with `hold` held down; if it fails or is cancelled, let go of everything.
 
-        Several chains are one input split by `_commands`: what it holds stays down from the first to the last.
-        `release` is an `xdotool` chain that lets go of what the chains press; each command may take `pauses` on top of
+        `release` is an `xdotool` chain that lets go of what the chain presses; the command may take `pauses` on top of
         the usual time limit.
         """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
-        commands = [['xdotool', *chain] for chain in chains]
-        commands[0][1:1] = keydown
-        commands[-1] += keyup
         try:
-            for command in commands:
-                await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)
+            await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *keydown, *chain, *keyup], pauses=pauses)
         except BaseException as error:
             # Each release runs on its own, so one that fails doesn't keep the other from running.
             failures = await self._release([list(release), keyup])
@@ -370,20 +344,20 @@ class X11Computer:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 await self._xdotool(
-                    [*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]],
+                    [*_move(x, y), 'click', '--repeat', _repeat(count), _BUTTONS[button]],
                     hold=modifiers,
                     release=('mouseup', _BUTTONS[button]),
+                    pauses=count * _CLICK_SECONDS,
                 )
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]
                 steps = drag_steps(path)
-                chains = _commands([['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)] for point in steps])
-                chains[0][:0] = [*_move(start.x, start.y), 'mousedown', '1', 'sleep', str(DRAG_PRESS_PAUSE)]
-                chains[-1] += ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1']
+                moves = [arg for point in steps for arg in ['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)]]
+                pause = ['sleep', str(DRAG_PRESS_PAUSE)]
                 await self._xdotool(
-                    *chains,
+                    [*_move(start.x, start.y), 'mousedown', '1', *pause, *moves, *pause, 'mouseup', '1'],
                     hold=modifiers,
                     release=('mouseup', '1'),
                     pauses=2 * DRAG_PRESS_PAUSE + len(steps) * DRAG_STEP_PAUSE,
@@ -401,14 +375,14 @@ class X11Computer:
                     pauses=amount * _SCROLL_TICK_SECONDS,
                 )
             case TypeText(text=text):
-                for part in _commands([[_character(character)] for character in text]):
-                    # A cancel can land between a key's press and release, and X then repeats the key without end.
-                    # `xdotool` holds Shift_L for a shifted character such as `!`.
-                    await self._xdotool(
-                        ['key', '--delay', _TYPING_DELAY_MS, '--', *part],
-                        release=('keyup', 'Shift_L', *dict.fromkeys(part)),
-                        pauses=len(part) * _KEY_SECONDS,
-                    )
+                keysyms = [_character(character) for character in text]
+                # A cancel can land between a key's press and release, and X then repeats the key without end.
+                # `xdotool` holds Shift_L for a shifted character such as `!`.
+                await self._xdotool(
+                    ['key', '--delay', _TYPING_DELAY_MS, '--', *keysyms],
+                    release=('keyup', 'Shift_L', *dict.fromkeys(keysyms)),
+                    pauses=len(keysyms) * _KEY_SECONDS,
+                )
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.

@@ -174,15 +174,6 @@ class DaytonaDesktop:
     def __init__(self, computer_use: Callable[[], AsyncComputerUse]):
         self._computer_use = computer_use
 
-    async def _check_running(self) -> None:
-        """Refuse an action on a desktop that stopped, before sending it any input.
-
-        The sandbox may stop and start between calls, and input sent before its desktop starts again breaks it.
-        """
-        status = await self._computer_use().get_status(request_timeout=_REQUEST_TIMEOUT)
-        if status.status != 'active':
-            raise WorkspaceError(f"Daytona's desktop is not running: its status is {status.status!r}.")
-
     async def display_size(self) -> tuple[int, int]:
         displays = (await self._computer_use().display.get_info(request_timeout=_REQUEST_TIMEOUT)).displays or []
         display = next((display for display in displays if display.is_active), None)
@@ -261,7 +252,6 @@ class DaytonaDesktop:
             await _send_input(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
 
     async def act(self, action: DisplayAction) -> None:
-        await self._check_running()
         mouse = self._computer_use().mouse
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):

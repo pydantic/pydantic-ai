@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.computer_use import Click
+from pydantic_ai.computer_use import Click, MouseDown, MouseUp
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -62,6 +62,23 @@ _agent = Agent(
 )
 
 
+def _press(messages: list[ModelMessage], info: object) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_pressing_agent = Agent(
+    FunctionModel(_press),
+    name='computer_use_temporal_press',
+    capabilities=[
+        _provider.capability(),
+        ComputerUse(),
+        TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(minutes=5))),
+    ],
+)
+
+
 @workflow.defn
 class ComputerUseWorkflow(PydanticAIWorkflow):
     __pydantic_ai_agents__ = [_agent]
@@ -77,12 +94,24 @@ class ComputerUseWorkflow(PydanticAIWorkflow):
         ]
 
 
+@workflow.defn
+class PressingWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [_pressing_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _pressing_agent.run(prompt)).output
+
+
+_runner = SandboxedWorkflowRunner(
+    restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'tests', 'annotated_types')
+)
+
+
 async def test_each_call_is_one_activity_and_replays_without_acting() -> None:
     _provider.reset()
     workflow_id = uuid4().hex
-    runner = SandboxedWorkflowRunner(
-        restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'tests', 'annotated_types')
-    )
+    runner = _runner
     async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         async with Worker(client, task_queue='computer-use', workflows=[ComputerUseWorkflow], workflow_runner=runner):
@@ -108,3 +137,21 @@ async def test_each_call_is_one_activity_and_replays_without_acting() -> None:
         workflows=[ComputerUseWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner
     ).replay_workflow(history)
     assert len(_provider.actions) == 2
+
+
+async def test_the_end_of_a_run_releases_the_button_its_call_pressed() -> None:
+    """The release is its own activity, which knows what to release from the run's calls, not the worker's memory."""
+    _provider.reset()
+    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
+        client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
+        async with Worker(client, task_queue='computer-use', workflows=[PressingWorkflow], workflow_runner=_runner):
+            output = await client.execute_workflow(
+                PressingWorkflow.run,
+                'Press.',
+                id=uuid4().hex,
+                task_queue='computer-use',
+                execution_timeout=timedelta(minutes=10),
+            )
+
+    assert output == 'done'
+    assert _provider.actions == [MouseDown(), MouseUp()]

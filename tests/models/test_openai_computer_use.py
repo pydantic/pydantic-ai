@@ -41,7 +41,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
 
 from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, FakeComputer
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 from ..workspace_fakes import InMemoryProvider
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message, with_history_digests
 
@@ -112,7 +112,10 @@ COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)
     ],
 )
 async def test_compacting_a_history_with_a_computer_call_enables_the_computer_tool(
-    allow_model_requests: None, response_scoped: bool, stored_id: str, settings: OpenAIResponsesModelSettings | None
+    allow_model_requests: None,
+    response_scoped: bool,
+    stored_id: str,
+    settings: OpenAIResponsesModelSettings | None,
 ) -> None:
     profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'), profile=profile)
@@ -173,9 +176,61 @@ async def test_compacting_a_history_with_a_computer_call_enables_the_computer_to
 
 
 @pytest.mark.parametrize(
-    'settings,response_scoped',
+    'settings,compact',
     [
         pytest.param({'openai_previous_response_id': 'auto'}, False, id='previous-response'),
+        pytest.param({'openai_conversation_id': 'conv_1'}, False, id='conversation'),
+        pytest.param({'openai_previous_response_id': 'auto'}, True, id='compaction'),
+    ],
+)
+async def test_answering_a_stored_computer_call_without_the_native_tool_is_refused(
+    allow_model_requests: None, settings: OpenAIResponsesModelSettings, compact: bool
+) -> None:
+    """Live, the API refuses it: `You provided computer_output, but the "computer" tool is not enabled.`"""
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock([])))
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'screenshot'}]},
+        tool_call_id='call_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='openai',
+        provider_details={'computer_call': _COMPUTER_ITEM},
+    )
+    result = ToolReturnPart('computer', ['Ran 1 action.', _SCREEN], tool_call_id='call_1', tool_kind=COMPUTER_KIND.id)
+    history = with_history_digests(
+        [
+            ModelRequest.user_text_prompt('Go.'),
+            ModelResponse(
+                parts=[call],
+                provider_name='openai',
+                provider_response_id='resp_1',
+                provider_details={'conversation_id': 'conv_1'},
+            ),
+            ModelRequest(parts=[result]),
+        ]
+    )
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    params = ModelRequestParameters(function_tools=[computer], allow_text_output=True)
+
+    with pytest.raises(UserError) as error:
+        if compact:
+            await model.compact_messages(
+                ModelRequestContext(
+                    model=model, messages=history, model_settings=settings, model_request_parameters=params
+                )
+            )
+        else:
+            await model.request(history, settings, params)
+    assert error.value.message == snapshot(
+        'The stored response or conversation holds a native computer call, so its result must be sent with the '
+        'native computer tool: the API refuses it otherwise. Keep the native computer tool for this run, or continue '
+        'without `openai_previous_response_id` and `openai_conversation_id`.'
+    )
+
+
+@pytest.mark.parametrize(
+    'settings,response_scoped',
+    [
         pytest.param({'openai_conversation_id': 'conv_1'}, False, id='conversation'),
         # Stored qualified and restored before the request, as for Bedrock Mantle's IDs.
         pytest.param({'openai_previous_response_id': 'auto'}, True, id='previous-response-scoped-ids'),
@@ -247,8 +302,24 @@ async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requ
     assert 'tools' not in request
 
 
+@pytest.mark.vcr
+async def test_openai_rejects_defer_loading_on_its_computer_tool(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Why a deferred `computer` tool sent as the native one is refused before the request."""
+    from openai import AsyncOpenAI, BadRequestError
+
+    client = AsyncOpenAI(api_key=openai_api_key, http_client=request_capture.client)
+    with pytest.raises(BadRequestError, match=r"Unknown parameter: 'tools\[0\]\.defer_loading'"):
+        await client.responses.create(
+            model='gpt-5.5',
+            input='Look at the screen.',
+            extra_body={'tools': [{'type': 'computer', 'defer_loading': True}]},
+        )
+
+
 async def test_a_computer_tool_found_by_tool_search_is_refused(allow_model_requests: None) -> None:
-    # The API refuses `defer_loading` on the native tool, and tool search can't reveal it, so the deferral is refused.
+    # The API rejects `defer_loading` on the native tool, so the deferral is refused.
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock([])))
     computer = ToolDefinition(
         name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id, defer_loading=True
@@ -262,8 +333,8 @@ async def test_a_computer_tool_found_by_tool_search_is_refused(allow_model_reque
     with pytest.raises(UserError) as error:
         await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
     assert error.value.message == snapshot(
-        "OpenAI sends the 'computer' tool as its native computer tool, which it cannot defer: the API refuses "
-        '`defer_loading` on it, and tool search cannot reveal it. Defer the whole capability with '
+        "OpenAI sends the 'computer' tool as its native computer tool, which it cannot defer: the API rejects "
+        '`defer_loading` on it as an unknown parameter. Defer the whole capability with '
         '`ComputerUse(defer_loading=True)` instead, or drop `defer_loading` from the tool.'
     )
 
@@ -532,11 +603,8 @@ async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_fu
     assert request['tools'][0]['type'] == 'function'
 
 
-def test_an_azure_client_keeps_the_function_tool_and_the_gateway_gets_the_native_one() -> None:
-    """The native computer tool isn't verified on Azure, so an Azure client opts out.
-
-    The gateway shares Azure's other opt-outs but not this one.
-    """
+def test_an_azure_client_and_the_gateway_keep_the_function_tool() -> None:
+    """The native computer tool isn't verified on Azure or the gateway, so both opt out."""
     from openai import AsyncAzureOpenAI
 
     from pydantic_ai.providers.gateway import gateway_provider
@@ -547,7 +615,7 @@ def test_an_azure_client_keeps_the_function_tool_and_the_gateway_gets_the_native
         'gpt-5.5', provider=gateway_provider('openai', api_key='gw-key', base_url='https://gateway.example.com')
     )
     assert ComputerTool not in (azure.profile.get('supported_native_tools') or ())
-    assert ComputerTool in (gateway.profile.get('supported_native_tools') or ())
+    assert ComputerTool not in (gateway.profile.get('supported_native_tools') or ())
 
 
 async def test_computer_calls_from_another_provider_replay_as_function_calls(allow_model_requests: None) -> None:
@@ -927,13 +995,10 @@ async def test_a_held_computer_result_stays_one_when_a_later_call_reuses_its_id(
     ]
 
 
-@pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out-since'])
-async def test_a_stored_computer_call_is_answered_as_one_whatever_its_arguments_or_the_tool_now(
-    allow_model_requests: None, native: bool
-) -> None:
+async def test_a_stored_computer_call_is_answered_as_one_whatever_its_arguments(allow_model_requests: None) -> None:
     """The API holds the call as a `computer_call`, so its result must be a `computer_call_output`.
 
-    Its actions didn't map, so after a JSON round trip it is a base part; or the tool opted out of the native tool.
+    Its actions didn't map, so after a JSON round trip it is a base part.
     """
     client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
@@ -947,9 +1012,7 @@ async def test_a_stored_computer_call_is_answered_as_one_whatever_its_arguments_
     await model.request(
         with_history_digests(history),
         OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
-        ModelRequestParameters(
-            function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True
-        ),
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
     )
 
     (request,) = get_mock_responses_kwargs(client)

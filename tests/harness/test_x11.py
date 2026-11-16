@@ -161,52 +161,6 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
     assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], False, {'DISPLAY': ':1'})]
 
 
-def fits_the_providers(argv: WorkspaceCommand) -> bool:
-    """Whether Sprites and Modal take `argv`, as measured: Sprites puts each argument in its exec URL after `&cmd=` and
-    ran a command of one 64,984-byte argument; Modal takes arguments adding up to 65,536 bytes."""
-    return sum(len(arg) + len('&cmd=') for arg in argv) <= 64_984
-
-
-async def test_x11_computer_types_long_text_in_commands_the_providers_take() -> None:
-    desktop = ScriptedDesktop()
-    await desktop.screen.act(TypeText(text='a' * 10_909))
-    typed = [argv[argv.index('--') + 1 :] for argv in desktop.argvs]
-    assert [len(keysyms) for keysyms in typed] == [5_454, 5_454, 1]
-    assert {keysym for keysyms in typed for keysym in keysyms} == {'U0061'}
-    assert all(fits_the_providers(argv) for argv in desktop.argvs)
-
-
-LONG_DRAG = Drag(path=tuple(Point(x=100 + i % 2 * 300, y=100 + i) for i in range(1_500)), modifiers=('alt',))
-"""A drag too long for one command: on Sprites, one command for it was refused (HTTP 414)."""
-
-
-async def test_x11_computer_splits_a_long_drag_holding_the_button_across_commands() -> None:
-    desktop = ScriptedDesktop()
-    await desktop.screen.act(LONG_DRAG)
-    chains = [argv[argv.index('xdotool') + 1 :] for argv in desktop.argvs]
-    assert len(chains) > 1
-    assert all(fits_the_providers(argv) for argv in desktop.argvs)
-    # Pressed in the first, let go in the last: X keeps the button and the key down between commands.
-    pressed = ['keydown', 'alt', 'mousemove', '100', '100', 'mousedown', '1']
-    assert chains[0][: len(pressed)] == pressed
-    assert chains[-1][-6:] == ['sleep', '0.1', 'mouseup', '1', 'keyup', 'alt']
-    held = [arg for chain in chains for arg in chain if arg in ('mousedown', 'mouseup', 'keydown', 'keyup')]
-    assert held == ['keydown', 'mousedown', 'mouseup', 'keyup']
-    # Every step of every leg, ending on the last point: each 300-pixel leg is two steps.
-    moves = [chain[i + 1 : i + 3] for chain in chains for i, arg in enumerate(chain) if arg == 'mousemove']
-    assert len(moves) == 1 + 2 * 1_499
-    assert moves[-1] == ['400', '1599']
-
-
-async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() -> None:
-    desktop = ScriptedDesktop(
-        CommandResult(exit_code=0, stdout='', stderr=''), CommandResult(exit_code=1, stdout='', stderr='BadValue')
-    )
-    with pytest.raises(WorkspaceError, match='BadValue'):
-        await desktop.screen.act(LONG_DRAG)
-    assert recovery(desktop.argvs[1:]) == stops_then(['xdotool', 'mouseup', '1'], ['xdotool', 'keyup', 'alt'])
-
-
 @pytest.mark.parametrize(
     'action, timeout',
     [
@@ -217,7 +171,9 @@ async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() 
         (TypeText(text='a' * 1_000), 162),
         # 0.1 s before the first move and after the last, and 0.05 s before each of the 2 moves.
         (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.3),
-        (Click(x=1, y=1), 150),
+        (Click(x=1, y=1), 150.1),
+        # xdotool waits 0.1 s between the clicks of a repeated click.
+        (Click(count=3), 150.3),
     ],
 )
 async def test_x11_computer_allows_for_the_pauses_an_action_asks_for(action: DisplayAction, timeout: float) -> None:
@@ -241,8 +197,8 @@ async def test_x11_computer_refuses_characters_outside_ascii(action: DisplayActi
 
 @pytest.mark.parametrize(
     'action',
-    [Scroll(direction='down', amount=2**31), PressKeys(keys=('a',), repeat=10**400)],
-    ids=['scroll', 'keypress'],
+    [Click(count=2**31), Scroll(direction='down', amount=2**31), PressKeys(keys=('a',), repeat=10**400)],
+    ids=['click', 'scroll', 'keypress'],
 )
 async def test_x11_computer_refuses_a_count_xdotool_cannot_take(action: DisplayAction) -> None:
     desktop = ScriptedDesktop()

@@ -377,21 +377,6 @@ async def test_after_aclose_the_desktop_is_started_again_before_any_input(fake_d
     assert sandbox.desktop_calls == ['start', 'click 1 1 left clicks=1 modifiers=[]']
 
 
-async def test_every_action_checks_the_desktop_runs_and_the_next_starts_it(fake_daytona: FakeDaytona) -> None:
-    """The sandbox can stop and start between two actions with no screenshot between them."""
-    backend, sandbox = await _started(fake_daytona)
-    await screen(backend).act(Click(x=1, y=1))
-
-    sandbox.computer_use.stop_with_sandbox()
-    with pytest.raises(WorkspaceError, match="Daytona's desktop is not running"):
-        await screen(backend).act(Click(x=2, y=2))
-    # No input reached the stopped desktop.
-    assert sandbox.desktop_calls == ['click 1 1 left clicks=1 modifiers=[]']
-    # The next action starts the desktop again and runs on it.
-    await screen(backend).act(Click(x=3, y=3))
-    assert sandbox.desktop_calls[-2:] == ['start', 'click 3 3 left clicks=1 modifiers=[]']
-
-
 async def test_a_desktop_that_does_not_answer_in_time_is_a_timeout(
     fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
 ) -> None:
