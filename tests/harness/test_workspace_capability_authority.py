@@ -18,6 +18,7 @@ CAPABILITIES = [
     'DaytonaSandbox',
     'DockerContainer',
     'E2BSandbox',
+    'KubernetesSandbox',
     'ModalSandbox',
     'OpenSandbox',
     'RenderSandbox',
