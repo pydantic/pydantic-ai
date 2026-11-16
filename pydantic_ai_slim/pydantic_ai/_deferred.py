@@ -63,8 +63,9 @@ class DeferredToolRequests:
     passed through any [tool validation hooks](../hooks.md#tool-validation-hooks): values coerced, keys the
     schema doesn't accept dropped, and any rewrite by a hook such as `after_tool_validate` applied. They are
     keyed by the tool's Python parameter names and stored in their JSON-compatible form, a nested model's
-    fields under their aliases and `bytes` as base64, so they survive serialization unchanged. They are stored and shown wherever
-    the requests are, so a validation hook shouldn't add a value the approver may not see.
+    fields under their aliases and `bytes` as base64, so they survive serialization unchanged. They are
+    stored and shown wherever the requests are, so a validation hook shouldn't add a value the approver
+    may not see.
 
     When an approved call resumes, its recorded arguments are validated again, so a validation hook whose
     output isn't determined by its input can give the tool different arguments than these.

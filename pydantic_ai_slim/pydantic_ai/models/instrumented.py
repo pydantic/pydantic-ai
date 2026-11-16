@@ -124,8 +124,8 @@ class InstrumentationSettings:
                 its output function receives, and run and tool deferral metadata. The media type is
                 recorded either way. Binary content is found inside dictionaries, lists and
                 `ToolReturn`s, but not inside your own types: a `BinaryContent` held as a field of a
-                model or dataclass you define is still recorded in full, as is one in a deferred call's
-                `DeferredToolRequests.validated_args`, which holds the arguments already dumped to JSON.
+                model or dataclass you define is still recorded in full. The agent's
+                `DeferredToolRequests` output is recorded without its `validated_args`.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
