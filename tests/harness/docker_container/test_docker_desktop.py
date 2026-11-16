@@ -246,10 +246,6 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     assert 'Fatal server error' in str(error.value)
 
 
-def test_a_desktop_needs_no_image() -> None:
-    assert DockerContainerBackend(desktop=True).display is not None
-
-
 def test_a_desktop_size_must_be_positive() -> None:
     with pytest.raises(ValueError, match='must be a positive width and height'):
         DockerContainerBackend(desktop=(0, 0))

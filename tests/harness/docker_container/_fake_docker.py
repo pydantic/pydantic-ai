@@ -93,11 +93,13 @@ exec)
         export FAKE_TMP="$tmp"
         for arg; do
             shift
-            case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */tmp/pydantic-ai-* | */proc/*)
+            case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */tmp/pydantic-ai-*)
                 arg=$(printf '%s' "$arg" | sed -e "s#/run/pydantic-ai/#$tmp/#g" -e "s#/tmp/\\.X#$tmp/.X#g" \
-                    -e "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g" -e "s#/tmp/pydantic-ai-#$tmp/pydantic-ai-#g" \
-                    -e "s#/proc/#$tmp/proc/#g") ;;
+                    -e "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g" -e "s#/tmp/pydantic-ai-#$tmp/pydantic-ai-#g") ;;
             esac
+            # Only the display start reads the X lock's owner from the fake `/proc` that `leave_x_lock` writes; the
+            # stops walk the real one.
+            case $arg in *Xvfb*) arg=$(printf '%s' "$arg" | sed "s#/proc/#$tmp/proc/#g") ;; esac
             set -- "$@" "$arg"
         done
     fi
