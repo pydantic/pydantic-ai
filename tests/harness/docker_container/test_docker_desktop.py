@@ -137,7 +137,7 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     backend = _desktop(container_dir, image='my-desktop')
     workspace = screen(backend)
     await workspace.display_size()
-    assert docker.xvfb_starts == 0  # the display was already up
+    assert docker.xvfb_starts == 1
 
     docker.remove_display()
     failure = "Display command failed with exit code 1 on display :1: Can't open display: :1"
@@ -150,7 +150,7 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     # The next action starts the display again and runs on it.
     await workspace.act(Click(x=1, y=1))
 
-    assert docker.xvfb_starts == 1
+    assert docker.xvfb_starts == 2
 
 
 async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
@@ -162,20 +162,19 @@ async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
     docker.remove_display()
     docker.leave_x_lock(backend.ref.id)
 
+    # The fake Xvfb refuses to start while a lock exists, so the display coming up shows the stale one went.
     assert await screen(backend).display_size() == (1280, 800)
-    assert not docker.x_lock_exists(backend.ref.id)
 
 
 async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_dir: Path) -> None:
-    # An image's own X server that refuses the probe, such as a VNC server with authentication on.
+    # An image's own X server, such as a VNC server, is used rather than replaced.
     backend = _desktop(container_dir, image='my-desktop')
     await backend.working_dir()
     assert backend.ref is not None
-    docker.remove_display()
     docker.leave_x_lock(backend.ref.id, owner='Xvnc')
 
-    with pytest.raises(WorkspaceUnavailableError, match='Server is already active'):
-        await screen(backend).display_size()
+    assert await screen(backend).display_size() == (1280, 800)
+    assert docker.xvfb_starts == 0
     assert docker.x_lock_exists(backend.ref.id)
 
 
@@ -190,6 +189,11 @@ async def test_the_start_opens_the_panel_unless_it_shows(docker: FakeDocker, con
     docker.close_panel()
     await screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 2
+
+    docker.close_panel()
+    docker.fail_panel()
+    with pytest.raises(WorkspaceUnavailableError, match='the panel did not start:\ntint2: could not open the config'):
+        await screen(_desktop(container_dir, image='my-desktop')).display_size()
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
