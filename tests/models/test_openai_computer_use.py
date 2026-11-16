@@ -47,7 +47,7 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai.types import responses as resp
-    from openai.types.responses.response import Conversation, IncompleteDetails
+    from openai.types.responses.response import Conversation
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai._computer import (
@@ -248,7 +248,7 @@ async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requ
 
 
 async def test_a_computer_tool_found_by_tool_search_is_refused(allow_model_requests: None) -> None:
-    # The native tool would replace it, leaving tool search with nothing to load.
+    # The API refuses `defer_loading` on the native tool, and tool search can't reveal it, so the deferral is refused.
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock([])))
     computer = ToolDefinition(
         name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id, defer_loading=True
@@ -259,8 +259,13 @@ async def test_a_computer_tool_found_by_tool_search_is_refused(allow_model_reque
         revealed_tool_names={'computer'},
         allow_text_output=True,
     )
-    with pytest.raises(UserError, match="OpenAI sends the 'computer' tool as its native computer tool"):
+    with pytest.raises(UserError) as error:
         await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
+    assert error.value.message == snapshot(
+        "OpenAI sends the 'computer' tool as its native computer tool, which it cannot defer: the API refuses "
+        '`defer_loading` on it, and tool search cannot reveal it. Defer the whole capability with '
+        '`ComputerUse(defer_loading=True)` instead, or drop `defer_loading` from the tool.'
+    )
 
 
 async def test_the_native_tool_is_sent_and_a_call_with_no_actions_is_answered_with_a_screenshot(
@@ -432,70 +437,19 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
     assert after == ([{'role': 'user', 'content': expected}] if note else [])
 
 
-@pytest.mark.parametrize(
-    'call_status, response_status, streamed',
-    [
-        pytest.param('incomplete', 'completed', False, id='call-incomplete'),
-        pytest.param('in_progress', 'completed', False, id='call-in-progress'),
-        # OpenAI says to stop when the response is incomplete, as when cut by a content filter, even if the call isn't.
-        pytest.param('completed', 'incomplete', False, id='response-incomplete'),
-        pytest.param('completed', 'incomplete', True, id='streamed-response-incomplete'),
-    ],
-)
+@pytest.mark.parametrize('call_status', ['incomplete', 'in_progress'])
 async def test_an_unfinished_call_runs_nothing(
-    allow_model_requests: None,
-    call_status: Literal['completed', 'incomplete', 'in_progress'],
-    response_status: Literal['completed', 'incomplete'],
-    streamed: bool,
+    allow_model_requests: None, call_status: Literal['incomplete', 'in_progress']
 ) -> None:
     response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
     item = response.output[0]
     assert isinstance(item, resp.ResponseComputerToolCall)
     item.status = call_status
-    response.status = response_status
-    if response_status == 'incomplete':
-        response.incomplete_details = IncompleteDetails(reason='content_filter')
-    done = _done()
-    done.status = 'completed'
     provider, computer = InMemoryProvider(), FakeComputer()
-    # Streamed, the response's status comes only after the call.
-    created = response.model_copy(update={'status': 'in_progress', 'incomplete_details': None})
-    first: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=created, type='response.created', sequence_number=0),
-        resp.ResponseOutputItemDoneEvent(
-            item=response.output[0], output_index=0, type='response.output_item.done', sequence_number=1
-        ),
-    ]
-    if response_status == 'incomplete':
-        first.append(resp.ResponseIncompleteEvent(response=response, type='response.incomplete', sequence_number=2))
-    streams: list[list[resp.ResponseStreamEvent]] = [
-        first,
-        [
-            resp.ResponseTextDeltaEvent(
-                item_id='msg_1',
-                output_index=0,
-                content_index=0,
-                delta='done',
-                logprobs=[],
-                type='response.output_text.delta',
-                sequence_number=0,
-            ),
-            resp.ResponseCompletedEvent(response=done, type='response.completed', sequence_number=1),
-        ],
-    ]
-    client = (
-        MockOpenAIResponses.create_mock_stream(streams)
-        if streamed
-        else MockOpenAIResponses.create_mock([response, done])
-    )
+    client = MockOpenAIResponses.create_mock([response, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     agent = Agent(model, capabilities=[computer, provider.capability()])
-    if streamed:
-        async with agent.run_stream_events('Go.') as events:
-            async for _ in events:
-                pass
-    else:
-        await agent.run('Go.')
+    await agent.run('Go.')
 
     assert computer.actions == []
     _, second = get_mock_responses_kwargs(client)

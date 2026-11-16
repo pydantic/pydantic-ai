@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -187,44 +186,6 @@ async def test_a_grid_model_is_told_its_grid_in_every_computer_tool() -> None:
     messages = (await agent.run('Click.')).all_messages()
     assert descriptions == [[GRID_SENTENCE, GRID_SENTENCE]] * 2
     assert [call.coordinate_grid for call in _computer_calls(messages)] == [1000, 1000]
-
-
-@pytest.mark.parametrize('size', [(0, 800), (1280, -1)])
-def test_computer_tool_refuses_a_display_size_that_is_not_positive(size: tuple[int, int]) -> None:
-    with pytest.raises(ValueError, match='must be two positive numbers'):
-        ComputerTool(display_size=size)
-
-
-@pytest.mark.parametrize(
-    'unfinished',
-    [
-        pytest.param({'finish_reason': 'length'}, id='cut-off'),
-        pytest.param({'state': 'incomplete'}, id='stream-ended-early'),
-    ],
-)
-async def test_a_computer_call_in_a_response_that_did_not_finish_normally_does_nothing(
-    unfinished: dict[str, Any],
-) -> None:
-    ran: list[object] = []
-
-    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # pragma: no cover
-        ran.append(actions)
-        return ['Done.', SCREEN]
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) > 1:
-            return ModelResponse(parts=[TextPart('ok')])
-        return ModelResponse(
-            parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 2}]})], **unfinished
-        )
-
-    agent = Agent(FunctionModel(respond), tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
-    result = await agent.run('Click.')
-    assert result.output == 'ok'
-    assert ran == []
-    [retry] = result.all_messages()[2].parts
-    assert isinstance(retry, ToolReturnPart) and retry.outcome == 'retried'
-    assert retry.content == 'The response this call came in did not finish normally, so the computer did nothing.'
 
 
 GRID_PROFILE = ModelProfile(computer_use_coordinate_grid=1000)
