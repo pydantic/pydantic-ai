@@ -115,12 +115,6 @@ class _Unit:
 
 _ActionName = Literal['truncate', 'spill', 'summarize']
 
-_ACTION_NAMES: Mapping[type[Truncate] | type[Spill] | type[Summarize], _ActionName] = {
-    Truncate: 'truncate',
-    Spill: 'spill',
-    Summarize: 'summarize',
-}
-
 
 @dataclass
 class _Reduction:
@@ -748,7 +742,11 @@ async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: d
 
 
 def _action_name(action: Truncate | Spill | Summarize) -> _ActionName:
-    return _ACTION_NAMES[type(action)]
+    if isinstance(action, Truncate):
+        return 'truncate'
+    if isinstance(action, Spill):
+        return 'spill'
+    return 'summarize'
 
 
 def _text_size_unit(over_tokens: bool) -> Literal['chars', 'tokens']:
