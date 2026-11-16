@@ -106,6 +106,7 @@ class PostgresMemoryStore:
                 return
             async with self._connection() as connection, connection.transaction():
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._metadata_table)
+                creating = await connection.fetchval('SELECT to_regclass($1) IS NULL', self._table)
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._table} ('
                     'path TEXT PRIMARY KEY, content TEXT NOT NULL, '
@@ -116,9 +117,11 @@ class PostgresMemoryStore:
                 )
                 await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS last_operation_id TEXT')
                 await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS write_metadata JSONB')
-                await connection.execute(
-                    f'CREATE INDEX IF NOT EXISTS {self._table}_path_idx ON {self._table} (path COLLATE "C")'
-                )
+                # Building it on an existing table would block its writes; the docs give the statement to run.
+                if creating:
+                    await connection.execute(
+                        f'CREATE INDEX IF NOT EXISTS {self._table}_path_idx ON {self._table} (path COLLATE "C")'
+                    )
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._operations_table} ('
                     'id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version TEXT, '

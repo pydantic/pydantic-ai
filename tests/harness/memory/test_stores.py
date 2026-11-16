@@ -1122,6 +1122,11 @@ class FakePostgresConnection:
             return self._database.generation
         if query.startswith('SELECT pg_advisory_xact_lock'):
             return None
+        if query.startswith('SELECT to_regclass'):
+            return not any(
+                statement.startswith('CREATE TABLE IF NOT EXISTS agent_memory (')
+                for statement in self._database.statements
+            )
         if query.startswith('INSERT INTO agent_memory_metadata'):
             if self._database.versions_initialized:
                 return None
@@ -1255,9 +1260,6 @@ async def test_postgres_store_contract_schema_and_parameterization() -> None:
     assert await store.list_paths(limit=100) == ['other/private.md', 'tenant/main.md', 'tenant/nested/deep.md']
 
     assert pool.database.transactions == 8
-    assert 'CREATE INDEX IF NOT EXISTS agent_memory_path_idx ON agent_memory (path COLLATE "C")' in (
-        pool.database.statements
-    )
     assert len([query for query in pool.database.statements if query.startswith('CREATE TABLE')]) == 3
     assert [query for query in pool.database.statements if query.startswith('ALTER TABLE')] == [
         'ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1',
@@ -1269,6 +1271,12 @@ async def test_postgres_store_contract_schema_and_parameterization() -> None:
             assert '$' in query or query.startswith(
                 ('INSERT INTO agent_memory_metadata', 'UPDATE agent_memory SET version')
             )
+
+    # Only the store that creates the table indexes it, since the build would block writes to an existing table.
+    assert await PostgresMemoryStore(pool).list_paths(limit=1) == ['other/private.md']
+    assert [query for query in pool.database.statements if query.startswith('CREATE INDEX')] == [
+        'CREATE INDEX IF NOT EXISTS agent_memory_path_idx ON agent_memory (path COLLATE "C")'
+    ]
 
 
 async def test_postgres_store_write_metadata_contract() -> None:

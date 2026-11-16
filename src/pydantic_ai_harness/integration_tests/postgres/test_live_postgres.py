@@ -612,7 +612,8 @@ async def test_memory_store_adds_the_metadata_column_to_a_previous_release_table
                 'write_metadata',
             )
         assert column_type == 'jsonb'
-        assert await _table_exists(pool, f'{prefix}_path_idx')
+        # Building the path index would block writes to an existing table, so it is left to the application.
+        assert not await _table_exists(pool, f'{prefix}_path_idx')
         await stores[0].write_with_metadata(
             'main/MEMORY.md', 'new', expected_version=versions[0], metadata={'updated_by': 'ui'}
         )

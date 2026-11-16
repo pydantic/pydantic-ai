@@ -162,7 +162,7 @@ async def build_memory() -> tuple[Memory[None], asyncpg.Pool]:
 
 Call `build_memory` during application startup and close the returned pool during shutdown. The store does not manage it.
 
-On first use, the store creates an index on `path COLLATE "C"`, the binary collation its prefix filters compare in, so listing and searching a scope reads only that scope's rows under any database collation. Creating it on an existing large table blocks writes to the table until the index is built; to avoid that, create it beforehand with `CREATE INDEX CONCURRENTLY {table}_path_idx ON {table} (path COLLATE "C")`.
+When the store creates its table, it also creates an index on `path COLLATE "C"`, the binary collation its prefix filters compare in, so listing and searching a scope reads only that scope's rows under any database collation. A table created by an earlier release does not get it automatically, because building an index blocks writes to the table until it finishes. Create it without blocking writes with `CREATE INDEX CONCURRENTLY {table}_path_idx ON {table} (path COLLATE "C")`.
 
 ## Namespaces
 
