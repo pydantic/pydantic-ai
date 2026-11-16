@@ -58,6 +58,7 @@ from pydantic_ai_harness.guardrails._shared import (
     RecordedVerdict,
     as_guards,
     evaluate_all,
+    guard_at,
     record_verdict,
     replay_verdict,
     trace_block,
@@ -375,11 +376,17 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             _replace_prompt(part, replacement)
         if original is not None and (same_text or own_redaction is not None):
             _replace_prompt(original, replacement if own_redaction is None else own_redaction[0])
-        trace_redaction(ctx, direction='input', guard=guards[position], position=position, replacement=replacement)
+        trace_redaction(
+            ctx, direction='input', guard=guard_at(guards, position), position=position, replacement=replacement
+        )
         if own_redaction is not None:
             own_replacement, own_position = own_redaction
             trace_redaction(
-                ctx, direction='input', guard=guards[own_position], position=own_position, replacement=own_replacement
+                ctx,
+                direction='input',
+                guard=guard_at(guards, own_position),
+                position=own_position,
+                replacement=own_replacement,
             )
 
     async def _screen(
@@ -405,7 +412,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 )
             case 'block':
                 message = verdict.message or _DEFAULT_INPUT_BLOCK_MESSAGE
-                trace_block(ctx, direction='input', guard=guards[position], position=position, message=message)
+                trace_block(
+                    ctx, direction='input', guard=guard_at(guards, position), position=position, message=message
+                )
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
@@ -604,7 +613,7 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
         if ctx.partial_output:
             return output
         verdict, position = replay_verdict(await self._evaluate(ctx, output), output)
-        guard = as_guards(self.guard, capability='OutputGuardrail')[position]
+        guard = guard_at(as_guards(self.guard, capability='OutputGuardrail'), position)
         match verdict.action:
             case 'allow':
                 return output
