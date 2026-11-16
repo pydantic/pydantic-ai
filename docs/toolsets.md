@@ -982,13 +982,14 @@ Wrapping the custom toolset in a [`DynamicToolset`][pydantic_ai.toolsets.Dynamic
 from typing import Any
 
 from pydantic import TypeAdapter
+from pydantic_core import SchemaValidator
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ToolsetTool
 
-celsius_args = TypeAdapter(dict[str, float])
+celsius_validator = SchemaValidator(TypeAdapter(dict[str, float]).core_schema)
 
 
 class UnitConversionToolset(AbstractToolset[None]):
@@ -1009,7 +1010,7 @@ class UnitConversionToolset(AbstractToolset[None]):
                     },
                 ),
                 max_retries=0,
-                args_validator=celsius_args.validator,
+                args_validator=celsius_validator,
             )
         }
 
@@ -1026,7 +1027,8 @@ def unit_conversion_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
 
 agent = Agent(
     TestModel(),
-    toolsets=[DynamicToolset(unit_conversion_toolset, id='unit_conversion')],  # (2)!
+    deps_type=None,
+    toolsets=[DynamicToolset[None](unit_conversion_toolset, id='unit_conversion')],  # (2)!
 )
 ```
 
