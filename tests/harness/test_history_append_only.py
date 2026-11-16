@@ -482,11 +482,14 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
-    # A button pressed in the first run stays held into the continued run.
+    # A button pressed in one step stays held into the run's next step, which releases it.
     'ComputerUse': Scenario(
-        state_calls=(
-            ('computer', {'actions': [{'type': 'mouse_down'}]}),
-            ('computer', {'actions': [{'type': 'mouse_up'}, {'type': 'screenshot'}]}),
+        turns=(
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_down'}]}),)),
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_up'}, {'type': 'screenshot'}]}),)),
+            Turn(text='Clicked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
         )
     ),
     'DeduplicateFileReads': Scenario(
