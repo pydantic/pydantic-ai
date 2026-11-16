@@ -120,13 +120,21 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._env = dict(env) if env is not None else None
         self._denied_env_patterns = list(denied_env_patterns)
         self._secret_env = dict(secret_env) if secret_env is not None else None
-        self._secrets = _masks(self._secret_env or {})
+        # Longest first, so a secret containing another is masked whole.
+        self._secrets = sorted(
+            ((value, f'[REDACTED:{name}]') for name, value in (secret_env or {}).items() if value),
+            key=lambda secret: len(secret[0]),
+            reverse=True,
+        )
+        self._secret_bytes = [os.fsencode(value) for value, _ in self._secrets]
         self._tools = tuple(tools)
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
 
         self._check_tool_options()
+        self._register_tools()
 
+    def _register_tools(self) -> None:
         command_metadata = {'code_arg_name': 'command', 'code_arg_language': 'shell'}
         registrations: dict[str, Callable[..., Awaitable[str]]] = {
             'run_command': self.run_command,
@@ -224,10 +232,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         if not isinstance(result, str):
             return result
         return truncate_tail(self._redact(result), self._max_output_chars)
-
-    @property
-    def _secret_bytes(self) -> list[bytes]:
-        return [os.fsencode(value) for value, _ in self._secrets]
 
     def _redact(self, text: str) -> str:
         for value, mask in self._secrets:
@@ -600,12 +604,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             # The wrapper makes only the job directory writable again, not a jobs directory the command made read-only.
             parts.append('[job directory not removed: permission denied]')
         return '\n'.join(parts)
-
-
-def _masks(secret_env: Mapping[str, str]) -> list[tuple[str, str]]:
-    """Each non-empty secret with its mask, longest first so a secret containing another is masked whole."""
-    secrets = [(value, f'[REDACTED:{name}]') for name, value in secret_env.items() if value]
-    return sorted(secrets, key=lambda secret: len(secret[0]), reverse=True)
 
 
 def _job_id(ctx: RunContext[AgentDepsT]) -> str | None:

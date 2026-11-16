@@ -2343,6 +2343,7 @@ def _secret_toolset(
     env: Mapping[str, str] | None = None,
     denied_env_patterns: Sequence[str] = (),
     max_output_chars: int = 50_000,
+    secret_env: Mapping[str, str] | None = None,
 ) -> ShellToolset[None]:
     return ShellToolset(
         allowed_commands=[],
@@ -2354,7 +2355,7 @@ def _secret_toolset(
         allow_interactive=False,
         env=env,
         denied_env_patterns=denied_env_patterns,
-        secret_env={'TMP_TOKEN': _SECRET, 'EMPTY': ''},
+        secret_env={'TMP_TOKEN': _SECRET, 'EMPTY': ''} if secret_env is None else secret_env,
     )
 
 
@@ -2415,20 +2416,21 @@ class TestShellSecretEnv:
         assert 'defghijk' not in output
         assert output.count('[REDACTED:LONG]') == 1
 
+    async def test_persistent_tail_line_start_does_not_split_a_secret(self, tmp_path: Path) -> None:
+        # The byte cut lands where the secret starts; the line it then drops ends inside the secret.
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'KEY': 'AAAA\nBBBB'}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "%100s" | tr " " z; printf "pre%s\\n" "$KEY"; printf "%15990s" | tr " " w'},
+        )
+        assert output.startswith('[... output truncated, 112 earlier bytes omitted]\n\nwww')
+        assert 'BBBB' not in output
+
     def test_repr_hides_secret_env(self) -> None:
         assert _SECRET not in repr(Shell(secret_env={'TMP_TOKEN': _SECRET}))
 
     async def test_longer_secret_is_masked_whole(self, shell_dir: Path) -> None:
-        ts = ShellToolset[None](
-            allowed_commands=[],
-            denied_commands=[],
-            denied_operators=[],
-            default_timeout=10.0,
-            max_output_chars=50_000,
-            persist_cwd=False,
-            allow_interactive=False,
-            secret_env={'SHORT': 'abc', 'LONG': 'abcdef'},
-        )
+        ts = _secret_toolset(secret_env={'SHORT': 'abc', 'LONG': 'abcdef'})
         output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo abcdef abc')
         assert output == '[stdout]\n[REDACTED:LONG] [REDACTED:SHORT]\n'
 

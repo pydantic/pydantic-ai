@@ -444,7 +444,7 @@ class Job:
         start = max(0, size - max_bytes)
         pad = min(start, max(map(len, secrets), default=0))
         data = await self.read(path, start - pad, size - start + pad)
-        cut = _past_secrets(data, pad, secrets)
+        cut = past_secrets(data, pad, secrets)
         return start - pad + cut, data[cut:]
 
     async def kill(self) -> None:
@@ -513,7 +513,7 @@ class Job:
             pass
 
 
-def _past_secrets(data: bytes, cut: int, secrets: Sequence[bytes]) -> int:
+def past_secrets(data: bytes, cut: int, secrets: Sequence[bytes]) -> int:
     """`cut`, moved past the end of every occurrence of a secret in `data` that spans it, or that a move makes span."""
     spans: list[tuple[int, int]] = []
     for secret in secrets:

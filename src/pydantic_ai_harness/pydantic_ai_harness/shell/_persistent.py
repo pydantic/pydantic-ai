@@ -21,7 +21,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job
+from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job, past_secrets
 
 MAX_FOREGROUND_WAIT: float = 270.0
 """Longest a foreground `shell` call waits before returning handles to the still-running command.
@@ -56,8 +56,10 @@ async def _output_tail(job: Job, secrets: Sequence[bytes]) -> str:
         return data.decode('utf-8', errors='replace')
     # Drop the cut first line, unless it is the only one.
     if 0 <= (newline := data.find(b'\n')) < len(data) - 1:
-        start += newline + 1
-        data = data[newline + 1 :]
+        # The newline can be inside a multi-line secret, so the moved cut is checked again.
+        cut = past_secrets(data, newline + 1, secrets)
+        start += cut
+        data = data[cut:]
     return f'[... output truncated, {start} earlier bytes omitted]\n' + data.decode('utf-8', errors='replace')
 
 
