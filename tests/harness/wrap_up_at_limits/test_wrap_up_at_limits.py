@@ -10,7 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
@@ -163,11 +163,13 @@ class TestWrapUpAtLimits:
         ],
     )
     async def test_token_limit_wraps_up_before_it_is_exceeded(self, limits: UsageLimits, limit: str) -> None:
-        model = _Researcher()
+        looked_up: list[str] = []
 
-        result = await _agent(model, []).run('Research', usage_limits=limits)
+        result = await _agent(_Researcher(), looked_up).run('Research', usage_limits=limits)
 
         assert result.output == 'what I found so far'
+        # At least one round of tools ran before the projection made a request the last.
+        assert looked_up
         assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': limit})]
 
     async def test_custom_prompt(self) -> None:
@@ -186,7 +188,11 @@ class TestWrapUpAtLimits:
 
         agent = Agent(FunctionModel(model), capabilities=[WrapUpAtLimits()])
 
-        for limits in (None, UsageLimits(request_limit=5)):
+        for limits in (
+            None,
+            UsageLimits(request_limit=5),
+            UsageLimits(input_tokens_limit=10_000, output_tokens_limit=10_000, total_tokens_limit=10_000),
+        ):
             result = await agent.run('Research', usage_limits=limits)
             assert result.output == 'done'
             assert wrap_ups(result.new_messages()) == []
@@ -216,7 +222,10 @@ class TestWrapUpAtLimits:
         assert result.usage.requests == 2
 
     async def test_limit_raises_when_no_request_is_left(self) -> None:
+        tool_choices: list[ToolChoice] = []
+
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_choices.append(info.model_settings.get('tool_choice') if info.model_settings else None)
             return ModelResponse(
                 parts=[ToolCallPart('look_up', {'topic': 'a'}), ToolCallPart('look_up', {'topic': 'b'})]
             )
@@ -230,8 +239,10 @@ class TestWrapUpAtLimits:
             return topic
 
         # The model ignores `tool_choice='none'` on its one request, and no request is left to wrap up with.
-        with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
+        with capture_run_messages() as messages, pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
             await agent.run('Research', usage_limits=UsageLimits(request_limit=1, tool_calls_limit=1))
+        assert tool_choices == ['none']
+        assert wrapped_up_by(messages) == 'request_limit'
         assert looked_up == []
 
     async def test_resumed_provider_turn_is_left_alone(self) -> None:
