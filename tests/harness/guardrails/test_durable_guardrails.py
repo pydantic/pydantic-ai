@@ -17,6 +17,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, DeferredToolRequests
@@ -36,6 +37,7 @@ from pydantic_ai_harness.guardrails import (
 from pydantic_ai_harness.guardrails._exceptions import InputBlocked, ToolBlocked
 from tests.conftest import detach_dbos_logging, without_admin_server
 from tests.harness._recording_durability import RecordingDurability
+from tests.harness.conftest import Instrumented
 
 pytestmark = pytest.mark.anyio
 
@@ -330,16 +332,29 @@ async def _chain_workflow() -> str:
     return (await _chain_agent.run('go')).output
 
 
-async def test_dbos_replays_a_verdict_from_a_guard_the_chain_no_longer_has(dbos: DBOS) -> None:
-    """A recorded verdict still applies after the chain is shortened below the position it came from."""
+async def test_dbos_replays_a_verdict_from_a_guard_the_chain_no_longer_has(
+    dbos: DBOS, instrumented: Instrumented
+) -> None:
+    """A recorded verdict still applies after the chain is shortened below the position it came from.
+
+    Its span keeps the recorded position, and names no guard, since none is left at that position.
+    """
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
         assert await _chain_workflow() == 'answer!'
     steps = await dbos.list_workflow_steps_async(workflow_id)
 
+    instrumentation, exporter = instrumented(False)
     _chain_guardrail.guard = _allow_output
+    _chain_agent.instrument = instrumentation.settings
     try:
         handle = await DBOS.fork_workflow_async(workflow_id, len(steps) + 1)
         assert await handle.get_result(polling_interval_sec=0.01) == 'answer!'
     finally:
         _chain_guardrail.guard = [_allow_output, _output_guard]
+        _chain_agent.instrument = None
+
+    [span] = [span for span in exporter.get_finished_spans() if span.name == 'guardrail redacted output']
+    assert dict(span.attributes or {}) == snapshot(
+        {'guardrail.direction': 'output', 'guardrail.action': 'replace', 'guardrail.position': 1}
+    )
