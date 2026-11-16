@@ -300,11 +300,17 @@ unchanged.
 For lazy provisioning, pass an async function that returns the CDP endpoint:
 
 ```python
-from pydantic_ai_harness.playwright import CdpUrlFactory, PlaywrightBrowser
+import os
+
+from pydantic_ai_harness.playwright import PlaywrightBrowser
 
 
-def provider_browser(endpoint: CdpUrlFactory) -> PlaywrightBrowser[None]:
-    return PlaywrightBrowser(cdp_url_factory=endpoint, cdp_context='default')
+async def agent_browser_endpoint() -> str:
+    # Create or resume the provider's browser for the agent's profile here.
+    return os.environ['AGENT_BROWSER_CDP_URL']
+
+
+browser = PlaywrightBrowser(cdp_url_factory=agent_browser_endpoint, cdp_context='default')
 ```
 
 The factory runs on first browser use, within `navigation_timeout_ms`. Its
@@ -509,7 +515,9 @@ Enforcement is at two layers: a network route guard aborts a refused request
 before it leaves (covering clicks, `execute_js`, and history moves, not just
 `navigate`), and each tool re-checks the resulting URL and bounces to
 `about:blank` so disallowed content never reaches the model. Service workers are
-blocked in the browser context so their traffic cannot slip past the route guard.
+blocked in a new browser context so their traffic cannot slip past the route
+guard; [Reusing the default context](#reusing-the-default-context) covers what an
+inherited context leaves outside it.
 
 ### Rules the two fields cannot express
 

@@ -35,7 +35,8 @@ together when it changed. Pinned in the `[playwright]` extra as
 - `connect_over_cdp(no_defaults=True)` leaves the default context's downloads and
   focus and media emulation at the browser's own settings; without it, Playwright
   sends `Browser.setDownloadBehavior` with `allowAndName` into its temporary
-  artifacts directory. The parameter exists from 1.61.0. Verified 2026-11-16
+  artifacts directory. The parameter is present since 1.60.0, below the extra's
+  `>=1.61.0` floor. Verified 2026-11-16
   against the 1.64.1 driver source (`_connectOverCDPImpl`,
   `CRBrowserContext.initialize`). Source:
   <https://playwright.dev/python/docs/api/class-browsertype#browser-type-connect-over-cdp>.
@@ -203,8 +204,8 @@ _BLANK_PAGE = 'about:blank'
 _ERROR_PAGE_SCHEME = 'chrome-error://'
 """Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
 
-_SRCDOC_FRAME = 'about:srcdoc'
-"""URL of an iframe whose document is its parent's `srcdoc` markup, so no request loads it."""
+_INLINE_SUBFRAME_PREFIXES = ('about:srcdoc', 'data:')
+"""URL prefixes of subframes whose document is written in the parent's markup, so no request loads it."""
 
 _BLOCK_SERVICE_WORKER_REGISTRATION = (
     'if (self.ServiceWorkerContainer) ServiceWorkerContainer.prototype.register = async () => {'
@@ -1273,8 +1274,11 @@ class PlaywrightBrowserSession:
                     # CDP can expose a cross-origin frame before its URL is populated.
                     await self._bounded(frame.wait_for_load_state('domcontentloaded', timeout=self._launch_timeout_ms))
                 top_level = index == 0
-                if not top_level and frame.url == _SRCDOC_FRAME:
-                    # Its markup came from the parent document, which this loop checks.
+                if frame.url.startswith(_ERROR_PAGE_SCHEME) or (
+                    not top_level and frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)
+                ):
+                    # Chromium's error page holds nothing from the origin that failed to load, and an
+                    # inline subframe came from its parent's markup, which this loop checks.
                     continue
                 document = EgressRequest(
                     url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level
@@ -1352,20 +1356,20 @@ class PlaywrightBrowserSession:
         self.page = pages[0]
 
     async def _install_guards(self, context: PlaywrightBrowserContext) -> None:
-        """Route every request and WebSocket of `context` through the policy, when it enforces anything.
+        """Keep every request of `context` on a path the policy sees, and route them through it.
 
         A context the session did not create keeps the service-worker setting it was
         created with, and a worker's requests never reach a route, so new registrations
-        are refused the way `service_workers='block'` refuses them. Workers registered
-        before the session attached are out of its reach.
+        are refused the way `service_workers='block'` refuses them, whatever the policy.
+        Workers registered before the session attached are out of its reach.
         """
+        if self._cdp_context == 'default':
+            await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))
         if not self.policy.enforced():
             return
         await self._bounded(context.route('**/*', self._route_guard))
         # A network route never sees a WebSocket, so sockets get a guard of their own.
         await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
-        if self._cdp_context == 'default':
-            await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))
 
     async def _bounded(self, awaitable: Awaitable[_T]) -> _T:
         """Run a setup step that has no `timeout` parameter under `launch_timeout_ms`.

@@ -2364,6 +2364,40 @@ class TestPlaywrightBrowserLifecycle:
         assert 'Allowed embedded content' in result
         assert 'Inline srcdoc content' in result
 
+    async def test_default_context_navigates_on_from_a_failed_load(self) -> None:
+        # A refused or failed load leaves Chromium's error page in the tab; it holds nothing from the
+        # origin, so it must not lock every later tool out of the inherited context.
+        page = _FakePage(url='chrome-error://chromewebdata/', body='Allowed content')
+        page.frames.append(_FakeFrameContent(url='data:text/html,<p>inline</p>', text='Inline data content'))
+        session = PlaywrightBrowserSession(
+            cdp_url='http://localhost:9222',
+            cdp_context='default',
+            policy=EgressPolicy(allowed_domains=['example.com'], block_private_addresses=False),
+        )
+        async with session:
+            result = await _toolset(page, session=session).navigate('https://example.com/')
+        assert 'Allowed content' in str(result)
+        assert 'Inline data content' in str(result)
+        assert page.url == 'https://example.com/'
+
+    async def test_default_context_refuses_service_workers_whatever_the_policy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        _populate_default_context(monkeypatch, tabs=1)
+        agent = Agent(
+            TestModel(call_tools=['screenshot']),
+            capabilities=[
+                PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default', block_private_addresses=False)
+            ],
+        )
+        await agent.run('inspect the existing browser')
+        browser = cm.driver.chromium.browser
+        assert browser is not None
+        context = browser.contexts[0]
+        assert context.routes == []  # nothing to enforce, so no route
+        assert len(context.init_scripts) == 1 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
+
     @pytest.mark.parametrize('tabs', [0, 2])
     async def test_default_cdp_context_keeps_pages_and_native_handlers(
         self, monkeypatch: pytest.MonkeyPatch, tabs: int
