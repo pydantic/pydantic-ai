@@ -1,3 +1,7 @@
+---
+description: "Compute experiment-wide metrics with Pydantic Evals report evaluators: confusion matrices, precision-recall and ROC curves with AUC, accuracy and custom tables."
+---
+
 # Report Evaluators
 
 Report evaluators analyze entire experiment results rather than individual cases. Use them to compute
@@ -550,7 +554,7 @@ class ClassificationSummary(ReportEvaluator):
 
 ### Async Report Evaluators
 
-Report evaluators support async `evaluate` methods, handled automatically via `evaluate_async`:
+Report evaluators support async `evaluate` methods, handled automatically via `evaluate_async`, which also awaits any other awaitable a sync `evaluate` returns, such as an `asyncio.Future` or `asyncio.Task`:
 
 ```python
 from dataclasses import dataclass

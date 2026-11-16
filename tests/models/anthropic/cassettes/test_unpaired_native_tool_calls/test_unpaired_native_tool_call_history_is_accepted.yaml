@@ -1,110 +1,211 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '965'
+      - "888"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Look up the 10-year Treasury duration, then add 2 and 2.
-          type: text
-        role: user
-      - content:
-        - id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
-          input:
-            a: 2
-            b: 2
-          name: add
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '4'
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Look up the 10-year Treasury duration, then add 2 and 2.
             type: text
-          is_error: false
-          tool_use_id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
-          type: tool_result
-        role: user
-      - content:
-        - text: It is 4.
-          type: text
-        role: assistant
-      - content:
-        - text: 'In one sentence: does a longer duration mean more interest-rate risk?'
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Add two numbers.
-        input_schema:
-          additionalProperties: false
-          properties:
-            a:
-              type: integer
-            b:
-              type: integer
-          required:
-          - a
-          - b
-          type: object
-        name: add
-    uri: https://api.anthropic.com/v1/messages?beta=true
+        - role: assistant
+          content:
+          - id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_use
+            name: add
+            input:
+              a: 2
+              b: 2
+        - role: user
+          content:
+          - tool_use_id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_result
+            content:
+            - text: "4"
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - text: It is 4.
+            type: text
+        - role: user
+          content:
+          - text: "In one sentence: does a longer duration mean more interest-rate risk?"
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: add
+          description: Add two numbers.
+          input_schema:
+            additionalProperties: false
+            properties:
+              a:
+                type: integer
+              b:
+                type: integer
+            required:
+            - a
+            - b
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '625'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=95
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-39136e34dc0d6541318959d574e9135f-7482c92b04c96c8d-01
+      - 00-5997e6b9efb79eecd0e6efe90b2b97c4-9c89f39aedb23da2-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: Yes, a longer duration means more interest-rate risk because the bond's price will be more sensitive to changes
-          in interest rates.
-        type: text
-      id: msg_011Ce7QXwgnRjsN8rb19Q7xz
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 699
-        output_tokens: 29
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPEtikLPuaa2ay3N4VUE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":517,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS9wUKEAgTGAI4AUIIdGhpbmtpbmcSDAlkm5znCH3mOIXttxoMwQ32JVY09X/FdlsyIjCP/h6zicw13ysYV+lZTVaE+YNWttujJfcDl3yqMambOr9OKB9nmRnIQUdqjFuHQdAqlAUiMvWS6hUpuL/AQFk/jZdxvT3MXYE3w53IFjbk3dbntD6tEiOZliAhwK4mm0jZ0uhjIPvvzTV8Z8tbLfgF6+Hgm0/r+juSZQ91xeN1VA+gYuEeBfW4cNLDD9aKUUHjjr9Qg6NfQDxKkZMqhpK3JHfmIG5PoTYCpM3/3BU3tMP+cxXv9nkUohQaPnmzfV+RQxO/xVPKDT0+18tXL5UJEodhWcxo1ngHclkTYikWmfKof/McFtBiPTAPhdPTrsjuOgR3cVMzzzoeAbv27G+Vz2ZeWFDzsuz6kEBh/YPhrgsuvZFmvaMl6ETRfoA1anSuz6wxLM0qWNkawT/V22OL9O1tuCM0Pj2SZyGm6Kx5DDfzBoqa474XVy12W3fw1MZpjpLrTWkGVlihRWxIX4CFwngSayPIynw1GUFAr+w/F6fNhp71aegNK744uVBLGO5M8HmrzSecO1sBIEVNW9RaSdZlc6kD3vyZjpbEBA/Vea/TD770MHLNomas2cG64fh6O0P4sMWu+EXaSs+DMS4nyrTRvkqJaixFLkJfjpr+VxnUUr5RDw66bRqlD3IA1qJMuz2DkT0Fz4csZoqpLz3GPYDkOZQqoev85rQBqqeXaVvpVuUnF2qBeKwtSKx+GnG7SReOEdvu7BrAxoWXwNyFiD5ctCbrhD+/LF7GTI79KBW9NlyH3rfzE6h2pUlC2cQ/k5OqTxnm9hdUL0G6UMDCBZ6zTVVTAhCyItNBLaG39xxcWiIFogMpWnDiFHeo44SUay4YVGBVyekJbm5tv5rV8KwdcNjul/+ZjmjiJJHd3834DHWum5mBIv8u3H5zTHUyn5/GJHLEjBhMhOeaq37kha3LE/mCRQT8LUIAGUXPT1ibJD/BChEYAQ=="}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Yes, a long"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"er duration means a"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" bond's price is"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" more sensitive to interest"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-rate changes, so it"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" carries more interest-rate"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" risk.\n\nI also need"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to correct my last"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" re"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ply. I cou"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ldn't look up the 10"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-year Treasury duration"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" because"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I don't have a tool for"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" that, and I should"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have said so inst"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ead of only"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" gi"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ving the s"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"um. As"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a rough gu"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ide, a 10-year"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Treasury's modified duration"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is usually about 8"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to 9 years, but"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" check"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" current source for the exact figure"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":517,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":200,"output_tokens_details":{"thinking_tokens":52}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+  recorded_at: 2026-10-25T16:05:09.946836+00:00

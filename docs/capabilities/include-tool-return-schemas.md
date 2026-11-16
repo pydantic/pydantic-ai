@@ -1,3 +1,7 @@
+---
+description: "Send tool return type schemas to the model with the Pydantic AI IncludeToolReturnSchemas capability, natively where supported or in the tool description."
+---
+
 # Include Tool Return Schemas
 
 [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] is a [capability](overview.md) that includes return type schemas in tool definitions sent to the model. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured field in the API request. For other models, it is injected into the tool description as JSON text.

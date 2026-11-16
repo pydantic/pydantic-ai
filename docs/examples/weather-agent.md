@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI tool calling example: a weather agent chains geocoding and weather API tools to answer a question, plus a Gradio chat UI for it."
+---
+
 Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
 Demonstrates:

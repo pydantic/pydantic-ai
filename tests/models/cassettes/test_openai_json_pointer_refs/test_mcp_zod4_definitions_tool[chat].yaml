@@ -1,0 +1,235 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "645"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: >-
+            Save a tree named root with one child named leaf that has no children, then say
+            done.
+        model: gpt-4.1-mini
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: save_tree
+            description: Save a tree
+            parameters:
+              type: object
+              properties:
+                tree:
+                  $ref: "#/definitions/__schema0"
+              required:
+              - tree
+              definitions:
+                __schema0:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    children:
+                      type: array
+                      items:
+                        $ref: "#/definitions/__schema0"
+                  required:
+                  - name
+                  - children
+                  additionalProperties: false
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "609"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EUZq0R7wcOlgvXSxafbi7NcqbiKeh
+        object: chat.completion
+        created: 1790956308
+        model: gpt-4.1-mini-2025-04-14
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: null
+            tool_calls:
+            - id: call_zlwDAnI5RFxkJjiTT0xeMXQ3
+              type: function
+              function:
+                name: save_tree
+                arguments: "{\"tree\":{\"name\":\"root\",\"children\":[{\"name\":\"leaf\",\"children\":[]} ]}}"
+            refusal: null
+            annotations: []
+          logprobs: null
+          finish_reason: tool_calls
+        usage:
+          prompt_tokens: 69
+          completion_tokens: 28
+          total_tokens: 97
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_5748f11873
+  recorded_at: 2026-10-02T15:51:48.699112+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "984"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: >-
+            Save a tree named root with one child named leaf that has no children, then say
+            done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_zlwDAnI5RFxkJjiTT0xeMXQ3
+            type: function
+            function:
+              name: save_tree
+              arguments: "{\"tree\":{\"name\":\"root\",\"children\":[{\"name\":\"leaf\",\"children\":[]} ]}}"
+        - role: tool
+          tool_call_id: call_zlwDAnI5RFxkJjiTT0xeMXQ3
+          content: saved root with 1 children
+        model: gpt-4.1-mini
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: save_tree
+            description: Save a tree
+            parameters:
+              type: object
+              properties:
+                tree:
+                  $ref: "#/definitions/__schema0"
+              required:
+              - tree
+              definitions:
+                __schema0:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    children:
+                      type: array
+                      items:
+                        $ref: "#/definitions/__schema0"
+                  required:
+                  - name
+                  - children
+                  additionalProperties: false
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "431"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EUZq1KnPc9RVEwCLYy45sKjMxm2Md
+        object: chat.completion
+        created: 1790956309
+        model: gpt-4.1-mini-2025-04-14
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: >-
+              Done. The tree named "root" with one child named "leaf" that has no children
+              has been saved.
+            refusal: null
+            annotations: []
+          logprobs: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 110
+          completion_tokens: 24
+          total_tokens: 134
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_5748f11873
+  recorded_at: 2026-10-02T15:51:49.571567+00:00

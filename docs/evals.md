@@ -1,10 +1,11 @@
 ---
 title: Pydantic Evals
+description: "Pydantic Evals is a code-first Python framework for evaluating LLM apps and agents: score outputs and tool-call trajectories on datasets or live traffic."
 ---
 
 # Pydantic Evals
 
-**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.
+**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications. It grades an agent's final outputs and its [trajectory](evals/evaluators/agentic.md) (the sequence and arguments of its tool calls), against datasets in code or, with [online evaluation](evals/online-evaluation.md), against a sample of live production traffic.
 
 ## Design Philosophy
 
@@ -186,7 +187,7 @@ class MyEvaluator(Evaluator):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -234,7 +235,7 @@ class MyEvaluator(Evaluator[str, str]):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -276,6 +277,8 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 _(This example is complete, it can be run "as is")_
 
 See [Quick Start](evals/quick-start.md) for more examples and [Concurrency & Performance](evals/how-to/concurrency.md) to learn about controlling parallel execution.
+
+To evaluate an agent at batch prices, add [`BatchModelRequests`](batch.md) to it: cases run concurrently, so their model requests share batches, and the evaluation takes as long as its batches do.
 
 ## API Reference
 

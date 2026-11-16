@@ -1,0 +1,106 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/decisions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1061"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        input: My invoice was charged twice and nobody answers the phone!
+        questions:
+        - type: predicate
+          name: Ticket.urgent
+          instructions: "{\"field\": \"urgent\", \"premise\": \"If the user's request calls for Ticket: Triage a support ticket.\", \"question\": \"Does this need a reply within the hour?\"}"
+        - type: choice
+          name: Ticket.area
+          instructions: "{\"field\": \"area\", \"premise\": \"If the user's request calls for Ticket: Triage a support ticket.\", \"question\": \"Which team owns it?\"}"
+          choices:
+          - value: billing
+          - value: bug
+        - type: predicate
+          name: record_profile.disabled
+          instructions: "{\"field\": \"disabled\", \"premise\": \"If the user's request calls for record_profile: Record the customer's profile.\", \"question\": \"Does the customer have a disability?\"}"
+        - type: choice
+          name: route
+          instructions: Which of these does this call for?
+          choices:
+          - value: Ticket
+            description: Triage a support ticket.
+          - value: record_profile
+            description: Record the customer's profile.
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - x-request-id,retry-after,server-timing-total
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "398"
+      server-timing-total:
+      - "397.977"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        answers:
+        - type: predicate
+          name: Ticket.urgent
+          probability: 0.76
+        - type: choice
+          name: Ticket.area
+          choice: billing
+          probabilities:
+          - value: billing
+            probability: 1.0
+          - value: bug
+            probability: 0.0
+          confidence: 1.0
+        - type: refusal
+          name: record_profile.disabled
+        - type: choice
+          name: route
+          choice: Ticket
+          probabilities:
+          - value: Ticket
+            probability: 1.0
+          - value: record_profile
+            probability: 0.0
+          confidence: 1.0
+        usage:
+          input_tokens: 628
+          input_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 628
+  recorded_at: 2026-10-07T08:16:54.938661+00:00

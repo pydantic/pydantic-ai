@@ -1,0 +1,170 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1419"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Which tool can report our revenue numbers?
+            type: text
+        - role: assistant
+          content:
+          - id: tsc_1
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - revenue report
+        - role: user
+          content:
+          - tool_use_id: tsc_1
+            type: tool_result
+            content:
+            - tool_name: get_metrics
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - id: tsc_2
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - quarterly metrics
+        - role: user
+          content:
+          - tool_use_id: tsc_2
+            type: tool_result
+            content:
+            - tool_name: get_metrics
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - text: "`get_metrics` reports this quarter's revenue metrics."
+            type: text
+        - role: user
+          content:
+          - text: Thanks, that's all I needed.
+            type: text
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: send_status
+          description: Send a status update to the user.
+          input_schema:
+            additionalProperties: false
+            properties:
+              message:
+                type: string
+            required:
+            - message
+            type: object
+        - name: get_metrics
+          description: Get this quarter's revenue metrics.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=233
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-74bf3a558c75f6359f148f295b01e5b2-786add6a845fafaf-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011Ch76igNfMwrkWe7ZivVvJ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1065,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS/wgKEAgTGAI4AUIIdGhpbmtpbmcSDH2oe1svS72VqM2zwxoM/5gkTBnzPin2oSXsIjAVt1r/H2H94RN667VhlO6sKAAlj9fuLsfN+33VRbMmj9lijc6jNsfykhuJ20qCV6MqnAhTfCCEG2eYeZpxnSOUTkIAkNzUS1dssuhvVVbdRla53cBZpiTTeLQMAeG1QPAFwtVOsej4SxZauz1MwJXvDdZODdDi6EvXhI1ZW8W58stuvCG51LybELP77SdANSFpm+I5Qufo4HftdADjnmrSSxcWjyf2ApL41LpOhCVAdrzZ/QNXqzmWHRr5Y/Hp+PXLTh3Mccz1mFbDnGaXhErLgFtYWxs9x3mi/nx1OIDKBKmIELwy7B3hUocjVZk+zyuTtktJmSgM7MRQ9UK0ds+s5/Vl52sHroe3OKoNKMBoSh2vIEJwyu7EEVZIR9j5vY48UzojGAQzPfLPFLZAr9zNJjMZtV9svtovfwV4YsgmH/Ed7X+ZNldSHe1OqCAO8ud/QgzaAcLQpwrII+ryxAS0VMlWBIKbWW2/+4pLeWi5IX9+CxF6YMnFiZVW857FV7RtZlgsIbnslSsjRnw1vY175w15lRVlR0VBFCnxpMolYgM5N69m7TYn/i8vf+UdSkxqgKAfcmVeNOlHOX/ECi6kLoa7G30vWlthK3Cirm6PtDEXsB5CmHu5Rro1/qdiPSWtcl+X4+XKeIL9njvaOB76YJMPTjXRYVoua0v/sVBkJgBcEPQ/ACkOGFCKOQv/ei5MvJ1lBJQEmr3aOeWdMSDairVSm9DyWrWnHM8eHzmNV28F8W00YJ2NdrZ7/j1ew7p4hKksGRASu0I6HrW4hwhdAJj6TXlq8U1R7Uu9VwfuEghXCZbSlFgIYEG0aFHyQjZoBSbRAjN+p2ND9p7uwSt0EBm7gepaSgBrAxeC/mchMfo0e9FK5+HkEfQVMXzWbHe4eYePaklrVWb1DRpB34Dx/D4C7Flt96yr6ndhW17TGVV/Tfv2657rPdp0E7KIwFnbxJSRFCeqe0LKIKRrgv/Hm+Q18zaB8eosbrh+I9RjX5q9hmE72Zz5pQNoiMQZ81n84pwYCqDozk3ArEnSAcfVhybr34W5dyOH+SCqmcP8u4MAmfXuczasJyC5Q0xfrUdf3qMrfJq7MCg4TfXi9FiaEAipsv4QYQ1yiTmZV3eogWlkzGQ4iifPFWym9hoiKaCuUxJQ1tN/J1eG2vxDmEqPbDfPd5o4cCtfz1vsRd+sR7ESmWooxKr18603k16QBXfe0eGOIZfsRsxEzy1RIDmOMTsnRxwihvtzmCVh9ObyGd6PvJBUReo+h+EPtDZ7g/qvLDxJBjgHTUo9fv+FUhGfC/FjkpQOuOEZ2CbYzrVrG7tGcynQrXd9jm/S42TuLRXFaPRLmf85x4WIBmbaMMVoFsw0sp35M0B2TpG6HZfogXfw7Q1/y65gIL2RWpFcsQkVGXUqQB02cHQHNsYFhySwTo3c+Vn+2w9QVfvMzlcx3mbKplWuhRsYHVtHkDYUPRgB"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"You're"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" welcome!"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" If"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you want"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numbers, I"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" can pull them with"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `get_metrics`."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1065,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":203,"output_tokens_details":{"thinking_tokens":173}}}
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-11-16T18:42:56.951213+00:00

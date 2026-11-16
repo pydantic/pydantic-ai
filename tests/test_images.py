@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx2
 import pytest
+from _pytest.mark import ParameterSet
 from dirty_equals import IsBytes
 from genai_prices.types import PriceCalculation
 from opentelemetry.trace import StatusCode
@@ -34,7 +35,17 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelAuthenticationError,
+    ModelConnectionError,
     ModelHTTPError,
+    ModelNotFoundError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelRequestRejectedError,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -56,10 +67,9 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, try_import
+from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, gave_up_on, google_user_agents, try_import
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.usefixtures('allow_model_requests'),
 ]
 
@@ -452,10 +462,11 @@ def test_known_openai_image_generation_model_names():
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('openai:')} == {
-        'openai:gpt-image-1',
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',
+        'openai:gpt-image-2.6-flare',
+        'openai:gpt-image-2.6-sunburst',
     }
 
 
@@ -463,7 +474,6 @@ def test_known_google_image_generation_model_names():
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('google:')} == {
-        'google:gemini-2.5-flash-image',
         'google:gemini-3-pro-image',
         'google:gemini-3.1-flash-image',
         'google:gemini-3.1-flash-lite-image',
@@ -475,7 +485,6 @@ def test_known_google_cloud_image_generation_model_names():
     known_names = get_args(KnownImageGenerationModelName.__value__)
 
     assert {name for name in known_names if name.startswith('google-cloud:')} == {
-        'google-cloud:gemini-2.5-flash-image',
         'google-cloud:gemini-3-pro-image',
         'google-cloud:gemini-3.1-flash-image',
         'google-cloud:gemini-3.1-flash-lite-image',
@@ -676,6 +685,7 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
         google_geometry.resolve_google_dimensions('gemini-3.1-flash-lite-image', tiers['512'])
 
 
+@pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'])
 @pytest.mark.parametrize(
     ('dimensions', 'error_message'),
     [
@@ -684,9 +694,16 @@ def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, 
         ((800, 800), 'total pixel count'),
     ],
 )
-def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(dimensions: tuple[int, int], error_message: str):
+def test_openai_gpt_image_2_rejects_out_of_bounds_dimensions(
+    model_name: str, dimensions: tuple[int, int], error_message: str
+):
+    """GPT Image 2.6 takes the GPT Image 2 size limits.
+
+    The live Images API rejects `1000x1000`, `800x800`, `3856x1296`, `3840x1024` and `3840x2224` for
+    both 2.6 models with the same messages as for `gpt-image-2`.
+    """
     with pytest.raises(UserError, match=error_message):
-        openai_geometry.resolve_openai_dimensions('gpt-image-2', dimensions)
+        openai_geometry.resolve_openai_dimensions(model_name, dimensions)
 
 
 def test_openai_geometry_conflicts_and_invalid_compatibility_sizes():
@@ -897,19 +914,19 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
                     'parts': [
                         {'text': 'replace the subject'},
                         {
-                            'inlineData': {'data': 'Zmlyc3QtaW1hZ2U=', 'mimeType': 'image/png'},
+                            'inlineData': {'data': 'Zmlyc3QtaW1hZ2U=', 'mime_type': 'image/png'},
                             'mediaResolution': {'level': 'MEDIA_RESOLUTION_LOW'},
                         },
                         {
                             'fileData': {
-                                'fileUri': 'https://generativelanguage.googleapis.com/v1beta/files/file-123',
-                                'mimeType': 'image/webp',
+                                'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/file-123',
+                                'mime_type': 'image/webp',
                             }
                         },
                         {
                             'fileData': {
-                                'fileUri': 'https://generativelanguage.googleapis.com/v1beta/files/file-456',
-                                'mimeType': 'image/jpeg',
+                                'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/file-456',
+                                'mime_type': 'image/jpeg',
                             }
                         },
                     ],
@@ -1069,6 +1086,93 @@ async def test_google_image_generation_wires_extra_body():
     assert json.loads(requests[0].content)['labels'] == snapshot({'team': 'growth'})
 
 
+_GOOGLE_IMAGE_RESPONSE = {
+    'candidates': [
+        {
+            'content': {'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}], 'role': 'model'},
+            'finishReason': 'STOP',
+        }
+    ]
+}
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    'extra_headers,expected',
+    [
+        ({'User-Agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'user-agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'USER-AGENT': 'support-bot'}, ['google-genai support-bot']),
+        ({'User-Agent': ''}, ['google-genai']),
+    ],
+)
+async def test_google_image_generation_extra_headers_user_agent_replaces_ours(
+    extra_headers: dict[str, str], expected: list[str]
+):
+    """A user-agent in `extra_headers` replaces ours in any spelling, on the one line google-genai adds its label to.
+
+    google-genai would prefix its label to an empty value, leaving a trailing space that h11 rejects.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GOOGLE_IMAGE_RESPONSE)
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+        await model.generate('a robot', settings={'extra_headers': extra_headers})
+
+    assert google_user_agents(requests[0]) == expected
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    'extra_headers',
+    [
+        {'User-Agent': 'per-request-app'},
+        {'user-agent': 'per-request-app'},
+        {'USER-AGENT': 'per-request-app'},
+        {'user-agent': ' per-request-app'},
+    ],
+)
+@pytest.mark.parametrize(
+    'client_header,expected',
+    [
+        ('user-agent', ['google-genai per-request-app']),
+        ('User-Agent', ['per-request-app', 'google-genai per-request-app']),
+    ],
+)
+async def test_google_image_generation_extra_headers_user_agent_replaces_user_built_client_user_agent(
+    client_header: str, extra_headers: dict[str, str], expected: list[str]
+):
+    """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
+
+    A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
+    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
+    surrounding whitespace, so it's stripped.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GOOGLE_IMAGE_RESPONSE)
+
+    async with _mock_google_provider(
+        handle_request,
+        build_provider=lambda http_options: GoogleProvider(
+            client=GoogleClient(
+                api_key='test-api-key',
+                http_options=http_options.model_copy(update={'headers': {client_header: 'client-app'}}),
+            )
+        ),
+    ) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+        await model.generate('a robot', settings={'extra_headers': extra_headers})
+
+    assert google_user_agents(requests[0]) == expected
+
+
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_warns_for_unmergeable_extra_body():
     """`extra_body` is typed `object`, and only a string-keyed mapping can be merged into a JSON body.
@@ -1136,7 +1240,7 @@ async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.M
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
     body = json.loads(requests[0].content)
-    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mimeType': 'image/webp'}}
+    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1151,12 +1255,8 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
     `'google'` — so a name-keyed regression fails here. A `GoogleCloudProvider` would agree with its own
     transport and keep passing either way.
 
-    The blob's key spelling is google-genai's serialization rather than ours, and it varies by version:
-    `tests/models/cassettes/test_google/test_google_url_input_force_download.yaml` records a live Vertex
-    200 for a request body carrying `inlineData.mimeType` (recorded when `uv.lock` pinned google-genai
-    1.70.0), while the pinned 2.18.0 emits `mime_type` for the same construction. The assertion reads
-    either spelling; the coverage is that the downloaded `image/webp` wins over the URL's declared
-    `image/png`.
+    The blob's `mime_type` spelling is google-genai's serialization rather than ours; the coverage is
+    that the downloaded `image/webp` wins over the URL's declared `image/png`.
 
     Not a VCR test because `download_item` is monkeypatched, so no fetch reaches the wire.
     """
@@ -1196,8 +1296,7 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
     body = json.loads(requests[0].content)
-    blob = body['contents'][0]['parts'][1]['inlineData']
-    assert (blob['data'], blob.get('mimeType') or blob.get('mime_type')) == ('ZG93bmxvYWRlZA==', 'image/webp')
+    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1243,7 +1342,7 @@ async def test_google_image_generation_force_download_beats_files_api_shortcut(m
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
     body = json.loads(requests[0].content)
     assert body['contents'][0]['parts'][1] == snapshot(
-        {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mimeType': 'image/webp'}}
+        {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
     )
 
 
@@ -1419,16 +1518,17 @@ async def test_google_image_generation_accepts_the_gemini_api_provider_name_fami
         ),
     ],
 )
-async def test_google_cloud_image_generation_rejects_uploaded_file(
+async def test_google_cloud_image_generation_rejects_files_api_uploaded_file(
     provider_factory: Callable[[], BaseGoogleProvider], file_provider_name: UploadedFileProviderName
 ):
-    """The Files API is unavailable on Vertex AI, so an `UploadedFile` is rejected instead of forwarded.
+    """The Files API is unavailable on Vertex AI, so a Files API `UploadedFile` is rejected instead of forwarded.
 
     The rejection is keyed on the client's transport rather than on `system`: `GoogleProvider` stores a
     pre-built Vertex client as-is and keeps `name` `'google'`, so a name-keyed check would forward the
     file as a `fileData` part Vertex cannot resolve. It also runs before the `provider_name` check, so a
     file uploaded through the Gemini Files API (`provider_name='google'`) gets this error rather than
-    provider-mismatch advice that only leads back to it.
+    provider-mismatch advice that only leads back to it. A Cloud Storage `gs://` id is the reference
+    Vertex does resolve; `test_google_cloud_image_generation_forwards_gcs_references` pins that route.
     """
     model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider_factory())
     uploaded_file = UploadedFile(
@@ -1439,6 +1539,152 @@ async def test_google_cloud_image_generation_rejects_uploaded_file(
 
     with pytest.raises(UserError, match='The Gemini Files API is not available on Google Cloud'):
         await model.generate('edit this image', images=[uploaded_file])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_forwards_gcs_references(monkeypatch: pytest.MonkeyPatch):
+    """On Vertex a Cloud Storage `gs://` reference travels as a `fileData` part, never as inline bytes.
+
+    Vertex has no Files API; Cloud Storage is its file store, and it reads the object server-side —
+    the route `GoogleModel._resolve_file` already takes for the conversational API. Both spellings of
+    the reference are pinned: an `UploadedFile` whose `file_id` is the URI, and an `ImageUrl` whose URL
+    is, with the media type inferred from the object name's extension or taken from an explicit
+    `media_type` when there is none. `download_item` is monkeypatched to prove nothing is fetched — a
+    `gs://` URL is not downloadable, so the old inline path could not have served it at all.
+    """
+    download_mock = AsyncMock(side_effect=AssertionError('a gs:// reference must not be downloaded'))
+    monkeypatch.setattr(google_images, 'download_item', download_mock)
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    async with _mock_google_provider(
+        handle_request,
+        build_provider=lambda http_options: GoogleCloudProvider(
+            client=GoogleClient(vertexai=True, api_key='test-api-key', http_options=http_options)
+        ),
+    ) as provider:
+        model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+
+        await model.generate(
+            'composite the logo',
+            images=[
+                ImageUrl('gs://bucket/brand/logo.png'),
+                ImageUrl('gs://bucket/brand/no-extension', media_type='image/webp'),
+                UploadedFile(
+                    file_id='gs://bucket/brand/product.jpg', provider_name='google-cloud', media_type='image/jpeg'
+                ),
+                UploadedFile(
+                    file_id='gs://bucket/brand/hero.png',
+                    provider_name='google-vertex',
+                    media_type='image/png',
+                    vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_HIGH'}},
+                ),
+            ],
+        )
+
+    download_mock.assert_not_awaited()
+    body = json.loads(requests[0].content)
+    parts = body['contents'][0]['parts'][1:]
+    # The nested key spelling is google-genai's serialization, which varies by version and transport
+    # (`test_google_cloud_image_generation_downloads_files_api_url` reads both for `inlineData`), so the
+    # assertion reads either; the coverage is that every reference is a `fileData` part.
+    assert [(part['fileData'].get('fileUri') or part['fileData'].get('file_uri')) for part in parts] == snapshot(
+        [
+            'gs://bucket/brand/logo.png',
+            'gs://bucket/brand/no-extension',
+            'gs://bucket/brand/product.jpg',
+            'gs://bucket/brand/hero.png',
+        ]
+    )
+    assert [(part['fileData'].get('mimeType') or part['fileData'].get('mime_type')) for part in parts] == snapshot(
+        ['image/png', 'image/webp', 'image/jpeg', 'image/png']
+    )
+    assert [part.get('mediaResolution') for part in parts] == snapshot(
+        [None, None, None, {'level': 'MEDIA_RESOLUTION_HIGH'}]
+    )
+    assert not any('inlineData' in part for part in parts)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_force_download_on_gcs_url_is_not_downloadable():
+    """`force_download=True` takes a `gs://` URL out of the `fileData` shortcut, and then cannot fetch it.
+
+    The Gemini-side counterpart, `test_google_image_generation_force_download_beats_files_api_shortcut`,
+    pins that an explicit download wins over the shortcut. Here honouring it is fatal rather than merely
+    wasteful: `download_item` speaks only http(s), so the request never reaches the model. Nothing is
+    monkeypatched — the real scheme check is what the docs promise, and it runs before any network I/O.
+    """
+    model = GoogleImageGenerationModel(
+        'gemini-3.1-flash-image',
+        provider=GoogleCloudProvider(client=GoogleClient(vertexai=True, api_key='test-api-key')),
+    )
+
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
+        await model.generate(
+            'composite the logo',
+            images=[ImageUrl('gs://bucket/brand/logo.png', force_download=True)],
+        )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_requires_media_type_for_extensionless_gcs_url():
+    """A `gs://` `ImageUrl` whose object name carries no extension needs an explicit `media_type`.
+
+    The Files API branch has the same failure mode; both get the guidance instead of the bare
+    `ValueError` `ImageUrl.media_type` raises.
+    """
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=GoogleCloudProvider(api_key='test-api-key'))
+
+    with pytest.raises(UserError, match='cannot be inferred'):
+        await model.generate('edit this', images=[ImageUrl('gs://bucket/brand/abc123')])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_rejects_foreign_uploaded_file():
+    """A `gs://` file stamped with another provider's name is rejected with the Vertex name family.
+
+    The family is the Google Cloud one on this transport (`google-cloud`, plus the pre-v2 `google-vertex`),
+    not the Gemini API family the same check accepts on the other transport.
+    """
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=GoogleCloudProvider(api_key='test-api-key'))
+    uploaded_file = UploadedFile(file_id='gs://bucket/brand/logo.png', provider_name='openai', media_type='image/png')
+
+    with pytest.raises(UserError, match=r"Expected `provider_name` to be one of \['google-cloud', 'google-vertex'\]"):
+        await model.generate('edit this', images=[uploaded_file])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_gcs_url_is_not_forwarded_on_the_gemini_api(monkeypatch: pytest.MonkeyPatch):
+    """The `gs://` shortcut is keyed on the transport: the Gemini Developer API cannot resolve Cloud Storage.
+
+    So the URL takes the download path there, where `download_item` rejects the scheme, rather than
+    being forwarded as a `fileData` part the API would fail on server-side.
+    """
+    download_mock = AsyncMock(side_effect=ValueError('Unsupported URL scheme: gs'))
+    monkeypatch.setattr(google_images, 'download_item', download_mock)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=GoogleProvider(api_key='test-api-key'))
+    image_url = ImageUrl('gs://bucket/brand/logo.png')
+
+    with pytest.raises(ValueError, match='Unsupported URL scheme'):
+        await model.generate('edit this', images=[image_url])
+
+    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1749,32 +1995,171 @@ async def test_google_image_generation_maps_non_http_api_error():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-async def test_google_image_generation_status_error():
-    """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and `retry-after`.
+@pytest.mark.parametrize(
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'),
+    [
+        pytest.param(
+            400,
+            {'retry-after': '12'},
+            {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'},
+            ModelRequestRejectedError,
+            12,
+            id='retry-after-header',
+        ),
+        pytest.param(
+            429,
+            None,
+            {
+                'code': 429,
+                'message': 'Resource has been exhausted',
+                'status': 'RESOURCE_EXHAUSTED',
+                'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+            },
+            ModelRateLimitError,
+            14.0,
+            id='retry-info-body',
+        ),
+        pytest.param(
+            429,
+            None,
+            {
+                'code': 429,
+                'message': 'You exceeded your current quota, please check your plan and billing details.',
+                'status': 'RESOURCE_EXHAUSTED',
+                'details': [
+                    {
+                        '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                        'violations': [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}],
+                    },
+                    {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'},
+                ],
+            },
+            ModelQuotaExceededError,
+            14.0,
+            id='daily-quota',
+        ),
+        pytest.param(
+            503,
+            None,
+            {'code': 503, 'message': 'The model is overloaded. Please try again later.', 'status': 'UNAVAILABLE'},
+            ModelOverloadedError,
+            None,
+            id='overloaded',
+        ),
+        pytest.param(
+            400,
+            None,
+            {
+                'code': 400,
+                'message': 'API key not valid. Please pass a valid API key.',
+                'status': 'INVALID_ARGUMENT',
+                'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID'}],
+            },
+            ModelAuthenticationError,
+            None,
+            id='api-key-invalid',
+        ),
+        pytest.param(
+            404,
+            None,
+            {'code': 404, 'message': 'models/gemini-2.5-flash-image is not found.', 'status': 'NOT_FOUND'},
+            ModelNotFoundError,
+            None,
+            id='not-found',
+        ),
+        pytest.param(
+            504,
+            None,
+            {
+                'code': 504,
+                'message': 'Deadline expired before operation could complete.',
+                'status': 'DEADLINE_EXCEEDED',
+            },
+            ModelServerError,
+            None,
+            id='status-without-category',
+        ),
+        pytest.param(
+            502,
+            None,
+            {'code': 502, 'message': 'Bad Gateway'},
+            ModelServerError,
+            None,
+            id='no-status',
+        ),
+    ],
+)
+@pytest.mark.parametrize('gave_up', [False, True])
+async def test_google_image_generation_status_error(
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, object],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ],
+    expected_retry_after: float | None,
+    gave_up: bool,
+):
+    """A Gemini error status surfaces as its `ModelHTTPError` category, with Gemini's status and the reported wait.
 
-    Not a VCR test because a 400 is easy to provoke but its `retry-after` header and structured error
-    body are not: both depend on Google's live quota state, and a recording would pin whatever that
-    happened to be. The response here is fixed from Google's documented error format instead.
+    So does one a retrying transport gave up on, which `google.genai` never sees.
+
+    Not a VCR test because an error status is easy to provoke but its wait is not: a `retry-after` header and a
+    structured error body both depend on Google's live quota state, and a recording would pin whatever that happened to
+    be. The responses here are fixed from Google's documented error format instead.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(
-            400,
-            headers={'retry-after': '12'},
-            json={'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}},
-        )
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
 
-    async with _mock_google_provider(handle_request) as provider:
+    async with _mock_google_provider(gave_up_on(handle_request) if gave_up else handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.generate('tiny robot')
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.body == {
-        'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}
-    }
-    assert exc_info.value.retry_after == 12
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gemini-2.5-flash-image')
+    )
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.provider_error_code == error.get('status')
+    assert exc_info.value.body == {'error': error}
+    assert exc_info.value.retry_after == expected_retry_after
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError) is gave_up
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.parametrize(
+    ('transport_error', 'expected', 'phase'),
+    [
+        pytest.param(httpx2.ConnectError, ModelConnectionError, 'connect', id='connect'),
+        pytest.param(httpx2.ReadTimeout, ModelTimeoutError, 'read', id='timeout'),
+    ],
+)
+async def test_google_image_generation_transport_error(
+    transport_error: type[httpx2.TransportError], expected: type[ModelConnectionError], phase: str
+):
+    """`google.genai` doesn't wrap connection errors and timeouts, so they surface as their pydantic-ai categories.
+
+    Not a VCR test: the transport raises before any response exists, so there is no response to record.
+    """
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        raise transport_error('failed', request=request)
+
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
+        with pytest.raises(ModelConnectionError) as exc_info:
+            await model.generate('tiny robot')
+
+    assert type(exc_info.value) is expected
+    assert exc_info.value.phase == phase
+    assert isinstance(exc_info.value.__cause__, transport_error)
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -2134,6 +2519,73 @@ async def test_google_cloud_image_edit_vcr(
         {'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'}
     )
     assert result.provider_response_id
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    'image',
+    [
+        pytest.param(ImageUrl('gs://cloud-samples-data/generative-ai/image/scones.jpg'), id='image-url'),
+        pytest.param(
+            UploadedFile(
+                file_id='gs://cloud-samples-data/generative-ai/image/scones.jpg',
+                provider_name='google-cloud',
+                media_type='image/jpeg',
+            ),
+            id='uploaded-file',
+        ),
+    ],
+)
+async def test_google_cloud_gcs_image_edit_vcr(
+    google_cloud_capture_provider: GoogleCloudProvider,
+    request_capture: RequestCapture,
+    image: ImageUrl | UploadedFile,
+):
+    """Vertex reads a public GCS reference server-side for both input types."""
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=google_cloud_capture_provider)
+
+    result = await model.generate(
+        'Turn this photograph of scones into a watercolor painting.',
+        images=[image],
+        settings=GoogleImageGenerationSettings(dimensions=(512, 512)),
+    )
+
+    # Capture the current request too: VCR's default matchers do not compare bodies.
+    assert request_capture.bodies() == snapshot(
+        [
+            {
+                'contents': [
+                    {
+                        'parts': [
+                            {'text': 'Turn this photograph of scones into a watercolor painting.'},
+                            {
+                                'fileData': {
+                                    'file_uri': 'gs://cloud-samples-data/generative-ai/image/scones.jpg',
+                                    'mime_type': 'image/jpeg',
+                                }
+                            },
+                        ],
+                        'role': 'user',
+                    }
+                ],
+                'generationConfig': {
+                    'responseModalities': ['IMAGE'],
+                    'imageConfig': {'aspectRatio': '1:1', 'imageSize': '512'},
+                },
+            }
+        ]
+    )
+
+    assert len(result.images) == 1
+    edited_image = result.images[0]
+    assert edited_image.content.data[:8] == b'\x89PNG\r\n\x1a\n'
+    assert edited_image.content.media_type == 'image/png'
+    assert edited_image.output_format == 'png'
+    assert result.model_name == 'gemini-3.1-flash-image'
+    assert result.provider_name == 'google-cloud'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
 
 
 def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:
@@ -3314,10 +3766,22 @@ def _openai_png_response() -> ImagesResponse:
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(openai_mock_client: AsyncMock):
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'gpt-image-2',
+        'gpt-image-2-2026-04-21',
+        'gpt-image-2.6-flare',
+        'gpt-image-2.6-flare-2026-12-01',
+        'gpt-image-2.6-sunburst',
+        'gpt-image-2.6-sunburst-2026-12-01',
+    ],
+)
+async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(model_name: str, openai_mock_client: AsyncMock):
+    """OpenAI lists no dated GPT Image 2.6 snapshot yet; the hypothetical dated ids pin the dash-suffix match."""
     openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
-        'gpt-image-2',
+        model_name,
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
@@ -3609,6 +4073,56 @@ async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str, reque
         {'created': 1784770548, 'size': '1024x1024', 'quality': 'low', 'background': 'opaque'}
     )
     assert result.model_name == 'gpt-image-2'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    ('model_name', 'quality'), [('gpt-image-2.6-flare', 'xhigh'), ('gpt-image-2.6-sunburst', 'max')]
+)
+async def test_openai_gpt_image_2_6_generation_vcr(
+    openai_api_key: str,
+    request_capture: RequestCapture,
+    model_name: str,
+    quality: Literal['xhigh', 'max'],
+):
+    """GPT Image 2.6 maps `aspect_ratio` to a GPT Image 2 size and accepts the `xhigh` and `max` qualities.
+
+    OpenAI rejects both qualities for `gpt-image-2` and `gpt-image-1.5` (`The model 'gpt-image-2' does not
+    support quality 'xhigh'.`), so a 2.6 model is what proves they reach the wire and come back echoed.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    model = OpenAIImageGenerationModel(model_name, provider=provider)
+
+    result = await model.generate(
+        'A small red circle centered on a plain white background.',
+        settings=OpenAIImageGenerationSettings(
+            aspect_ratio='16:9',
+            openai_output_format='jpeg',
+            openai_output_compression=10,
+            openai_quality=quality,
+        ),
+    )
+
+    assert request_capture.bodies() == [
+        {
+            'model': model_name,
+            'output_compression': 10,
+            'output_format': 'jpeg',
+            'prompt': 'A small red circle centered on a plain white background.',
+            'quality': quality,
+            'size': '1280x720',
+        }
+    ]
+    assert result.provider_details == {
+        'created': IsInt(),
+        'size': '1280x720',
+        'quality': quality,
+        'background': 'opaque',
+    }
+    assert result.images[0].content.media_type == 'image/jpeg'
+    assert result.model_name == model_name
+    assert result.usage.output_tokens > 0
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -3940,84 +4454,250 @@ async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_cl
     openai_mock_client.images.edit.assert_not_awaited()
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
-    """A 5xx on the edit endpoint surfaces as `ModelHTTPError` with the status and body preserved.
+_OPENAI_IMAGE_STATUS_ERRORS: list[ParameterSet] = [
+    pytest.param(
+        429,
+        {'retry-after': '7'},
+        {'message': 'Rate limit reached', 'type': 'requests', 'code': 'rate_limit_exceeded'},
+        ModelRateLimitError,
+        7.0,
+        id='rate-limit',
+    ),
+    pytest.param(
+        429,
+        None,
+        {'message': 'You exceeded your current quota', 'type': 'insufficient_quota', 'code': 'insufficient_quota'},
+        ModelQuotaExceededError,
+        None,
+        id='quota',
+    ),
+    pytest.param(
+        503,
+        None,
+        {'message': 'Service Unavailable', 'type': 'server_error', 'code': None},
+        ModelUnavailableError,
+        None,
+        id='unavailable',
+    ),
+    pytest.param(
+        503,
+        {'retry-after': '2'},
+        {
+            'message': 'The server is overloaded, please try again later.',
+            'type': 'service_unavailable_error',
+            'code': 'server_is_overloaded',
+        },
+        ModelOverloadedError,
+        2.0,
+        id='overloaded',
+    ),
+    pytest.param(
+        500,
+        None,
+        {'message': 'The server had an error', 'type': 'server_error', 'code': None},
+        ModelServerError,
+        None,
+        id='server-error',
+    ),
+    pytest.param(
+        401,
+        None,
+        {'message': 'Incorrect API key provided', 'type': 'invalid_request_error', 'code': 'invalid_api_key'},
+        ModelAuthenticationError,
+        None,
+        id='invalid-api-key',
+    ),
+    pytest.param(
+        403,
+        None,
+        {
+            'message': 'Your organization must be verified to use the model gpt-image-1',
+            'type': 'invalid_request_error',
+            'code': None,
+        },
+        ModelAuthenticationError,
+        None,
+        id='organization-not-verified',
+    ),
+    pytest.param(
+        404,
+        None,
+        {'message': 'The model does not exist', 'type': 'invalid_request_error', 'code': 'model_not_found'},
+        ModelNotFoundError,
+        None,
+        id='model-not-found',
+    ),
+    pytest.param(
+        400,
+        None,
+        {
+            'message': "Invalid value: '7x7'. Supported values are: '1024x1024'",
+            'type': 'invalid_request_error',
+            'code': 'invalid_value',
+        },
+        ModelRequestRejectedError,
+        None,
+        id='invalid-value',
+    ),
+    pytest.param(
+        409,
+        None,
+        {'message': 'conflict', 'type': 'invalid_request_error', 'code': None},
+        None,
+        None,
+        id='no-category',
+    ),
+]
+"""OpenAI image API error statuses, fixed from OpenAI's documented error format, and the category each raises."""
 
-    Not a VCR test because a deliberate 500 from the edit endpoint is not reproducible on demand, and
-    the structured error body a recording would capture depends on which OpenAI failure produced it.
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+@pytest.mark.parametrize(
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'), _OPENAI_IMAGE_STATUS_ERRORS
+)
+async def test_openai_image_generation_status_error(
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, str | None],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ]
+    | None,
+    expected_retry_after: float | None,
+    edit: bool,
+):
+    """An OpenAI error status surfaces as its `ModelHTTPError` category on both endpoints, as it does from embeddings.
+
+    Driven through the real `AsyncOpenAI` over a mock transport, so the SDK unwraps the `error` envelope that
+    `provider_error_code` and `provider_error_type` come from. `max_retries=0` keeps the SDK from waiting out the
+    `retry-after`. Not a VCR test because most of these statuses cannot be provoked on demand, and a rate limit's wait
+    depends on the org's live usage; the responses are fixed from OpenAI's documented error format instead.
     """
-    openai_mock_client.images.edit.side_effect = APIStatusError(
-        'test error',
-        response=httpx2.Response(
-            status_code=500, request=httpx2.Request('POST', 'https://example.com/v1/images/edits')
-        ),
-        body={'error': 'test error'},
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)),
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
-    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await model.generate('edit this image', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
+        await model.generate('tiny robot', images=images)
 
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.body == {'error': 'test error'}
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gpt-image-1')
+    )
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.body == error
+    assert exc_info.value.provider_error_code == error['code']
+    assert exc_info.value.provider_error_type == error['type']
+    assert exc_info.value.retry_after == expected_retry_after
+    assert isinstance(exc_info.value.__cause__, APIStatusError)
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_connection_error(openai_mock_client: AsyncMock):
-    """A connection failure surfaces as `ModelAPIError` rather than the SDK's own exception.
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+@pytest.mark.parametrize(
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'), _OPENAI_IMAGE_STATUS_ERRORS
+)
+async def test_openai_image_generation_gave_up_status_error(
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, str | None],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ]
+    | None,
+    expected_retry_after: float | None,
+    edit: bool,
+):
+    """A status a retrying transport gave up on surfaces as the category `openai` raises for it, on both endpoints.
 
-    Not a VCR test because a transport failure cannot be provoked on demand, so the error is fixed
-    from the shape the SDK documents.
+    The error has the same `provider_error_code`, `provider_error_type` and `retry_after`; its `body` is the whole
+    response body, whose `error` envelope `openai` unwraps. Not a VCR test: the transport raises `HTTPStatusError`
+    itself, so there is no response to record.
     """
-    openai_mock_client.images.generate.side_effect = APIConnectionError(
-        message='connection failed', request=httpx2.Request('POST', 'https://example.com/v1/images/generations')
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(gave_up_on(handle_request))),
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
-    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
-
-    with pytest.raises(ModelAPIError, match='connection failed'):
-        await model.generate('generate this image')
-
-
-@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_rate_limited(openai_mock_client: AsyncMock):
-    """A 429 rate-limit surfaces as `ModelHTTPError` with the status and body preserved.
-
-    Image models are rate-limited by images/min and images/day, and a Tier-1 org (~5 images/min) can hit
-    the limit before its first successful generation, so this is a common first-call failure, not an edge case.
-
-    See https://platform.openai.com/docs/guides/rate-limits.
-
-    Not a VCR test because a rate limit cannot be provoked on demand, so the response is fixed from
-    OpenAI's documented error format.
-    """
-    rate_limit_body = {'error': {'code': 'rate_limit_exceeded', 'type': 'requests', 'message': 'Rate limit reached'}}
-    openai_mock_client.images.generate.side_effect = APIStatusError(
-        'Rate limit reached',
-        response=httpx2.Response(
-            status_code=429,
-            headers={'retry-after': '30'},
-            request=httpx2.Request('POST', 'https://example.com/v1/images/generations'),
-        ),
-        body=rate_limit_body,
-    )
-    model = OpenAIImageGenerationModel(
-        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
-    )
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await model.generate('a robot')
+        await model.generate('tiny robot', images=images)
 
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.body == rate_limit_body
-    assert exc_info.value.retry_after == 30
-    openai_mock_client.images.generate.assert_awaited_once()
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gpt-image-1')
+    )
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.body == {'error': error}
+    assert exc_info.value.provider_error_code == error['code']
+    assert exc_info.value.provider_error_type == error['type']
+    assert exc_info.value.retry_after == expected_retry_after
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_moderation_blocked():
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+@pytest.mark.parametrize(
+    ('transport_error', 'expected', 'phase'),
+    [
+        pytest.param(httpx2.ConnectError, ModelConnectionError, 'connect', id='connect'),
+        pytest.param(httpx2.ReadTimeout, ModelTimeoutError, 'read', id='timeout'),
+    ],
+)
+async def test_openai_image_generation_transport_error(
+    transport_error: type[httpx2.TransportError], expected: type[ModelConnectionError], phase: str, edit: bool
+):
+    """A connection failure or timeout surfaces as its pydantic-ai category on both endpoints, as from embeddings.
+
+    Not a VCR test: the transport raises before any response exists, so there is no response to record.
+    """
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        raise transport_error('failed', request=request)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)),
+    )
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
+
+    with pytest.raises(ModelConnectionError) as exc_info:
+        await model.generate('tiny robot', images=images)
+
+    assert type(exc_info.value) is expected
+    assert exc_info.value.phase == phase
+    assert isinstance(exc_info.value.__cause__, APIConnectionError)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('gave_up', [False, True], ids=['sdk', 'gave-up'])
+async def test_openai_image_generation_moderation_blocked(gave_up: bool):
     """A `moderation_blocked` 400 keeps its structured body and is never auto-retried.
 
     OpenAI returns HTTP 400 with an `error` object whose `code` is `moderation_blocked`, carrying a
@@ -4033,6 +4713,9 @@ async def test_openai_image_generation_moderation_blocked():
     what pins the unwrapped shape. Not a VCR test because provoking a real block means committing a
     policy-violating prompt to the repository, which the recorded request body would carry verbatim. The
     response is fixed from OpenAI's documented error format instead.
+
+    A retrying transport that gave up on the 400 raises it before `openai` sees it; the error object is unwrapped from
+    its body the same way.
     """
     requests: list[httpx2.Request] = []
 
@@ -4048,9 +4731,12 @@ async def test_openai_image_generation_moderation_blocked():
                     'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
                 }
             },
+            request=request,
         )
 
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+    http_client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(gave_up_on(handle_request) if gave_up else handle_request)
+    )
     openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
     model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=openai_client))
 
@@ -4496,3 +5182,78 @@ async def test_instrumentation_exception_honors_include_content(capfire: Capture
         assert set(attributes) == {'exception.type', 'exception.escaped'}
         assert span.status.description is None
         assert 'image-secret' not in str(capfire.exporter.exported_spans)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+async def test_openai_image_generation_non_json_response_body_raises_model_api_error(edit: bool):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+        images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.generate('tiny robot', images=images)
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+async def test_openai_image_generation_text_plain_response_body_raises_model_api_error(edit: bool):
+    """A 200 response with a `text/plain` body, which the SDK returns as a `str`, raises `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9579
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'upstream connect error', headers={'content-type': 'text/plain'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+        images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.generate('tiny robot', images=images)
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_non_json_response_body_raises_model_api_error():
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.generate('tiny robot')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

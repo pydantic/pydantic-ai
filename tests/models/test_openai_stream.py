@@ -21,7 +21,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -51,7 +50,10 @@ def evroc_api_key() -> str:
 
 @pytest.mark.vcr
 async def test_clean_eof_without_finish_reason_is_accepted_by_default(allow_model_requests: None, evroc_api_key: str):
-    """Keep missing finish reasons non-fatal unless the model profile opts into strict handling."""
+    """Keep missing finish reasons non-fatal unless the model profile opts into strict handling.
+
+    A clean end of stream counts as a `'stop'`, as a complete response without a finish reason does.
+    """
     model = _evroc_model(evroc_api_key)
     messages, settings = _evroc_request()
 
@@ -61,7 +63,9 @@ async def test_clean_eof_without_finish_reason_is_accepted_by_default(allow_mode
 
     response = stream.get()
     assert response.state == 'complete'
-    assert response.finish_reason is None
+    assert response.finish_reason == 'stop'
+    assert response.provider_details is not None
+    assert 'finish_reason' not in response.provider_details
     assert response.text is not None
     assert response.text.strip().splitlines() == [str(number) for number in range(1, 215)]
 

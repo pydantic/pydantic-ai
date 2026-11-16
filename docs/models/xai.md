@@ -1,3 +1,7 @@
+---
+description: "Use xAI Grok models with Pydantic AI: configure the provider and use image generation, X search, file attachments, reasoning effort and multi-agent models."
+---
+
 # xAI
 
 ## Install
@@ -27,9 +31,12 @@ You can then use [`XaiModel`][pydantic_ai.models.xai.XaiModel] by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('xai:grok-4.3')
+agent = Agent('{{ xai:medium }}')
 ...
 ```
+
+!!! tip
+    For voice agents, use Grok Voice with a [realtime session](../realtime/xai.md) instead.
 
 Or initialise the model directly:
 
@@ -38,7 +45,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 
 # Uses XAI_API_KEY environment variable
-model = XaiModel('grok-4.3')
+model = XaiModel('{{ xai:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -52,7 +59,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 # Custom API key
 provider = XaiProvider(api_key='your-api-key')
-model = XaiModel('grok-4.3', provider=provider)
+model = XaiModel('{{ xai:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -69,30 +76,12 @@ provider = XaiProvider(
     api_host='gateway.example.com',
     timeout=30,
 )
-model = XaiModel('grok-4.3', provider=provider)
+model = XaiModel('{{ xai:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
 
-`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
-
-You can also attach gRPC `metadata` to every request the client makes. The canonical use is xAI prompt-cache sticky routing, which pins a conversation to a cache node via an `x-grok-conv-id` so repeated prefixes are served from cache instead of reprocessed:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.xai import XaiModel
-from pydantic_ai.providers.xai import XaiProvider
-
-provider = XaiProvider(
-    api_key='your-api-key',
-    metadata=(('x-grok-conv-id', 'my-conversation-id'),),
-)
-model = XaiModel('grok-4.3', provider=provider)
-agent = Agent(model)
-...
-```
-
-`metadata` is a sequence of `(key, value)` string tuples forwarded verbatim to the underlying `xai_sdk.AsyncClient`, so the xAI SDK's own documentation on [maximizing cache hits](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits) applies. Because it is client-scoped, it applies to *every* request made through the provider — a provider configured with a fixed `x-grok-conv-id` must not be shared between unrelated conversations, or those conversations will collide on the same cache node. Use a separate provider per conversation when the metadata is conversation-specific. Like `api_host` and `timeout`, it is omitted when left unset and ignored when a custom `xai_sdk.AsyncClient` is passed.
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes; a request that exceeds it raises [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
 
 Or with a custom `xai_sdk.AsyncClient`:
 
@@ -103,12 +92,60 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 from pydantic_ai.providers.xai import XaiProvider
 
-xai_client = AsyncClient(api_key='your-api-key')
-provider = XaiProvider(xai_client=xai_client)
-model = XaiModel('grok-4.3', provider=provider)
+
+async def main():
+    async with AsyncClient(api_key='your-api-key') as xai_client:
+        model = XaiModel('{{ xai:medium.name }}', provider=XaiProvider(xai_client=xai_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+A client you pass as `xai_client` is yours to close, for example with `async with`; Pydantic AI never closes it. Its gRPC channel binds to the event loop it was created in, so create the client inside the event loop that uses it, as above.
+
+## Cache sticky routing {#cache-sticky-routing}
+
+You can attach gRPC `metadata` to every request the provider's client makes. The canonical use is xAI prompt-cache sticky routing, which pins a conversation to a cache node via an `x-grok-conv-id` so repeated prefixes are served from cache instead of reprocessed:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+provider = XaiProvider(
+    api_key='your-api-key',
+    metadata=(('x-grok-conv-id', 'my-conversation-id'),),
+)
+model = XaiModel('{{ xai:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
+
+`metadata` is a sequence of `(key, value)` string tuples forwarded verbatim to the underlying `xai_sdk.AsyncClient`, so the xAI SDK's own documentation on [maximizing cache hits](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits) applies. Because it is client-scoped, it applies to *every* request made through the provider — a provider configured with a fixed `x-grok-conv-id` must not be shared between unrelated conversations, or those conversations will collide on the same cache node. Use a separate provider per conversation when the metadata is conversation-specific. Like `api_host` and `timeout`, it is omitted when left unset and ignored when a custom `xai_sdk.AsyncClient` is passed.
+
+## SDK retries {#sdk-retries}
+
+The `xai_sdk.AsyncClient` turns on gRPC's own retries: a request that fails with `UNAVAILABLE` is attempted up to 5 times, with a backoff between 0.1 and 1 second. gRPC also transparently retries an attempt that never reached the server. These retries happen inside the gRPC channel, so Pydantic AI can't see or count them. To keep the retry policy in your own code, pass a client with gRPC retries disabled:
+
+```python
+from xai_sdk import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+
+async def main():
+    async with AsyncClient(api_key='your-api-key', channel_options=[('grpc.enable_retries', 0)]) as xai_client:
+        model = XaiModel('{{ xai:medium.name }}', provider=XaiProvider(xai_client=xai_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+The retry policy belongs to the channel and can't change per request, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on xAI. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Image generation
 
@@ -151,7 +188,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
-    'xai:grok-4.3',
+    '{{ xai:medium }}',
     capabilities=[
         XSearch(
             allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
@@ -207,7 +244,9 @@ agent = Agent(
 
 Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
 
-Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it always reasons: `thinking=False` is silently ignored and `thinking=True` maps to `'medium'`.
+Grok 3 Mini (`grok-3-mini` and `grok-3-mini-fast`) also accepts `'none'`, so `thinking=False` disables reasoning there too; `thinking=True` and the other levels map onto its `'low'` and `'high'`.
+
+Grok 4.5 and 4.6 support `'low'`, `'medium'`, and `'high'` but not `'none'`, so they always reason: `thinking=False` sends the lowest effort, `'low'`, and `thinking=True` maps to `'medium'`. Grok 4.7 supports the same values but not `'none'`; `thinking=False` also sends `'low'`, while `thinking=True` omits `reasoning_effort` so xAI applies its documented `'high'` default. xAI accepts `'xhigh'`, but Pydantic AI currently maps it (and unified `'max'`) to `'high'`; see [issue #9744](https://github.com/pydantic/pydantic-ai/issues/9744) for dedicated support.
 
 ## Agentic turns
 
@@ -218,7 +257,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModelSettings
 
 agent = Agent(
-    'xai:grok-4.3',
+    '{{ xai:medium }}',
     model_settings=XaiModelSettings(xai_max_turns=5),
 )
 ```

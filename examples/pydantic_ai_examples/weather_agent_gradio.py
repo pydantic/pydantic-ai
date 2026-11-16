@@ -12,7 +12,7 @@ try:
     import gradio as gr
 except ImportError as e:
     raise ImportError(
-        'Please install gradio with `pip install gradio`. You must use python>=3.10.'
+        'Please install gradio with `pip install gradio`. You must use python>=3.11.'
     ) from e
 
 TOOL_TO_DISPLAY_NAME = {'get_lat_lng': 'Geocoding API', 'get_weather': 'Weather API'}
