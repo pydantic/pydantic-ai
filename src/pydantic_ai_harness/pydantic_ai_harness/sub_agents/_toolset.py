@@ -32,7 +32,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import register_tag, wrap
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryFeedbackPart, repair_messages
+from pydantic_ai.messages import ModelMessage, ModelResponse, is_retry, repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -280,7 +280,7 @@ class SubAgent(Generic[AgentDepsT]):
     keep_partial_output: bool = dataclass_field(default=False, kw_only=True)
     """Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response.
     The parent gets it after the steering message, in a `<partial_output>` frame. It has not passed the child's
-    output validation; text the child rejected as output and retried is not passed on."""
+    output validation; text from a response the child answered with a retry, such as rejected output, is skipped."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -1648,7 +1648,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
 
 def _last_text(messages: Sequence[ModelMessage]) -> str | None:
-    """The text of the last model response that has any, skipping one the run rejected as output and retried."""
+    """The text of the last model response that has any, skipping one the run answered with a retry."""
     retried = False
     for message in reversed(messages):
         if isinstance(message, ModelResponse):
@@ -1656,7 +1656,7 @@ def _last_text(messages: Sequence[ModelMessage]) -> str | None:
                 return message.text
             retried = False
         else:
-            retried = any(isinstance(part, RetryFeedbackPart) for part in message.parts)
+            retried = any(is_retry(part) for part in message.parts)
     return None
 
 

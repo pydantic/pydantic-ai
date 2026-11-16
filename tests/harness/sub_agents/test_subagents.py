@@ -844,11 +844,17 @@ Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable o
             ]
         )
 
-    async def test_partial_output_skips_text_rejected_as_output(self) -> None:
-        worker = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('secret')])), name='worker')
+    @pytest.mark.parametrize('output_tool', [False, True])
+    async def test_partial_output_skips_text_rejected_as_output(self, output_tool: bool) -> None:
+        parts = [TextPart('secret'), *([ToolCallPart('final_result', {'response': 1})] if output_tool else [])]
+        worker = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=parts)),
+            name='worker',
+            output_type=int if output_tool else str,
+        )
 
         @worker.output_validator
-        def reject(output: str) -> str:
+        def reject(output: int | str) -> int | str:
             raise ModelRetry('not allowed')
 
         parent: Agent[object, str] = Agent(
