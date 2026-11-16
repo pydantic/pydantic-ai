@@ -220,7 +220,8 @@ class Skills(AbstractCapability[AgentDepsT]):
             read_files: Give the model a `read_skill_file` tool that reads a UTF-8 text file in the
                 directory of a skill it has loaded, from the workspace the skill was read from. It
                 works without file tools and for a `workspace=` library, and does not reach files
-                outside the skill's directory, through `..` or a symlink.
+                outside the skill's directory through `..`, or through a symlink where the workspace
+                resolves symlinks, as `FileSystem` does.
         """
         if include is not None and exclude is not None:
             raise ValueError('include and exclude cannot be used together.')

@@ -321,7 +321,10 @@ skill came from, including a `workspace=` backend, so it also works for
 [skills shipped with your application](#ship-skills-with-your-application).
 The tool refuses a skill the model has not loaded with `load_capability`, a
 path that leads outside the skill's directory through `..` or a symlink, and a
-file that is not UTF-8 text. When two `Skills` combine, only the libraries of
+file that is not UTF-8 text. A filesystem-only backend without
+`SupportsRealpath` or commands cannot resolve symlinks, so there the path is
+checked as text, which suits storage without symlinks, such as an object store.
+When two `Skills` combine, only the libraries of
 one with `read_files=True` are readable. With a `scanner`, each file is
 scanned before it is returned, and a flagged file is withheld.
 
