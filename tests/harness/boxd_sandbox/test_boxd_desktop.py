@@ -21,13 +21,12 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 
-from ..display_fakes import screen
+from ..display_fakes import look_click_then_finish, screen
 from .fake_boxd import APIStatusError, FakeBoxd
 
 
@@ -260,25 +259,16 @@ def test_a_machine_without_a_desktop_has_no_display() -> None:
     assert BoxdSandboxBackend().display is None
 
 
-def _look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Takes a screenshot, clicks on what it showed, then answers."""
-    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
-    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
-    if done == len(steps):
-        return ModelResponse(parts=[TextPart('done')])
-    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
-
-
 async def test_a_desktop_machine_runs_computer_use(host: FakeBoxd) -> None:
     sandbox = BoxdSandbox(desktop=True)
-    agent = Agent(FunctionModel(_look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
+    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
 
     result = await agent.run('Click.')
 
     *_, clicked = [
         part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerReturnPart)
     ]
-    assert clicked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert clicked.result == {'performed': 1}
     assert clicked.screenshot is not None and clicked.screenshot.data == host.desktop.png
     assert host.desktop.calls == ['set_screen_size 1280x800', "click 3 4 left count=1 modifiers=''"]
 
