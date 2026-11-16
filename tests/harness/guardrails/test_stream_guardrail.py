@@ -210,24 +210,87 @@ class TestStreamGuardrail:
     def test_is_excluded_from_agent_specs(self):
         assert StreamGuardrail.get_serialization_name() is None
 
-    async def test_a_part_left_incomplete_is_dropped_unscreened(self):
+    async def test_tool_call_args_streamed_after_another_part_started_are_screened(self):
+        async def interleaved(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+            yield {0: DeltaToolCall(name='weather', json_args='{"city": ', tool_call_id='call-1')}
+            yield {1: DeltaToolCall(name='weather', json_args='{"city": "Rome"}', tool_call_id='call-2')}
+            yield {0: DeltaToolCall(json_args='"SSN 123"}')}
+
+        screened: list[object] = []
+
+        def guard(part: StreamGuardrailPart) -> GuardrailResult:
+            assert isinstance(part, ToolCallPart)
+            screened.append(part.args)
+            return GuardrailResult.block('no SSNs') if 'SSN' in str(part.args) else GuardrailResult.allow()
+
+        agent = Agent(FunctionModel(stream_function=interleaved), capabilities=[StreamGuardrail(guard=guard)])
+        seen: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        with pytest.raises(OutputBlocked, match='no SSNs'):
+            async with agent.run_stream_events('weather?') as events:
+                async for event in events:
+                    seen.append(event)  # pragma: no cover - nothing is released before the block
+
+        assert seen == []
+        assert screened == ['{"city": "SSN 123"}']
+
+    async def test_tool_call_replace_is_refused(self):
+        def guard(part: StreamGuardrailPart) -> GuardrailResult:
+            return GuardrailResult.replace(part)
+
+        with pytest.raises(UserError, match=r'cannot return GuardrailResult.replace\(\) for a tool call'):
+            async with _agent(StreamGuardrail(guard=guard)).run_stream_events('weather?') as events:
+                async for _ in events:
+                    pass
+
+    @pytest.mark.parametrize(
+        'stream',
+        [
+            pytest.param(
+                [
+                    PartStartEvent(index=0, part=TextPart(content='abandoned')),
+                    PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' secret')),
+                    PartStartEvent(index=0, part=TextPart(content='kept')),
+                    PartEndEvent(index=0, part=TextPart(content='kept')),
+                ],
+                id='restarted-while-streaming',
+            ),
+            pytest.param(
+                [
+                    PartStartEvent(index=0, part=ToolCallPart(tool_name='weather', args='{"city": "SSN"}')),
+                    PartEndEvent(index=0, part=ToolCallPart(tool_name='weather', args='{"city": "SSN"}')),
+                    PartStartEvent(index=0, part=TextPart(content='kept')),
+                    PartEndEvent(index=0, part=TextPart(content='kept')),
+                ],
+                id='restarted-while-held',
+            ),
+            pytest.param(
+                [
+                    PartStartEvent(index=0, part=TextPart(content='kept')),
+                    PartEndEvent(index=0, part=TextPart(content='kept')),
+                    PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' secret')),
+                    PartStartEvent(index=1, part=TextPart(content='never ends')),
+                    PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' secret')),
+                ],
+                id='late-delta-and-incomplete-part',
+            ),
+        ],
+    )
+    async def test_unscreened_content_is_dropped(self, stream: list[AgentStreamEvent]):
         screened: list[str] = []
 
         def guard(part: StreamGuardrailPart) -> bool:
-            assert isinstance(part, TextPart)
-            screened.append(part.content)
+            screened.append(str(part))
             return True
 
         async def events() -> AsyncIterator[AgentStreamEvent]:
-            yield PartStartEvent(index=0, part=TextPart(content='abandoned'))
-            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' secret'))
-            yield PartStartEvent(index=0, part=TextPart(content='kept'))
-            yield PartEndEvent(index=0, part=TextPart(content='kept'))
+            for event in stream:
+                yield event
 
         ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
         released = [event async for event in StreamGuardrail(guard=guard).wrap_run_event_stream(ctx, stream=events())]
 
-        assert [_describe(event) for event in released] == snapshot(
-            ["PartStartEvent 0 text 'kept'", "PartEndEvent 0 text 'kept'"]
-        )
-        assert screened == ['kept']
+        assert [_describe(event) for event in released] == [
+            "PartStartEvent 0 text 'kept'",
+            "PartEndEvent 0 text 'kept'",
+        ]
+        assert screened == [str(TextPart(content='kept'))]

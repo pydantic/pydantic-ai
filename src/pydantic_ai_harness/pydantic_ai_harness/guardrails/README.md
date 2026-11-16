@@ -541,7 +541,7 @@ A `ToolGuardrail` is a control over tools this run executes. For the ones it doe
 
 ### Screening streamed parts
 
-`StreamGuardrail` holds back each text, thinking and tool-call part of the run's event stream until the part is complete, then passes the whole `TextPart`, `ThinkingPart` or `ToolCallPart` to its `guard`. `allow` releases the part's events as they arrived, `block` raises `OutputBlocked` before any of them reach the caller, and `replace` releases one start and one end event carrying the replacement part, which must be of the same type. `retry` and `approve` raise `UserError`. Events that arrive while a part is held wait with it, so the caller sees them in their original order.
+`StreamGuardrail` holds back each text, thinking and tool-call part of the run's event stream until the part is complete, then passes the whole `TextPart`, `ThinkingPart` or `ToolCallPart` to its `guard`. `allow` releases the part's events as they arrived, `block` raises `OutputBlocked` before any of them reach the caller, and `replace` releases one start and one end event carrying the replacement part, which must be of the same type. `retry` and `approve` raise `UserError`, as does `replace` for a tool call, whose original arguments the run would still execute: rewrite those with `ToolGuardrail`. Events that arrive while a part is held wait with it, so the caller sees them in their original order.
 
 ```python
 from dataclasses import replace
@@ -561,7 +561,7 @@ def no_ssn(part: StreamGuardrailPart) -> GuardrailResult:
 agent = Agent('openai:gpt-5.4', capabilities=[StreamGuardrail(guard=no_ssn)])
 ```
 
-Each part reaches the caller only once it is complete, so its first chunk is delayed by the part's generation time plus the guard's latency. The guard screens the event stream: `run_stream_events()`, an `event_stream_handler`, `node.stream()` under `iter()`, and the UI adapters built on them. `run_stream()` reads the response directly, so its `stream_text()`, `stream_output()` and `stream_response()` are not screened. A replacement changes only what the event stream carries, not the message history or the run's output: add `OutputGuardrail` and `ToolGuardrail` for those. The guard runs on the live stream, so it is not a durable operation and needs no `id`.
+A text or thinking part is complete at its end event, so its first chunk is delayed by the part's generation time plus the guard's latency. A tool call is complete only when the model response ends, as a provider can still stream its arguments after another part started. A delta for a part already released is dropped, as the guard never saw it. The guard screens the event stream: `run_stream_events()`, an `event_stream_handler`, `node.stream()` under `iter()`, and the UI adapters built on them. `run_stream()` reads the response directly, so its `stream_text()`, `stream_output()` and `stream_response()` are not screened. A replacement changes only what the event stream carries, not the message history or the run's output: add `OutputGuardrail` and `ToolGuardrail` for those. The guard runs on the live stream, so it is not a durable operation and needs no `id`.
 
 ## Durable execution
 

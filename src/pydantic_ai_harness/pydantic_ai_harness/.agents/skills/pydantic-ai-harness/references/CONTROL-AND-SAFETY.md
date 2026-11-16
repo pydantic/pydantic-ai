@@ -93,7 +93,7 @@ value); return `bool(...)` instead.
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `StreamGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|---|
 | block | skip the model call; message becomes the response | raise `OutputBlocked` | raise `OutputBlocked`, part never released | skip tool; message is the tool result | message replaces the result |
-| replace | rewrite the prompt (text prompts, sequential only) | stream a same-type part instead (events only) | run with new args mapping | substitute result |
+| replace | rewrite the prompt (text prompts, sequential only) | stream a same-type text or thinking part instead (events only); `UserError` for a tool call | run with new args mapping | substitute result |
 | retry | `UserError` | `ModelRetry` to the model (counts output retries) | `UserError` | `ModelRetry` | `ModelRetry` (tool already ran) |
 | approve | `UserError` | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
 
@@ -177,7 +177,8 @@ Key parameters:
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
 - `StreamGuardrail(guard)`: holds each streamed `TextPart`, `ThinkingPart` or `ToolCallPart` until it
   is complete and passes the whole part to the guard before its events reach `run_stream_events()`,
-  an `event_stream_handler` or a UI adapter. Adds the part's generation time to its first chunk.
+  an `event_stream_handler` or a UI adapter. Adds the part's generation time to its first chunk; a
+  tool call is held until the model response ends.
   `run_stream()`'s `stream_text()`/`stream_output()` and the run's history and output are not
   changed; pair with `OutputGuardrail`/`ToolGuardrail` for those.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both

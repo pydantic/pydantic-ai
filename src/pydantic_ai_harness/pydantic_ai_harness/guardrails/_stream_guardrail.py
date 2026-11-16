@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import assert_never
 
 from typing_extensions import TypeIs
@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolCallPartDelta,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
@@ -46,6 +47,11 @@ def _is_part(value: object) -> TypeIs[StreamGuardrailPart]:
 
 def _replacement_check(part: StreamGuardrailPart) -> Callable[[object, int], StreamGuardrailPart]:
     def check(replacement: object, position: int) -> StreamGuardrailPart:
+        if isinstance(part, ToolCallPart):
+            raise UserError(
+                f'A StreamGuardrail guard cannot return GuardrailResult.replace() for a tool call; guard at position '
+                f'{position} did. The run would still execute the original arguments: rewrite them with ToolGuardrail.'
+            )
         if not _is_part(replacement) or type(replacement) is not type(part):
             raise UserError(
                 f'GuardrailResult.replace() for a StreamGuardrail must provide a {type(part).__name__} to replace '
@@ -76,17 +82,95 @@ def _drop_part(events: list[AgentStreamEvent], index: int) -> list[AgentStreamEv
     ]
 
 
+_Screen = Callable[[int, StreamGuardrailPart, list[AgentStreamEvent]], Awaitable[list[AgentStreamEvent]]]
+
+
+@dataclass
+class _Hold:
+    """The events of one model response's stream that wait on a verdict.
+
+    Text and thinking parts are screened at their end event. Tool-call parts are screened when the
+    stream ends, as a provider can still stream arguments to a call after another part started.
+    A delta for a part already released is dropped, as the guard never saw it.
+    """
+
+    screen: _Screen
+    held: list[AgentStreamEvent] = field(default_factory=list[AgentStreamEvent])
+    streaming: set[int] = field(default_factory=set[int])
+    calls: dict[int, ToolCallPart] = field(default_factory=dict[int, ToolCallPart])
+    released: set[int] = field(default_factory=set[int])
+
+    async def feed(self, event: AgentStreamEvent) -> list[AgentStreamEvent]:
+        """Take `event` and return the events that can be released now."""
+        if isinstance(event, PartStartEvent):
+            self._start(event)
+        elif isinstance(event, PartDeltaEvent) and not self._delta(event):
+            return []
+        if not (self.streaming or self.calls):
+            return [event]
+        self.held.append(event)
+        if isinstance(event, PartEndEvent) and event.index in self.streaming and _is_part(event.part):
+            self.streaming.discard(event.index)
+            if isinstance(event.part, ToolCallPart):
+                self.calls[event.index] = event.part
+            else:
+                await self._screen(event.index, event.part)
+        return self._release()
+
+    async def finish(self) -> list[AgentStreamEvent]:
+        """Screen the held tool calls once the stream has ended, and return what can be released."""
+        for index in self.streaming:
+            self.held = _drop_part(self.held, index)
+        self.streaming.clear()
+        for index, call in self.calls.items():
+            await self._screen(index, call)
+        self.calls.clear()
+        return self._release()
+
+    def _delta(self, event: PartDeltaEvent) -> bool:
+        """Apply a delta to a held tool call, returning whether the delta is kept."""
+        if event.index in self.released:
+            return False
+        call = self.calls.get(event.index)
+        if call is not None and isinstance(event.delta, ToolCallPartDelta):
+            updated = event.delta.apply(call)
+            if isinstance(updated, ToolCallPart):  # pragma: no branch
+                self.calls[event.index] = updated
+        return True
+
+    def _start(self, event: PartStartEvent) -> None:
+        """Track a part that starts, dropping a held part at its index that will now never complete."""
+        if event.index in self.streaming or event.index in self.calls:
+            self.held = _drop_part(self.held, event.index)
+            self.streaming.discard(event.index)
+            self.calls.pop(event.index, None)
+        self.released.discard(event.index)
+        if _is_part(event.part):
+            self.streaming.add(event.index)
+
+    async def _screen(self, index: int, part: StreamGuardrailPart) -> None:
+        self.held = await self.screen(index, part, self.held)
+        self.released.add(index)
+
+    def _release(self) -> list[AgentStreamEvent]:
+        if self.streaming or self.calls:
+            return []
+        released, self.held = self.held, []
+        return released
+
+
 @dataclass
 class StreamGuardrail(AbstractCapability[AgentDepsT]):
     """Screen each streamed text, thinking and tool-call part before the caller receives it.
 
-    The events of each such part are held back from its start until it is complete, when the
-    `guard` receives the whole part: `allow` releases the events as they arrived, `block` raises
+    The events of each such part are held back until it is complete, when the `guard` receives the
+    whole part: `allow` releases the events as they arrived, `block` raises
     [`OutputBlocked`][pydantic_ai_harness.guardrails.OutputBlocked] without releasing them, and
     `replace` releases a start and end event carrying the replacement part instead, which must be
     of the same type. Events that arrive while a part is held are held with it, so the caller sees
     them in their original order. `retry` and `approve` raise
-    [`UserError`][pydantic_ai.exceptions.UserError].
+    [`UserError`][pydantic_ai.exceptions.UserError], as does `replace` for a tool call, whose
+    original arguments the run would still execute: rewrite those with `ToolGuardrail`.
 
     ```python
     from dataclasses import replace
@@ -106,15 +190,17 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
     agent = Agent('openai:gpt-5.4', capabilities=[StreamGuardrail(guard=no_ssn)])
     ```
 
-    Each part reaches the caller only once it is complete and screened, which adds the part's
-    generation time and the guard's latency before its first chunk.
+    A text or thinking part is complete at its end event, so its first chunk is delayed by the
+    part's generation time plus the guard's latency. A tool call is complete only when the model
+    response ends, as a provider can still stream its arguments after another part started, and
+    a delta for a part already released is dropped.
 
     The guard screens the run's event stream: `run_stream_events()`, an `event_stream_handler`,
-    `node.stream()` under `iter()`, `StreamedRunResult.stream_text()` and UI adapters.
-    `stream_output()` and `stream_response()` read the accumulated response rather than the events,
-    and a replacement changes only what the event stream carries, not the message history or the
-    run's output: pair it with `OutputGuardrail` and `ToolGuardrail` for those. The guard runs on
-    the live stream, so it is not a durable operation.
+    `node.stream()` under `iter()`, and UI adapters. `run_stream()` reads the accumulated response,
+    so its `stream_text()`, `stream_output()` and `stream_response()` are not screened. A
+    replacement changes only what the event stream carries, not the message history or the run's
+    output: pair it with `OutputGuardrail` and `ToolGuardrail` for those. The guard runs on the
+    live stream, so it is not a durable operation.
     """
 
     guard: StreamGuardrailFunc[AgentDepsT] | Sequence[StreamGuardrailFunc[AgentDepsT]]
@@ -138,36 +224,22 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Hold each screened part's events until the guard has decided on the complete part.
+        """Hold each screened part's events until the guard has decided on the complete part."""
 
-        A part that starts while another is held means the held one will not complete, as when a
-        model stream is replaced mid-part, so the held part's events are dropped unscreened.
-        """
-        held: list[AgentStreamEvent] = []
-        open_index: int | None = None
+        async def screen(index: int, part: StreamGuardrailPart, held: list[AgentStreamEvent]) -> list[AgentStreamEvent]:
+            return await self._screen(ctx, index, part, held)
+
+        hold = _Hold(screen)
         async for event in stream:
-            if isinstance(event, PartStartEvent) and isinstance(event.part, StreamGuardrailPart):
-                if open_index is not None:
-                    held = _drop_part(held, open_index)
-                open_index = event.index
-            if open_index is None:
-                yield event
-                continue
-            held.append(event)
-            if (
-                isinstance(event, PartEndEvent)
-                and event.index == open_index
-                and isinstance(event.part, StreamGuardrailPart)
-            ):
-                released = await self._screen(ctx, open_index, event.part, held)
-                held, open_index = [], None
-                for released_event in released:
-                    yield released_event
+            for released in await hold.feed(event):
+                yield released
+        for released in await hold.finish():
+            yield released
 
     async def _screen(
         self, ctx: RunContext[AgentDepsT], index: int, part: StreamGuardrailPart, held: list[AgentStreamEvent]
     ) -> list[AgentStreamEvent]:
-        """Run the guard chain on a complete `part`, returning the `held` events to release."""
+        """Run the guard chain on the complete `part` at `index`, returning the `held` events to release."""
         check = _replacement_check(part)
         verdict, position = await evaluate_all(
             as_guards(self.guard, capability='StreamGuardrail'), ctx, part, check_replacement=check
