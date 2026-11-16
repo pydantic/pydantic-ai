@@ -181,8 +181,6 @@ class _Plan:
     """Whether the actions to run differ from the ones the model asked for."""
     limit: _ScreenshotLimit
     """The largest screenshot both that model and the run's model take; a larger screen is refused."""
-    model_name: str
-    """The name of the run's model, for the error refusing a screen it can't see."""
     held: list[MouseButton]
     """The mouse buttons the last call that succeeded said are still pressed."""
     keeps_held: bool
@@ -226,14 +224,14 @@ def _model_limit(model: AbstractModel, call: ComputerCallPart | None = None) -> 
     )
 
 
-def _check_fits(what: str, size: tuple[int, int], limit: _ScreenshotLimit, model_name: str, purpose: str = '') -> None:
+def _check_fits(what: str, size: tuple[int, int], limit: _ScreenshotLimit, purpose: str = '') -> None:
     """Refuse a screenshot of `size` larger than the model can see, naming it `what`.
 
     `purpose` ends the advice to start the display smaller, such as `' to use this model on it'`.
     """
     if (fitted := limit.fit(size)) != size:
         raise UserError(
-            f'{what} is {size[0]}x{size[1]}, larger than {model_name!r} can see. Start the display at '
+            f'{what} is {size[0]}x{size[1]}, larger than the model can see. Start the display at '
             f'{fitted[0]}x{fitted[1]} or smaller{purpose}.'
         )
 
@@ -560,10 +558,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     )
     """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
 
-    def __post_init__(self) -> None:
-        if self.settle_seconds < 0:
-            raise UserError('`settle_seconds` must not be negative.')
-
     @cached_property
     def _toolset(self) -> FunctionToolset[AgentDepsT]:
         """The `computer` tool, built once per instance so every run of an agent gets the same toolset."""
@@ -613,7 +607,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # The next request goes to the run's model, or with a sticky `ModelFallback` to the one that made the call,
             # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
             limit=_model_limit(ctx.model, call),
-            model_name=ctx.model.model_name,
             held=list(run.held) if run else [],
             keeps_held=run is not None,
         )
@@ -674,7 +667,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 size = await _display_size(display)
                 # The call ends with a screenshot at the screen's size, so a screen the model can't see ends the run
                 # before anything acts.
-                _check_fits('The screen', size, plan.limit, plan.model_name)
+                _check_fits('The screen', size, plan.limit)
                 # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size.
                 space = (plan.grid, plan.grid) if plan.grid else plan.seen or size
                 mapping = _CoordinateMapping(space=space, display=size)
@@ -820,7 +813,5 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             )
         size = _last_screenshot_size(request_context.messages)
         if size is not None:
-            _check_fits(
-                'The latest screenshot', size, _model_limit(model), model.model_name, ' to use this model on it'
-            )
+            _check_fits('The latest screenshot', size, _model_limit(model), ' to use this model on it')
         return request_context
