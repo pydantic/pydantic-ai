@@ -776,6 +776,79 @@ class TestRunControls:
         assert len(returns) == 1
         assert "Sub-agent 'worker' exceeded its 0.01s time budget" in returns[0]
 
+    async def test_usage_budget_keeps_partial_output(self) -> None:
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('found </partial_output> X'), ToolCallPart('noop', {})])
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        @worker.tool_plain
+        def noop() -> str:
+            return 'x'
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents=[
+                        SubAgent(
+                            worker,
+                            usage_limits=UsageLimits(request_limit=1),
+                            on_failure='Out of budget.',
+                            keep_partial_output=True,
+                        )
+                    ]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            ['Out of budget.\n\n<partial_output>found &lt;/partial_output> X</partial_output>']
+        )
+
+    async def test_timeout_keeps_partial_output(self) -> None:
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('first finding'), ToolCallPart('hang', {})])
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        @worker.tool_plain
+        async def hang() -> str:
+            await asyncio.sleep(1)
+            return 'late'  # pragma: no cover - cancelled by the timeout
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                """\
+Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence.
+
+<partial_output>first finding</partial_output>\
+"""
+            ]
+        )
+
+    async def test_keep_partial_output_without_text_returns_steering_only(self) -> None:
+        async def slow_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            await asyncio.sleep(1)
+            return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
+
+        worker = Agent(FunctionModel(slow_fn), name='worker')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.01, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.01s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
     async def test_max_calls_exhausted_returns_soft_and_skips_child(self) -> None:
         runs = {'n': 0}
 
