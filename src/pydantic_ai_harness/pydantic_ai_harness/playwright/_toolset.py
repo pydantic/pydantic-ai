@@ -1037,8 +1037,8 @@ class PlaywrightBrowserSession:
     Exiting closes whatever was started, in the order that a half-built session
     still tears down cleanly.
 
-    `PlaywrightBrowser` creates one per run (via `for_run`), so concurrent runs
-    never share a page. It can also be driven directly:
+    `PlaywrightBrowser` creates one session per run. Sessions using the same
+    default CDP context share its pages. It can also be driven directly:
 
     ```python
     async with PlaywrightBrowserSession(policy=EgressPolicy()) as session:

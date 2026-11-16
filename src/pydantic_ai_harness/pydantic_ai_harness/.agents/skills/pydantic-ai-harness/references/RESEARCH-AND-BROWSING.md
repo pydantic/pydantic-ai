@@ -343,13 +343,12 @@ Fields: `headless=True`, `allowed_domains=None` (exact host plus subdomains), `p
 `EgressPolicy`), `block_private_addresses=True`, `screenshot_on_navigate=False`,
 `max_content_tokens=4000`, `action_timeout_ms=5000`, `navigation_timeout_ms=60000` (`0` disables
 either), `chromium_sandbox=True`, `auto_install_chromium=False`, `storage_state=None` (Playwright
-cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium). Set
-`cdp_url_factory` to an async endpoint supplier to create/resume the provider browser only on the
-first browser tool call. Its endpoint is cached per run; the caller owns provider cleanup. Set
-`cdp_context='default'` to reuse the default context's sign-ins and tabs; the default remains
-`'new'`. `'default'` mode requires a CDP endpoint and rejects `storage_state`. Loaded tab and frame
-URLs must pass the egress policy before page tools run. Native session handlers and request guards
-still run; the browser owner controls service workers and downloads.
+cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium).
+`cdp_url_factory` calls an async endpoint supplier on first browser use and caches its result per
+run; the caller owns provisioning and cleanup. `cdp_context='default'` reuses sign-ins and tabs
+instead of creating a `'new'` context. It requires a CDP endpoint and excludes `storage_state`.
+Loaded tabs and frames must pass the egress policy. Service workers and existing connections
+may bypass request guards; use a dedicated agent profile.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,

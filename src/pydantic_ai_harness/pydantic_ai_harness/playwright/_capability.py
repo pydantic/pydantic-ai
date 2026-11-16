@@ -112,9 +112,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     https://github.com/pydantic/pydantic-ai/issues/9204. Set
     `allowed_domains` when the agent may act on untrusted input.
 
-    Chromium starts lazily on the first browser-tool call and is closed when the
-    run ends (on success, error, or cancellation); runs that never call a browser
-    tool pay no Playwright cost. When no browser can be started the tool returns a
+    The first browser-tool call launches Chromium or connects through CDP. At
+    run end, a local browser is closed or a CDP connection is disconnected. Runs
+    without browser calls start neither. When no browser can be started the tool returns a
     `playwright install chromium` hint instead of ending the run, so an agent that
     can run a shell can install it and carry on, and the process gets a
     `BrowserUnavailableWarning` for the developer who is not reading tool results.
@@ -231,15 +231,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     cdp_url: str | None = field(default=None, repr=False)
     """Attach to a Chromium already running at this Chrome DevTools Protocol endpoint.
 
-    When set, the capability connects instead of launching, so no local Chromium
-    binary is needed and `auto_install_chromium` does not apply. Used for
-    managed-browser providers and benchmark harnesses that hand the agent a
-    browser. By default a new browser context is created for the run, so
-    `storage_state` and the egress guards apply as they do for a launched
-    browser, and the run does not inherit the sessions already open in that
-    Chrome. Provider endpoints sometimes carry an auth token in the URL; treat
-    those as secrets. Set `cdp_context='default'` to opt into the default
-    context's existing state instead.
+    No local Chromium binary is needed; `auto_install_chromium` does not apply.
+    Each run creates an isolated context unless `cdp_context='default'` is set.
+    Endpoints can contain authentication tokens; treat them as secrets.
     """
 
     _: KW_ONLY
@@ -340,7 +334,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         return self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> PlaywrightBrowser[AgentDepsT]:
-        """Return a fresh instance per run so concurrent runs never share a page or browser."""
+        """Create per-run connection state; a default CDP context may share pages with other runs."""
         return replace(self)
 
     def get_toolset(self) -> PlaywrightBrowserToolset[AgentDepsT]:

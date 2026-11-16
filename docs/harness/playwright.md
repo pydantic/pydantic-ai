@@ -279,34 +279,23 @@ No local Chromium binary is involved, so the install hint and
 `auto_install_chromium` do not apply. This is what managed-browser providers and
 benchmark harnesses expect: they start a browser and hand you its endpoint.
 
-The run still gets its own browser context, so `storage_state`, the domain
-allowlist, and the private-address block apply exactly as they do for a launched
-browser, and the agent does not inherit the sessions already open in that
-Chrome. Pointing `cdp_url` at your personal everyday browser is still the
-higher-risk choice -- that process holds every account you are logged into, and
-anything the agent can reach through it is reachable in one prompt injection.
-Prefer a browser started for the agent, with a scoped `storage_state`. Provider
-endpoints sometimes embed an auth token in the URL; treat those as secrets.
+By default (`cdp_context='new'`), each run creates an isolated context with its
+own `storage_state` and egress guards. Use a browser dedicated to the agent;
+CDP endpoints can contain authentication tokens and must be kept secret.
 
 ### Reusing the default context
 
-For a managed browser whose default context holds a saved profile, set
-`cdp_context='default'`. Pydantic uses that context's first page, tracks its
-existing tabs, and installs the same request guards, event listeners, and dialog
-handling as for a new context. If it has no page, one is opened. A missing
-default context or more than eight existing tabs returns a tool error rather
-than opening an empty context or closing inherited tabs.
+Set `cdp_context='default'` to reuse the browser's sign-ins, tabs, and in-memory
+state. Pydantic selects the first page or opens one if none exists. A missing
+default context or more than eight tabs returns a tool error. This mode cannot
+be combined with `storage_state`.
 
-Loaded tab and frame URLs must pass the egress policy before page handlers are
-attached and before tools read or act on a page. A context containing a refused
-document returns a tool error. The browser owner must close or navigate its tab
-before retrying; Pydantic leaves inherited pages unchanged. Frame checks use the
-policy's `subframe` rules, including its configured allowlist reach.
+Loaded tab and frame URLs must pass the policy's navigation and subframe rules
+before handlers are attached and before page operations. On refusal, close or
+navigate the blocked tab in the provider browser and retry; Pydantic leaves it
+unchanged.
 
-Pass `cdp_url_factory` instead of `cdp_url` when obtaining the endpoint should
-also be lazy. Supply an async function that creates or resumes the provider
-browser and returns its CDP URL. The resulting capability goes in the agent's
-`capabilities` list:
+For lazy provisioning, pass an async function that returns the CDP endpoint:
 
 ```python
 from pydantic_ai_harness.playwright import CdpUrlFactory, PlaywrightBrowser
@@ -316,38 +305,29 @@ def provider_browser(endpoint: CdpUrlFactory) -> PlaywrightBrowser[None]:
     return PlaywrightBrowser(cdp_url_factory=endpoint, cdp_context='default')
 ```
 
-The factory is not called at agent construction, run start, or tool discovery.
-Its returned endpoint is cached for that run, including connection retries; calls
-that raise or time out are not cached. The factory is called again for a later
-run. `navigation_timeout_ms` limits each factory call. If provisioning fails or
-times out before returning an endpoint, the factory must handle any provider
-resources it created and ambiguous provisioning results. Pydantic does not own
-the provider API or its retry policy.
+The factory runs on first browser use, within `navigation_timeout_ms`. Its
+returned endpoint is cached for the run, including connection retries; failed
+calls are not cached. A later run calls it again. The caller owns provisioning
+and cleanup, including resources created before a failure or timeout.
 
-`storage_state` cannot be combined with `'default'`: the context already has
-its state. The agent inherits that context's signed-in accounts, open pages, and
-in-memory state. Use a dedicated agent profile rather than an everyday browser.
-The browser owner controls downloads and service workers on an existing context;
-Pydantic cannot apply their creation-time settings retroactively. Requests from
-service workers or connections established before attachment may bypass the
-newly installed guards.
-
-At run end Pydantic closes its CDP connection and Playwright driver, not the
-provider browser. The caller decides whether to retain, sleep, or delete that
-browser through its provider API. A profile's persistence rules remain the
-provider's responsibility.
+Use a dedicated agent profile. Its download and service-worker settings stay
+with the browser owner; service workers and connections opened before attachment
+may bypass the request guards.
 
 ## Lifecycle
 
-Chromium starts lazily on the first browser-tool call and is closed when the run
-ends -- on success, error, or cancellation. Runs that never call a browser tool
-pay no Playwright cost (no subprocess, no window). Each agent run gets its own
-page and browser, so concurrent `agent.run()` calls never share a tab.
+Each run gets a `PlaywrightBrowserSession` that starts or connects to Chromium
+on the first browser-tool call. A run with no browser use starts neither a
+driver nor a browser. On success, error, or cancellation, a locally launched
+browser is closed; a CDP connection is disconnected. The caller decides when to
+retain, sleep, or delete the provider browser and save its profile.
 
-That lifecycle lives in `PlaywrightBrowserSession`, which the capability creates
-per run. It is exported for the case where you want the same guarded browser
-without an agent around it -- the allowlist, the private-address block, the
-service-worker block, the tab tracking, and the dialog handling all come with it:
+Locally launched browsers and `cdp_context='new'` have an isolated context per
+run. Runs using `'default'` against the same browser share its pages and state;
+the caller must coordinate concurrent access.
+
+Use `PlaywrightBrowserSession` directly for the same guards, tab tracking, and
+dialog handling without an agent:
 
 ```python
 from pydantic_ai_harness.playwright import PlaywrightBrowserSession
