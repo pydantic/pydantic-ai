@@ -5,17 +5,9 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -25,17 +17,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import WrapUpAtLimits
 from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, NOT_EXECUTED
 
-ORIGIN = 'pydantic-ai-harness.wrap_up_at_limits.v1'
-
-
-def _wrap_ups(messages: list[ModelMessage]) -> list[tuple[str, object]]:
-    return [
-        (part.content, part.metadata)
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, SystemPromptPart)
-    ]
+from ._messages import ORIGIN, wrap_ups
 
 
 class _Researcher:
@@ -81,7 +63,7 @@ class TestWrapUpAtLimits:
         assert result.output == 'what I found so far'
         assert result.usage.requests == 3
         assert sorted(looked_up) == ['a1', 'a2', 'b1', 'b2']
-        assert _wrap_ups(result.new_messages()) == [
+        assert wrap_ups(result.new_messages()) == [
             (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'request_limit'})
         ]
         # The tools stay defined on the final request, so the cached prefix still matches.
@@ -98,14 +80,14 @@ class TestWrapUpAtLimits:
         assert sorted(looked_up) == ['a1', 'b1']
         assert result.usage.tool_calls == 2
         skipped = [
-            (part.tool_call_id, part.content)
+            (part.tool_call_id, part.outcome)
             for message in result.new_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, ToolReturnPart) and part.content == NOT_EXECUTED
         ]
-        assert skipped == [('a2', NOT_EXECUTED), ('b2', NOT_EXECUTED)]
-        assert _wrap_ups(result.new_messages()) == [
+        assert skipped == [('a2', 'denied'), ('b2', 'denied')]
+        assert wrap_ups(result.new_messages()) == [
             (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'tool_calls_limit'})
         ]
 
@@ -117,7 +99,7 @@ class TestWrapUpAtLimits:
 
         assert sorted(looked_up) == ['a1', 'b1']
         assert result.usage.requests == 2
-        assert _wrap_ups(result.new_messages()) == [
+        assert wrap_ups(result.new_messages()) == [
             (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'tool_calls_limit'})
         ]
 
@@ -135,14 +117,14 @@ class TestWrapUpAtLimits:
         result = await _agent(model, []).run('Research', usage_limits=limits)
 
         assert result.output == 'what I found so far'
-        assert _wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': limit})]
+        assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': limit})]
 
     async def test_custom_prompt(self) -> None:
         result = await _agent(_Researcher(), [], WrapUpAtLimits(prompt='Stop and summarize.')).run(
             'Research', usage_limits=UsageLimits(request_limit=1)
         )
 
-        assert _wrap_ups(result.new_messages()) == [
+        assert wrap_ups(result.new_messages()) == [
             ('Stop and summarize.', {'origin': ORIGIN, 'limit': 'request_limit'})
         ]
 
@@ -156,7 +138,7 @@ class TestWrapUpAtLimits:
         for limits in (None, UsageLimits(request_limit=5)):
             result = await agent.run('Research', usage_limits=limits)
             assert result.output == 'done'
-            assert _wrap_ups(result.new_messages()) == []
+            assert wrap_ups(result.new_messages()) == []
 
     @pytest.mark.moves_cache_prefix(reason="with tool output, `tool_choice='none'` sends only the output tools")
     async def test_structured_output_is_still_produced(self) -> None:
@@ -196,6 +178,35 @@ class TestWrapUpAtLimits:
         with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
             await agent.run('Research', usage_limits=UsageLimits(request_limit=1, tool_calls_limit=1))
         assert looked_up == []
+
+    async def test_resumed_approvals_are_left_to_core(self) -> None:
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('delete', {'path': 'a'}, tool_call_id='d1'),
+                    ToolCallPart('delete', {'path': 'b'}, tool_call_id='d2'),
+                ]
+            )
+
+        deleted: list[str] = []
+        agent = Agent(FunctionModel(model), output_type=[str, DeferredToolRequests], capabilities=[WrapUpAtLimits()])
+
+        @agent.tool_plain(requires_approval=True)
+        def delete(path: str) -> str:
+            deleted.append(path)
+            return path
+
+        first = await agent.run('Clean up')
+        assert isinstance(first.output, DeferredToolRequests)
+
+        # The approved calls aren't answered with `NOT_EXECUTED`: core's own check applies to them.
+        with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
+            await agent.run(
+                message_history=first.all_messages(),
+                deferred_tool_results=DeferredToolResults(approvals={'d1': True, 'd2': True}),
+                usage_limits=UsageLimits(tool_calls_limit=1),
+            )
+        assert deleted == []
 
     async def test_resumed_provider_turn_is_left_alone(self) -> None:
         ctx = RunContext[None](

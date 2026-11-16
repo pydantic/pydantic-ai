@@ -10,12 +10,15 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ToolChoice
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import WrapUpAtLimits
+from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT
 from tests.conftest import try_import
+
+from ._messages import ORIGIN, wrap_ups
 
 with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -60,16 +63,6 @@ def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     )
 
 
-def _wrap_ups(messages: list[ModelMessage]) -> list[object]:
-    return [
-        part.metadata
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, SystemPromptPart)
-    ]
-
-
 def test_recovery_wraps_up_at_the_same_request(dbos: DBOS) -> None:
     agent = Agent(FunctionModel(_model), name='wrap_up_dbos', capabilities=[WrapUpAtLimits(), DBOSDurability()])
 
@@ -97,7 +90,7 @@ def test_recovery_wraps_up_at_the_same_request(dbos: DBOS) -> None:
 
     (first_output, first), (recovered_output, recovered) = attempts
     assert first_output == recovered_output == 'what I found so far'
-    expected = [{'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1', 'limit': 'tool_calls_limit'}]
-    assert _wrap_ups(first) == _wrap_ups(recovered) == expected
+    expected = [(DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'tool_calls_limit'})]
+    assert wrap_ups(first) == wrap_ups(recovered) == expected
     # Recovery read the model responses from the journal; the hooks ran again over them.
     assert _model_calls == [None, None, 'none']

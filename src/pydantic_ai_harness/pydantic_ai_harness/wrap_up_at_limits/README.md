@@ -35,7 +35,7 @@ async def research(topic: str) -> str:
 
 When the run's `UsageLimits` leave room for one more model request but not for another after it, `WrapUpAtLimits` makes that request the last:
 
-- It sets `tool_choice='none'` and keeps the tool definitions, so the request starts with the same prefix as the one before it and the prompt cache still matches. With [tool output](https://pydantic.dev/docs/ai/core-concepts/output/#tool-output), `tool_choice='none'` sends only the output tools, so that request's prefix differs.
+- It sets `tool_choice='none'` and keeps the tool definitions, so the cached tools and instructions still match. Some providers still miss part of the cache: Anthropic caches messages per `tool_choice`, and [some cases](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-choice-caching) send a trimmed tool list. With [tool output](https://pydantic.dev/docs/ai/core-concepts/output/#tool-output), `tool_choice='none'` sends only the output tools.
 - It adds a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts) asking the model to answer now with what it has. The model's answer is the run's output.
 
 | Field | Default | Meaning |
@@ -53,7 +53,8 @@ When the run's `UsageLimits` leave room for one more model request but not for a
 - A batch of tool calls that would go over `tool_calls_limit` is all or none, as without the capability: none of its calls run. Each is answered with `NOT_EXECUTED` under its original `tool_call_id`, so the model sees which calls didn't happen.
 - Token use is projected from this run's responses: each further request is assumed to grow by as much as the last response grew over the one before, plus the final prompt. A final request that uses more than projected still raises `UsageLimitExceeded`.
 - `cost_limit` isn't projected, and raises as before.
-- A model that still calls tools on the final request has them run as usual. The next request is made the last again, or raises `UsageLimitExceeded` when no request is left.
+- A model that still calls tools on the final request has them answered with `NOT_EXECUTED` when the tool-call budget is used up, and run as usual otherwise. The next request is made the last again, or raises `UsageLimitExceeded` when no request is left.
+- Under `Agent.run_stream()`, which runs a batch of tool calls before the capability can answer it, a batch over `tool_calls_limit` raises as before. A run resumed with [deferred tool results](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) is checked by core as before too.
 
 ## Telling a wrapped-up answer from a finished one
 
@@ -61,9 +62,10 @@ The final prompt is a `SystemPromptPart` whose `metadata` holds `'origin': 'pyda
 
 ```python
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai_harness.wrap_up_at_limits import LimitName
 
 
-def wrapped_up_by(messages: list[ModelMessage]) -> str | None:
+def wrapped_up_by(messages: list[ModelMessage]) -> LimitName | None:
     """The limit that cut the run short, given `result.new_messages()`."""
     for message in messages:
         for part in message.parts if isinstance(message, ModelRequest) else ():
@@ -84,6 +86,7 @@ def wrapped_up_by(messages: list[ModelMessage]) -> str | None:
 ## Composition
 
 - [`WarnNearLimits`](../compaction/) warns the model as limits approach. `WrapUpAtLimits` acts on the last request. Use both to have the model wind down first.
+- It decides on the usage when its hook runs. List it after capabilities that spend from the run's usage before a request, such as `SummarizingCompaction`, so it sees what they spent.
 - [Compaction](../compaction/) still runs on the final request. A strategy that makes a model request of its own, such as `SummarizingCompaction`, has no request left there and raises `UsageLimitExceeded`; wrap it in `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded))` with a strategy that makes no model requests.
 - In [Subagents](../sub_agents/), pass it in `shared_capabilities` so a sub-agent that reaches its budget returns its wrapped-up answer to the parent.
 

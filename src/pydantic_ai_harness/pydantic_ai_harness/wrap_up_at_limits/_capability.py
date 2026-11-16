@@ -48,8 +48,8 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
 
     When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for only one more model
     request, that request is made the last: it keeps the tool definitions with `tool_choice='none'`, so
-    the prompt cache still matches, and gets a request-scoped system prompt asking the model to answer
-    now. The prompt's `metadata` holds `'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1'` and the
+    the cached tools and instructions still match, and gets a request-scoped system prompt asking the
+    model to answer now. The prompt's `metadata` holds `'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1'` and the
     `'limit'` that triggered it, which tells a wrapped-up answer from a finished one.
 
     ```python
@@ -72,11 +72,13 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     ) -> NodeResult[AgentDepsT]:
         """Answer a tool-call batch that would exceed `tool_calls_limit` as not executed, so the next request wraps up.
 
-        None of the batch's calls run, as with core's own check. With no request left, core raises as usual.
+        None of the batch's calls run, as with core's own check. With no request left, or when the run resumes
+        with deferred tool results, core decides as usual.
         """
         limits = ctx.usage_limits
         if (
             not isinstance(node, CallToolsNode)
+            or node.tool_call_results is not None
             or limits is None
             or limits.tool_calls_limit is None
             or (limits.request_limit is not None and ctx.usage.requests >= limits.request_limit)
@@ -90,7 +92,13 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         if ctx.usage.tool_calls + function_calls <= limits.tool_calls_limit:
             return await handler(node)
         parts: list[ModelRequestPart] = [
-            ToolReturnPart(call.tool_name, NOT_EXECUTED, tool_call_id=call.tool_call_id, metadata={'origin': _ORIGIN})
+            ToolReturnPart(
+                call.tool_name,
+                NOT_EXECUTED,
+                tool_call_id=call.tool_call_id,
+                metadata={'origin': _ORIGIN},
+                outcome='denied',
+            )
             for call in calls
         ]
         return ModelRequestNode[AgentDepsT, object](ModelRequest(parts=parts))
