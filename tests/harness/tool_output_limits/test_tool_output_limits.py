@@ -1319,11 +1319,11 @@ class TestReadBack:
 
     @pytest.mark.parametrize('from_end', [False, True])
     @pytest.mark.parametrize('pattern', [None, 'é'])
+    @pytest.mark.parametrize('text', ['é1\r\nb\rcé\n\nd\u2028é2\x85f\r\n\ré3', 'é1\r\nb\ré2\r'])
     async def test_read_slice_streams_like_splitlines(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_end: bool, pattern: str | None
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_end: bool, pattern: str | None, text: str
     ):
         monkeypatch.setattr('pydantic_ai_harness.tool_output_limits._store._CHUNK_SIZE', 3)
-        text = 'é1\r\nb\rcé\n\nd\u2028é2\x85f\r\n\ré3'
         store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', text.encode('utf-8'))
         lines = [line for line in text.splitlines() if pattern is None or pattern in line]
