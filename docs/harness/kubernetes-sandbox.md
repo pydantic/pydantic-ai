@@ -41,7 +41,7 @@ flowchart TB
 pip/uv-add "pydantic-ai-harness[coder,kubernetes,anthropic]"
 ```
 
-The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. The client uses your kubeconfig, or the pod's service account inside the cluster. The default port-forward connection also needs `kubectl` on your `PATH`.
+The client uses your kubeconfig, or the pod's service account inside the cluster, and the default port-forward connection needs `kubectl` on your `PATH`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Set up the cluster
 
@@ -105,9 +105,17 @@ agent = Agent('{{ anthropic:large }}', capabilities=[KubernetesSandbox(warm_pool
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
-`Coder`'s shell and file tools now run in a sandbox pod, not on your machine. The run claims an already-running pod from the warm pool the first time it needs the workspace; with `Coder`, `RepoContext` does that when the run starts, even without a tool call. The sandbox keeps running after the run ends; see [Clean up](#clean-up).
+`Coder`'s shell and file tools now run in a sandbox pod claimed from the warm pool. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
+
+- **It keeps running after the run.** See [Clean up](#clean-up).
+- **It is deleted after 24 hours** (`sandbox_timeout=86_400`), whether or not anyone still uses it. `sandbox_timeout=None` keeps it until you delete it.
+- **Commands start in sandboxd's root directory**, `/workspace` in the template above, and run as the container's user.
+- **The container's image decides which tools the agent has.** It needs a POSIX shell with coreutils (`base64`, `dd`, `find`), since file operations run as shell commands.
+- **Files are lost if the pod is lost.** When a node fails, agent-sandbox starts a new pod that keeps only what the template puts on a persistent volume; the template above uses `emptyDir`.
 
 ## Continue in the same sandbox
+
+Pass the message history, and the next run works in the same sandbox:
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -121,60 +129,12 @@ followup = agent.run_sync(
     'Which capability would you add next, and where would it live?',
     message_history=result.all_messages(),
 )
+ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-The follow-up run finds the sandbox in the message history and works in it, so the clone is still there. If the claim has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty sandbox.
+If the claim has been deleted, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-## Choose the tools
-
-For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) instead of `Coder`, or write your own tool that runs in the sandbox:
-
-```python {names="defined"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.file_system import FileSystem
-from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
-from pydantic_ai_harness.shell import Shell
-
-agent = Agent('{{ anthropic:large }}', capabilities=[KubernetesSandbox(warm_pool='python-pool'), Shell(), FileSystem()])
-
-
-@agent.tool
-async def run_python(ctx: RunContext, code: str) -> str:
-    """Run a Python snippet in the sandbox."""
-    result = await ctx.workspace.run(['python', '-c', code], timeout=10)
-    return result.stdout + result.stderr
-```
-
-Commands start in sandboxd's root directory, `/workspace` in the template above, and run as the container's user.
-
-### What a timeout stops
-
-Claiming or reattaching gives up with `TimeoutError` after 190 seconds: the 180 seconds the SDK waits for a new claim to become Ready, plus one API server request. A claim that times out is deleted. A command timeout starts once the sandbox is claimed. A timeout or a cancelled run kills the command's process group, and the sandbox keeps running for other commands. `WorkspaceTimeoutError` carries the output so far. A job that detaches with `setsid` may keep running.
-
-A background job that keeps the command's output open delays the result by about 5 seconds. A command whose combined output passes 10 MiB is stopped and raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large or background output to a file instead; `Shell.start_command` manages its own output log.
-
-## Reattach later
-
-To come back to the sandbox without the message history, pass its ref back as `workspace=`:
-
-```python {names="defined"}
-from pydantic_ai import Agent
-from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
-
-agent = Agent('{{ anthropic:large }}', capabilities=[KubernetesSandbox(warm_pool='python-pool'), Coder()])
-
-result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
-ref = result.workspace.ref  # store this, e.g. in your database
-
-later = agent.run_sync('Which capability would you add next, and where would it live?', workspace=ref)
-```
-
-The ref is `<namespace>/<claim name>`. It holds no credentials, so the process that reattaches needs its own access to the cluster. `KubernetesSandbox` reattaches only to claims it made in its `namespace`; see [Security model](#security-model). Pass `workspace='new'` to claim a fresh sandbox even when the message history names one.
-
-`warm_pool`, `namespace` and `sandbox_timeout` only shape a new claim; `connection`, `working_dir` and `env` apply to every command, including after you reattach. A new claim gets `working_dir` created for it; on an attached claim it must already exist, or commands fail with `WorkspaceError`.
-
-`KubernetesSandbox(...).backend(ref)` returns a backend for a stored ref that connects on first use. A run leaves a backend you built open: close it with `await backend.aclose()`, which closes the connection (and any `kubectl port-forward`) but not the sandbox.
+The ref is `<namespace>/<claim name>`, and the process that reattaches needs its own access to the cluster. `KubernetesSandbox` reattaches only to claims it made; see [Security model](#security-model).
 
 ## Prepare a sandbox before the run
 
@@ -202,7 +162,51 @@ async def run_in_prepared_sandbox() -> str:
             await KubernetesSandbox(warm_pool='python-pool').destroy(ref)
 ```
 
-The run uses the backend as it is, so `KubernetesSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the sandbox instead, store `backend.ref` and pass it as `workspace=` to reattach later.
+The run leaves a backend you built open, so close it with `aclose()`; that closes the connection (and any `kubectl port-forward`), not the sandbox. To keep the sandbox, store `backend.ref` instead of destroying it.
+
+## Clean up
+
+Delete a sandbox with the ref you stored. This deletes the claim, and with it the pod:
+
+```python {names="defined"}
+from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+
+async def delete_sandbox(ref: WorkspaceRef) -> None:
+    await KubernetesSandbox(warm_pool='python-pool').destroy(ref)
+```
+
+A failed run returns no result, so delete its sandbox in an `on_run_error` hook:
+
+```python
+from typing import Any
+
+import anyio
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+sandbox = KubernetesSandbox(warm_pool='python-pool')
+hooks = Hooks()
+
+
+@hooks.on.run_error
+async def delete_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+    if ctx.workspace.ref is not None:
+        # Shielded so a deadline around the run can't cut the delete short, bounded so a hung call can't hang it.
+        with anyio.move_on_after(30, shield=True):
+            await sandbox.destroy(ctx.workspace.ref)
+    raise error
+
+
+agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder(), hooks])
+```
+
+Each claim's ref is logged as `Claimed Kubernetes sandbox <namespace>/<claim name>` at INFO on the `pydantic_ai_harness.kubernetes_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
 
 ## Connect to the sandbox
 
@@ -214,9 +218,11 @@ from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 sandbox = KubernetesSandbox(warm_pool='python-pool', namespace='agents', connection='in-cluster-pod-ip')
 ```
 
-`'in-cluster-service'` connects through the sandbox's Service instead, which needs `service: true` on the template. Either way, agent-sandbox's default NetworkPolicy blocks traffic from other pods, so add a `networkPolicy` to the template that lets your agent's pods reach TCP ports 8080 and 9090. Port-forwarding doesn't work on gVisor or Kata, so use an in-cluster connection there.
+- `'in-cluster-service'` connects through the sandbox's Service instead, which needs `service: true` on the template.
+- agent-sandbox's default NetworkPolicy blocks traffic from other pods, so add a `networkPolicy` to the template that lets your agent's pods reach TCP ports 8080 and 9090.
+- Port-forwarding doesn't work on gVisor or Kata, so use an in-cluster connection there.
 
-For sandboxd on other ports than 8080 and 9090, or a port-forward that needs longer to start, pass the SDK's connection config:
+For other sandboxd ports, a port-forward that needs longer to start, or sandboxd started with `--auth-token-sha256` or `--auth-token-file`, pass the SDK's connection config:
 
 ```python {names="defined"}
 from k8s_agent_sandbox.models import SandboxdPodTunnelConnectionConfig
@@ -228,36 +234,14 @@ sandbox = KubernetesSandbox(
 )
 ```
 
-`SandboxdInClusterConnectionConfig` takes the same ports, with `mode='in-cluster-pod-ip'` or `mode='in-cluster-service'`. For sandboxd started with `--auth-token-sha256` or `--auth-token-file`, pass the token as either config's `auth_token`; every command sends it.
-
-## Clean up
-
-Ending a run never deletes the sandbox. A sandbox claimed by `KubernetesSandbox` is deleted after `sandbox_timeout` (24 hours by default) whether or not anyone still uses it; delete it sooner with the ref you stored:
-
-```python {names="defined"}
-from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
-
-
-async def delete_sandbox(ref: WorkspaceRef) -> None:
-    await KubernetesSandbox(warm_pool='python-pool').destroy(ref)
-```
-
-`destroy(ref)` deletes the claim, and with it the pod; a claim that is already gone returns quietly.
-
-## How commands run
-
-Commands start through `/bin/sh` and file operations run as shell commands, so the image needs a POSIX shell with coreutils (`base64`, `dd`, `find`).
-
-If a sandbox's pod is lost while its claim remains, for example when its node fails, agent-sandbox starts a new pod. Commands fail until it is ready, with an error durable execution retries. The new pod starts empty except for what the template keeps on a persistent volume; the template above uses `emptyDir`, so files are lost.
-
-The agent-sandbox SDK runs on asyncio only, so under Trio workspace operations and `destroy` raise `UserError`.
+`SandboxdInClusterConnectionConfig` takes the same ports, with `mode='in-cluster-pod-ip'` or `mode='in-cluster-service'`. Pass an auth token as either config's `auth_token`; every command sends it.
 
 ## Security model
 
-`KubernetesSandbox` makes one check of its own: it reattaches to and deletes only claims in its `namespace` named `pydantic-ai-` and 32 hex digits, the names it gives its claims. A ref from message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` that names any other claim raises `ValueError` before anything reaches the cluster. The name is not proof of origin, and a `KubernetesSandboxBackend(ref=...)` you build yourself attaches to any claim it names, so keep refs server-side.
-
-Everything else is set by your cluster, not by this capability: the pod's isolation (it shares its node's kernel unless `runtimeClassName` selects a runtime such as gVisor or Kata), which claims the agent's kubeconfig or service account can reach, which pods can reach sandboxd's ports, and whether sandboxd requires an auth token. The SDK talks to sandboxd over plaintext gRPC: `connection='port-forward'` tunnels it through the API server, and an in-cluster connection does not.
+- `KubernetesSandbox` reattaches to and deletes only claims in its `namespace` named `pydantic-ai-` and 32 hex digits, the names it gives its claims. A ref naming any other claim raises `ValueError` before anything reaches the cluster.
+- The name is not proof of origin, and a `KubernetesSandboxBackend(ref=...)` you build yourself attaches to any claim it names, so keep refs server-side.
+- Your cluster sets everything else: the pod's isolation (it shares its node's kernel unless `runtimeClassName` selects gVisor or Kata), which claims the agent's kubeconfig or service account can reach, which pods can reach sandboxd's ports, and whether sandboxd requires an auth token.
+- The SDK talks to sandboxd over plaintext gRPC: `connection='port-forward'` tunnels it through the API server, an in-cluster connection does not.
 
 ## Configuration
 
@@ -265,68 +249,29 @@ Everything else is set by your cluster, not by this capability: the pod's isolat
 | --- | --- |
 | `warm_pool` | Name of the `SandboxWarmPool` to claim new sandboxes from. Required. |
 | `namespace` | Namespace of the warm pool and the claims. Default: `'default'`. |
-| `connection` | `'port-forward'` (default), `'in-cluster-pod-ip'` or `'in-cluster-service'`; or the SDK's `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`, for other ports and timeouts. |
+| `connection` | `'port-forward'` (default), `'in-cluster-pod-ip'` or `'in-cluster-service'`; or the SDK's `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`, for other ports, timeouts and auth tokens. |
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached claim it must already exist. |
-| `env` | Environment variables every command gets, on top of the container's own. Default: `None`. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached one it must exist. |
+| `env` | Environment variables every command gets, on top of the container's own. Default: `None`. The agent's commands can read these, so leave out secrets it shouldn't see. |
+
+`connection`, `working_dir` and `env` also apply when you reattach; the other options only shape a new claim.
+
+## Limits
+
+- Claiming or reattaching gives up with `TimeoutError` after 190 seconds; a claim that times out is deleted.
+- A timeout or cancellation kills the command's process group, not the sandbox. A job that detaches with `setsid` may keep running.
+- A background job that keeps the command's output open delays the result by about 5 seconds. Redirect its output to a file; `Shell.start_command` does this for you.
+- A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
+- While a lost pod is replaced, commands fail with an error durable execution retries.
+- The agent-sandbox SDK needs asyncio; under Trio, every operation raises `UserError`.
 
 ## Durable execution
 
-Outside a run, every command opens its own connection (with the default connection, a `kubectl port-forward`) and closes it when it ends, so the worker has nothing to close. File operations are shell commands, and one may run a few, so each activity takes a little longer than it does inside a plain run. Run a Temporal dev server on `localhost:7233` first.
-
-```python
-import asyncio
-import uuid
-
-from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
-from temporalio import workflow
-from temporalio.client import Client
-from temporalio.worker import Worker
-
-agent = Agent(
-    '{{ anthropic:large }}',
-    name='kubernetes_coder',
-    capabilities=[KubernetesSandbox(warm_pool='python-pool'), Coder(), TemporalDurability()],
-)
-
-
-@workflow.defn
-class SandboxWorkflow(PydanticAIWorkflow):
-    __pydantic_ai_agents__ = [agent]
-
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        return (await agent.run(prompt)).output
-
-
-async def main() -> None:
-    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
-    async with Worker(client, task_queue='sandbox', workflows=[SandboxWorkflow]):
-        print(
-            await client.execute_workflow(
-                SandboxWorkflow.run,
-                'Use the shell tool to run pwd.',
-                id=f'sandbox-{uuid.uuid4()}', task_queue='sandbox',
-            )
-        )
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
-```
-
-`Coder`, `Shell`, and `FileSystem` work under DBOS, Temporal and Prefect. See the [Coder](coder.md#durable-execution), [Shell](shell.md#durable-execution), and [FileSystem](filesystem.md#durable-execution) guides for engine-specific limits.
-
-Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
+Add `TemporalDurability()` next to `KubernetesSandbox()` and install the `temporal` extra; [Workspaces](../workspace.md#durable-execution) covers what changes. Outside a run, each command opens and closes its own connection (with the default, a `kubectl port-forward`), so each activity takes a little longer than a call inside a plain run.
 
 ## Telemetry
 
-`KubernetesSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Claiming a sandbox logs its ref at `INFO` (`Claimed Kubernetes sandbox <namespace>/<claim name>`) on the `pydantic_ai_harness.kubernetes_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
-
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
+`KubernetesSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 ## API reference
 
