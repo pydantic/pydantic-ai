@@ -1351,7 +1351,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             response.status if response.status in ('cancelled', 'failed', 'incomplete') else 'completed'
         )
         self._lifecycle.response_done(
-            response_id or None,
+            # An id-less done ends the active response, as `_settle_response` takes it to.
+            response_id or self._active_response_id,
             status=status,
             finish_reason=finish_reason,
             provider_details=response_provider_details(response),
