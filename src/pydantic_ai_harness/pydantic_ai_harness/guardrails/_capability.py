@@ -52,6 +52,7 @@ from pydantic_ai_harness._background_completion import get_background_completion
 from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
+    GuardCallable,
     GuardOutcome,
     GuardrailResult,
     RecordedVerdict,
@@ -313,6 +314,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     """Run the guard concurrently with the model request and cancel the model call on failure."""
 
     _parallel_verdict: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
+    _guards: tuple[GuardCallable, ...] | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -346,7 +348,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         evaluation happens before anything is rewritten, and the redaction spans
         are recorded once every rewrite has succeeded.
         """
-        verdict, position = await self._screen(ctx, prompt)
+        guards = self._guards_for_run()
+        verdict, position = await self._screen(ctx, prompt, guards)
         if verdict.action == 'allow':
             return
         if self.parallel:
@@ -373,7 +376,6 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             _replace_prompt(part, replacement)
         if original is not None and (same_text or own_redaction is not None):
             _replace_prompt(original, replacement if own_redaction is None else own_redaction[0])
-        guards = as_guards(self.guard, capability='InputGuardrail')
         trace_redaction(ctx, direction='input', guard=guards[position], position=position, replacement=replacement)
         if own_redaction is not None:
             own_replacement, own_position = own_redaction
@@ -381,7 +383,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 ctx, direction='input', guard=guards[own_position], position=own_position, replacement=own_replacement
             )
 
-    async def _screen(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[GuardrailResult, int]:
+    async def _screen(
+        self, ctx: RunContext[AgentDepsT], prompt: str, guards: tuple[GuardCallable, ...]
+    ) -> tuple[GuardrailResult, int]:
         """Run the guard chain on `prompt`, returning an `allow` or `replace` verdict and raising for the others.
 
         `block` raises `SkipModelRequest`; `retry` and `approve` raise `UserError`.
@@ -402,8 +406,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 )
             case 'block':
                 message = verdict.message or _DEFAULT_INPUT_BLOCK_MESSAGE
-                guard = as_guards(self.guard, capability='InputGuardrail')[position]
-                trace_block(ctx, direction='input', guard=guard, position=position, message=message)
+                trace_block(ctx, direction='input', guard=guards[position], position=position, message=message)
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
@@ -411,8 +414,14 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     @durable_operation('guard')
     async def _evaluate(self, ctx: RunContext[AgentDepsT], prompt: str) -> RecordedVerdict:
         """Run the guard chain, as the durable operation `(id, 'guard')` inside a workflow or flow."""
-        guards = as_guards(self.guard, capability='InputGuardrail')
-        return await record_verdict(evaluate_all(guards, ctx, prompt, check_replacement=_require_prompt_text))
+        return await record_verdict(
+            evaluate_all(self._guards_for_run(), ctx, prompt, check_replacement=_require_prompt_text)
+        )
+
+    def _guards_for_run(self) -> tuple[GuardCallable, ...]:
+        if self._guards is None:
+            self._guards = as_guards(self.guard, capability='InputGuardrail')
+        return self._guards
 
     async def _history_redaction(self, ctx: RunContext[AgentDepsT], original: UserPromptPart) -> tuple[str, int] | None:
         """The redaction of the history's `original` of a prompt the model was sent a changed copy of.
@@ -427,7 +436,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         Returns the replacement and the position of the guard that made it, or `None` when the
         original is left as it is.
         """
-        verdict, position = await self._screen(ctx, _prompt_text(original.content))
+        verdict, position = await self._screen(ctx, _prompt_text(original.content), self._guards_for_run())
         if verdict.action == 'allow':
             return None
         return _require_prompt_text(verdict.replacement, position), position
@@ -580,6 +589,8 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
     the output the remaining guards see.
     """
 
+    _guards: tuple[GuardCallable, ...] | None = field(default=None, init=False, repr=False, compare=False)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Exclude a callable policy from YAML and JSON agent specifications."""
@@ -600,7 +611,8 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
         if ctx.partial_output:
             return output
         verdict, position = replay_verdict(await self._evaluate(ctx, output), output)
-        guard = as_guards(self.guard, capability='OutputGuardrail')[position]
+        guards = self._guards_for_run()
+        guard = guards[position]
         match verdict.action:
             case 'allow':
                 return output
@@ -628,4 +640,9 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
     @durable_operation('guard')
     async def _evaluate(self, ctx: RunContext[AgentDepsT], output: object) -> RecordedVerdict:
         """Run the guard chain, as the durable operation `(id, 'guard')` inside a workflow or flow."""
-        return await record_verdict(evaluate_all(as_guards(self.guard, capability='OutputGuardrail'), ctx, output))
+        return await record_verdict(evaluate_all(self._guards_for_run(), ctx, output))
+
+    def _guards_for_run(self) -> tuple[GuardCallable, ...]:
+        if self._guards is None:
+            self._guards = as_guards(self.guard, capability='OutputGuardrail')
+        return self._guards

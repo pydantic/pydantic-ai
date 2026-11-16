@@ -36,9 +36,9 @@ __all__ = (
     'RunTelemetry',
     'current_run_telemetry',
     'current_span',
-    'record_decision',
     'open_span',
     'publish_run_telemetry',
+    'record_decision',
     'run_telemetry_scope',
     'set_content_attribute',
 )
@@ -158,6 +158,9 @@ def current_span(ctx: RunContext[Any] | RunTelemetry | None) -> Span:
     return get_current_span() if _telemetry_of(ctx) is not None else INVALID_SPAN
 
 
+_TRACE_FIELDS = frozenset({'tracer', 'trace_include_content'})
+
+
 def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | None:
     if ctx is None or isinstance(ctx, RunTelemetry):
         return ctx
@@ -166,9 +169,6 @@ def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | 
     if not _TRACE_FIELDS <= ctx.__dataclass_fields__.keys():
         return None
     return _run_telemetry(ctx.tracer, ctx.trace_include_content)
-
-
-_TRACE_FIELDS = frozenset({'tracer', 'trace_include_content'})
 
 
 def _with_content(

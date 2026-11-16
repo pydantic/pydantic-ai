@@ -8,6 +8,7 @@ from functools import cached_property
 
 import anyio
 
+from pydantic_ai._telemetry import current_run_telemetry
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -327,7 +328,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
     ) -> CommandResult:
         # Traced here: the wrapped workspace sees only the `bwrap` launcher, whose arguments carry `env`.
         with self._operation('run') as span:
-            set_command(span, command)
+            set_command(current_run_telemetry(), span, command)
             result = await self._run_sandboxed(command, shell=shell, env=env, timeout=timeout)
             span.set_attribute('process.exit.code', result.exit_code)
             return result
