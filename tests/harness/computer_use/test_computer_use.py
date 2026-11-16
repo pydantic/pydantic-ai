@@ -662,12 +662,14 @@ Each call runs a list of actions in order and returns a screenshot of the result
             async def act(self, action: DisplayAction) -> None:
                 if gone == 'act':
                     raise WorkspaceUnavailableError('the environment is gone')
-                await super().act(action)  # pragma: no cover - only a call that ignored the lost environment acts
+                # Only a call that ignored the lost environment acts.
+                await super().act(action)  # pragma: no cover
 
             async def screenshot(self) -> bytes:
                 if gone == 'screenshot':
                     raise WorkspaceUnavailableError('the environment is gone')
-                return await super().screenshot()  # pragma: no cover - only a call that ignored it looks
+                # Only a call that ignored the lost environment looks.
+                return await super().screenshot()  # pragma: no cover
 
         class Provider(ScreenProvider):
             def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
