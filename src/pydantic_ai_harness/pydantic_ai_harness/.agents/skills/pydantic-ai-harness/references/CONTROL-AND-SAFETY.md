@@ -454,7 +454,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import Budget, SpendLimitExceeded
 
 limits = SpendLimits(budgets=[Budget(tokens=1, window='total')])
 agent = Agent(TestModel(), capabilities=[limits])
@@ -473,7 +473,7 @@ from decimal import Decimal
 from redis.asyncio import Redis
 
 from pydantic_ai_harness import SpendLimits
-from pydantic_ai_harness.spend import Budget, RedisSpendStore
+from pydantic_ai_harness.spend_limits import Budget, RedisSpendStore
 
 limits = SpendLimits(
     budgets=[

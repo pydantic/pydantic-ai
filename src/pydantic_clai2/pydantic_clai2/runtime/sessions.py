@@ -26,7 +26,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime.imported_sessions import (

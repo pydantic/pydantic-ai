@@ -13,6 +13,7 @@ from .google import google_model_profile
 from .grok import grok_model_profile
 from .harmony import harmony_model_profile
 from .meta import meta_model_profile
+from .minimax import minimax_model_profile
 from .mistral import mistral_model_profile
 from .moonshotai import moonshotai_model_profile
 from .openai import openai_model_profile
@@ -42,6 +43,8 @@ _VENDOR_FAMILY_PROFILES: dict[str, ModelProfileFunc] = {
     'meta': meta_model_profile,
     'meta-llama': meta_model_profile,
     'meta-models': meta_model_profile,
+    'minimax': minimax_model_profile,
+    'minimaxai': minimax_model_profile,
     'mistral': mistral_model_profile,
     'mistralai': mistral_model_profile,
     'moonshotai': moonshotai_model_profile,

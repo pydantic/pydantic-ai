@@ -603,7 +603,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         fmt = cls._infer_fmt(path, fmt)
 
-        raw = Path(path).read_text(encoding='utf-8')
+        # Not `encoding='utf-8-sig'`: `read_text` returns '' for a lone b'\xef' or b'\xef\xbb' instead of raising.
+        raw = Path(path).read_text(encoding='utf-8').removeprefix('\ufeff')
         try:
             return cls.from_text(
                 raw,
