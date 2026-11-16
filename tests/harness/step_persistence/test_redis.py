@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
-from pydantic_ai_harness.media import DiskMediaStore
+from pydantic_ai_harness.media import FileMediaStore
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     RedisClient,
@@ -732,7 +732,7 @@ class TestRedisStepStoreExpiry:
 class TestRedisStepStoreMedia:
     async def test_large_binary_and_text_externalized_and_restored(self, tmp_path: Path) -> None:
         media = tmp_path / 'media'
-        store = RedisStepStore(FakeRedis(), media_store=DiskMediaStore(media), media_threshold_bytes=64 * 1024)
+        store = RedisStepStore(FakeRedis(), media_store=FileMediaStore(media), media_threshold_bytes=64 * 1024)
         big_binary = b'\xab' * 100_000
         big_text = 'Z' * 100_000
         messages: list[ModelMessage] = [
