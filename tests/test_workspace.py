@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import math
+import ntpath
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -20,7 +22,13 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, LocalWorkspace, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+    LocalWorkspace,
+    WindowsWorkspace,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     Authority,
@@ -49,15 +57,17 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     SupportsFilesystem,
     UnavailableWorkspace,
+    WindowsWorkspaceBackend,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspacePlatform,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceUnavailableError,
     WrapperWorkspace,
-    local as local_module,
+    _host as host_module,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
 
@@ -244,7 +254,7 @@ async def test_run_starts_in_cwd(tmp_path: Path, native: bool) -> None:
 
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
-    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
+    monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     with pytest.raises(WorkspaceError, match='shell filesystem read exceeded command output limit'):
         await workspace.read_bytes('large')
@@ -253,7 +263,7 @@ async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monk
 async def test_shell_listing_output_limit_names_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for index in range(400):
         (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
-    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
+    monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     with pytest.raises(WorkspaceError, match='shell filesystem listing exceeded command output limit'):
         await workspace.list_dir('.')
@@ -262,7 +272,7 @@ async def test_shell_listing_output_limit_names_listing(tmp_path: Path, monkeypa
 async def test_shell_listing_larger_than_command_output_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for index in range(600):
         (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
-    monkeypatch.setattr(local_module, '_MAX_CAPTURE_BYTES', 120 * 1024)
+    monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 120 * 1024)
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     assert len(await workspace.list_dir('.')) == 600
 
@@ -2040,3 +2050,120 @@ async def test_shell_read_names_a_missing_utility(tmp_path: Path) -> None:
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root, env={'PATH': str(bin_dir)})))
     with pytest.raises(WorkspaceError, match=r'^The workspace has no `dd`, which its file operations need'):
         await workspace.read_text('a.txt')
+
+
+class FakeWindowsBackend:
+    """A `'windows'` backend that records the commands it is asked to run, and where."""
+
+    def __init__(self) -> None:
+        self.runs: list[tuple[WorkspaceCommand, bool, str]] = []
+
+    ref = WorkspaceRef(provider='windows', id='C:\\project')
+
+    @property
+    def workspace_platform(self) -> WorkspacePlatform:
+        return 'windows'
+
+    async def working_dir(self) -> str:
+        return 'C:\\project'
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        raise NotImplementedError
+
+    async def run_in_directory(
+        self,
+        command: WorkspaceCommand,
+        *,
+        cwd: str,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        self.runs.append((command, shell, cwd))
+        return CommandResult(exit_code=0, stdout='', stderr='')
+
+    async def stat(self, path: str) -> FileEntry:
+        return FileEntry(name=ntpath.basename(path), path=path, is_dir=not path.endswith('.txt'), size=None)
+
+    async def realpath(self, path: str) -> str:
+        return ntpath.normpath(path)
+
+    async def read_bytes(self, path: str) -> bytes:
+        raise NotImplementedError
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        raise NotImplementedError
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        raise NotImplementedError
+
+    async def make_dir(self, path: str) -> None:
+        raise NotImplementedError
+
+    async def remove(self, path: str) -> None:
+        raise NotImplementedError
+
+    async def exists(self, path: str) -> bool:
+        raise NotImplementedError
+
+
+class TestWindowsPaths:
+    async def test_a_backend_is_posix_unless_it_says_otherwise(self, tmp_path: Path) -> None:
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+        assert (workspace.platform, workspace.paths) == ('posix', posixpath)
+
+    async def test_paths_resolve_as_windows_paths(self) -> None:
+        workspace = Workspace(Workspace(FakeWindowsBackend()))
+        assert (workspace.platform, workspace.paths) == ('windows', ntpath)
+        assert await workspace.resolve('src/app.py') == 'C:\\project\\src\\app.py'
+        assert await workspace.resolve('D:/data/../logs') == 'D:\\logs'
+        # A path with a root but no drive is on the working directory's drive.
+        assert await workspace.resolve('/') == 'C:\\'
+        assert await workspace.resolve('app.py', base='C:\\other') == 'C:\\other\\app.py'
+        with pytest.raises(ValueError, match='base must be an absolute path'):
+            await workspace.resolve('app.py', base='other')
+        assert await workspace.realpath('src\\..\\app.py') == 'C:\\project\\app.py'
+
+    async def test_run_passes_the_directory_to_the_backend(self) -> None:
+        """Without `sh`, `Workspace.run` can't change directory itself, so the backend starts the command there."""
+        backend = FakeWindowsBackend()
+        workspace = Workspace(backend)
+        await workspace.run(['rg', '--files'], cwd='src')
+        await workspace.run('Get-ChildItem', shell=True, cwd='C:\\project\\docs')
+        assert backend.runs == [
+            (['rg', '--files'], False, 'C:\\project\\src'),
+            ('Get-ChildItem', True, 'C:\\project\\docs'),
+        ]
+        with pytest.raises(NotADirectoryError):
+            await workspace.run(['rg'], cwd='notes.txt')
+        with pytest.raises(TypeError):
+            await workspace.run('rg', cwd='src')
+
+    async def test_authority_of_a_windows_path(self) -> None:
+        workspace = Workspace(FakeWindowsBackend())
+        assert await workspace.authority_of('src\\app.py') == 'operator'
+        assert await workspace.authority_of('D:\\elsewhere') == 'none'
+
+    async def test_a_windows_backend_that_cannot_start_in_a_directory_fails_clearly(self) -> None:
+        """Without `SupportsRunInDirectory`, `Workspace.run` would send a `'windows'` backend an `sh` `cd`."""
+
+        class NoDirectoryBackend(FakeWindowsBackend):
+            run_in_directory = None  # pyright: ignore[reportAssignmentType]
+
+        workspace = Workspace(NoDirectoryBackend())
+        with pytest.raises(UserError, match='must implement `SupportsRunInDirectory`'):
+            await workspace.run(['rg'], cwd='src')
+
+
+def test_windows_workspace_needs_windows(tmp_path: Path) -> None:
+    with pytest.raises(NotImplementedError, match='only runs on Windows'):
+        WindowsWorkspaceBackend(tmp_path)
+    with pytest.raises(NotImplementedError, match='only runs on Windows'):
+        WindowsWorkspace(tmp_path)

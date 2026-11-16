@@ -130,30 +130,6 @@ def _retry_after_wait(payload: object) -> tuple[float, int] | None:
     return wait['pydantic_ai_retry_after'], wait['attempts']
 
 
-class SnapshotStepReservation:
-    """`dbos.StepReservation` for dbos before 3.4.0, which lacks `DBOS.reserve_step`.
-
-    Built on the private DBOS calls that `DBOS.reserve_step` and `StepReservation.run_async` wrap.
-    """
-
-    # TODO(v3): Require `dbos>=3.4.0` and use `DBOS.reserve_step` alone.
-
-    def __init__(self) -> None:
-        from dbos._context import snapshot_step_context
-
-        step_ctx = snapshot_step_context()
-        assert step_ctx is not None
-        self._step_ctx = step_ctx
-
-    async def run_async(
-        self, dbos_step_options: StepOptions, func: Callable[..., object], *args: object, **kwargs: object
-    ) -> object:
-        from dbos._core import run_step_async
-        from dbos._dbos import _get_dbos_instance  # pyright: ignore[reportPrivateUsage]
-
-        return await run_step_async(_get_dbos_instance(), self._step_ctx, func, dbos_step_options, args, kwargs)
-
-
 class DBOSOperationConfig(DurableOperationConfig[StepConfig]):
     def __init__(self, *, model: StepConfig, event: StepConfig, tool: StepConfig) -> None:
         self._model = model
@@ -234,7 +210,7 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
             }
             step = functools.partial(DBOS.run_step_async, options, self._step_function)
 
-    async def call_reserved(self, reservation: StepReservation | SnapshotStepReservation, params: ParamsT) -> ResultT:
+    async def call_reserved(self, reservation: StepReservation, params: ParamsT) -> ResultT:
         async def reserved_step(*args: object, **kwargs: object) -> object:
             return await reservation.run_async(self._step_options, self._step_function, *args, **kwargs)
 

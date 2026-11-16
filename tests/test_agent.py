@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVa
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, Field, TypeAdapter, field_validator
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter, field_validator
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
 from typing_extensions import TypedDict
@@ -2361,8 +2361,86 @@ def text_with_var_kwargs(text: str, **kwargs: int) -> str:
     return f'text={text}'
 
 
-@pytest.mark.parametrize('output_function', [text_alias, text_with_hidden_arg, text_with_var_kwargs])
-def test_output_type_text_output_function_str_arg(output_function: Callable[..., str]):
+def text_with_hidden_arg_aliased_as_text(text: str, b: SkipJsonSchema[Annotated[int, Field(alias='text')]] = 1) -> str:
+    return f'text={text}'
+
+
+def text_alias_with_hidden_arg(text: Annotated[str, Field(alias='theText')], b: SkipJsonSchema[int] = 1) -> str:
+    return f'text={text}'
+
+
+def text_alias_choices_with_hidden_arg(
+    text: Annotated[str, Field(validation_alias=AliasChoices('theText', 't'))], b: SkipJsonSchema[int] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_with_var_kwargs(text: Annotated[str, Field(alias='theText')] = 'default', **kwargs: int) -> str:
+    return f'text={text}'
+
+
+def text_alias_positional_only_with_hidden_arg(
+    text: Annotated[str, Field(alias='theText')], /, b: SkipJsonSchema[int] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_path_with_hidden_arg(
+    text: Annotated[str, Field(validation_alias=AliasPath('payload', 'text'))], b: SkipJsonSchema[int] = 1
+) -> str:
+    return f'text={text}'
+
+
+class TextOutputNode(BaseModel):
+    value: int
+    children: list['TextOutputNode'] = []
+
+
+class TextOutputLeaf(BaseModel):
+    value: int
+
+
+def text_alias_with_hidden_model_args(
+    text: Annotated[str, Field(alias='theText')],
+    node: SkipJsonSchema[Annotated[TextOutputNode | None, Field(alias='n')]] = None,
+    leaf: SkipJsonSchema[Annotated[TextOutputLeaf | None, Field(alias='l')]] = None,
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_shared_with_hidden_arg(
+    text: Annotated[str, Field(alias='theText')], b: SkipJsonSchema[Annotated[int, Field(alias='theText')]] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_shared_with_hidden_arg_and_var_kwargs(
+    text: Annotated[str, Field(alias='theText')] = 'default',
+    b: SkipJsonSchema[Annotated[int, Field(alias='theText')]] = 1,
+    **kwargs: int,
+) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    'output_function',
+    [
+        text_alias,
+        text_with_hidden_arg,
+        text_with_var_kwargs,
+        text_with_hidden_arg_aliased_as_text,
+        text_alias_with_hidden_arg,
+        text_alias_choices_with_hidden_arg,
+        text_alias_with_var_kwargs,
+        text_alias_positional_only_with_hidden_arg,
+        text_alias_path_with_hidden_arg,
+        text_alias_with_hidden_model_args,
+        text_alias_shared_with_hidden_arg,
+        text_alias_shared_with_hidden_arg_and_var_kwargs,
+    ],
+)
+async def test_output_type_text_output_function_str_arg(output_function: Callable[..., str], stream: bool):
     """`TextOutput` calls the function with the text under the str arg's Python name, not its alias.
 
     Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
@@ -2371,8 +2449,37 @@ def test_output_type_text_output_function_str_arg(output_function: Callable[...,
     def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])
 
-    agent = Agent(FunctionModel(respond), output_type=TextOutput(output_function))
-    assert agent.run_sync('hi').output == 'text=hello'
+    async def stream_respond(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    agent = Agent(FunctionModel(respond, stream_function=stream_respond), output_type=TextOutput(output_function))
+    if stream:
+        async with agent.run_stream('hi') as result:
+            assert await result.get_output() == 'text=hello'
+    else:
+        assert (await agent.run('hi')).output == 'text=hello'
+
+
+def text_alias_named_like_hidden_arg(
+    text: Annotated[str, Field(alias='b')] = 'default', b: SkipJsonSchema[str] = 'hidden'
+) -> str:
+    return f'text={text} b={b}'
+
+
+def test_output_type_text_output_function_alias_named_like_hidden_arg():
+    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, a known gap.
+
+    The JSON schema property `b` is the str arg's alias and also the hidden arg's Python name, and a property named
+    after a parameter's Python name keeps naming that parameter. https://github.com/pydantic/pydantic-ai/issues/13438
+    tracks the gap.
+    Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg))
+    assert agent.run_sync('hi').output == 'text=default b=hello'
 
 
 def test_output_type_handoff_to_agent():
