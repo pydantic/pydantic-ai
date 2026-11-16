@@ -128,14 +128,15 @@ or below those sizes.
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](https://pydantic.dev/docs/ai/core-concepts/agent/#streaming-all-events) can save or show them as the run goes.
 
-Each finished call also emits [capability events](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) in
-the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events()`:
+Each call that finishes and returns a screenshot also emits
+[capability events](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) in the `computer_use` namespace, read with
+`@agent.on_event` or `run_stream_events()`:
 
 | Event | Payload |
 |---|---|
 | `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
-They are emitted once per call, also under durable execution, and add no telemetry spans, since core already traces
+They are emitted once per such call, also under durable execution, and add no telemetry spans, since core already traces
 the tool call. The history keeps the same facts: each result is a `ComputerReturnPart` whose `result` is the call's
 `ComputerResult`.
 
@@ -160,9 +161,9 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.
-- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that takes over is told its
-  own coordinates (pixels or a grid), and screenshots are sized for it too. One that can't take images, or would
-  see the latest screenshot scaled down, ends the run with an error before its request. In a
+- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that takes over is told
+  its own coordinates (pixels or a grid). One that can't take images, or would see the latest screenshot scaled down,
+  ends the run with an error before its request. In a
   [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every
   model in it does.
 

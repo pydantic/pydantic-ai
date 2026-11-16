@@ -126,14 +126,15 @@ or below those sizes.
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](../agent.md#streaming-all-events) can save or show them as the run goes.
 
-Each finished call also emits [capability events](../capabilities/overview.md#capability-events) in
-the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events()`:
+Each call that finishes and returns a screenshot also emits
+[capability events](../capabilities/overview.md#capability-events) in the `computer_use` namespace, read with
+`@agent.on_event` or `run_stream_events()`:
 
 | Event | Payload |
 |---|---|
 | `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
-They are emitted once per call, also under durable execution, and add no telemetry spans, since core already traces
+They are emitted once per such call, also under durable execution, and add no telemetry spans, since core already traces
 the tool call. The history keeps the same facts: each result is a `ComputerReturnPart` whose `result` is the call's
 `ComputerResult`.
 
@@ -159,9 +160,9 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](advisor.md) forwards every screenshot; Anthropic refuses one past 600 images.
 - With [`ModelFallback`](../capabilities/model-fallback.md), a model that takes over is told its own coordinates
-  (pixels or a grid), and screenshots are sized for it too. One that can't take images, or would see the latest
-  screenshot scaled down, ends the run with an error before its request. In a
-  [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets its grid only if every model in it does.
+  (pixels or a grid). One that can't take images, or would see the latest screenshot scaled down, ends the run with an
+  error before its request. In a [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets its grid only if
+  every model in it does.
 
 ## Giving a workspace a screen
 
