@@ -394,10 +394,9 @@ what happened uses the words the capability's API already uses for it, such as t
 `GuardrailResult` actions (`block`, `replace`, `approve`) or `SubAgents`' `DelegationOutcome`, so an
 operator reading a trace and a developer reading the code name the same outcome the same way.
 
-Some older code still opens spans on the raw tracer and checks `ctx.trace_include_content` itself:
-`_judge.py`, `smart_search/_toolset.py`, `memory/_toolset.py`, `memory/_capability.py`, `compaction`,
-`repair_tool_arguments` and `playwright`. A follow-up PR moves them onto these functions; don't copy
-them.
+Some older memory code still opens spans on `ctx.tracer` and checks `ctx.trace_include_content` itself:
+`memory/_toolset.py` and `memory/_capability.py`. A follow-up PR moves them onto these functions; don't
+copy them.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.

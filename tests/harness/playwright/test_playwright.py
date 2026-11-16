@@ -12,28 +12,25 @@ import asyncio
 import inspect
 import socket
 import sys
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Protocol, get_args
 
 import anyio
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import Error as PlaywrightError, StorageState, TimeoutError as PlaywrightTimeoutError
 
 import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
-from pydantic_ai._telemetry import run_telemetry_scope
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn, ToolReturnPart
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -2901,14 +2898,21 @@ class TestInteractionTools:
 # --- Browser events and tracing ---------------------------------------------
 
 
-@contextmanager
-def _recording_spans(*, include_content: bool = True) -> Generator[InMemorySpanExporter]:
-    """Record the spans of browser operations called in the block, as if a run with these settings called them."""
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    with run_telemetry_scope(provider.get_tracer('test'), include_content=include_content):
-        yield exporter
+async def _run_browser_operation(
+    instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+    operation: Callable[[], Awaitable[object]],
+    include_content: bool = True,
+) -> list[ReadableSpan]:
+    tracing, exporter = instrumented(include_content)
+    agent = Agent(TestModel(call_tools=['drive']), capabilities=[tracing])
+
+    @agent.tool_plain
+    async def drive() -> str:
+        await operation()
+        return ''
+
+    await agent.run('drive')
+    return [span for span in exporter.get_finished_spans() if span.name.startswith('browser ')]
 
 
 class TestBrowserEvents:
@@ -3001,56 +3005,66 @@ class TestBrowserEvents:
         assert await toolset.console_messages() == 'No console messages recorded.'
         assert await toolset.network_requests() == 'No network requests recorded.'
 
-    async def test_operation_span_carries_the_action_and_page_events(self) -> None:
+    async def test_operation_span_carries_the_action_and_page_events(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         page = _FakePage()
         session = self._session(page)
-        with _recording_spans() as exporter:
-            toolset = _toolset(page, session=session)
+        toolset = _toolset(page, session=session)
 
-            class _EmittingPage(_FakePage):
-                async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
-                    session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
-                    return await super().inner_text(selector, timeout=timeout)
+        class _EmittingPage(_FakePage):
+            async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
+                session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
+                return await super().inner_text(selector, timeout=timeout)
 
-            session.page = _EmittingPage()
+        session.page = _EmittingPage()
+
+        async def drive() -> None:
             await toolset.get_text()
-            (span,) = exporter.get_finished_spans()
-            assert span.name == 'browser get_text'
-            assert span.attributes is not None
-            assert span.attributes['browser.action'] == 'get_text'
-            assert span.attributes['browser.timeout_ms'] == DEFAULT_ACTION_TIMEOUT_MS
-            assert span.attributes['browser.outcome'] == 'ok'
-            assert span.attributes['url.full'] == 'https://example.com/'
-            (event,) = span.events
-            assert event.name == 'browser.console'
-            assert event.attributes is not None
-            assert event.attributes['browser.event.message'] == 'error: boom'
 
-    async def test_network_event_attributes_follow_otel_conventions(self) -> None:
+        (span,) = await _run_browser_operation(instrumented, drive)
+        assert span.name == 'browser get_text'
+        assert span.attributes is not None
+        assert span.attributes['browser.action'] == 'get_text'
+        assert span.attributes['browser.timeout_ms'] == DEFAULT_ACTION_TIMEOUT_MS
+        assert span.attributes['browser.outcome'] == 'ok'
+        assert span.attributes['url.full'] == 'https://example.com/'
+        (event,) = span.events
+        assert event.name == 'browser.console'
+        assert event.attributes is not None
+        assert event.attributes['browser.event.message'] == 'error: boom'
+
+    async def test_network_event_attributes_follow_otel_conventions(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         page = _FakePage()
         session = self._session(page)
-        with _recording_spans() as exporter:
-            toolset = _toolset(page, session=session)
+        toolset = _toolset(page, session=session)
 
-            class _RequestingPage(_FakePage):
-                async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
-                    session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
-                    return await super().inner_text(selector, timeout=timeout)
+        class _RequestingPage(_FakePage):
+            async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
+                session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
+                return await super().inner_text(selector, timeout=timeout)
 
-            session.page = _RequestingPage()
+        session.page = _RequestingPage()
+
+        async def drive() -> None:
             await toolset.get_text()
-            (span,) = exporter.get_finished_spans()
-            (event,) = span.events
-            assert event.name == 'browser.response'
-            assert event.attributes is not None
-            assert event.attributes['url.full'] == 'https://example.com/api'
-            assert event.attributes['http.request.method'] == 'POST'
-            assert event.attributes['http.response.status_code'] == 503
-            # A response carries no message, so no empty attribute is emitted for one.
-            assert 'browser.event.message' not in event.attributes
+
+        (span,) = await _run_browser_operation(instrumented, drive)
+        (event,) = span.events
+        assert event.name == 'browser.response'
+        assert event.attributes is not None
+        assert event.attributes['url.full'] == 'https://example.com/api'
+        assert event.attributes['http.request.method'] == 'POST'
+        assert event.attributes['http.response.status_code'] == 503
+        # A response carries no message, so no empty attribute is emitted for one.
+        assert 'browser.event.message' not in event.attributes
 
     @pytest.mark.parametrize('include_content', [True, False])
-    async def test_page_urls_and_event_text_are_recorded_only_with_content(self, include_content: bool) -> None:
+    async def test_page_urls_and_event_text_are_recorded_only_with_content(
+        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         # What the page logged and the URLs it touched are content; the event's shape is not.
         page = _FakePage()
         session = self._session(page)
@@ -3063,9 +3077,11 @@ class TestBrowserEvents:
                 return await super().inner_text(selector, timeout=timeout)
 
         session.page = _BusyPage()
-        with _recording_spans(include_content=include_content) as exporter:
+
+        async def drive() -> None:
             await toolset.get_text()
-        (span,) = exporter.get_finished_spans()
+
+        (span,) = await _run_browser_operation(instrumented, drive, include_content)
         assert span.attributes is not None
         assert ('url.full' in span.attributes) is include_content
         console, response = span.events
@@ -3077,17 +3093,22 @@ class TestBrowserEvents:
         assert response.attributes['http.request.method'] == 'POST'
         assert response.attributes['http.response.status_code'] == 503
 
-    async def test_failed_operation_is_marked_on_the_span(self) -> None:
+    async def test_failed_operation_is_marked_on_the_span(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         page = _FakePage(click_error=PlaywrightTimeoutError('Timeout 5000ms exceeded.'))
         session = self._session(page)
-        with _recording_spans() as exporter:
-            await _toolset(page, session=session).click('button#go')
-            (span,) = exporter.get_finished_spans()
-            assert span.attributes is not None
-            assert span.attributes['browser.outcome'] == 'error'
-            # Recorded on the failure path too: which page the click failed on is what
-            # makes the span diagnosable.
-            assert span.attributes['url.full'] == 'https://example.com/'
+        toolset = _toolset(page, session=session)
+
+        async def drive() -> None:
+            await toolset.click('button#go')
+
+        (span,) = await _run_browser_operation(instrumented, drive)
+        assert span.attributes is not None
+        assert span.attributes['browser.outcome'] == 'error'
+        # Recorded on the failure path too: which page the click failed on is what
+        # makes the span diagnosable.
+        assert span.attributes['url.full'] == 'https://example.com/'
 
     async def test_events_outside_an_operation_are_still_logged(self) -> None:
         page = _FakePage()
@@ -3103,19 +3124,16 @@ class TestBrowserEvents:
         assert len(session.events) == toolset_module._EVENT_LOG_LIMIT  # pyright: ignore[reportPrivateUsage]
 
     async def test_a_run_reports_browser_spans_to_the_agents_instrumentation(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
     ) -> None:
         # The capability adopts the run's tracer, so browser spans land wherever the
         # agent's instrumentation settings send its tool calls.
         page = _FakePage()
         _install_fake_driver(monkeypatch, page)
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        model = InstrumentedModel(
-            TestModel(call_tools=['screenshot']), InstrumentationSettings(tracer_provider=provider)
-        )
-        agent = Agent(model, capabilities=[PlaywrightBrowser()])
+        tracing, exporter = instrumented(False)
+        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(), tracing])
         await agent.run('screenshot the page')
         assert 'browser screenshot' in [span.name for span in exporter.get_finished_spans()]
 
@@ -3193,15 +3211,20 @@ class TestCredentialsStayOutOfTelemetry:
             '[info] response GET 200 https://example.com/api?q=1'
         )
 
-    async def test_span_url_loses_its_userinfo(self) -> None:
+    async def test_span_url_loses_its_userinfo(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         page = _FakePage(url='https://user:secret@example.com/dashboard')
         session = PlaywrightBrowserSession()
         session.page = page
-        with _recording_spans() as exporter:
-            await _toolset(page, session=session, block_private_addresses=False).get_text()
-            (span,) = exporter.get_finished_spans()
-            assert span.attributes is not None
-            assert span.attributes['url.full'] == 'https://example.com/dashboard'
+        toolset = _toolset(page, session=session, block_private_addresses=False)
+
+        async def drive() -> None:
+            await toolset.get_text()
+
+        (span,) = await _run_browser_operation(instrumented, drive)
+        assert span.attributes is not None
+        assert span.attributes['url.full'] == 'https://example.com/dashboard'
 
     async def test_credential_parameters_are_redacted_by_name(self) -> None:
         page = _FakePage()
@@ -3673,82 +3696,113 @@ class TestEgressPolicy:
 
 
 class TestSpanOutcome:
-    async def test_a_returned_error_marks_the_span_failed(self) -> None:
+    async def test_a_returned_error_marks_the_span_failed(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         page = _FakePage(selector_raises=True)
         session = PlaywrightBrowserSession()
         session.page = page
         session.pages = [page]
-        with _recording_spans() as exporter:
-            result = await _toolset(page, session=session).get_text('#missing')
-            assert result.startswith('Error getting text')
-            (span,) = exporter.get_finished_spans()
-            assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
+        toolset = _toolset(page, session=session)
+        result: str | None = None
 
-    async def test_an_escaping_exception_marks_the_span_failed(self) -> None:
+        async def drive() -> None:
+            nonlocal result
+            result = await toolset.get_text('#missing')
+
+        (span,) = await _run_browser_operation(instrumented, drive)
+        assert result is not None and result.startswith('Error getting text')
+        assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
+
+    async def test_an_escaping_exception_marks_the_span_failed(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         # A capability that was never started is a wiring bug: it still ends the run,
         # unlike a browser that could not be launched.
         session = PlaywrightBrowserSession()
-        with _recording_spans() as exporter:
-            toolset = PlaywrightBrowserToolset[None](session=session)
+        toolset = PlaywrightBrowserToolset[None](session=session)
+
+        async def drive() -> None:
             with pytest.raises(RuntimeError, match='PlaywrightBrowser is not running'):
                 await toolset.snapshot()
-            (span,) = exporter.get_finished_spans()
-            assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
-            assert 'url.full' not in span.attributes
+
+        (span,) = await _run_browser_operation(instrumented, drive)
+        assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
+        assert 'url.full' not in span.attributes
 
     @pytest.mark.parametrize('include_content', [True, False])
-    async def test_an_escaping_exception_keeps_its_message_only_with_content(self, include_content: bool) -> None:
+    async def test_an_escaping_exception_keeps_its_message_only_with_content(
+        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         # An exception message can quote what the model passed, so it follows the run's content setting.
-        with _recording_spans(include_content=include_content) as exporter:
+        async def drive() -> None:
             with pytest.raises(RuntimeError, match='PlaywrightBrowser is not running'):
                 await PlaywrightBrowserToolset[None](session=PlaywrightBrowserSession()).snapshot()
-        (span,) = exporter.get_finished_spans()
+
+        (span,) = await _run_browser_operation(instrumented, drive, include_content)
         (event,) = span.events
         assert event.attributes is not None and event.attributes['exception.type'] == 'RuntimeError'
         assert ('exception.message' in event.attributes) is include_content
         assert ('not running' in (span.status.description or '')) is include_content
 
-    async def test_a_refusal_opens_its_own_span(self) -> None:
+    async def test_a_refusal_opens_its_own_span(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         # A call the egress policy turns away never reaches a page, and a trace that
         # showed only the calls that did would not show it happened at all.
         page = _FakePage()
         session = PlaywrightBrowserSession(policy=toolset_module.EgressPolicy(allowed_domains=['example.com']))
         session.page = page
         session.pages = [page]
-        with _recording_spans() as exporter:
-            result = await _toolset(page, session=session).navigate('https://evil.example/')
-            assert result == 'Error: domain not in allowed_domains: https://evil.example/'
-            (span,) = exporter.get_finished_spans()
-            assert span.name == 'browser navigate'
-            assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
-            assert 'url.full' not in span.attributes
+        toolset = _toolset(page, session=session)
+        result: str | ToolReturn[str] = ''
 
-    async def test_the_span_names_the_tab_the_operation_ended_on(self) -> None:
+        async def drive() -> None:
+            nonlocal result
+            result = await toolset.navigate('https://evil.example/')
+
+        (span,) = await _run_browser_operation(instrumented, drive)
+        assert result == 'Error: domain not in allowed_domains: https://evil.example/'
+        assert span.name == 'browser navigate'
+        assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
+        assert 'url.full' not in span.attributes
+
+    async def test_the_span_names_the_tab_the_operation_ended_on(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         page = _FakePage()
         popup = _FakePage(url='https://example.com/popup')
         session = PlaywrightBrowserSession()
         session.page = page
         session.pages = [page, popup]
-        with _recording_spans() as exporter:
-            await _toolset(page, session=session).tabs('select', 1)
-            (span,) = exporter.get_finished_spans()
-            assert span.attributes is not None and span.attributes['url.full'] == 'https://example.com/popup'
+        toolset = _toolset(page, session=session)
 
-    async def test_the_log_tools_open_their_own_span(self) -> None:
+        async def drive() -> None:
+            await toolset.tabs('select', 1)
+
+        (span,) = await _run_browser_operation(instrumented, drive)
+        assert span.attributes is not None and span.attributes['url.full'] == 'https://example.com/popup'
+
+    async def test_the_log_tools_open_their_own_span(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
         page = _FakePage()
         session = PlaywrightBrowserSession()
         session.page = page
         session.pages = [page]
-        with _recording_spans() as exporter:
-            toolset = _toolset(page, session=session)
+        toolset = _toolset(page, session=session)
+
+        async def drive() -> None:
             await toolset.console_messages()
             await toolset.network_requests()
             await toolset.handle_next_dialog(accept=True)
-            assert [span.name for span in exporter.get_finished_spans()] == [
-                'browser console_messages',
-                'browser network_requests',
-                'browser handle_next_dialog',
-            ]
+
+        spans = await _run_browser_operation(instrumented, drive)
+        assert [span.name for span in spans] == [
+            'browser console_messages',
+            'browser network_requests',
+            'browser handle_next_dialog',
+        ]
 
 
 class TestEventLogBounds:
