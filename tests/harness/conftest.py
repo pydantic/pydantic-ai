@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -12,7 +12,15 @@ import pytest
 import pydantic_ai.models
 import pydantic_ai_harness.planning  # pyright: ignore[reportUnusedImport] # noqa: F401
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from tests.conftest import try_import
+
+with try_import():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 # `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
 # harness imports it lazily. A registration after any test has escaped framing text emits a
@@ -46,6 +54,7 @@ __all__ = (
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
+    'instrumented',
 )
 
 # Temporal markers live in `tests/harness/_temporal.py`: modules defining workflows must not import
@@ -96,6 +105,19 @@ def allow_model_requests() -> Iterator[None]:
     """Temporarily allow real model requests within a test."""
     with pydantic_ai.models.override_allow_model_requests(True):
         yield
+
+
+@pytest.fixture
+def instrumented() -> Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]:
+    def factory(include_content: bool) -> tuple[Instrumentation, InMemorySpanExporter]:
+        exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return Instrumentation(
+            settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=include_content)
+        ), exporter
+
+    return factory
 
 
 @pytest.fixture
