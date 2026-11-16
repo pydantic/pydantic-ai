@@ -276,6 +276,43 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
 
 @needs_anthropic
 @pytest.mark.vcr
+async def test_claude_sees_an_image_a_result_holds_beside_its_screenshot(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    hooks = Hooks[object]()
+    picture = BinaryImage(data=png(64, 64, red_box=(0, 0, 64, 64)), media_type='image/png')
+
+    @hooks.on.after_tool_execute
+    async def add_picture(
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: ToolReturn,
+    ) -> ToolReturn:
+        # As an app might add an image of its own to the result, before the screenshot.
+        assert _is_object_list(result.return_value)
+        return ToolReturn([picture, *result.return_value], metadata=result.metadata)
+
+    agent = Agent(
+        _claude('claude-sonnet-5-5', anthropic_api_key, request_capture),
+        capabilities=[provider.capability(), ComputerUse(), hooks],
+    )
+    result = await agent.run(
+        'Take one screenshot. Besides the screenshot you get a small square image: reply with its colour only.'
+    )
+
+    assert 'red' in result.output.lower()
+    last = request_capture.bodies('/v1/messages')[-1]
+    # The last call that ran carries the image, then the screen, which stays the result's last block.
+    *_, (is_error, blocks) = _results(last)
+    assert not is_error and blocks[:2] == ['OK', 'image'] and blocks[-1] == 'image' and blocks.count('image') == 2
+
+
+@needs_anthropic
+@pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='loading the capability swaps the deferred `computer` tool for the toolset')
 async def test_claude_drives_the_screen_after_loading_a_deferred_computer(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture

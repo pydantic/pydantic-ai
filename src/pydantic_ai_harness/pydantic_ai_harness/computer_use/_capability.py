@@ -216,30 +216,13 @@ class _NotRun:
         return UserError(self.message)
 
 
-def _smallest(*values: int | None) -> int | None:
-    """The smallest of the limits that are set, or `None` when none is."""
-    return min((value for value in values if value), default=None)
-
-
-def _model_limit(model: AbstractModel) -> _ScreenshotLimit:
-    """The largest screenshot every model that may answer takes."""
+def _model_limit(model: AbstractModel, call: ComputerCallPart | None = None) -> _ScreenshotLimit:
+    """The largest screenshot every model that may answer takes, and the one that made `call`, as recorded on it."""
     models = candidate_models(model)
+    sides = [smallest_limit(models, 'computer_use_screenshot_max_side'), call and call.screenshot_max_side]
+    pixels = [smallest_limit(models, 'computer_use_screenshot_max_pixels'), call and call.screenshot_max_pixels]
     return _ScreenshotLimit(
-        max_side=smallest_limit(models, 'computer_use_screenshot_max_side'),
-        max_pixels=smallest_limit(models, 'computer_use_screenshot_max_pixels'),
-    )
-
-
-def _call_limit(call: ComputerCallPart) -> _ScreenshotLimit:
-    """The largest screenshot the model that made `call` takes, as the agent recorded it on the call."""
-    return _ScreenshotLimit(max_side=call.screenshot_max_side, max_pixels=call.screenshot_max_pixels)
-
-
-def _min_limit(first: _ScreenshotLimit, second: _ScreenshotLimit) -> _ScreenshotLimit:
-    """The largest screenshot both limits allow."""
-    return _ScreenshotLimit(
-        max_side=_smallest(first.max_side, second.max_side),
-        max_pixels=_smallest(first.max_pixels, second.max_pixels),
+        max_side=min(filter(None, sides), default=None), max_pixels=min(filter(None, pixels), default=None)
     )
 
 
@@ -377,21 +360,13 @@ async def _perform(
     """
     steps = _Steps(display, mapping, settle_seconds)
     try:
-        performed, error = await _run_in_order(steps, actions, held)
+        for index, action in enumerate(actions):
+            if (error := await _run_one(steps, action, held, last=index == len(actions) - 1)) is not None:
+                return index, error, steps
     except BaseException:
         await _release(display, held)
         raise
-    return performed, error, steps
-
-
-async def _run_in_order(
-    steps: _Steps, actions: list[ComputerToolAction], held: list[MouseButton]
-) -> tuple[int, str | None]:
-    """Run the actions until one fails, keeping `held` up to date: how many ran, and why the next one failed."""
-    for index, action in enumerate(actions):
-        if (error := await _run_one(steps, action, held, last=index == len(actions) - 1)) is not None:
-            return index, error
-    return len(actions), None
+    return len(actions), None, steps
 
 
 async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[MouseButton], *, last: bool) -> str | None:
@@ -446,22 +421,14 @@ async def _release_for_failure(display: Display, held: list[MouseButton]) -> tup
 
 
 def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
-    """The size of the latest screenshot the model saw, from its result's metadata or, without it, the image."""
+    """The size of the latest screenshot the model saw."""
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in reversed(message.parts):
             if isinstance(part, ComputerReturnPart) and (screenshot := part.screenshot) is not None:
-                return _screenshot_size(part, screenshot)
+                return png_size(screenshot.data)
     return None
-
-
-def _screenshot_size(part: ComputerReturnPart, screenshot: BinaryImage) -> tuple[int, int] | None:
-    result = part.result
-    if result is not None and 'screenshot_size' in result:
-        width, height = result['screenshot_size']
-        return width, height
-    return png_size(screenshot.data)
 
 
 def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
@@ -495,15 +462,10 @@ def _as_computer_call(part: ModelResponsePart, tool_call_id: str | None) -> Comp
     )
 
 
-def _display(ctx: RunContext[Any]) -> Display | None:
-    """The workspace backend's display, if it has one."""
-    backend = ctx.workspace.backend
-    return backend.display if isinstance(backend, SupportsDisplay) else None
-
-
 def _required_display(ctx: RunContext[Any]) -> Display:
     """The workspace backend's display, or a `UserError` when it has none."""
-    if (display := _display(ctx)) is None:
+    backend = ctx.workspace.backend
+    if not isinstance(backend, SupportsDisplay) or (display := backend.display) is None:
         raise UserError(_NO_DISPLAY)
     return display
 
@@ -642,16 +604,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         run = _run_buttons(ctx)
         made = _the_call(ctx)
         call = made[1] if made else None
-        # The grid and screenshot limit of the model that made the call, as the agent recorded them.
-        grid, made_limit = (call.coordinate_grid, _call_limit(call)) if call else (None, _ScreenshotLimit())
         plan = _Plan(
-            grid=grid,
+            # The grid the model that made the call points on, as the agent recorded it.
+            grid=call.coordinate_grid if call else None,
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=call is not None and call.actions != actions,
             # The next request goes to the run's model, or with a sticky `ModelFallback` to the one that made the call,
             # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
-            limit=_min_limit(made_limit, _model_limit(ctx.model)),
+            limit=_model_limit(ctx.model, call),
             model_name=ctx.model.model_name,
             held=list(run.held) if run else [],
             keeps_held=run is not None,
@@ -668,10 +629,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise outcome.error()
         tool_return, held = outcome
         result: ComputerResult = tool_return.metadata
-        size = result.get('screenshot_size')
-        assert size is not None  # a call that returns has taken its screenshot
-        width, height = size  # a list once a durable unit's result has been through JSON
-        result['screenshot_size'] = (width, height)
         if run is not None:
             run.held, run.stray = held, stray
         # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
@@ -765,7 +722,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         await steps.settle()
 
         png, size = await _screenshot(display, summary)
-        result['screenshot_size'] = size
         if held:
             buttons = 'button is' if len(held) == 1 else 'buttons are'
             summary.append(f'The {" and ".join(held)} mouse {buttons} still pressed.')
