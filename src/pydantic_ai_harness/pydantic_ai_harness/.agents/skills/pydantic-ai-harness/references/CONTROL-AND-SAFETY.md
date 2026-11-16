@@ -650,6 +650,8 @@ agent = Agent(
   as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
   with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
+  `skip_unchanged=True` (requires `scope='conversation'`) skips a firing while a copy of the same text
+  is still in the history the model sees, across runs too, and records it again once compaction drops it.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.
@@ -666,6 +668,7 @@ agent = Agent(
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
+  `skip_unchanged=True` leaves out a generation that matches the latest generated reminder in history.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).

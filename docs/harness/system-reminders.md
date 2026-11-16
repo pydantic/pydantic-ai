@@ -78,6 +78,7 @@ A `Reminder` fires on a cadence within a run:
 | `max_fires` | Cap the number of fires per run. `None` = no limit. |
 | `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. Left unset, it's `None` and warns that the default changed. |
 | `scope` | `'request'` (the default) shows each firing for its own request only; `'conversation'` keeps it in front of the model for the rest of the conversation. See [Lasting reminders](#lasting-reminders). |
+| `skip_unchanged` | Skip a firing while a copy of the same text is still in the history the model sees. Requires `scope='conversation'`. See [Lasting reminders](#lasting-reminders). |
 
 A request-scoped reminder, the default, adds recency; it doesn't keep a rule in force. The model sees each firing only in the request it fires on, so with `interval>1` it sees the reminder on the requests where it fires and not on the ones in between, and a `trigger` or `max_fires` narrows that further. Text the model must follow at every step belongs in the agent's [instructions](../agent.md#instructions), which every request sends. Guidance it must still act on several steps after a firing can be a [lasting reminder](#lasting-reminders).
 
@@ -106,6 +107,8 @@ SystemReminders(
 ```
 
 Each firing adds a `SystemPromptPart` to the message history for good, and every later request sends all of them again. So the history grows by one part per firing: with `interval=N`, a run of R requests gains `R // N` copies, and with the default `interval=1`, one on every request. The copies are appended and never moved, so the cached prefix holds, and with caching turned on for your model each earlier copy is read from cache. Use `interval` and `max_fires` to bound the growth: `max_fires=1` records the reminder once per run.
+
+To keep one copy instead of one per firing, set `skip_unchanged=True`. A firing is skipped while a lasting copy of the same text is still in the history the model sees, from the latest native compaction boundary on, so chained runs that pass the history along don't add a copy each. Once compaction drops the copy, or the text changes, the next firing records it again.
 
 Choose the scope by what the text has to do:
 
@@ -170,6 +173,8 @@ SystemReminders(dynamic_reminders=[GoalReanchor(), LLMReminder(model='{{ anthrop
 
 !!! warning "`LLMReminder` generates every 10 requests by default"
     `LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, so an agent with an `LLMReminder` and no cadence of its own grew its history by two parts on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
+
+Set `skip_unchanged=True` to leave out a generation whose text matches the latest generated reminder in the history the model sees. The generation call is still made; only the duplicate record is skipped.
 
 The nested call runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text.
 
