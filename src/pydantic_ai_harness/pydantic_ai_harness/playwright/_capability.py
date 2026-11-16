@@ -260,8 +260,10 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     before handlers are attached and before tools read or act on a page. Egress
     guards and native session handlers still apply, and documents loaded while
     attached cannot register service workers. Downloads follow the browser's own
-    settings. Workers registered before attachment are not guarded, and a document
-    loaded before attachment can still register one until it navigates.
+    settings. Requests from workers registered before attachment go through the
+    guards too, unless `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` turns off
+    Playwright's worker routing, and a document loaded before attachment can still
+    register one until it navigates.
     """
 
     id: str | None = 'playwright_browser'

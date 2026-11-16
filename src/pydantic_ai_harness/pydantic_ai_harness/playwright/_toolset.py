@@ -32,6 +32,13 @@ together when it changed. Pinned in the `[playwright]` extra as
   installs itself. Verified 2026-11-16 against the 1.64.1 driver source
   (`addInitScript` in `BrowserContext._initialize`). Re-check: search the bundled
   `coreBundle.js` for `Service Worker registration blocked by Playwright`.
+- Playwright routes service-worker requests through `BrowserContext.route` in
+  Chromium, including those of a worker registered before a CDP attach;
+  `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK=1` turns that off. Verified
+  2026-11-16 against Chromium 156 with 1.64.1: a refused host received the
+  worker's request only with the variable set. Source:
+  <https://github.com/microsoft/playwright/releases/tag/v1.57.0>. Re-check: have a
+  worker registered before attachment fetch a refused host.
 - `connect_over_cdp(no_defaults=True)` leaves the default context's downloads and
   focus and media emulation at the browser's own settings; without it, Playwright
   sends `Browser.setDownloadBehavior` with `allowAndName` into its temporary
@@ -1339,7 +1346,8 @@ class PlaywrightBrowserSession:
             if not pages:
                 pages = [await self._bounded(context.new_page())]
         else:
-            # Service workers bypass routes; downloads have no tool-level contract.
+            # Blocked workers stay off the request path even with Playwright's worker routing
+            # off; downloads have no tool-level contract.
             context = await self._bounded(
                 browser.new_context(
                     storage_state=self._storage_state,
@@ -1359,11 +1367,11 @@ class PlaywrightBrowserSession:
         """Keep requests of `context` on a path routes see, and route them when the policy enforces anything.
 
         A context the session did not create keeps the service-worker setting it was
-        created with, and a worker's requests never reach a route, so registrations are
-        refused the way `service_workers='block'` refuses them, whatever the policy. The
-        refusal reaches each document created or navigated from now on: workers
-        registered before the session attached, and documents already loaded until they
-        navigate, are out of its reach.
+        created with, so registrations are refused the way `service_workers='block'`
+        refuses them, whatever the policy. Playwright routes a worker's requests like a
+        page's unless `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set, and the refusal
+        covers that case too. It reaches each document created or navigated from now on:
+        documents already loaded can register a worker until they navigate.
         """
         if self._cdp_context == 'default':
             await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))

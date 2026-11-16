@@ -351,8 +351,9 @@ provisioning and cleanup. `cdp_context='default'` reuses sign-ins and tabs inste
 every signed-in account, so attach it to a profile dedicated to the agent, never an everyday
 browser, and set `allowed_domains` for untrusted pages. Loaded tabs and frames must pass the egress
 policy, and new service-worker registrations are refused; downloads follow the browser's settings.
-Service workers registered and connections opened before attachment bypass request guards, and a
-page loaded before attachment can register a worker until it navigates.
+Playwright routes service-worker requests through the guards unless
+`PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass
+them, and a page loaded before attachment can register a worker until it navigates.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,

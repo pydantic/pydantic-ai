@@ -329,9 +329,11 @@ timeout.
 
 While attached, the session refuses new service-worker registrations, and
 Playwright leaves the browser's download and emulation settings as they are.
-Service workers registered and connections opened before attachment bypass the
-request guards, and a page loaded before attachment can still register a worker
-until it navigates.
+Playwright routes service-worker requests through the request guards, including
+those of workers registered before attachment, unless
+`PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before
+attachment bypass the guards, and a page loaded before attachment can still
+register a worker until it navigates.
 
 ## Lifecycle
 
