@@ -5,7 +5,7 @@ import inspect
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 import pytest
 
@@ -107,8 +107,12 @@ def allow_model_requests() -> Iterator[None]:
         yield
 
 
+Instrumented: TypeAlias = 'Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]'
+"""The `instrumented` fixture: builds an `Instrumentation` and the exporter its spans go to, by `include_content`."""
+
+
 @pytest.fixture
-def instrumented() -> Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]:
+def instrumented() -> Instrumented:
     def factory(include_content: bool) -> tuple[Instrumentation, InMemorySpanExporter]:
         exporter = InMemorySpanExporter()
         tracer_provider = TracerProvider()

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -25,6 +23,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails import GuardrailError
+from tests.harness.conftest import Instrumented
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -305,7 +304,7 @@ class TestOutputGuardrailTracing:
         attributes = dict(_only_span(exporter).attributes or {})
         assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_replace_clean', 0)
 
-    async def test_a_retry_records_a_span(self, instrumented: Callable[[bool], tuple[Any, Any]]):
+    async def test_a_retry_records_a_span(self, instrumented: Instrumented):
         """Without it a retry shows only as a second model request."""
         tracing, exporter = instrumented(False)
         agent = Agent(
@@ -323,9 +322,7 @@ class TestOutputGuardrailTracing:
             'guardrail.position': 0,
         }
 
-    async def test_a_retry_span_carries_the_message_when_content_is_included(
-        self, instrumented: Callable[[bool], tuple[Any, Any]]
-    ):
+    async def test_a_retry_span_carries_the_message_when_content_is_included(self, instrumented: Instrumented):
         tracing, exporter = instrumented(True)
         agent = Agent(
             TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once()), tracing]
@@ -347,9 +344,7 @@ class TestOutputGuardrailTracing:
 
         assert (await agent.run('hello')).output is replacement
 
-    async def test_a_replacement_is_stringified_when_content_is_on(
-        self, instrumented: Callable[[bool], tuple[Any, Any]]
-    ):
+    async def test_a_replacement_is_stringified_when_content_is_on(self, instrumented: Instrumented):
         tracing, exporter = instrumented(True)
         agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=_replace_clean), tracing])
 

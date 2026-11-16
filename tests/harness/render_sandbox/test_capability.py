@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+
+from tests.harness.conftest import Instrumented
 
 from ...conftest import try_import
 
@@ -126,7 +127,7 @@ async def test_destroy_terminates_by_id_and_treats_a_missing_sandbox_as_gone(
 
 
 async def test_the_sandboxes_lifecycle_is_traced(
-    workspace_harness: WorkspaceHarness, instrumented: Callable[[bool], tuple[Any, Any]]
+    workspace_harness: WorkspaceHarness, instrumented: Instrumented
 ) -> None:
     """Creating, reattaching to and destroying the sandbox each get a span, under the call or tool that needed it."""
     tracing, exporter = instrumented(False)
