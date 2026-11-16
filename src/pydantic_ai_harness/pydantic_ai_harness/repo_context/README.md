@@ -214,6 +214,35 @@ Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the r
 escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own
 block.
 
+### Pinning accepted files
+
+An app that asks the user to accept a workspace's instruction files, skills or
+sub-agent definitions before trusting them can pin what was accepted. Record
+`file_digest(workspace, path)` when the user accepts a file, and before each run
+pass the recorded digests to `pin_accepted_files`. A file whose content no
+longer matches is capped at `changed` (`'none'` by default) through an
+`AuthorityWorkspace`, so `Workspace.authority_of` reports the lower level until
+the user accepts the new content and the app records its new digest. Showing the
+user what changed is up to the app, which holds the accepted content.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.repo_context import RepoContext, file_digest, pin_accepted_files
+
+workspace = Workspace(LocalWorkspaceBackend('./project'))
+accepted = {'AGENTS.md': await file_digest(workspace, 'AGENTS.md')}  # when the user accepts it
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[RepoContext()])
+result = await agent.run('Fix the failing test', workspace=await pin_accepted_files(workspace, accepted))
+```
+
+Files are compared when `pin_accepted_files` is called, not when they are read
+later in the run. The lower level reaches the model only through capabilities
+that check `authority_of`; see
+[Files you didn't write](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority)
+for which do.
+
 ## Cache cost
 
 Injecting file contents into the system prompt costs prompt-cache stability: a
