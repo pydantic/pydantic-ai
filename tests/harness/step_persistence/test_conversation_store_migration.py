@@ -22,12 +22,12 @@ def _recipe(path: str) -> str:
     return block.source
 
 
-async def _call(name: str, *args: object) -> None:
+async def _call(name: str, *args: object, **kwargs: object) -> None:
     namespace: dict[str, object] = {}
     exec(_recipe('docs/harness/step-persistence.md'), namespace)
     function = namespace[name]
     assert callable(function)
-    result = function(*args)
+    result = function(*args, **kwargs)
     assert inspect.isawaitable(result)
     await result
 
@@ -87,13 +87,7 @@ class TestStepPersistenceSessionMigration:
         result = await Agent(TestModel(), capabilities=[StepPersistence(store=steps)]).run('hi', conversation_id='c')
         conversations = InMemoryConversationStore()
 
-        namespace: dict[str, object] = {}
-        exec(_recipe('docs/harness/step-persistence.md'), namespace)
-        move_conversation = namespace['move_conversation']
-        assert callable(move_conversation)
-        moving = move_conversation(steps, conversations, 'c', scope='user-1')
-        assert inspect.isawaitable(moving)
-        await moving
+        await _call('move_conversation', steps, conversations, 'c', scope='user-1')
 
         assert await conversations.load('c', scope='user-2') is None
         moved = await conversations.load('c', scope='user-1')

@@ -926,7 +926,8 @@ async def move_heads(
 - `save_once` skips a conversation the store already has, so a pass that stops
   partway can be run again to move the rest, and leaves conversations already
   moved, or saved since, unchanged. Pass `scope=` to record whose conversation
-  it is.
+  it is, and the same `scope=` on every pass: a conversation the store has
+  under another scope is skipped too.
 - `move_heads` moves archived heads too, and saves each head as a conversation
   of its own, so the `forked_from` link a head records isn't kept.
 - Keep `StepPersistence` on the agent if you still need the step-event trail,

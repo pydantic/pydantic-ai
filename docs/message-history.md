@@ -906,7 +906,7 @@ speech in either direction without losing its running total.
 
 For a chat application that is usually the whole design: load a thread's conversation, pass it as `conversation=`, and store the result's `conversation` back once the run finishes, with [`ConversationTypeAdapter`][pydantic_ai.conversation.ConversationTypeAdapter] or as a field on a model of your own. For a long thread, store the messages separately and append each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] instead of rewriting them, which keeps each write proportional to the turn rather than to the conversation; [Persistence](persistence.md#storing-a-conversation-yourself) covers both.
 
-To have the load and save calls written for you, use a [`ConversationStore`](persistence.md#using-a-conversation-store): it stores each message once and catches conflicting saves.
+To keep that history in a database without writing the storage yourself, use a [`ConversationStore`](persistence.md#using-a-conversation-store): it stores each message once, catches conflicting saves, and builds in forking. A [UI adapter](ui/overview.md#saving-to-a-conversation-store) given one makes the load and save calls for you.
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) adds capabilities that keep more than the conversation:
 
