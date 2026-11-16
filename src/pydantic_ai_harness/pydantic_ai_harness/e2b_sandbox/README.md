@@ -143,7 +143,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs them too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
 
-`template` and `allow_internet_access` only shape a new sandbox. `sandbox_timeout` also applies when you reattach, and `working_dir` and `env` apply to every command.
+`template`, `allow_internet_access` and `network` only shape a new sandbox. `sandbox_timeout` also applies when you reattach, and `working_dir` and `env` apply to every command.
 
 Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
