@@ -1,5 +1,5 @@
 ---
-description: "Use OpenAI-compatible inference platforms and gateways such as Fireworks AI, Together AI, Vercel AI Gateway, LiteLLM and vLLM with Pydantic AI, or connect to any custom endpoint."
+description: "Use OpenAI-compatible inference platforms and gateways such as Fireworks AI, Together AI, Vercel AI Gateway, LiteLLM, Otari and vLLM with Pydantic AI, or connect to any custom endpoint."
 ---
 
 # Other compatible APIs
@@ -197,6 +197,40 @@ result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ```
+
+## Otari
+
+[Otari](https://otari.ai) is Mozilla.ai's open-source LLM gateway, which adds API key management, budgets, usage tracking and fallback routing in front of the providers it routes to. Use the hosted gateway at [otari.ai](https://otari.ai), or [run your own](https://github.com/mozilla-ai/otari).
+
+Create an API key on the **API keys** page of the otari.ai dashboard, set the `OTARI_API_KEY` environment variable and use [`OtariProvider`][pydantic_ai.providers.otari.OtariProvider] by name. Otari names a model `<provider>:<model>`, or by the name of one of your routing policies or aliases:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('otari:anthropic:claude-sonnet-5-5')
+...
+```
+
+Requests go to otari.ai's US region by default. Pass `region='eu'` for an account in the EU region, or point `base_url` (or the `OTARI_BASE_URL` environment variable) at a self-hosted gateway, its URL plus `/api/v1`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.otari import OtariProvider
+
+eu_model = OpenAIChatModel(
+    'anthropic:claude-sonnet-5-5',
+    provider=OtariProvider(api_key='your-otari-api-key', region='eu'),
+)
+self_hosted_model = OpenAIChatModel(
+    'openai:gpt-5.2',
+    provider=OtariProvider(api_key='your-otari-api-key', base_url='http://localhost:8000/api/v1'),
+)
+agent = Agent(eu_model)
+...
+```
+
+The provider part of the model name selects the [model profile](#model-profile), so `anthropic:claude-sonnet-5-5` is treated as a Claude model whichever API Otari reaches it through.
 
 ## OVHcloud AI Endpoints
 

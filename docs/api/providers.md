@@ -88,6 +88,8 @@
 
 ::: pydantic_ai.providers.nebius.NebiusProvider
 
+::: pydantic_ai.providers.otari.OtariProvider
+
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
 ::: pydantic_ai.providers.crusoe.CrusoeProvider

@@ -24,6 +24,7 @@ _SpecialTokenRoute = Literal[
     'openai',
     'openai-compatible',
     'openrouter',
+    'otari',
     'ovhcloud',
     'sambanova',
     'together',
