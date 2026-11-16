@@ -772,10 +772,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def compactions(self) -> list[_messages.CompactionRecord]:
         """The compactions this run kept so far, in the order it kept them.
 
-        The message history only shows the compacted history: [`new_messages()`][pydantic_ai.agent.AgentRun.new_messages] are this run's messages
-        still in it. Each [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you
-        can tell which messages were summarized, for example to store the conversation's full log. A compaction made
-        for an attempt that then failed isn't included.
+        The message history only shows the compacted history:
+        [`new_messages()`][pydantic_ai.agent.AgentRun.new_messages] are this run's messages still in it. Each
+        [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you can tell which
+        messages were summarized, for example to store the conversation's full log. A compaction made for an attempt
+        that then failed isn't included.
         """
         return self._graph_run.state.compactions
 
@@ -1225,10 +1226,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def compactions(self) -> list[_messages.CompactionRecord]:
         """The compactions this run kept, in the order it kept them.
 
-        The message history only shows the compacted history: [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] are this run's messages
-        still in it. Each [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you
-        can tell which messages were summarized, for example to store the conversation's full log. A compaction made
-        for an attempt that then failed isn't included.
+        The message history only shows the compacted history:
+        [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] are this run's messages still in it. Each
+        [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you can tell which
+        messages were summarized, for example to store the conversation's full log. A compaction made for an attempt
+        that then failed isn't included.
         """
         return self._state.compactions
 

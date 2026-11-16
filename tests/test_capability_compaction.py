@@ -1308,6 +1308,36 @@ async def test_a_part_equal_to_but_not_the_one_in_the_history_is_refused():
         await agent.run('hi')
 
 
+@pytest.mark.parametrize('build', [_summary_after_the_system_prompt, _provider_response_after_the_system_prompt])
+async def test_compaction_usage_is_priced_at_a_timestamp_from_the_history(
+    build: CompactionBuilder, monkeypatch: pytest.MonkeyPatch
+):
+    """Not the clock, which a durable replay or recovery reads differently: the cost has to price the same."""
+    import pydantic_ai._agent_graph as agent_graph
+
+    priced: list[ModelResponse] = []
+    original = agent_graph.fill_response_cost
+
+    def record(response: ModelResponse) -> None:
+        priced.append(response)
+        original(response)
+
+    monkeypatch.setattr(agent_graph, 'fill_response_cost', record)
+    agent = Agent(seen_by([]), system_prompt='You are a pirate.', capabilities=[RequestOnce(), Returns(build)])
+    result = await agent.run('hi')
+
+    [record_] = result.compactions
+    holder = result.all_messages()[record_.part_message_index]
+    [compaction_billed] = [r for r in priced if r.parts and r.parts[0] is record_.part]
+    if isinstance(holder, ModelResponse):
+        expected = holder.timestamp
+    else:
+        answered = result.all_messages()[-2]
+        assert isinstance(answered, ModelRequest)
+        expected = answered.timestamp
+    assert compaction_billed.timestamp == expected
+
+
 async def test_compactions_serialize_without_what_they_replaced():
     agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
     result = await agent.run('hi')
