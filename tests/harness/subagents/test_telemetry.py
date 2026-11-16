@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from typing import Any
 
 import anyio
 import pytest
@@ -13,9 +11,9 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
+from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.fallback import FallbackModel
@@ -23,9 +21,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
+from tests.harness.conftest import Instrumented
 
 
-def calling(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
+def calling(*calls: tuple[str, dict[str, str]]) -> FunctionModel:
     """A parent model that makes each `(tool name, arguments)` call in turn, then replies with text."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -47,7 +46,7 @@ def delegation_spans(exporter: InMemorySpanExporter) -> list[ReadableSpan]:
     return [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
 
 
-def sub_agents_attributes(span: ReadableSpan) -> dict[str, Any]:
+def sub_agents_attributes(span: ReadableSpan) -> dict[str, AttributeValue]:
     return {key: value for key, value in (span.attributes or {}).items() if key.startswith('sub_agents.')}
 
 
@@ -96,7 +95,7 @@ class TestSubAgentsTelemetry:
         sub_agent: SubAgent[object],
         outcome: str,
         model: str,
-        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+        instrumented: Instrumented,
     ):
         instrumentation, exporter = instrumented(False)
         await Agent(delegating(), capabilities=[SubAgents(agents=[sub_agent]), instrumentation]).run('go')
@@ -108,9 +107,7 @@ class TestSubAgentsTelemetry:
             'sub_agents.model': model,
         }
 
-    async def test_the_model_is_the_one_that_served_the_run(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_the_model_is_the_one_that_served_the_run(self, instrumented: Instrumented):
         # Configured as the string `'test'`; the model that answered names itself `test:test`.
         worker = SubAgent(Agent('test', name='worker'))
         instrumentation, exporter = instrumented(False)
@@ -119,9 +116,7 @@ class TestSubAgentsTelemetry:
         [span] = delegation_spans(exporter)
         assert sub_agents_attributes(span)['sub_agents.model'] == 'test:test'
 
-    async def test_under_a_fallback_model_the_model_is_the_one_that_answered(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_under_a_fallback_model_the_model_is_the_one_that_answered(self, instrumented: Instrumented):
         worker = SubAgent(Agent(FallbackModel(FunctionModel(crash), TestModel()), name='worker'))
         instrumentation, exporter = instrumented(False)
         await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
@@ -130,9 +125,7 @@ class TestSubAgentsTelemetry:
         assert sub_agents_attributes(span)['sub_agents.model'] == 'test:test'
 
     @pytest.mark.parametrize('include_content', [False, True])
-    async def test_a_created_agents_name_is_content(
-        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_created_agents_name_is_content(self, include_content: bool, instrumented: Instrumented):
         create = ('create_agent', {'name': 'poet', 'description': 'd', 'instructions': 'i'})
         delegate = ('delegate_task', {'agent_name': 'poet', 'task': 'do it'})
         sub_agents = SubAgents[object](models={'fast': TestModel()}, dynamic_agents=DynamicAgents(models=['fast']))
@@ -143,9 +136,7 @@ class TestSubAgentsTelemetry:
         name = {'sub_agents.agent_name': 'poet'} if include_content else {}
         assert sub_agents_attributes(span) == {**name, 'sub_agents.outcome': 'ok', 'sub_agents.model': 'test:test'}
 
-    async def test_a_timeout_is_a_successful_call_and_quotes_nothing_without_content(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_timeout_is_a_successful_call_and_quotes_nothing_without_content(self, instrumented: Instrumented):
         worker = SubAgent(Agent(FunctionModel(slow), name='worker'), timeout_seconds=0.01)
         instrumentation, exporter = instrumented(False)
         await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
@@ -155,9 +146,7 @@ class TestSubAgentsTelemetry:
         assert sub_agents_attributes(span)['sub_agents.outcome'] == 'timeout'
         assert 'do it' not in json.dumps(dict(span.attributes or {}))
 
-    async def test_an_uncontained_crash_is_an_error_with_its_outcome(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_an_uncontained_crash_is_an_error_with_its_outcome(self, instrumented: Instrumented):
         worker = SubAgent(Agent(FunctionModel(crash), name='worker'))
         instrumentation, exporter = instrumented(False)
         with pytest.raises(ModelAPIError):
@@ -171,9 +160,7 @@ class TestSubAgentsTelemetry:
             'sub_agents.model': 'function:function:crash:',
         }
 
-    async def test_an_exhausted_max_calls_budget_is_recorded_without_a_model(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_an_exhausted_max_calls_budget_is_recorded_without_a_model(self, instrumented: Instrumented):
         worker = SubAgent(Agent(TestModel(), name='worker'), max_calls=1)
         instrumentation, exporter = instrumented(False)
         await Agent(delegating(times=2), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
