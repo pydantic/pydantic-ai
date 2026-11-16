@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
 
 import pytest
 from inline_snapshot import snapshot
@@ -11,9 +10,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import SkipToolExecution, UsageLimitExceeded, UserError
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ModelRetry, RunContext
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ValidatedToolArgs
+from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -175,8 +174,8 @@ class TestToolBudgets:
     async def test_call_skipped_by_another_capability_is_not_counted(self):
         class SkipFirst(AbstractCapability[None]):
             async def before_tool_execute(
-                self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-            ) -> dict[str, Any]:
+                self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
                 if call.tool_call_id in ('s1', 'p1'):
                     raise SkipToolExecution('skipped')
                 return args
@@ -188,11 +187,36 @@ class TestToolBudgets:
 
         result = await agent.run('Research it')
 
-        assert ran == ['search:a', 'poll:j1']
+        assert sorted(ran) == ['poll:j1', 'search:a']
         assert [metadata for _, _, metadata in _returns(result.all_messages())] == [
             None,
             None,
             None,
+            None,
+            {'tool_budgets': 'per_tool'},
+        ]
+
+    async def test_call_approved_inline_is_counted_once(self):
+        class AskFirst(AbstractCapability[None]):
+            async def before_tool_execute(
+                self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
+                if not ctx.tool_call_approved:
+                    raise ApprovalRequired
+                return args
+
+        def approve(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return requests.build_results(approve_all=True)
+
+        ran: list[str] = []
+        model = _scripted([_search('a', 's1')], [_search('b', 's2')])
+        budgets = ToolBudgets(per_tool={'search': 1}, refuse_repeats={'search'})
+        agent = _agent(model, budgets, AskFirst(), HandleDeferredToolCalls(approve), ran=ran)
+
+        result = await agent.run('Research it')
+
+        assert ran == ['search:a']
+        assert [metadata for _, _, metadata in _returns(result.all_messages())] == [
             None,
             {'tool_budgets': 'per_tool'},
         ]
@@ -259,15 +283,18 @@ class TestToolBudgets:
         )
 
     @pytest.mark.parametrize(
-        ('budgets', 'message'),
+        ('create', 'message'),
         [
-            ({'per_tool': {'search': 0}}, "`ToolBudgets.per_tool['search']` must be at least 1, got 0."),
-            ({'total': 0}, '`ToolBudgets.total` must be at least 1, got 0.'),
+            (
+                lambda: ToolBudgets(per_tool={'search': 0}),
+                "`ToolBudgets.per_tool['search']` must be at least 1, got 0.",
+            ),
+            (lambda: ToolBudgets(total=0), '`ToolBudgets.total` must be at least 1, got 0.'),
         ],
     )
-    def test_rejects_an_empty_budget(self, budgets: dict[str, Any], message: str):
+    def test_rejects_an_empty_budget(self, create: Callable[[], ToolBudgets[None]], message: str):
         with pytest.raises(UserError) as exc_info:
-            ToolBudgets(**budgets)
+            create()
         assert str(exc_info.value) == message
 
 
