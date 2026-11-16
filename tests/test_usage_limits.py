@@ -31,7 +31,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, PydanticAIDeprecationWarning
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -122,6 +122,7 @@ async def test_streamed_text_limits() -> None:
                         ],
                         usage=RequestUsage(input_tokens=51),
                         model_name='test',
+                        model_id='test:test',
                         timestamp=IsNow(tz=UTC),
                         provider_name='test',
                         run_id=IsStr(),
@@ -242,6 +243,7 @@ async def test_multi_agent_usage_no_incr():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -264,6 +266,7 @@ async def test_multi_agent_usage_no_incr():
                 parts=[TextPart(content='{"delegate_to_other_agent1":0}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -302,6 +305,7 @@ async def test_multi_agent_usage_no_incr():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -324,6 +328,7 @@ async def test_multi_agent_usage_no_incr():
                 parts=[TextPart(content='{"delegate_to_other_agent2":0}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -430,6 +435,7 @@ async def test_multi_agent_usage_sync():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -452,6 +458,7 @@ async def test_multi_agent_usage_sync():
                 parts=[TextPart(content='{"delegate_to_other_agent":0}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -762,6 +769,7 @@ async def test_tool_call_limit() -> None:
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -784,6 +792,7 @@ async def test_tool_call_limit() -> None:
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -822,6 +831,7 @@ async def test_output_tool_not_counted() -> None:
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -844,6 +854,7 @@ async def test_output_tool_not_counted() -> None:
                 parts=[TextPart(content='{"regular_tool":"a-processed"}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -879,6 +890,7 @@ async def test_output_tool_not_counted() -> None:
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -905,6 +917,7 @@ async def test_output_tool_not_counted() -> None:
                 ],
                 usage=RequestUsage(input_tokens=52, output_tokens=10),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -971,6 +984,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                 parts=[ToolCallPart(tool_name='regular_tool', args={'x': 'test'}, tool_call_id='call_1')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:call_output_after_regular:',
+                model_id='function:function:call_output_after_regular:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -992,6 +1006,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                 parts=[ToolCallPart(tool_name='final_result', args={'result': 'success'}, tool_call_id='call_2')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:call_output_after_regular:',
+                model_id='function:function:call_output_after_regular:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1046,6 +1061,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1070,6 +1086,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 parts=[ToolCallPart(tool_name='flaky_tool', args={'x': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=58, output_tokens=10),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1092,6 +1109,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 parts=[TextPart(content='{"flaky_tool":"a-success"}')],
                 usage=RequestUsage(input_tokens=59, output_tokens=14),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1257,6 +1275,7 @@ async def test_response_over_limit_is_kept_in_captured_messages(
                 # Streamed and non-streamed `FunctionModel` responses estimate usage differently.
                 usage=IsInstance(RequestUsage),
                 model_name='gpt-4o',
+                model_id='function:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1515,3 +1534,19 @@ def test_check_before_request_cost_exceeded():
 
 def test_check_before_request_cost_within_limit():
     UsageLimits(cost_limit=Decimal('0.01')).check_before_request(RunUsage(cost=Decimal('0.005')))
+
+
+async def test_calling_usage_like_a_v1_method_warns_and_returns_the_usage():
+    """`result.usage()` from V1 code warns instead of raising `TypeError`, which `except Exception` would hide."""
+    agent = Agent(TestModel())
+    result = await agent.run('Hello')
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=re.escape('use `.usage` instead of `.usage()`')):
+        usage = result.usage()  # pyright: ignore[reportDeprecated]
+    assert usage is result.usage
+
+    async with agent.run_stream('Hello') as stream:
+        await stream.get_output()
+    # A stream builds its usage on each access, so this compares values rather than identity.
+    with pytest.warns(PydanticAIDeprecationWarning, match=re.escape('use `.usage` instead of `.usage()`')):
+        assert stream.usage() == stream.usage  # pyright: ignore[reportDeprecated]

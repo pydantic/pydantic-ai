@@ -2,8 +2,9 @@
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Literal, TypeAlias, assert_never, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast, get_args
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -21,6 +22,9 @@ from anthropic.types.beta import (
     BetaDirectCaller,
     BetaMCPToolResultBlock,
     BetaMCPToolUseBlock,
+    BetaMemoryTool20250818Param,
+    BetaRequestMCPServerToolConfigurationParam,
+    BetaRequestMCPServerURLDefinitionParam,
     BetaServerToolCaller,
     BetaServerToolCaller20260120,
     BetaServerToolUseBlock,
@@ -55,17 +59,22 @@ from anthropic.types.beta.beta_text_editor_code_execution_tool_result_block_para
 from pydantic import TypeAdapter
 
 from ... import _utils
+from ...exceptions import UserError
 from ...messages import (
+    ModelMessage,
+    ModelRequest,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     ToolReturnPart,
     ToolSearchReturnPart,
+    UserPromptPart,
 )
 from ...native_tools import AdvisorTool, CodeExecutionTool, MCPServerTool, WebFetchTool, WebSearchTool
 from ...native_tools._tool_search import ToolSearchArgs, ToolSearchMatch
 from ...profiles.anthropic import AnthropicCodeExecutionToolVersion
+from ...tools import ToolDefinition
 
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
@@ -86,6 +95,56 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 
 
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
+
+
+_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset(
+    {'web_search_20260209', 'web_fetch_20260209', 'web_search_20260318', 'web_fetch_20260318'}
+)
+"""Web tool versions whose `allowed_callers` defaults to code execution, which Anthropic provisions server-side."""
+
+_CODE_EXECUTION_TOOL_TYPES = frozenset(
+    f'code_execution_{version}' for version in get_args(AnthropicCodeExecutionToolVersion)
+)
+
+
+def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
+    """Whether Anthropic gives a request with these tools a code execution container.
+
+    `CodeExecutionTool` does, and so does a tool that code execution may call: one whose `allowed_callers` names a
+    code execution caller, on any version, or one of `_CODE_EXECUTING_WEB_TOOL_TYPES` sent without `allowed_callers`.
+    Tools are matched by wire type, since a function tool can have any name.
+    """
+    return any(
+        tool.get('type') in _CODE_EXECUTION_TOOL_TYPES
+        or (
+            any(caller != 'direct' for caller in tool['allowed_callers'])
+            if 'allowed_callers' in tool
+            else tool.get('type') in _CODE_EXECUTING_WEB_TOOL_TYPES
+        )
+        for tool in tools
+    )
+
+
+def open_turn_has_code_execution(messages: Sequence[ModelMessage], provider_name: str) -> bool:
+    """Whether the open user turn has already used code execution on this provider.
+
+    The open turn is everything after the last request with a user prompt: the responses to it, and the tool results
+    sent back in between. A response used code execution when it has a code execution call, under any of its tool
+    names, or a container. Its container and pending calls stay in the turn until the next user prompt.
+    """
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            if any(isinstance(part, UserPromptPart) for part in message.parts):
+                return False
+        elif message.provider_name == provider_name and (
+            (message.provider_details is not None and message.provider_details.get('container_id'))
+            or any(
+                isinstance(part, NativeToolCallPart) and part.tool_name in _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES
+                for part in message.parts
+            )
+        ):
+            return True
+    return False
 
 
 def build_custom_tool_search_replay_blocks(
@@ -275,14 +334,42 @@ def map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> BetaT
             assert_never(version)
 
 
+def with_native_memory_tool(
+    tools: list[BetaToolUnionParam], declared_function_tools: Sequence[ToolDefinition]
+) -> list[BetaToolUnionParam]:
+    """Replace the `memory` function tool's definition in `tools` with Anthropic's native memory tool."""
+    if 'memory' not in {tool.name for tool in declared_function_tools}:
+        raise UserError("Native `MemoryTool` requires a 'memory' tool to be defined.")
+    tools = [tool for tool in tools if tool.get('name') != 'memory']
+    tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
+    return tools
+
+
+def map_mcp_server_tool(tool: MCPServerTool) -> BetaRequestMCPServerURLDefinitionParam:
+    mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
+        type='url',
+        name=tool.id,
+        url=tool.url,
+    )
+    if tool.allowed_tools is not None:  # pragma: no branch
+        mcp_server_url_definition_param['tool_configuration'] = BetaRequestMCPServerToolConfigurationParam(
+            enabled=bool(tool.allowed_tools),
+            allowed_tools=tool.allowed_tools,
+        )
+    if tool.authorization_token:  # pragma: no cover
+        mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
+    return mcp_server_url_definition_param
+
+
 def map_advisor_tool(tool: AdvisorTool) -> BetaAdvisorTool20260301Param:
     param = BetaAdvisorTool20260301Param(type='advisor_20260301', name='advisor', model=tool.model)
     if tool.max_uses is not None:
         param['max_uses'] = tool.max_uses
     if tool.max_tokens is not None:
         param['max_tokens'] = tool.max_tokens
-    if tool.caching is not None:
-        param['caching'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=tool.caching)
+    caching = (tool.provider_settings or {}).get('anthropic', {}).get('caching', tool.caching)
+    if caching is not None:
+        param['caching'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=caching)
     return param
 
 

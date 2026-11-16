@@ -222,37 +222,12 @@ class ReportCaseAggregate(BaseModel):
                 total_duration=0.0,
             )
 
-        def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, float] = defaultdict(float)
-            for sbn in scores_by_name:
-                for name, score in sbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name] += score
-            return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
-
-        def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            for lbn in labels_by_name:
-                for name, label in lbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name][label] += 1
-            return {
-                name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
-                for name in sums_by_name
-            }
-
         average_task_duration = sum(case.task_duration for case in cases) / num_cases
         average_total_duration = sum(case.total_duration for case in cases) / num_cases
 
         # average_assertions: dict[str, float] = _scores_averages([{k: v.value for k, v in case.scores.items()} for case in cases])
-        average_scores: dict[str, float] = _scores_averages(
-            [{k: v.value for k, v in case.scores.items()} for case in cases]
-        )
-        average_labels: dict[str, dict[str, float]] = _labels_averages(
-            [{k: v.value for k, v in case.labels.items()} for case in cases]
-        )
+        average_scores: dict[str, float] = _scores_averages([_result_values(case.scores) for case in cases])
+        average_labels: dict[str, dict[str, float]] = _labels_averages([_result_values(case.labels) for case in cases])
         average_metrics: dict[str, float] = _scores_averages([case.metrics for case in cases])
 
         average_assertions: float | None = None
@@ -294,20 +269,7 @@ class ReportCaseAggregate(BaseModel):
         avg_scores = _avg_numeric_dicts([a.scores for a in aggregates])
         avg_metrics = _avg_numeric_dicts([a.metrics for a in aggregates])
 
-        # Average labels (average the distribution dicts)
-        all_label_keys: set[str] = set()
-        for a in aggregates:
-            all_label_keys.update(a.labels)
-        avg_labels: dict[str, dict[str, float]] = {}
-        for key in all_label_keys:
-            combined: dict[str, float] = {}
-            count = 0
-            for a in aggregates:
-                if key in a.labels:
-                    count += 1
-                    for label_val, freq in a.labels[key].items():
-                        combined[label_val] = combined.get(label_val, 0.0) + freq
-            avg_labels[key] = {k: v / count for k, v in combined.items()}
+        avg_labels = _avg_label_distributions(aggregates)
 
         # Average assertions
         assertion_values = [a.assertions for a in aggregates if a.assertions is not None]
@@ -328,6 +290,47 @@ class ReportCaseAggregate(BaseModel):
             task_duration=sum(task_durs) / len(task_durs),
             total_duration=sum(total_durs) / len(total_durs),
         )
+
+
+def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, float] = defaultdict(float)
+    for sbn in scores_by_name:
+        for name, score in sbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name] += score
+    return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
+
+
+def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for lbn in labels_by_name:
+        for name, label in lbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name][label] += 1
+    return {
+        name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
+        for name in sums_by_name
+    }
+
+
+def _avg_label_distributions(aggregates: list[ReportCaseAggregate]) -> dict[str, dict[str, float]]:
+    """Average the label distributions of several aggregates."""
+    all_label_keys: set[str] = set()
+    for a in aggregates:
+        all_label_keys.update(a.labels)
+    avg_labels: dict[str, dict[str, float]] = {}
+    for key in all_label_keys:
+        combined: dict[str, float] = {}
+        count = 0
+        for a in aggregates:
+            if key in a.labels:
+                count += 1
+                for label_val, freq in a.labels[key].items():
+                    combined[label_val] = combined.get(label_val, 0.0) + freq
+        avg_labels[key] = {k: v / count for k, v in combined.items()}
+    return avg_labels
 
 
 @dataclass(kw_only=True)
@@ -643,64 +646,63 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         """
         if baseline is None:
             # Single report - show metadata if present
-            if self.experiment_metadata:
-                metadata_text = Text()
-                items = list(self.experiment_metadata.items())
-                for i, (key, value) in enumerate(items):
-                    metadata_text.append(f'{key}: {value}', style='dim')
-                    if i < len(items) - 1:
-                        metadata_text.append('\n')
-                return Panel(
-                    metadata_text,
-                    title=f'Evaluation Summary: {self.name}',
-                    title_align='left',
-                    border_style='dim',
-                    padding=(0, 1),
-                    expand=False,
-                )
+            if not self.experiment_metadata:
+                return None
+            title = f'Evaluation Summary: {self.name}'
+            lines_styles = [(f'{key}: {value}', 'dim') for key, value in self.experiment_metadata.items()]
         else:
             # Diff report - show metadata diff if either has metadata
-            if self.experiment_metadata or baseline.experiment_metadata:
-                diff_name = (
-                    baseline.name if baseline.name == self.name else f'{baseline.name} {_arrow(ascii_only)} {self.name}'
-                )
-                metadata_text = Text()
-                lines_styles: list[tuple[str, str]] = []
-                if baseline.experiment_metadata and self.experiment_metadata:
-                    # Collect all keys from both
-                    all_keys = sorted(set(baseline.experiment_metadata.keys()) | set(self.experiment_metadata.keys()))
-                    for key in all_keys:
-                        baseline_val = baseline.experiment_metadata.get(key)
-                        report_val = self.experiment_metadata.get(key)
-                        if baseline_val == report_val:
-                            lines_styles.append((f'{key}: {report_val}', 'dim'))
-                        elif baseline_val is None:
-                            lines_styles.append((f'+ {key}: {report_val}', 'green'))
-                        elif report_val is None:
-                            lines_styles.append((f'- {key}: {baseline_val}', 'red'))
-                        else:
-                            lines_styles.append((f'{key}: {baseline_val} {_arrow(ascii_only)} {report_val}', 'yellow'))
-                elif self.experiment_metadata:
-                    lines_styles = [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
-                else:  # baseline.experiment_metadata only
-                    assert baseline.experiment_metadata is not None
-                    lines_styles = [(f'- {k}: {v}', 'red') for k, v in baseline.experiment_metadata.items()]
+            if not (self.experiment_metadata or baseline.experiment_metadata):
+                return None
+            diff_name = (
+                baseline.name if baseline.name == self.name else f'{baseline.name} {_arrow(ascii_only)} {self.name}'
+            )
+            title = f'Evaluation Diff: {diff_name}'
+            lines_styles = self._metadata_diff_lines(baseline, ascii_only=ascii_only)
 
-                for i, (line, style) in enumerate(lines_styles):
-                    metadata_text.append(line, style=style)
-                    if i < len(lines_styles) - 1:
-                        metadata_text.append('\n')
+        metadata_text = Text()
+        for i, (line, style) in enumerate(lines_styles):
+            metadata_text.append(line, style=style)
+            if i < len(lines_styles) - 1:
+                metadata_text.append('\n')
 
-                return Panel(
-                    metadata_text,
-                    title=f'Evaluation Diff: {diff_name}',
-                    title_align='left',
-                    border_style='dim',
-                    padding=(0, 1),
-                    expand=False,
-                )
+        return Panel(
+            metadata_text,
+            title=title,
+            title_align='left',
+            border_style='dim',
+            padding=(0, 1),
+            expand=False,
+        )
 
-        return None
+    def _metadata_diff_lines(
+        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT], *, ascii_only: bool
+    ) -> list[tuple[str, str]]:
+        """Diff the experiment metadata against the baseline's, as `(line, style)` pairs.
+
+        At least one of the two reports has metadata.
+        """
+        if not baseline.experiment_metadata:
+            assert self.experiment_metadata is not None
+            return [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
+        if not self.experiment_metadata:
+            return [(f'- {k}: {v}', 'red') for k, v in baseline.experiment_metadata.items()]
+
+        lines_styles: list[tuple[str, str]] = []
+        # Collect all keys from both
+        all_keys = sorted(set(baseline.experiment_metadata.keys()) | set(self.experiment_metadata.keys()))
+        for key in all_keys:
+            baseline_val = baseline.experiment_metadata.get(key)
+            report_val = self.experiment_metadata.get(key)
+            if baseline_val == report_val:
+                lines_styles.append((f'{key}: {report_val}', 'dim'))
+            elif baseline_val is None:
+                lines_styles.append((f'+ {key}: {report_val}', 'green'))
+            elif report_val is None:
+                lines_styles.append((f'- {key}: {baseline_val}', 'red'))
+            else:
+                lines_styles.append((f'{key}: {baseline_val} {_arrow(ascii_only)} {report_val}', 'yellow'))
+        return lines_styles
 
     def failures_table(
         self,
@@ -1014,6 +1016,10 @@ T = TypeVar('T')
 ScalarT = TypeVar('ScalarT', bound=EvaluationScalar)
 
 
+def _result_values(results: Mapping[str, EvaluationResult[ScalarT]]) -> dict[str, ScalarT]:
+    return {name: result.value for name, result in results.items()}
+
+
 @dataclass(kw_only=True)
 class ReportCaseRenderer:
     include_input: bool
@@ -1186,17 +1192,13 @@ class ReportCaseRenderer:
 
         if self.include_scores:  # pragma: no branch
             scores_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.scores.items()},
-                {k: v.value for k, v in new_case.scores.items()},
-                self.score_renderers,
+                _result_values(baseline.scores), _result_values(new_case.scores), self.score_renderers
             )
             row.append(scores_diff)
 
         if self.include_labels:  # pragma: no branch
             labels_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.labels.items()},
-                {k: v.value for k, v in new_case.labels.items()},
-                self.label_renderers,
+                _result_values(baseline.labels), _result_values(new_case.labels), self.label_renderers
             )
             row.append(labels_diff)
 
@@ -1595,25 +1597,7 @@ class EvaluationRenderer:
         """
         report_cases = report.cases
         baseline_cases = self._baseline_cases_to_include(report, baseline)
-
-        report_cases_by_id = {case.name: case for case in report_cases}
-        baseline_cases_by_id = {case.name: case for case in baseline_cases}
-
-        diff_cases: list[tuple[ReportCase, ReportCase]] = []
-        removed_cases: list[ReportCase] = []
-        added_cases: list[ReportCase] = []
-
-        for case_id in sorted(set(baseline_cases_by_id.keys()) | set(report_cases_by_id.keys())):
-            maybe_baseline_case = baseline_cases_by_id.get(case_id)
-            maybe_report_case = report_cases_by_id.get(case_id)
-            if maybe_baseline_case and maybe_report_case:
-                diff_cases.append((maybe_baseline_case, maybe_report_case))
-            elif maybe_baseline_case:
-                removed_cases.append(maybe_baseline_case)
-            elif maybe_report_case:
-                added_cases.append(maybe_report_case)
-            else:  # pragma: no cover
-                assert False, 'This should be unreachable'
+        diff_cases, removed_cases, added_cases = self._pair_cases(report_cases, baseline_cases)
 
         case_renderer = self._get_case_renderer(report, baseline)
         diff_name = (
@@ -1649,6 +1633,31 @@ class EvaluationRenderer:
                 table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
 
         return table
+
+    @staticmethod
+    def _pair_cases(
+        report_cases: list[ReportCase], baseline_cases: list[ReportCase]
+    ) -> tuple[list[tuple[ReportCase, ReportCase]], list[ReportCase], list[ReportCase]]:
+        """Pair cases by name: `(baseline, report)` pairs, then baseline-only cases, then report-only cases."""
+        report_cases_by_id = {case.name: case for case in report_cases}
+        baseline_cases_by_id = {case.name: case for case in baseline_cases}
+
+        diff_cases: list[tuple[ReportCase, ReportCase]] = []
+        removed_cases: list[ReportCase] = []
+        added_cases: list[ReportCase] = []
+
+        for case_id in sorted(set(baseline_cases_by_id.keys()) | set(report_cases_by_id.keys())):
+            maybe_baseline_case = baseline_cases_by_id.get(case_id)
+            maybe_report_case = report_cases_by_id.get(case_id)
+            if maybe_baseline_case and maybe_report_case:
+                diff_cases.append((maybe_baseline_case, maybe_report_case))
+            elif maybe_baseline_case:
+                removed_cases.append(maybe_baseline_case)
+            elif maybe_report_case:
+                added_cases.append(maybe_report_case)
+            else:  # pragma: no cover
+                assert False, 'This should be unreachable'
+        return diff_cases, removed_cases, added_cases
 
     def build_failures_table(self, report: EvaluationReport) -> Table:
         case_renderer = self._get_case_renderer(report)
@@ -1717,37 +1726,58 @@ def _render_analysis(
     analysis: ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult | LinePlot,
 ) -> RenderableType:
     """Render a single report analysis as a Rich renderable."""
-    if isinstance(analysis, ConfusionMatrix):
-        table = Table(title=analysis.title, show_lines=True)
-        table.add_column('Expected \\ Predicted', style='bold')
-        for label in analysis.class_labels:
-            table.add_column(label, justify='right')
-        for i, row_label in enumerate(analysis.class_labels):
-            row = [row_label] + [str(v) for v in analysis.matrix[i]]
-            table.add_row(*row)
-        return table
-    elif isinstance(analysis, ScalarResult):
-        value_str = str(analysis.value)
-        if analysis.unit:
-            value_str += f' {analysis.unit}'
-        return Text(f'{analysis.title}: {value_str}')
-    elif isinstance(analysis, PrecisionRecall):
-        lines: list[str] = [analysis.title]
-        for curve in analysis.curves:
-            auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
-            lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
-        return Text('\n'.join(lines))
-    elif isinstance(analysis, LinePlot):
-        lines: list[str] = [analysis.title]
-        for curve in analysis.curves:
-            lines.append(f'  {curve.name}: {len(curve.points)} points')
-        return Text('\n'.join(lines))
-    elif isinstance(analysis, TableResult):
-        table = Table(title=analysis.title, show_lines=True)
-        for col in analysis.columns:
-            table.add_column(col)
-        for row in analysis.rows:
-            table.add_row(*[str(v) if v is not None else '' for v in row])
-        return table
-    else:
-        assert_never(analysis)
+    match analysis:
+        case ConfusionMatrix():
+            return _render_confusion_matrix(analysis)
+        case ScalarResult():
+            return _render_scalar_result(analysis)
+        case PrecisionRecall():
+            return _render_precision_recall(analysis)
+        case LinePlot():
+            return _render_line_plot(analysis)
+        case TableResult():
+            return _render_table_result(analysis)
+        case _:
+            assert_never(analysis)
+
+
+def _render_confusion_matrix(analysis: ConfusionMatrix) -> RenderableType:
+    table = Table(title=analysis.title, show_lines=True)
+    table.add_column('Expected \\ Predicted', style='bold')
+    for label in analysis.class_labels:
+        table.add_column(label, justify='right')
+    for i, row_label in enumerate(analysis.class_labels):
+        row = [row_label] + [str(v) for v in analysis.matrix[i]]
+        table.add_row(*row)
+    return table
+
+
+def _render_scalar_result(analysis: ScalarResult) -> RenderableType:
+    value_str = str(analysis.value)
+    if analysis.unit:
+        value_str += f' {analysis.unit}'
+    return Text(f'{analysis.title}: {value_str}')
+
+
+def _render_precision_recall(analysis: PrecisionRecall) -> RenderableType:
+    lines: list[str] = [analysis.title]
+    for curve in analysis.curves:
+        auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
+        lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
+    return Text('\n'.join(lines))
+
+
+def _render_line_plot(analysis: LinePlot) -> RenderableType:
+    lines: list[str] = [analysis.title]
+    for curve in analysis.curves:
+        lines.append(f'  {curve.name}: {len(curve.points)} points')
+    return Text('\n'.join(lines))
+
+
+def _render_table_result(analysis: TableResult) -> RenderableType:
+    table = Table(title=analysis.title, show_lines=True)
+    for col in analysis.columns:
+        table.add_column(col)
+    for row in analysis.rows:
+        table.add_row(*[str(v) if v is not None else '' for v in row])
+    return table

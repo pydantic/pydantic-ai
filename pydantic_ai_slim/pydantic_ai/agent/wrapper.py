@@ -277,6 +277,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                             cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                         ),
                         model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                         conversation_id='...',

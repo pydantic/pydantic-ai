@@ -8,7 +8,7 @@ description: "Connect a Pydantic AI agent to local or remote MCP servers with th
 
 Backed by [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] on the native side (see [MCP Server Tool](../native-tools.md#mcp-server-tool) for provider support and configuration) — pass `native=MCPServerTool(...)` directly when you need full control (e.g. a different `id`, `authorization_token`, or `description` than the capability would derive). On the local side, `local=` accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input (URL, `fastmcp.Client`, transport, in-process `FastMCP` server, script path, …) — non-toolset inputs are wrapped in `MCPToolset` automatically.
 
-Without an explicit `id=`, the capability uses the server URL's hostname as its [`id`][pydantic_ai.capabilities.AbstractCapability.id], which also names its local toolset and [durable](../durable_execution/overview.md) operations. Only the hostname is used, because a URL's path or query can carry a credential. Two `MCP` capabilities for servers on the same host would get the same `id`, so the agent rejects them and asks for an explicit `id=` on each.
+Without an explicit `id=`, the capability uses the server URL's hostname as its [`id`][pydantic_ai.capabilities.AbstractCapability.id], which also names its local toolset and [durable](../durable_execution/overview.md) operations. An IPv6 address is spelled with `-` in place of its `:`s. Only the hostname is used, because a URL's path or query can carry a credential. Two `MCP` capabilities for servers on the same host would get the same `id`, so the agent rejects them and asks for an explicit `id=` on each.
 
 ```python {title="mcp.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import MCP
@@ -60,6 +60,22 @@ agent = Agent(
 
 !!! note
     Prefixing MCP tool names by default is planned for v3.
+
+## Server instructions
+
+An MCP server can send instructions on how to use its tools, and by default the capability adds them to the agent's instructions, as described in [server instructions](../mcp/client.md#server-instructions). The server writes this text, and the model receives it with the same authority as the instructions you write yourself. For a server you don't trust, such as one your end users supply, pass `include_instructions=False` to leave them out:
+
+```python {title="mcp_capability_include_instructions.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import MCP
+
+agent = Agent(
+    '{{ openai:medium }}',
+    capabilities=[MCP('https://mcp.example.com/api', include_instructions=False)],
+)
+```
+
+This applies to the local toolset the capability builds. A pre-built [`MCPToolset`][pydantic_ai.mcp.MCPToolset] you pass as `local=` keeps its own [`include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions], and with [native MCP](../native-tools.md#mcp-server-tool) the model provider decides what to do with the server's instructions.
 
 ## Per-user credentials
 

@@ -1,7 +1,7 @@
 """Merge gates that a script answers from a pull request's metadata alone.
 
-`.github/workflows/pr-gates.yml` runs each subcommand as its own check. Everything a gate judges
-comes from the GitHub API. A gate fails closed, so anything it cannot read counts against the PR.
+`pr-gates.yml` runs the compatibility check with a read-only token.
+Everything the gate judges comes from the GitHub API. Unreadable metadata fails closed.
 """
 
 from __future__ import annotations
@@ -12,9 +12,10 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol, assert_never
+from pathlib import PurePosixPath
+from typing import Literal, Protocol, TypeVar, assert_never
 
-from check_api_compatibility import Allowlist
+from check_api_compatibility import WAIVERS, read_waiver
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
@@ -35,7 +36,9 @@ class ChangedFile(BaseModel):
     previous_filename: str | None = None
 
 
-class _Label(BaseModel):
+class Label(BaseModel):
+    """A live PR label."""
+
     name: str
 
 
@@ -43,12 +46,14 @@ class _PullRequest(BaseModel):
     changed_files: int
 
 
-class _Commit(BaseModel):
+class Commit(BaseModel):
+    """A commit identified by SHA."""
+
     sha: str
 
 
 class _Comparison(BaseModel):
-    merge_base_commit: _Commit
+    merge_base_commit: Commit
 
 
 class GitHub(Protocol):
@@ -80,15 +85,19 @@ def _paths(files: Iterable[ChangedFile]) -> set[str]:
 def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Verdict:
     """Require `compatibility impact` on a PR that adds an API compatibility waiver."""
     verdict = Verdict()
-    if ALLOWLIST not in _paths(github.changed_files()):
-        verdict.summary.append(f'`{ALLOWLIST}` is unchanged.')
+    paths = sorted(
+        path for path in _paths(github.changed_files()) if PurePosixPath(path).parent == PurePosixPath(WAIVERS)
+    )
+    if not paths:
+        verdict.summary.append(f'`{WAIVERS}` is unchanged.')
         return verdict
 
     merge_base = github.merge_base(base_sha, head_sha)
     try:
-        added = _waivers(github.file_text(ALLOWLIST, head_sha)) - _waivers(github.file_text(ALLOWLIST, merge_base))
-    except ValidationError as error:
-        verdict.failures.append(f'Cannot read `{ALLOWLIST}`: {error.error_count()} validation error(s).')
+        existing = _waivers(github, paths, merge_base) | _legacy_waivers(github, merge_base)
+        added = _waivers(github, paths, head_sha) - existing
+    except ValueError as error:
+        verdict.failures.append(f'Cannot read a waiver: {error}')
         return verdict
 
     if not added:
@@ -103,14 +112,41 @@ def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Ver
     return verdict
 
 
-def _waivers(text: str | None) -> set[tuple[str, str]]:
-    if text is None:
+def _waivers(github: GitHub, paths: Iterable[str], ref: str) -> set[tuple[str, str]]:
+    """The `(against, fingerprint)` of each waiver among `paths` that exists at `ref`."""
+    waivers: set[tuple[str, str]] = set()
+    for path in paths:
+        if (text := github.file_text(path, ref)) is not None:
+            fingerprint, waiver = read_waiver(PurePosixPath(path), text)
+            waivers.add((waiver.against, fingerprint))
+    return waivers
+
+
+class _LegacyWaiver(BaseModel):
+    against: str
+    fingerprint: str
+
+
+class _LegacyAllowlist(BaseModel):
+    allowed_breakages: list[_LegacyWaiver] = []
+
+
+def _legacy_waivers(github: GitHub, ref: str) -> set[tuple[str, str]]:
+    """The `(against, fingerprint)` of each waiver that `ALLOWLIST` still lists at `ref`.
+
+    Before waivers moved to their own files, `allowed_breakages` held them all; moving one out adds no waiver.
+    Transitional: only the PR that moved them has a merge base still listing any, so remove this once it merges.
+    """
+    if (text := github.file_text(ALLOWLIST, ref)) is None:
         return set()
-    return {(waiver.against, waiver.fingerprint) for waiver in Allowlist.model_validate_json(text).allowed_breakages}
+    return {
+        (waiver.against, waiver.fingerprint) for waiver in _LegacyAllowlist.model_validate_json(text).allowed_breakages
+    }
 
 
 _FILE_PAGES = TypeAdapter(list[list[ChangedFile]])
-_LABEL_PAGES = TypeAdapter(list[list[_Label]])
+_LABEL_PAGES = TypeAdapter(list[list[Label]])
+FileT = TypeVar('FileT', bound=ChangedFile)
 
 
 class GhCli:
@@ -121,20 +157,26 @@ class GhCli:
         self._issue = f'repos/{repo}/issues/{number}'
         self._pull = f'repos/{repo}/pulls/{number}'
 
-    def _api(self, *args: str) -> str:
-        result = subprocess.run(['gh', 'api', *args], check=False, capture_output=True, text=True)
+    def _api(self, *args: str, input: str | None = None) -> str:
+        result = subprocess.run(['gh', 'api', *args], input=input, check=False, capture_output=True, text=True)
         if result.returncode != 0:
             raise GateError(f'`gh api {args[-1]}` failed: {result.stderr.strip()}')
         return result.stdout
 
     def changed_files(self) -> list[ChangedFile]:
         total = _PullRequest.model_validate_json(self._api(self._pull)).changed_files
-        pages = _FILE_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
-        files = [file for page in pages for file in page]
+        return self.file_pages(_FILE_PAGES, total, exact=False)
+
+    def file_pages(self, adapter: TypeAdapter[list[list[FileT]]], total: int, *, exact: bool) -> list[FileT]:
+        """Read the whole file list with the caller's snapshot-completeness requirement."""
+        pages = adapter.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
+        files: list[FileT] = [file for page in pages for file in page]
         # The endpoint caps at 3000 files and truncates silently; deciding on a partial list
         # could miss a changed allowlist.
         if len(files) < total:
             raise GateError(f'Retrieved only {len(files)} of {total} changed files (the PR files API caps at 3000).')
+        if exact and len(files) != total:
+            raise GateError('PR file count changed during review evaluation; retry the gate.')
         return files
 
     def labels(self) -> set[str]:

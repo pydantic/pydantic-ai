@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "Adds `CapabilityLoadDeltaEvent` to `HandleResponseEvent`, emitted when a request records a `CapabilityLoadDeltaPart`; every existing member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+}

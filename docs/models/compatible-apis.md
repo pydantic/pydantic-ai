@@ -296,7 +296,7 @@ agent = Agent(model)
 ...
 ```
 
-`deepseek-ai/DeepSeek-V4-*` models reject a forced tool choice while thinking is on, and thinking is their default. Pydantic AI therefore never forces tool choice for those models on Together: explicit `tool_choice='required'` or a tool list raises a [`UserError`][pydantic_ai.exceptions.UserError], and resolved output-tool forcing is sent as `tool_choice='auto'`; unlike with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider], the restriction is unconditional because whether Together honors DeepSeek's thinking toggle is unverified.
+`deepseek-ai/DeepSeek-V4-*` models, including point-release ids such as `deepseek-ai/DeepSeek-V4.1-Flash`, reject a forced tool choice while thinking is on, and thinking is their default. Pydantic AI therefore never forces tool choice for those models on Together: explicit `tool_choice='required'` or a tool list raises a [`UserError`][pydantic_ai.exceptions.UserError], and resolved output-tool forcing is sent as `tool_choice='auto'`; unlike with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider], the restriction is unconditional because whether Together honors DeepSeek's thinking toggle is unverified.
 
 ## Vercel AI Gateway
 
@@ -387,13 +387,30 @@ agent = Agent(model)
 
 The name is recorded as the [`provider_name`][pydantic_ai.messages.ModelResponse.provider_name] of every response and in OpenTelemetry attributes, and it decides which data from earlier responses is sent back to the service: response and item IDs only go back to a provider with the same name, and encrypted reasoning only to one with the same [canonical system](../message-history.md#sending-history-to-another-provider), which defaults to the name. So choose a name that stays the same for the service.
 
-Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways use, gets that vendor's model profile, and any other name the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile).
+Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways and Hugging Face repo ids use, gets the profile of the model family that vendor or organization makes, whatever its case, so `Qwen/Qwen3.8-27B` and `qwen/qwen3.8-27b` get the same profile and `openai/gpt-oss-120b` gets the gpt-oss one. Any other name gets the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile). A family profile can also leave out a feature the shared profile has: MiniMax documents no `response_format` on its [OpenAI-compatible API](https://platform.minimax.io/docs/api-reference/text-openai-api), so [`NativeOutput`](../output.md#native-output) raises a `UserError` for the MiniMax models the family profile describes, under `minimax/` and `MiniMaxAI/` names, here and on [LiteLLM](#litellm). Use [tool output](../output.md#tool-output) or [prompted output](../output.md#prompted-output) instead.
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
+
+## Response data Pydantic AI doesn't map
+
+OpenAI-compatible APIs often return more than the Chat Completions API defines: vendor fields on the response, choice or message, or a message's `content` as a list of parts rather than a string. Mistral models on the Albert API, for example, return `[{"type": "text", "text": "..."}, {"type": "reference", "reference_ids": [1]}]` when an answer carries references. `OpenAIChatModel` joins the text parts into the response's text and ignores the rest.
+
+To keep that data, set [`openai_include_unmapped_response_data`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_include_unmapped_response_data]. It's stored, exactly as received, in [`provider_details['unmapped']`][pydantic_ai.messages.ModelResponse.provider_details], keyed by where it came from:
+
+```python {test="skip"}
+{
+    'response': {...},  # vendor fields on the completion
+    'choice': {...},  # vendor fields on the choice
+    'message': {...},  # vendor fields on the message
+    'content_parts': [{'type': 'reference', 'reference_ids': [1]}],
+}
+```
+
+A streamed response collects it per chunk, as `{'chunks': [...]}` with `delta` in place of `message`, once the stream ends. Fields Pydantic AI already maps, like `reasoning_content`, aren't repeated. The data is for reading only: it's kept with the message history but never sent back to a provider.
 
 ## Model profile
 
@@ -484,6 +501,10 @@ streams include a finish reason, set
 in the model profile. Pydantic AI will then raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]
 when the stream reaches EOF without one. The option defaults to `False` because some compatible APIs
 do not guarantee the field.
+
+### Tool call IDs that repeat across responses
+
+Pydantic AI pairs each tool call with its result by the call's ID across the whole conversation. Some OpenAI-compatible APIs make tool call IDs unique only within one response, numbering the calls of every response from `call_0` again, so two different calls in one conversation share an ID. If yours does, set [`tool_call_ids_are_response_scoped=True`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] in the model profile. Each ID the API sends is then stored with a suffix derived from its response, such as `call_0_k3ZcR9aQ`, and sent back to the same endpoint as `call_0`. Other providers and endpoints, such as a [fallback model](overview.md#fallback-model), get the stored ID. The flag works with both `OpenAIChatModel` and `OpenAIResponsesModel`, and the [Bedrock Mantle](bedrock.md#bedrock-mantle) provider sets it for the GPT-5 models it serves on the Responses API.
 
 ### Models that accept only one leading system message
 

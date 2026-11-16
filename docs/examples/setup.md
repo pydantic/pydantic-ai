@@ -4,7 +4,7 @@ description: "Install and run the Pydantic AI examples, from setting model provi
 
 # Pydantic AI examples
 
-Here we include some examples of how to use Pydantic AI and what it can do.
+Here we include some examples of how to use Pydantic AI and what it can do. For complete open source applications built on Pydantic AI, see [Built with Pydantic AI](../built-with.md).
 
 ## Usage
 

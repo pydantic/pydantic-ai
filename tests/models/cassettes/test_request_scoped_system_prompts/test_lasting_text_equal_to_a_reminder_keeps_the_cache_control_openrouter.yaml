@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "748"
+      - "718"
       content-type:
       - application/json
       host:
@@ -35,15 +35,15 @@ interactions:
         - role: tool
           tool_call_id: call_1
           content: "Paris: 18C"
-        - role: user
+        - role: system
           content:
           - type: text
-            text: <system>Reminder.</system>
+            text: Reminder.
             cache_control:
               type: ephemeral
               ttl: 5m
-        - role: user
-          content: <system>Reminder.</system>
+        - role: system
+          content: Reminder.
         tool_choice: auto
         tools:
         - type: function
@@ -66,6 +66,8 @@ interactions:
       - "*"
       access-control-expose-headers:
       - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -81,9 +83,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792945480-2qC60OYHTzPFKQ4ARvHn
+        id: gen-1793409512-gMUWObnV0JRJRCjutls8
         object: chat.completion
-        created: 1792945480
+        created: 1793409512
         model: anthropic/claude-haiku-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -95,20 +97,20 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: Paris is currently 18°C.
+            content: It's 18°C in Paris right now.
             refusal: null
             reasoning: null
             reasoning_details:
             - type: reasoning.text
               signature: >-
-                CAQS3wYKEAgTGAI4AUIIdGhpbmtpbmcSDIgRfqIMmXTl54gHThoMKNpqqQrm15dp2WndIjD+JCQkdVbg6w1b6bPPbinMfrkNcP99tid7sch1coTfhmOiFYnLjZVe+sS8MDaIFzQq/AWyOy9uZiVIl85dJ8ce2IImRTEoaUrQz0GQ96ugRnJccu2Ofn16GHjPxVPZ68wYw84lyTZvKpdOsxwXcpbCIhNkKGn2PThQVxaZmpDsOpFHVoolkAvWJ/LIL4Tx14bky/MdUw+sYi9bIiWZ9kk9uI50A4lAQ1mU14VLIaveattY8/9Kl5+F2rZ6ZCth4IuA95RDIUJX5yC9qZmjeMVzS7fX5EkfaXScGM4n7siB13Bhjh2nvGTJCnaXYXtHBOm2Qt9puUJD3TC5LvWnyJRC4tnktMYXsL4jblTlS1FCyRH6+yQVVYPFDgGTg/MQ7Qf/FZAoBQcBLiigfmbJzVAkK298GGAmNgvt1KapgglD288nq2Y0wwIJi/QyrLJPtje2Mmf31bGvteOQOTH+exDBOfx4+RlBDVkqRjJX0E5c3iH8FnKtdSLYW2uM4gpL7qGR+RTv2HOJeIxeIWG2Tc0jyDEtj7ALkn86KDJKoNCuyfskwKDj+QKiSElUdIokzP4jgJJ0C4kgAQiTCNp6hCqQivXGm0VPHslPgBnCNoVjPqrFjl0YFO5myatRrquKI6zEZsomREsw16LCcXaOaIe8lfxrr2Sc+SfG1CA54wVlakIQAt2lXTuNY5cW6IYgf7TiaoWWJpoaSL0z/fglCu3jXjh2RFsbbTDV8AS5l6NGSjYh6mGkamotp6tUqfabxXmoEVPc6yIzP5ZqDTiZmsnjNjkeHPONkZjEgfNDTDvEC7DKmxdxUt4zG48G+s709kzATZ6o0uEChoBoYOs0ZC7VVWaX1rTk9Tl83nCclizPe4d8wlNjlm/64Ug89nLgS0lA6THUFYucL7/XmGDZB/Z6SEfIE7dUc4KbrhIatmfwKprGIQ8qM+3UsvobIfAIoqH4ZboN7+0WxgmLAedvi8+sTO6H2Ep7uvmEjbplnLbkbAipLmPApaIyXQ+BhHloKhY9SzbGi/W0NIvxNu8wN2h2RV/3LRBED4BuXJ3YGucu68W7Z3xCfjWEDNZLQHetYBgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
+                CAQS1QgKEAgTGAI4AUIIdGhpbmtpbmcSDOdPQj3+fxmfg2yG7BoMIxFlaqwpEM1unUGPIjBAnvuEofsGH5EMXNM9CgEnlPbTClW/sauWv4MNuVw+IA05+75gQ2FgxsyQvyJmkDIq8gfH1GRrcc7zAH0QAKkiIAEmDGRxC260NTe1O2FUd9Xf+/FTXGew9V8pnqlE8oyIVIKwdnOzl3gcPADHNuMqw8/EXDQMHTvYZBZSB+7y/fJkbPxJKVRs/lxCF1gMcuTUA4n+vmzKdq15f8qileKCYJoMC7qEdkKJAFNsgmfB++PKiolAJpBFy+mC8cPq71ShBItQbZwxqqGrQ3IORrZZ7gwhmcqcQdrJZo0oyOMLVJYDrsWi1ec9I2Lyl1nBRxVIm8s/SKWqUOHAtMkwYvOhFBrshtd4N/blePdZXGdlIt9UxvOiL004DopyLqNbIZNj36/cncOW0ylPSb74fTVKo/OdOWH8r4tM8CI2fHh0r7Mx4EA0zDyuPT53ymQ1otcGqCj9pf+x8uzQyKQOwSMLfHGWl7MTsRxu2LanE5GSM8E9RIQO/oYhJ9xHeNIoULIWc+JBGP4IJNFjDrInzS/ZqCCYAT96A68hhpO7nTOsPwfbb219GLGznU1xSW0MZ/5W7dE4s7xWj54+0LovyoQ4RZVigurOVgG9AFC0BWE5GLrdhjhFCVztDaZ68lTn21jYnO2XClmaTOnMXbTmct1Vm+FIhNxCE7KFQQs8KTI61ijAKLBbMUZZYWuk306RziSy04Ras0RWhzfK6iHsnXZe7OGDjSd80RfZ8Jvm4zGnYA9zOl6OhWkuzQTQW78J2aFeEHO7LJb3zd9EhVbTMcSsPhvb39/Wzhdb7ig2Dvh+RUF1GqtM76l3eUsIx+GJD7yiBvC6/Rp885TPdDOD46aHd5JV7nJt4AvezceCeofX2w7Dw1bll8fIWNfkYZoKcm/9C7sdAMGFjWrxAc6aXLo6HgkHxG/k8KG7TyAtkJmn/XOwWbWZ0XfrylvMVqnE8/JzM+jc2ZMs0dF4atIKpMpePseNXcPttWDAL9TFp4MUeJvWnz2UrkEComhxj7g2roRI2PS7NzzMfI1EWz/BHBakTS+bxIQWnJvlxRUDURDHf9CzbJO93RQP8HodcvGJq9yP+hRuZFkknwC/b+kbrRNz2T3rhbFebL49H+EEXIEoIg1RVKtfu3MKe14AOeCpPItTdfaJTz865njbejZFvjg3cqGSbTXhuElsx8FPcw03RGB3OZYALxb9sPRobw+EnwON7GoIRGVh0YAnSIBgrxoZug8cnTiSAgVq0+ICceWe20qVNL+eN4xiMwydRggkanA8vhIEvjp2JUZXUuF0K62GzXc5Oqohv7GOw1Ch57VBQt9ryQ4Ye7bhZIAOXX4RE0V3NYSl/s71PubZCq1gIjOrpNDP3ktHafgbNh3Doelz9nF/mdpIPDMGsZ60FWLwqPlN54IQrBgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8Y2xhdWRlLW9uLWF3cyJ9
               format: anthropic-claude-v1
               index: 0
         usage:
-          prompt_tokens: 456
-          completion_tokens: 86
-          total_tokens: 542
-          cost: 0.0000886
+          prompt_tokens: 444
+          completion_tokens: 164
+          total_tokens: 608
+          cost: 0.0001264
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -116,11 +118,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0000886
-            upstream_inference_prompt_cost: 0.0000456
-            upstream_inference_completions_cost: 0.000043
+            upstream_inference_cost: 0.0001264
+            upstream_inference_prompt_cost: 0.0000444
+            upstream_inference_completions_cost: 0.000082
           completion_tokens_details:
-            reasoning_tokens: 73
+            reasoning_tokens: 149
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T16:24:41.907187+00:00
+  recorded_at: 2026-10-31T01:18:33.707667+00:00

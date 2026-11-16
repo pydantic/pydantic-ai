@@ -21,6 +21,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -271,7 +272,7 @@ async def tool_executable(uv: str) -> str | None:
     """The `clai2` that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
     result = await run_process([uv, 'tool', 'dir', '--bin'], check=False)
     path = Path(result.stdout.decode().strip(), 'clai2')
-    return str(path) if result.returncode == 0 and path.is_file() else None
+    return str(path) if result.returncode == 0 and await to_thread.run_sync(path.is_file) else None
 
 
 def _in_thread(work: Callable[[], None]) -> None:
@@ -317,6 +318,10 @@ def _write_overrides(text: str) -> Path:
     return Path(name)
 
 
+CHECK_MAX_AGE = 3600.0
+"""Seconds before the footer checks for a newer CLAI again."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class UpdateCheck:
     """What a check of `channel` found: a newer CLAI in `update`, none, or the `error` that kept it from telling."""
@@ -324,6 +329,8 @@ class UpdateCheck:
     channel: UpdateChannel
     update: Update | None = None
     error: str | None = None
+    checked: float = field(default=0.0, compare=False)
+    """When the answer landed, on `Updates.clock`."""
 
 
 @dataclass(kw_only=True)
@@ -335,6 +342,8 @@ class Updates:
     fetch: Callable[[UpdateChannel], str] = latest
     spawn: Callable[[Callable[[], None]], None] = _in_thread
     """Runs the background check; tests run it inline."""
+    clock: Callable[[], float] = time.monotonic
+    """Times the check's answers, to check again once they are old."""
     run: Callable[[Sequence[str], Output | None], Awaitable[int]] = _run_uv
     """Runs uv, handing its lines to the output when there is one."""
     report: Callable[[], Callable[[InstallProgress], Awaitable[None]] | None] = lambda: None
@@ -363,7 +372,7 @@ class Updates:
     _started: float = field(default=0.0, init=False)
 
     def segment(self) -> str:
-        """A status-row hint once a background check finds an update; checks again when the channel changes.
+        """A status-row hint once a background check finds an update; checks again on a channel change or after an hour.
 
         Only `uv tool` installs check, so a source checkout never contacts PyPI or GitHub on its own.
         """
@@ -372,15 +381,19 @@ class Updates:
         found = self.check()
         return f'update {found.update.label}: /update' if found is not None and found.update is not None else ''
 
-    def check(self, *, wait: float = 0.0) -> UpdateCheck | None:
-        """The check of the current channel, started in the background unless one ran for it; `None` while it runs.
+    def check(self, *, wait: float = 0.0, max_age: float = CHECK_MAX_AGE) -> UpdateCheck | None:
+        """The check of the current channel, started in the background unless one ran for it within `max_age` seconds.
 
-        Waits for the answer until `wait` seconds after the check started, so a menu opened at once can show it.
+        `None` while the channel's first check runs; an older answer stays until a newer one lands. Waits for the
+        answer until `wait` seconds after the check started, so a menu opened at once can show it.
         """
         channel = self.channel()
-        if channel != self._checked:
+        stale = self._result is not None and self.clock() - self._result.checked > max_age
+        if channel != self._checked or (self._done.is_set() and stale):
+            if channel != self._checked:
+                self._result = None
             done = threading.Event()
-            self._checked, self._result, self._done, self._started = channel, None, done, time.monotonic()
+            self._checked, self._done, self._started = channel, done, time.monotonic()
             self.spawn(lambda: self._check(channel, done))
         if (left := self._started + wait - time.monotonic()) > 0:
             self._done.wait(left)
@@ -391,10 +404,12 @@ class Updates:
         import httpx
 
         try:
-            found = UpdateCheck(channel=channel, update=find_update(channel, self.current, self.fetch(channel)))
+            update = find_update(channel, self.current, self.fetch(channel))
+            found = UpdateCheck(channel=channel, update=update, checked=self.clock())
         except (httpx.HTTPError, ValueError) as exc:
             # Offline or rate-limited: no footer notice. The menu says why, and `/update now` reports it too.
-            found = UpdateCheck(channel=channel, error=str(exc).partition('\n')[0] or type(exc).__name__)
+            error = str(exc).partition('\n')[0] or type(exc).__name__
+            found = UpdateCheck(channel=channel, error=error, checked=self.clock())
         if channel == self._checked:  # Not a check of a channel the settings have since left.
             self._result = found
         done.set()
@@ -413,8 +428,8 @@ class Updates:
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
             return f'CLAI {self.current.label} is the newest on the {channel} channel.'
-        uv = self.find_uv()
-        overrides = _write_overrides(update.overrides()) if channel == 'main' else None
+        uv = await to_thread.run_sync(self.find_uv)
+        overrides = await to_thread.run_sync(_write_overrides, update.overrides()) if channel == 'main' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:
             self.failed = True
@@ -452,7 +467,8 @@ class Updates:
                 code = await self.run(command, line if report is not None and self.capture() else None)
         finally:
             if overrides is not None:
-                overrides.unlink(missing_ok=True)
+                with CancelScope(shield=True):
+                    await to_thread.run_sync(partial(overrides.unlink, missing_ok=True))
             if code != 0:  # Also when uv could not run at all.
                 await tell('failed')
         if code != 0:

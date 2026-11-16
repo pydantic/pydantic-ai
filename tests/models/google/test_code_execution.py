@@ -131,6 +131,7 @@ print(result)\
                     cost=Decimal('0.0010815'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -161,6 +162,7 @@ print(result)\
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -179,6 +181,7 @@ print(result)\
                     provider_details={'thought_signature': IsStr()},
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -190,6 +193,7 @@ print(result)\
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -214,6 +218,7 @@ print(result)\
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -311,6 +316,7 @@ print(datetime.datetime.now())
                     cost=Decimal('0.0038235'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -412,6 +418,7 @@ print(f"Time in Utrecht: {now}")
                     cost=Decimal('0.0062285'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',

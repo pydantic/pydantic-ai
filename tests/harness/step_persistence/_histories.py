@@ -1,4 +1,4 @@
-"""Message histories shared by the step store tests."""
+"""Message histories and model functions shared by the step store tests."""
 
 from __future__ import annotations
 
@@ -11,6 +11,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo
+
+
+def lookup_twice(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A `FunctionModel` function: call `lookup` as `call-1`, again as `call-2` once `call-1` is answered, then finish."""
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call-1')])
+    if len(messages) == 3:
+        return ModelResponse(parts=[ToolCallPart('lookup', {'q': 'y'}, tool_call_id='call-2')])
+    return ModelResponse(parts=[TextPart('done')])
 
 
 def growing_histories(turns: int) -> list[list[ModelMessage]]:

@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "False positive: `Planning` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the fallback plan record is now added in `before_model_request`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+}

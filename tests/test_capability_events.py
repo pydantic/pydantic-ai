@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._inline_snapshot import snapshot
@@ -388,6 +388,60 @@ async def test_capability_tool_emission_stamps_attribution() -> None:
     assert stamped[0] is not None and re.fullmatch(r'<capability:[0-9a-f]{6}>', stamped[0]), stamped[0]
 
 
+async def test_prefixed_capability_tool_emission_stamps_attribution() -> None:
+    """A capability tool exposed through `prefix_tools()` still emits under its capability.
+
+    `PrefixedToolset` hands the tool the unprefixed name as `ctx.tool_name`, while the tool manager
+    holds it under the prefixed name, so resolving the owner must account for the prefix. The event
+    keeps stamping `ctx.tool_name`, which stays the tool's own name inside the wrapper.
+    """
+    capability = Capability[Any](id='files')
+
+    @capability.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(FileReadEvent(path='tool.txt'))
+        return 'ok'
+
+    async def prefixed_tool_then_text(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not _has_tool_return(messages):
+            yield {0: DeltaToolCall(name='fs_read_file', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'done'
+
+    events = await _collect(
+        Agent(FunctionModel(stream_function=prefixed_tool_then_text), capabilities=[capability.prefix_tools('fs')])
+    )
+    assert [event for event in events if isinstance(event, FileReadEvent)] == [
+        FileReadEvent(path='tool.txt', capability_id='files', tool_call_id='call_1', tool_name='read_file')
+    ]
+
+
+async def test_renamed_capability_tool_emission_stamps_attribution() -> None:
+    """A capability tool renamed by `RenamedToolset` still emits under its capability."""
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool
+    async def read_file(ctx: RunContext[Any]) -> str:
+        await ctx.emit(FileReadEvent(path='tool.txt'))
+        return 'ok'
+
+    async def renamed_tool_then_text(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not _has_tool_return(messages):
+            yield {0: DeltaToolCall(name='open_file', json_args='{}', tool_call_id='call_1')}
+        else:
+            yield 'done'
+
+    capability = Capability[Any](id='files', toolsets=[toolset.renamed({'open_file': 'read_file'})])
+    events = await _collect(Agent(FunctionModel(stream_function=renamed_tool_then_text), capabilities=[capability]))
+    assert [event for event in events if isinstance(event, FileReadEvent)] == [
+        FileReadEvent(path='tool.txt', capability_id='files', tool_call_id='call_1', tool_name='read_file')
+    ]
+
+
 async def test_multiple_instances_get_distinct_run_ids() -> None:
     """Two instances of one class are attributed apart, and an explicit id claims its own name.
 
@@ -615,7 +669,7 @@ async def test_pre_set_capability_id_is_preserved():
 
 
 async def test_emission_with_unresolvable_tool_name_attributes_nothing():
-    """A context whose `tool_name` no longer resolves in the tool manager attributes no capability.
+    """A context whose tool no longer resolves in the tool manager attributes no capability.
 
     This can happen when a context copy outlives a dynamic toolset change; the emission still
     succeeds for a `CustomEvent`, un-attributed.
@@ -626,7 +680,7 @@ async def test_emission_with_unresolvable_tool_name_attributes_nothing():
 
     @agent.tool
     async def read_file(ctx: RunContext[Any]) -> str:
-        stale = dc.replace(ctx, tool_name='vanished')
+        stale = dc.replace(ctx, tool_name='vanished', _dispatched_tool_name='vanished')
         await stale.emit(BridgeEvent())
         return 'ok'
 

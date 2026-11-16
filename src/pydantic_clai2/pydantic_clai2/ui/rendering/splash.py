@@ -47,16 +47,18 @@ class Splash:
             rows.extend(['', *[line.center(44) for line in LABEL]])
         base = (sgr(PURPLE), sgr(LITHIUM), sgr(LIGHT_PURPLE, bold=True))
         hot = (sgr(LITHIUM), sgr(LIGHT_PURPLE), sgr(SUGAR, bold=True))
-        lines: list[str] = []
-        for y, row in enumerate(rows):
-            line = ' ' * max(0, (self._size.columns - 44) // 2)
-            for x, glyph in enumerate(row):
-                tier = 0 if glyph == '░' else 2 if glyph == '█' else 1
-                palette = hot if (x + 2 * y - phase) % 70 < 7 else base
-                line += glyph if glyph == ' ' else palette[tier] + glyph
-            lines.append(line + '\x1b[0m')
+        lines = [self._row(row, y=y, phase=phase, base=base, hot=hot) for y, row in enumerate(rows)]
         top = max(1, (self._size.lines - len(rows)) // 2 + 1)
         return f'\x1b[{top};1H' + '\n'.join(lines)
+
+    def _row(self, row: str, *, y: int, phase: int, base: tuple[str, str, str], hot: tuple[str, str, str]) -> str:
+        """Row `y` centred, each glyph in its tier's colour, from `hot` where the sheen crosses it at `phase`."""
+        line = ' ' * max(0, (self._size.columns - 44) // 2)
+        for x, glyph in enumerate(row):
+            tier = 0 if glyph == '░' else 2 if glyph == '█' else 1
+            palette = hot if (x + 2 * y - phase) % 70 < 7 else base
+            line += glyph if glyph == ' ' else palette[tier] + glyph
+        return line + '\x1b[0m'
 
     def _run(self) -> None:
         try:

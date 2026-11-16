@@ -51,6 +51,7 @@ def test_cohere_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv('CO_BASE_URL', custom_base_url)
     provider = CohereProvider(api_key='api-key')
     assert provider.base_url == custom_base_url
+    assert CohereProvider(api_key='api-key', base_url='https://gateway.example').base_url == 'https://gateway.example'
 
 
 def test_cohere_provider_model_profile_sets_inline_flag():

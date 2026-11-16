@@ -7,7 +7,14 @@ from pathlib import Path, PurePath
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.protocol import Project, SessionEntry, SessionState, Worktree
 from pydantic_clai2.plugins import LiveSession
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity, worktree_roots
+from pydantic_clai2.runtime.imported_sessions import imported_from
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    project_identity,
+    worktree_roots,
+)
 
 COMPLETIONS = 12
 """How many directories New session completes a typed path to; each costs a few Git calls."""
@@ -27,13 +34,16 @@ def session_entry(
         title=summary.title,
         workspace=summary.workspace,
         updated_at=summary.updated_at,
+        created_at=summary.created_at or summary.updated_at,
         state=state,
+        owner_pid=summary.owner_pid if state == 'busy' else None,
         messages=summary.message_count,
         model=summary.model,
         current=current,
         archived=summary.archived_at is not None,
         # Another CLAI's session shows read-only until the user forks it, as its transcript says.
         openable=openable and state != 'busy',
+        source=imported_from(summary),
     )
 
 
@@ -56,6 +66,42 @@ def worktrees(
         for root, (identity, sessions) in found.items()
     ]
     return sorted(worktrees, key=lambda worktree: (not worktree.current, worktree.missing))
+
+
+def project_folder(key: str) -> PurePath:
+    """A project's folder: a repository's key is its Git folder, `.git` inside the main checkout, or the folder itself."""
+    path = PurePath(key)
+    return path.parent if path.name == '.git' else path
+
+
+def project_names(identities: Mapping[str, ProjectIdentity]) -> dict[str, str]:
+    """Each project's name by its key, as the sidebar heads it.
+
+    Projects that share a name each show the shortest end of their folder's path that no other of them shares,
+    as `a/scratch` and `b/scratch`, or else their key.
+    """
+    folders = {key: project_folder(key) for key in identities}
+    names = {key: identity.name for key, identity in identities.items()}
+    for key, folder in folders.items():
+        name = identities[key].name
+        others = [folders[other] for other in folders if other != key and identities[other].name == name]
+        if not others:
+            continue
+        if (end := _unshared_end(folder, others)) is not None:
+            names[key] = end
+        elif key != MISSING:
+            # Equal folders, as after Git failed once while listing one, still differ by key; Removed folders has none.
+            names[key] = key
+    return names
+
+
+def _unshared_end(folder: PurePath, others: list[PurePath]) -> str | None:
+    """The shortest end of `folder`'s path, of two parts or more, that none of `others` ends with; `None` if each does."""
+    for depth in range(2, len(folder.parts) + 1):
+        label = folder.parts[-depth:]
+        if all(other.parts[-depth:] != label for other in others):
+            return str(PurePath(*label))
+    return None
 
 
 def completions(typed: str) -> list[Project]:
@@ -89,6 +135,7 @@ def completions(typed: str) -> list[Project]:
     return [
         Project(
             key=key,
+            folder=str(project_folder(key)),
             name=checkouts[0].name,
             current=False,
             worktrees=[

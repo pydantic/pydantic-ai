@@ -17,11 +17,17 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypeAlias, TypeVar
 
+from pydantic_ai._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from pydantic_ai._utils import disable_threads
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import Agent, EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models._request_timeout import RequestDeadline
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -31,6 +37,7 @@ __all__ = [
     'SegmentExecutor',
     'StreamedActivityResult',
     'StreamedModelRequestResult',
+    'agent_instrumentation_settings',
     'disable_threads',
     'consume_event_stream',
     'managed_model_scope',
@@ -39,6 +46,18 @@ __all__ = [
     'streamed_before_failing',
     'unwrap_model',
 ]
+
+
+def agent_instrumentation_settings(agent: AbstractAgent[Any, Any]) -> InstrumentationSettings | None:
+    """The instrumentation the agent's runs resolve, for a durable unit that has the agent but not the run.
+
+    An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
+    `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
+    """
+    explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
+    if explicit:
+        return explicit[-1].settings
+    return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
 
 @asynccontextmanager
@@ -230,6 +249,14 @@ class DurableModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+
+        def replay_request_parameters() -> ModelRequestParameters:
+            # The replay classifies each part against the parameters the unit's model sent, such as the output mode
+            # `'auto'` resolves to. They're prepared once the unit returns, so a request the model rejects still fails
+            # inside the unit; the unit's model already warned about the settings it ignores.
+            with suppress_unsupported_setting_warnings():
+                return self.wrapped.prepare_request(model_settings, model_request_parameters)[1]
+
         try:
             result = await self._request_stream_segment(segment_context)
         except Exception as error:
@@ -238,14 +265,19 @@ class DurableModel(WrapperModel):
             # The stream failed after it produced output, so it's handed over as a stream that fails partway
             # through rather than one that failed to open.
             stream: CompletedStreamedResponse = _StreamedThenFailed(
-                partial, model_request_parameters=model_request_parameters, error=error
+                partial, model_request_parameters=replay_request_parameters(), error=error
             )
         else:
-            stream = _completed_stream(result, model_request_parameters)
+            stream = _completed_stream(result, replay_request_parameters())
         yield stream
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await self._cancel_suspended_response_segment(response)
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        # This side only gets a streamed segment once the durable unit has consumed it, so the unit enforces the
+        # `first_event_timeout` deadline, and this side just `request_timeout`'s.
+        return super()._start_request_deadline(model_settings, stream=False)
 
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         # The requests are sent from the durable unit, which wraps the model it rebuilds there, so this side only

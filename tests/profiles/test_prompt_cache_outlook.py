@@ -84,7 +84,7 @@ def test_bedrock_profile_retention():
         minutes=5
     )
     assert _retention(BedrockProvider.model_profile('openai.gpt-5.6-sol')) == timedelta(minutes=30)
-    # GPT-5.6 is the only OpenAI generation with a documented Bedrock TTL.
+    # Bedrock's prompt-caching page lists no TTL for gpt-oss.
     assert _retention(BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')) is None
     assert _retention(BedrockProvider.model_profile('meta.llama3-70b-instruct-v1:0')) is None
 
@@ -195,7 +195,7 @@ def test_unsupported_cache_point_ttl_does_not_extend_retention():
 def test_openai_provider_profiles_declare_cache_tiers():
     # Raw provider profiles gate `CachePoint.ttl` too, not just `Model.profile` with its defaults filled in.
     gpt_5_6 = OpenAIProvider.model_profile('gpt-5.6-sol')
-    assert gpt_5_6 is not None and gpt_5_6.get('supported_cache_retentions') == ('30m',)
+    assert gpt_5_6 is not None and gpt_5_6.get('supported_cache_retentions') == ('30m', '12h')
     assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '1h'), profile=gpt_5_6, now=NOW) == 'cold'
     gpt_5 = OpenAIProvider.model_profile('gpt-5')
     assert gpt_5 is not None and gpt_5.get('supported_cache_retentions') == ()

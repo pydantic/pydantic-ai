@@ -15,7 +15,7 @@ import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -85,7 +85,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
 from ..realtime_connections import InferredConnection
@@ -331,6 +331,34 @@ async def test_deferred_instruction_capability_loads_through_the_tool() -> None:
     assert isinstance(result_part, ToolReturnPart)
     assert result_part.tool_name == 'load_capability'
     assert 'Speak like a pirate at all times.' in str(result_part.content)
+
+
+async def test_load_capability_from_tool_is_rejected_in_a_session() -> None:
+    """Loading a capability from code isn't supported in a session; the model's `load_capability` tool is.
+
+    The `UserError` ends the session, like any other `UserError` a session tool raises.
+    """
+
+    class Pirate(AbstractCapability[None]):
+        id = 'pirate'
+        defer_loading = True
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate at all times.'  # pragma: no cover
+
+    agent = Agent()
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        ctx.load_capability('pirate')
+        return 'Case opened.'  # pragma: no cover
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc_1', tool_name='open_case', args='{}'), ResponseDone()],
+    )
+
+    with pytest.raises(UserError, match=r'`ctx.load_capability\(\)` is not supported in a realtime session\.'):
+        await _drain(agent, model, capabilities=[Pirate()])
 
 
 async def test_deferred_capability_without_instructions_loads_with_only_the_message() -> None:
@@ -790,9 +818,11 @@ async def test_wrap_run_context_is_ambient_throughout_session() -> None:
         async for _ in session:
             pass
 
-    assert seen == [
+    # The instructions are resolved at connect, then again before the tool's result and after the response.
+    assert seen[:2] == [('instructions', 'managed prompt'), ('caller', 'managed prompt')]
+    assert sorted(seen[2:]) == [
         ('instructions', 'managed prompt'),
-        ('caller', 'managed prompt'),
+        ('instructions', 'managed prompt'),
         ('tool', 'managed prompt'),
     ]
     assert ambient.get(None) is None
@@ -1219,17 +1249,24 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     assert cancelled.all_messages() == session.all_messages()
 
 
-async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
+@pytest.mark.parametrize('registered_with', ['tool_plain', 'toolset'])
+async def test_agent_realtime_session_rejects_a_deferred_tool(
+    registered_with: Literal['tool_plain', 'toolset'],
+) -> None:
     # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose tools
     # are fixed at connect can never do. Advertising it silently would hand the model a `search_tools`
     # affordance that finds the tool and then can't have it — a dead end — so the session refuses to
     # open, exactly as it does for a deferred *capability* that contributes tools. The guard fires
-    # before any dial, so no provider is involved.
-    agent: Agent[None, str] = Agent()
-
-    @agent.tool_plain(defer_loading=True)
+    # before any dial, so no provider is involved. A `Tool` in a `FunctionToolset(defer_loading=True)`
+    # is deferred the same way.
     def withheld_tool() -> str:  # pragma: no cover — the session raises before any tool can run
         return 'withheld'
+
+    if registered_with == 'tool_plain':
+        agent: Agent[None, str] = Agent()
+        agent.tool_plain(defer_loading=True)(withheld_tool)
+    else:
+        agent = Agent(toolsets=[FunctionToolset([Tool(withheld_tool)], defer_loading=True)])
 
     with pytest.raises(
         UserError,

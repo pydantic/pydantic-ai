@@ -9,7 +9,7 @@ from typing import Annotated, Any, Generic, TypeAlias, cast
 from pydantic import Field
 from typing_extensions import TypeVar
 
-from .._utils import get_unwrapped_function_name, run_until_complete
+from .._utils import get_function_serialization_name, get_unwrapped_function_name, run_until_complete
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -227,10 +227,9 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
             of evaluation names to either of those.
         """
         output = self.evaluate(ctx)
-        if inspect.iscoroutine(output):  # pragma: no cover
+        if inspect.isawaitable(output):
             return run_until_complete(output)
-        else:
-            return cast(EvaluatorOutput, output)
+        return output
 
     async def evaluate_async(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
         """Run the evaluator asynchronously, handling both sync and async implementations.
@@ -248,10 +247,9 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         # Note: If self.evaluate is synchronous, but you need to prevent this from blocking, override this method with:
         # return await anyio.to_thread.run_sync(self.evaluate, ctx)
         output = self.evaluate(ctx)
-        if inspect.iscoroutine(output):
+        if inspect.isawaitable(output):
             return await output
-        else:
-            return cast(EvaluatorOutput, output)
+        return output
 
 
 EvaluatorFunc: TypeAlias = Callable[
@@ -274,9 +272,9 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
     wrapped automatically. Construct it explicitly to set an `evaluation_name` or `version`, or to pass a function to
     [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator].
 
-    A function evaluator can't be saved to a dataset file, since a Python function has no
-    serialized form. To load an evaluator from a file, subclass
-    [`Evaluator`][pydantic_evals.evaluators.Evaluator] instead.
+    In a dataset file, a function evaluator is identified by the function's name, so a dataset saved with one can
+    be loaded again by passing the function in `custom_evaluator_types`, see
+    [Saving Function Evaluators](../../evals/evaluators/custom.md#saving-function-evaluators).
 
     Example:
     ```python
@@ -305,19 +303,6 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
     ) -> EvaluatorOutput | Awaitable[EvaluatorOutput]:
         return self.function(ctx)
 
-    # `EvaluatorFunc` allows any awaitable (e.g. an `asyncio.Task`), not just the coroutines the base class handles.
-    def evaluate_sync(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
-        output = self.evaluate(ctx)
-        if inspect.isawaitable(output):
-            return run_until_complete(output)
-        return output
-
-    async def evaluate_async(self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]) -> EvaluatorOutput:
-        output = self.evaluate(ctx)
-        if inspect.isawaitable(output):
-            return await output
-        return output
-
     def get_default_evaluation_name(self) -> str:
         return self.evaluation_name or self._function_name()
 
@@ -340,10 +325,17 @@ class FunctionEvaluator(Evaluator[InputsT, OutputT, MetadataT]):
             return type(self.function).__name__
 
     def _serialization_spec(self) -> EvaluatorSpec:
-        raise TypeError(
-            f'Function evaluator {self.get_default_evaluation_name()!r} cannot be serialized, as a Python function '
-            'has no serialized form. To save a dataset to a file, use an `Evaluator` subclass instead.'
-        )
+        name = get_function_serialization_name(self.function)
+        if name is None:
+            raise TypeError(
+                f'Function evaluator {self.get_default_evaluation_name()!r} cannot be serialized, as it is identified '
+                'by its name, which only a plain function defined with `def` has, not a lambda, bound method, '
+                '`functools.partial` or other callable. To save a dataset to a file, use a plain function or an '
+                '`Evaluator` subclass instead.'
+            )
+        options = {'evaluation_name': self.evaluation_name, 'version': self.version}
+        arguments = {key: value for key, value in options.items() if value is not None}
+        return EvaluatorSpec(name=name, arguments=arguments or None)
 
     def __repr__(self) -> str:
         return f'{type(self).__name__}({self.get_default_evaluation_name()})'

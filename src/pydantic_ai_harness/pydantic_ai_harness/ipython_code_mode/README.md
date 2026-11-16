@@ -5,9 +5,26 @@
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ipython_code_mode/)
 
 > [!WARNING]
-> **Not a sandbox: do not serve it from a webserver.** Model-written code runs as a full Python process with the permissions of the user running the agent: it can read and write files, reach the network, read environment variables and credentials, and start processes. Do not run `IPythonCodeMode` in a webserver, or anywhere it handles untrusted input such as user prompts, documents, or web pages, unless the whole agent runs inside a sandbox (a container or VM with only the access it needs). For production and web-facing agents, use the Monty-based [Code Mode](../code_mode/), which is strongly recommended there.
+> **Not a sandbox: do not serve it from a webserver.** Model-written code runs as a full Python process with the permissions of the user running the agent: it can read and write files, reach the network, read environment variables and credentials, and start processes. Do not run `IPythonCodeMode` in a webserver, or anywhere it handles untrusted input such as user prompts, documents, or web pages, unless the whole agent runs inside a sandbox (a container or VM with only the access it needs). For production and web-facing agents, use the Monty-based [Code Mode](../code_mode/).
 
-![The model calls run_code with Python. The code runs in a separate IPython kernel process with full CPython and any installed package, such as pandas. Each call it makes to an agent tool, here get_sales, goes back to the agent over the Jupyter stdin channel and runs one at a time; the value of the last expression goes back to the model. Variables stay in the kernel for the next run_code call, each call has a 60 second timeout, and the kernel is not a sandbox: the code has the user's files, network and environment variables.](https://pydantic.dev/docs/ai/img/harness/ipython-code-mode.svg)
+```mermaid
+flowchart TB
+    accTitle: IPython Code Mode: run_code in a local IPython kernel
+    accDescr: Inside your agent, the model calls run_code of the IPythonCodeMode capability, which sends Python code to an IPython kernel process and gets the last value back. The kernel has full CPython, keeps state between calls, and calls your tool get_sales one call at a time over the stdin channel. It is not a sandbox and reaches your files, network and environment variables.
+    subgraph agent["Your agent"]
+        model(["model"])
+        mode["IPythonCodeMode()<br/>run_code"]:::capability
+        tool["your tool<br/>get_sales"]
+    end
+    kernel["IPython kernel process<br/>full CPython<br/>state kept between calls"]:::external
+    host["your files, network and<br/>environment variables"]
+    model <-->|"tool call, result"| mode
+    mode <-->|"Python code, last value"| kernel
+    kernel <-->|"one call at a time,<br/>over the stdin channel"| tool
+    kernel -->|"not a sandbox"| host
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Code Mode or IPython Code Mode
 
