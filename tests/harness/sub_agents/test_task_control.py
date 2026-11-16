@@ -766,7 +766,9 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         checked = tool_returns(result.all_messages())[1]
-        assert checked.endswith('s. Its activity is not visible from here.')
+        assert checked.endswith(
+            's. No activity is visible: it runs elsewhere, or has not made its first model request yet.'
+        )
 
     async def test_a_snapshot_is_bounded(self) -> None:
         """Bounds that need a hand-built history: several runs, more tool calls than are kept, and long text."""
@@ -1346,8 +1348,10 @@ class TestRemoteSubAgents:
             async with serving(worker):
                 result = await parent.run('Go.')
         checked = tool_returns(result.all_messages())[1]
-        assert checked.endswith('s. Its activity is not visible from here.')
-        assert 'model request' not in checked
+        assert checked.endswith(
+            's. No activity is visible: it runs elsewhere, or has not made its first model request yet.'
+        )
+        assert ', with ' not in checked
 
     async def test_a_remote_task_can_be_cancelled_softly_or_by_force(self) -> None:
         transport = InMemoryTransport()

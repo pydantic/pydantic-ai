@@ -465,7 +465,9 @@ def _snapshot_text(snapshot: DelegationSnapshot) -> str:
     if snapshot.status != 'running':
         return f'{task} finished ({snapshot.outcome}) after {elapsed}. Its report is delivered separately.'
     if snapshot.usage is None:
-        lines = [f'{task} has been running for {elapsed}. Its activity is not visible from here.']
+        lines = [
+            f'{task} has been running for {elapsed}. No activity is visible: it runs elsewhere, or has not made its first model request yet.'
+        ]
     else:
         requests = snapshot.usage.requests
         lines = [f'{task} has been running for {elapsed}, with {requests} model request{"s" if requests != 1 else ""}.']
