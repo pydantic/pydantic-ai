@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import os
+import sys
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -1371,6 +1372,13 @@ class TestReadBack:
             assert file.closed
             assert sum(file.reads) == len(payload)
             assert max(file.reads) == 8
+
+    @pytest.mark.parametrize('from_end', [False, True])
+    async def test_read_slice_accepts_an_offset_past_sys_maxsize(self, tmp_path: Path, from_end: bool):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        await store.write('h/1.0', b'a\nb')
+        out = await _read_slice(store, 'h/1.0', offset=sys.maxsize + 1, limit=5, from_end=from_end, pattern=None)
+        assert out == "[handle 'h/1.0': 2 matching line(s); showing 0]"
 
     async def test_read_slice_uses_an_overridden_read(self, tmp_path: Path):
         class UpperStore(LocalFileOverflowStore):

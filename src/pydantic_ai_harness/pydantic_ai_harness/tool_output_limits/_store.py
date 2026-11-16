@@ -166,21 +166,19 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
 _CHUNK_SIZE = 1 << 16
 
 
-async def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
+def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
     """Yield a stored payload in chunks.
 
     A `LocalFileOverflowStore` is streamed from disk unless a subclass overrides `read`, such as to decode what it
     wrote; any other store is read whole.
     """
-    if not isinstance(store, LocalFileOverflowStore) or type(store).read is not LocalFileOverflowStore.read:
-        yield await store.read(handle)
-        return
-    file = await anyio.to_thread.run_sync(store._open, handle)  # pyright: ignore[reportPrivateUsage]
-    try:
-        while chunk := await anyio.to_thread.run_sync(file.read, _CHUNK_SIZE):
-            yield chunk
-    finally:
-        file.close()
+    if isinstance(store, LocalFileOverflowStore) and type(store).read is LocalFileOverflowStore.read:
+        return store._chunks(handle)  # pyright: ignore[reportPrivateUsage]
+    return _read_whole(store, handle)
+
+
+async def _read_whole(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
+    yield await store.read(handle)
 
 
 def _default_root() -> Path:
@@ -283,6 +281,14 @@ class LocalFileOverflowStore:
     def _read(self, handle: str) -> bytes:
         with self._open(handle) as file:
             return file.read()
+
+    async def _chunks(self, handle: str) -> AsyncGenerator[bytes]:
+        file = await anyio.to_thread.run_sync(self._open, handle)
+        try:
+            while chunk := await anyio.to_thread.run_sync(file.read, _CHUNK_SIZE):
+                yield chunk
+        finally:
+            file.close()
 
     def _open(self, handle: str) -> BufferedReader:
         self._check_root()

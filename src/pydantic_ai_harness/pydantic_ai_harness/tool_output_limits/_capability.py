@@ -6,6 +6,7 @@ import base64
 import codecs
 import logging
 import posixpath
+import sys
 import warnings
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
@@ -833,7 +834,7 @@ async def _read_slice(
     limit = min(limit, _MAX_READ_LINES)
 
     try:
-        total, kept = await _matching_lines(store, handle, pattern, offset + limit, from_end=from_end)
+        total, window = await _matching_window(store, handle, pattern, offset, limit, from_end=from_end)
     except WorkspaceError as error:
         raise_tool_failure(error)
     except (OSError, UserError):
@@ -849,7 +850,6 @@ async def _read_slice(
             'available, re-run the original tool.]'
         )
 
-    window = kept[: max(0, len(kept) - offset)] if from_end else kept[offset:]
     body = '\n'.join(window)
     capped = ''
     if len(body) > _MAX_READ_CHARS:
@@ -859,19 +859,24 @@ async def _read_slice(
     return f'{header}\n{body}' if body else header
 
 
-async def _matching_lines(
-    store: OverflowStore, handle: str, pattern: str | None, keep: int, *, from_end: bool
+async def _matching_window(
+    store: OverflowStore, handle: str, pattern: str | None, offset: int, limit: int, *, from_end: bool
 ) -> tuple[int, list[str]]:
-    """Count the lines containing `pattern`, keeping the first `keep`, or with `from_end` the last `keep`."""
+    """Count the lines containing `pattern` and return the count with the window `offset` and `limit` select.
+
+    A forward read keeps only the window. A read from the end keeps the last `offset + limit` lines, since where
+    its window starts is known only once the payload ends.
+    """
     total = 0
-    kept: deque[str] = deque(maxlen=keep)
+    kept: deque[str] = deque(maxlen=min(offset + limit, sys.maxsize) if from_end else limit)
     async with aclosing(_payload_lines(store, handle)) as lines:
         async for line in lines:
             if pattern is None or pattern in line:
                 total += 1
-                if from_end or total <= keep:
+                if from_end or offset < total <= offset + limit:
                     kept.append(line)
-    return total, list(kept)
+    window = list(kept)
+    return total, window[: max(0, len(window) - offset)] if from_end else window
 
 
 async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[str]:
