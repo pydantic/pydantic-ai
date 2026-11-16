@@ -338,6 +338,7 @@ class TestLiveDaytonaDesktop:
                 await backend.aclose()
 
     async def test_display_contract(self, backend: WorkspaceBackend) -> None:
+        """The desktop is 1280x800, and its screenshots, zoom and pointer agree with that size."""
         display = screen(backend)
         assert await display.display_size() == (1280, 800)
         await check_display_contract(display)
