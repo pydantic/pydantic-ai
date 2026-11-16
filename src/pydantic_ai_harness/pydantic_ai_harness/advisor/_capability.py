@@ -301,7 +301,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         id: str | None = 'advisor',
         defer_loading: bool = False,
         description: str | None = None,
-        # TODO(harness 1.0, #12997): remove the deprecated `mode` spec field, its docstring mention and `mode=mode` below.
+        # TODO(harness 1.0, #12997): remove the deprecated `mode` spec field, its docstring mention
+        # and `mode=mode` below.
         mode: _Mode | None = None,
         **kwargs: Any,
     ) -> Advisor[Any]:
@@ -455,9 +456,9 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Merge like any native-or-local capability, keeping one combination that used to merge.
 
-        No single `Advisor` accepts the built native advisor with `local=False` and `max_uses` on OpenRouter, but merging used to
-        send the native tool without `max_uses`. That merge keeps working, with a warning, so an agent
-        composed from two packaged advisors keeps building.
+        No single `Advisor` accepts the built native advisor with `local=False` and `max_uses` on
+        OpenRouter, but merging used to send the native tool without `max_uses`. That merge keeps
+        working, with a warning, so an agent composed from two packaged advisors keeps building.
         """
         advisors = [capability for capability in capabilities if isinstance(capability, Advisor)]
         assert len(advisors) == len(capabilities)
