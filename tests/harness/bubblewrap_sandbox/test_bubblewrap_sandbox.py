@@ -885,7 +885,8 @@ class TestRealBubblewrap:  # pragma: lax no cover - CI hosts may not have bubble
                         while True:
                             try:
                                 state = status.read_text(encoding='utf-8').rsplit(')', 1)[1].split()[0]
-                            except FileNotFoundError:
+                            # Reaped before the open, or between the open and the read, which then fails with ESRCH.
+                            except (FileNotFoundError, ProcessLookupError):
                                 break
                             if state == 'Z':
                                 break
