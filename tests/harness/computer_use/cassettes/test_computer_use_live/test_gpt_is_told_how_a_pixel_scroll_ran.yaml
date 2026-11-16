@@ -56,7 +56,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1232"
+      - "1528"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -66,16 +66,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0bd0ffd612dec0c9006afad99c2cec87d291169958472fe4a0
+        id: resp_0902007382130e7f006afb05d323e087d28dda0eacd1acfd2a
         object: response
-        created_at: 1794824604
+        created_at: 1794835923
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794824604
+        completed_at: 1794835924
         error: null
         frequency_penalty: 0.0
         image:
@@ -96,12 +96,12 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: cu_0bd0ffd612dec0c9006afad99caf1887d2a032737ae4b5180d
+        - id: cu_0902007382130e7f006afb05d3fee887d2bf818dfd0af7bd2c
           type: computer_call
           status: completed
           actions:
           - type: screenshot
-          call_id: call_y6nPZAY24O9THs4pLK474QZu
+          call_id: call_Rc8PE4U1bMtll4OGdKA5Otz6
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
@@ -146,14 +146,14 @@ interactions:
             cache_write_tokens_details:
               ttl_12h_tokens: 0
               ttl_30m_tokens: 0
-            cached_tokens: 1152
+            cached_tokens: 0
           output_tokens: 15
           output_tokens_details:
             reasoning_tokens: 0
           total_tokens: 1318
         user: null
         metadata: {}
-  recorded_at: 2026-11-16T10:23:25.408189+00:00
+  recorded_at: 2026-11-16T13:32:04.675231+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -182,14 +182,14 @@ interactions:
           content: >-
             Scroll down by exactly 250 pixels at x=640 y=400 in one scroll action, then
             reply "done".
-        - id: cu_0bd0ffd612dec0c9006afad99caf1887d2a032737ae4b5180d
-          call_id: call_y6nPZAY24O9THs4pLK474QZu
+        - id: cu_0902007382130e7f006afb05d3fee887d2bf818dfd0af7bd2c
+          call_id: call_Rc8PE4U1bMtll4OGdKA5Otz6
           status: completed
           type: computer_call
           actions:
           - type: screenshot
         - type: computer_call_output
-          call_id: call_y6nPZAY24O9THs4pLK474QZu
+          call_id: call_Rc8PE4U1bMtll4OGdKA5Otz6
           output:
             type: computer_screenshot
             image_url: >-
@@ -223,7 +223,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1426"
+      - "1917"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -233,16 +233,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0bd0ffd612dec0c9006afad99d843487d2b655b2ee668ec653
+        id: resp_0902007382130e7f006afb05d5ad8c87d282bc12d8f0c52f4b
         object: response
-        created_at: 1794824605
+        created_at: 1794835925
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794824606
+        completed_at: 1794835927
         error: null
         frequency_penalty: 0.0
         image:
@@ -263,7 +263,7 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: cu_0bd0ffd612dec0c9006afad99e363087d2803112b562bc7de8
+        - id: cu_0902007382130e7f006afb05d6d12c87d298e515c97727a984
           type: computer_call
           status: completed
           actions:
@@ -273,7 +273,7 @@ interactions:
             scroll_y: 250
             x: 640
             "y": 400
-          call_id: call_ynGsu51XihOouCD7PvOCdaz7
+          call_id: call_sFUPMUScjZKr794vrtHvw8Cy
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
@@ -325,7 +325,7 @@ interactions:
           total_tokens: 2565
         user: null
         metadata: {}
-  recorded_at: 2026-11-16T10:23:26.943377+00:00
+  recorded_at: 2026-11-16T13:32:07.594938+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -354,21 +354,21 @@ interactions:
           content: >-
             Scroll down by exactly 250 pixels at x=640 y=400 in one scroll action, then
             reply "done".
-        - id: cu_0bd0ffd612dec0c9006afad99caf1887d2a032737ae4b5180d
-          call_id: call_y6nPZAY24O9THs4pLK474QZu
+        - id: cu_0902007382130e7f006afb05d3fee887d2bf818dfd0af7bd2c
+          call_id: call_Rc8PE4U1bMtll4OGdKA5Otz6
           status: completed
           type: computer_call
           actions:
           - type: screenshot
         - type: computer_call_output
-          call_id: call_y6nPZAY24O9THs4pLK474QZu
+          call_id: call_Rc8PE4U1bMtll4OGdKA5Otz6
           output:
             type: computer_screenshot
             image_url: >-
               data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABQAAAAMgCAIAAADz+lisAAALuElEQVR4nO3BgQAAAADDoPlTH+AKVQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAG+XSAAFMvxSRAAAAAElFTkSuQmCC
             detail: original
-        - id: cu_0bd0ffd612dec0c9006afad99e363087d2803112b562bc7de8
-          call_id: call_ynGsu51XihOouCD7PvOCdaz7
+        - id: cu_0902007382130e7f006afb05d6d12c87d298e515c97727a984
+          call_id: call_sFUPMUScjZKr794vrtHvw8Cy
           status: completed
           type: computer_call
           actions:
@@ -378,7 +378,7 @@ interactions:
             x: 640
             "y": 400
         - type: computer_call_output
-          call_id: call_ynGsu51XihOouCD7PvOCdaz7
+          call_id: call_sFUPMUScjZKr794vrtHvw8Cy
           output:
             type: computer_screenshot
             image_url: >-
@@ -387,8 +387,8 @@ interactions:
         - role: user
           content: >-
             <pyai:tool_result tool_name="computer"
-            tool_call_id="call_ynGsu51XihOouCD7PvOCdaz7">Ran 1 action. Screenshot attached (1280x800). scroll_y=250 ran as 3 wheel
-            clicks of about 100 pixels each.</pyai:tool_result>
+            tool_call_id="call_sFUPMUScjZKr794vrtHvw8Cy">Ran 1 action. Screenshot attached (1280x800). scroll_y=250 ran as 2 wheel
+            clicks of about 114 pixels each.</pyai:tool_result>
         instructions: |-
           You can see and control the screen of the computer you work on with the `computer` tool. Your shell and file tools, if you have any, run on this same computer, so a program with a window that you start from the shell opens on this screen. Start such a program in the background with its output redirected, such as `setsid <program> >/dev/null 2>&1 &`, or the shell command waits for the program to exit.
           Each call runs a list of actions in order and returns a screenshot of the result. If you have no screenshot yet, call the tool with a single `screenshot` action first.
@@ -417,7 +417,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1109"
+      - "1772"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -427,16 +427,16 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0bd0ffd612dec0c9006afad99f101c87d2925f1b8edff5894f
+        id: resp_0902007382130e7f006afb05d7ba2487d2a2f76c17a8b0cbb4
         object: response
-        created_at: 1794824607
+        created_at: 1794835927
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1794824607
+        completed_at: 1794835928
         error: null
         frequency_penalty: 0.0
         image:
@@ -457,7 +457,7 @@ interactions:
         model: gpt-5.4-mini-2026-03-17
         moderation: null
         output:
-        - id: msg_0bd0ffd612dec0c9006afad99f983487d2ac6b83d99ae70265
+        - id: msg_0902007382130e7f006afb05d8d6c087d288c057e477960e73
           type: message
           status: completed
           content:
@@ -505,7 +505,7 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 3848
+          input_tokens: 3846
           input_tokens_details:
             cache_write_tokens: 0
             cache_write_tokens_details:
@@ -515,7 +515,7 @@ interactions:
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 3853
+          total_tokens: 3851
         user: null
         metadata: {}
-  recorded_at: 2026-11-16T10:23:28.223324+00:00
+  recorded_at: 2026-11-16T13:32:09.504704+00:00
