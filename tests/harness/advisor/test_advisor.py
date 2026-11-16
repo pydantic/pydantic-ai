@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -68,6 +69,13 @@ Keyed on the hook itself rather than a version number: the release that introduc
 `AbstractCapability.combine` (pydantic/pydantic-ai#7248) is not cut yet, so there is no number to
 compare against, and asking whether the behaviour is present needs no bookkeeping once there is.
 """
+
+
+def _merge_warning(warned: pytest.WarningsRecorder) -> warnings.WarningMessage:
+    """The merge warning, which must be a plain `UserWarning`, not its `HarnessDeprecationWarning` subclass."""
+    [warning] = [w for w in warned if 'is ignored' in str(w.message)]
+    assert type(warning.message) is UserWarning
+    return warning
 
 
 class TestAdvisor:
@@ -748,8 +756,21 @@ class TestAdvisor:
 
         await agent.run('Review this plan.')
 
-        assert warned[0].filename == __file__
+        assert _merge_warning(warned).filename == __file__
         assert seen[0].native_tools == [AdvisorTool(model='anthropic/claude-opus-4.8')]
+
+    def test_merged_openrouter_native_replacement_keeps_max_uses(self) -> None:
+        native = AdvisorTool(model='anthropic/claude-opus-4.8')
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            merged = Advisor[None].combine(
+                [
+                    Advisor('openrouter:anthropic/claude-opus-4.8', native=native, local=False, max_uses=2),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', native=native, local=False),
+                ]
+            )
+        assert isinstance(merged, Advisor)
+        assert merged.max_uses == 2
 
     def test_merge_warning_points_at_the_run_call(self) -> None:
         def executor(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -764,8 +785,7 @@ class TestAdvisor:
                     Advisor('openrouter:anthropic/claude-opus-4.8', local=False),
                 ],
             )
-        # The run can record an unrelated warning first, such as one the garbage collector raises mid-run.
-        assert warned.pop(UserWarning).filename == __file__
+        assert _merge_warning(warned).filename == __file__
 
     def test_merge_warning_points_at_a_direct_combine_call(self) -> None:
         with pytest.warns(UserWarning, match=r'`max_uses=2`, .* is ignored') as warned:
@@ -775,7 +795,7 @@ class TestAdvisor:
                     Advisor('openrouter:anthropic/claude-opus-4.8', local=False),
                 ]
             )
-        assert warned[0].filename == __file__
+        assert _merge_warning(warned).filename == __file__
 
     async def test_rebuilt_advisor_keeps_fields_set_after_construction(self) -> None:
         earlier = Advisor[None]('test', max_uses=2)

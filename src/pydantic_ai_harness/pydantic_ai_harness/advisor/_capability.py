@@ -455,7 +455,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Merge like any native-or-local capability, keeping one combination that used to merge.
 
-        No single `Advisor` accepts `local=False` on OpenRouter with `max_uses`, but merging used to
+        No single `Advisor` accepts the built native advisor with `local=False` and `max_uses` on OpenRouter, but merging used to
         send the native tool without `max_uses`. That merge keeps working, with a warning, so an agent
         composed from two packaged advisors keeps building.
         """
@@ -465,6 +465,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         if (
             max_uses is not None
             and cls._last_stated([advisor._declared_local for advisor in advisors]) is False
+            and cls._last_stated([advisor._declared_native for advisor in advisors]) is True
             and cls._parse_native_model(advisors[-1].model)[0] == 'openrouter'
         ):
             warnings.warn(
