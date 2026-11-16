@@ -108,7 +108,7 @@ In `auto` mode, a `Model` instance runs locally and keeps its own provider, clie
 | `model` | required | Advisor model name or `Model` instance. |
 | `mode` | `'auto'` | Execution policy: `'auto'`, `'native'`, or `'local'`. |
 | `output_type` | `str` | Local advisor output specification. Non-default values require local execution. |
-| `max_uses` | `None` | Maximum consultations in one executor model request. Must be at least `1`. |
+| `max_uses` | `None` | Maximum consultations in one executor model request. An int must be at least `1`; a callable returns the limit for each request. |
 | `max_tokens` | `None` | Maximum output tokens for each consultation. Must be at least `1024`. |
 | `caching` | `None` | Anthropic-native prompt-cache TTL: `'5m'` or `'1h'`. OpenRouter and the local fallback have no equivalent control. |
 | `forward_history` | `False` | Forward completed executor message history to local consultations. |
@@ -116,6 +116,8 @@ In `auto` mode, a `Model` instance runs locally and keeps its own provider, clie
 Use `mode='native'` when the consultation must stay inside the executor provider, or `mode='local'` when the configured advisor provider must receive a separate request. Native mode requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. A provider subclass that only changes its `name`, such as an `AnthropicProvider` subclass named `claude-code`, counts as the provider it extends. It does not fall back when the executor lacks support.
 
 `max_uses` has the same per-request scope as Anthropic's native tool and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails. Parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits bound local consultations within one request.
+
+A callable `max_uses` takes the `RunContext` and returns the limit for each executor request, so a budget shared by several runs can live in `deps`, as in `max_uses=lambda ctx: 5 - ctx.deps.consulted`. The native tool is sent with that limit. The local tool reads it once per request, when the tool is prepared. Below `1`, the native tool is omitted from the request, and the local tool stays visible and returns its limit message. A callable is Python-only, like `output_type`, and should be cheap and deterministic, since it runs for each request and, under durable execution, in workflow code.
 
 OpenRouter's native tool ignores `max_uses` and applies its own fixed per-request limit. In `auto` mode, setting `max_uses` with an OpenRouter advisor therefore selects the local fallback. With `mode='native'`, it raises `ValueError`.
 
@@ -147,7 +149,7 @@ Invalid option combinations fail when `Advisor` is constructed. Executor and pro
 
 ## Composition
 
-The advisor tool is always visible and is not deferred through [Tool Search](../tools-advanced.md#tool-search). It reserves the tool name and toolset ID `advisor`. An agent has one advisor, so two `Advisor` capabilities merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. If the merge gives an OpenRouter `Advisor` in `mode='native'` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `HarnessDeprecationWarning`; this will raise `UserError` in a future release.
+The advisor tool is visible on every request, except a native-only advisor whose `max_uses` callable returns less than `1`, and is not deferred through [Tool Search](../tools-advanced.md#tool-search). It reserves the tool name and toolset ID `advisor`. An agent has one advisor, so two `Advisor` capabilities merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. If the merge gives an OpenRouter `Advisor` in `mode='native'` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `HarnessDeprecationWarning`; this will raise `UserError` in a future release.
 
 During streaming, the executor stream pauses while an advisor consultation runs and resumes when the completed advice is available. The local fallback does not splice the advisor model's token deltas into the executor stream.
 
