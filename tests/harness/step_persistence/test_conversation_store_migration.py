@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -56,6 +56,24 @@ class TestStepPersistenceSessionMigration:
         reloaded = await conversations.load('chat')
         assert reloaded is not None
         assert reloaded.messages == third.all_messages()
+
+    async def test_move_conversation_skips_delegate_runs_sharing_the_id(self) -> None:
+        steps = InMemoryStepStore()
+        delegate = Agent(TestModel(), capabilities=[StepPersistence(store=steps, agent_name='delegate')])
+        orchestrator = Agent(TestModel(), capabilities=[StepPersistence(store=steps, agent_name='orchestrator')])
+
+        @orchestrator.tool
+        async def ask(ctx: RunContext[object], question: str) -> str:
+            return (await delegate.run(question, conversation_id=ctx.conversation_id)).output
+
+        result = await orchestrator.run('investigate', conversation_id='chat')
+        assert len(await steps.list_runs(conversation_id='chat')) == 2
+        conversations = InMemoryConversationStore()
+
+        await _call('move_conversation', steps, conversations, 'chat')
+        moved = await conversations.load('chat')
+        assert moved is not None
+        assert moved.messages == result.all_messages()
 
     async def test_move_conversation_refuses_a_session_waiting_on_an_approval(self) -> None:
         def ask_to_delete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

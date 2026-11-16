@@ -893,7 +893,7 @@ async def save_once(conversations: ConversationStore, conversation: Conversation
 async def move_conversation(
     steps: StepStore, conversations: ConversationStore, conversation_id: str, *, scope: str | None = None
 ) -> None:
-    runs = await steps.list_runs(conversation_id=conversation_id)
+    runs = [run for run in await steps.list_runs(conversation_id=conversation_id) if run.parent_run_id is None]
     if not runs:
         return
     snapshot = await steps.latest_snapshot(run_id=runs[-1].run_id)
