@@ -573,6 +573,8 @@ impl Walker {
                         if property_names.iter().all(|name| required.contains(name)) => {}
                     // Python only reads `required` when there is a property to look up in it.
                     Some(_) if property_names.is_empty() => {}
+                    // shortcut: a string or object `required` on a node with properties counts as incompatible;
+                    // Python does a substring or key lookup, reachable only under draft-07 `definitions`.
                     _ => self.is_strict_compatible = false,
                 }
             }
