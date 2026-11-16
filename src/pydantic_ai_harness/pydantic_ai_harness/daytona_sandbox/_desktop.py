@@ -55,7 +55,7 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import png_from_base64
-from pydantic_ai_harness._drag import DRAG_STEP_PAUSE, drag_steps
+from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness._workspace_provider import run_to_completion
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
@@ -297,9 +297,11 @@ class DaytonaDesktop:
         mouse, start, end = self._computer_use().mouse, path[0], path[-1]
         try:
             await _send_input(partial(mouse.down, start.x, start.y, request_timeout=_REQUEST_TIMEOUT))
+            await anyio.sleep(DRAG_PRESS_PAUSE)
             for point in drag_steps(path):
                 await anyio.sleep(DRAG_STEP_PAUSE)
                 await _send_input(partial(mouse.move, point.x, point.y, request_timeout=_REQUEST_TIMEOUT))
+            await anyio.sleep(DRAG_PRESS_PAUSE)
             await _send_input(partial(mouse.up, end.x, end.y, request_timeout=_REQUEST_TIMEOUT))
         except BaseException as error:
             await _let_go(error, ['the left mouse button'], lambda _: mouse.up(request_timeout=_REQUEST_TIMEOUT))
