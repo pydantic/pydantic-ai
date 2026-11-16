@@ -1151,43 +1151,43 @@ class TestConcurrentChanges:
     """Calls changing one file take turns, so none is computed from content another is about to replace."""
 
     @pytest.mark.parametrize(
-        ('calls', 'expected'),
+        ('files', 'calls', 'expected'),
         [
             pytest.param(
+                {},
                 [
-                    ToolCallPart('create_directory', {'path': 'pkg/sub'}),
-                    ToolCallPart('write_file', {'path': 'pkg/sub/a.py', 'content': 'import old\n'}),
+                    ToolCallPart('create_directory', {'path': 'pkg'}),
+                    ToolCallPart('write_file', {'path': 'pkg/a.py', 'content': 'import old\n'}),
                 ],
-                'import old\n',
+                {'pkg/a.py': 'import old\n'},
                 id='write-into-new-directory',
             ),
             pytest.param(
+                {},
                 [
-                    ToolCallPart('write_file', {'path': 'pkg/sub/a.py', 'content': 'import old\n'}),
-                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'old', 'new_text': 'new'}),
+                    ToolCallPart('write_file', {'path': 'a.py', 'content': 'import old\n'}),
+                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old', 'new_text': 'new'}),
                 ],
-                'import new\n',
+                {'a.py': 'import new\n'},
                 id='edit-new-file',
             ),
             pytest.param(
+                {'a.py': 'import old\n'},
                 [
-                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'old', 'new_text': 'new'}),
-                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'new', 'new_text': 'newer'}),
+                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old', 'new_text': 'new'}),
+                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'new', 'new_text': 'newer'}),
                 ],
-                'import newer\n',
+                {'a.py': 'import newer\n'},
                 id='edit-edited-text',
             ),
         ],
     )
     async def test_changes_in_one_response_run_in_order(
-        self, tmp_path: Path, calls: list[ToolCallPart], expected: str
+        self, tmp_path: Path, files: dict[str, str], calls: list[ToolCallPart], expected: dict[str, str]
     ) -> None:
         """Each change depends on the one sent before it in the same response."""
-        if calls[0].tool_name == 'edit_file':
-            (tmp_path / 'pkg/sub').mkdir(parents=True)
-            (tmp_path / 'pkg/sub/a.py').write_text('import old\n')
-        elif calls[0].tool_name == 'write_file':
-            (tmp_path / 'pkg/sub').mkdir(parents=True)
+        for path, content in files.items():
+            (tmp_path / path).write_text(content)
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) > 1:
@@ -1196,13 +1196,13 @@ class TestConcurrentChanges:
 
         agent = Agent(
             FunctionModel(respond),
-            capabilities=[LocalWorkspace(tmp_path), FileSystem[object](content_hashes=False)],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()],
         )
         messages = (await agent.run('change the file')).all_messages()
 
         returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
         assert [part.tool_name for part in returns] == [call.tool_name for call in calls]
-        assert (tmp_path / 'pkg/sub/a.py').read_text() == expected
+        assert {path: (tmp_path / path).read_text() for path in expected} == expected
 
     async def test_edits_through_a_symlink_and_its_target_take_turns(self) -> None:
         toolset = FileSystem[None]().get_toolset()
