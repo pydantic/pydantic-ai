@@ -2250,10 +2250,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
         computer = model_request_parameters.declared_tool_defs.get(name or '')
         if computer is not None and computer.defer_loading:
-            # The native tool replaces it, so tool search would find nothing, and the API can't defer the native tool.
+            # The API refuses `defer_loading` on its computer tool, and one that tool search reveals never reaches the
+            # model, so the deferral would be dropped.
             raise UserError(
-                f"OpenAI sends the {name!r} tool as its native computer tool, which tool search can't load. "
-                'Drop `defer_loading` from the tool, or defer it with `ComputerUse(defer_loading=True)`.'
+                f'OpenAI sends the {name!r} tool as its native computer tool, which it cannot defer: the API refuses '
+                '`defer_loading` on it, and tool search cannot reveal it. Defer the whole capability with '
+                '`ComputerUse(defer_loading=True)` instead, or drop `defer_loading` from the tool.'
             )
         return name
 
