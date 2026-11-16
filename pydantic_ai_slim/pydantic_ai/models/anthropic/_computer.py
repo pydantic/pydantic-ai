@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Any, TypeGuard
 
@@ -110,17 +110,15 @@ class NativeComputer:
         blocks: list[ComputerBlock],
         provider_name: str,
         *,
-        incomplete: Collection[str] = (),
         split: Mapping[str, Sequence[str]] | None = None,
     ) -> ComputerCallPart:
         """Calls of the computer use tool as one `computer` call, keeping them to send back unchanged.
 
-        Nothing runs for a call in `incomplete` (by ID), which didn't arrive whole, such as one cut off at `max_tokens`.
         `split` names, by call ID, the other tools Claude called just before a call: run as one batch, the call would
         run before them, so the batch is refused and Claude asked again.
         """
         split = split or {}
-        member_actions = [self._member_actions(block, incomplete, split) for block in blocks]
+        member_actions = [self._member_actions(block, split) for block in blocks]
         actions = [action for member in member_actions for action in member]
         replay = ComputerReplay(
             computer_blocks=blocks,
@@ -136,13 +134,9 @@ class NativeComputer:
             provider_details=dict(replay),
         )
 
-    def _member_actions(
-        self, block: ComputerBlock, incomplete: Collection[str], split: Mapping[str, Sequence[str]]
-    ) -> list[dict[str, Any]]:
+    def _member_actions(self, block: ComputerBlock, split: Mapping[str, Sequence[str]]) -> list[dict[str, Any]]:
         """The `computer` tool actions one call becomes, or one the tool refuses if it can't run as asked."""
         name, args = computer_member(block, self.version)
-        if block['id'] in incomplete:
-            return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'incomplete_input': True}]
         if block['id'] in split:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
         return map_computer_member(name, args)
@@ -175,8 +169,6 @@ class ComputerBatch:
     between: list[str] = field(default_factory=list[str])
     """The other tools called since the batch's last call, which would run out of order if the batch ran as one."""
     split: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
-    incomplete: set[str] = field(default_factory=set[str])
-    """The IDs of calls whose input didn't arrive whole, such as in a stream cut off at `max_tokens`."""
 
     def take(self, block: BetaToolUseBlock, parts: list[ModelResponsePart]) -> bool:
         """Collect `block` if it's a call of the computer use tool; otherwise note it as another tool's call."""
@@ -209,7 +201,7 @@ class ComputerBatch:
         """The toolset's calls as one `computer` call, or `None` if there are none."""
         if self.computer is None or not self.blocks:
             return None
-        return self.computer.call_part(self.blocks, self.provider_name, incomplete=self.incomplete, split=self.split)
+        return self.computer.call_part(self.blocks, self.provider_name, split=self.split)
 
     def insert(self, parts: list[ModelResponsePart]) -> None:
         """Put the toolset's calls in `parts` as one `computer` call, at the first one's place.
