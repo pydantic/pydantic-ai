@@ -10,6 +10,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.messages import ModelResponse, SpeechPart, TextPart
+    from pydantic_ai.realtime.codec import ToolCall
 
     from . import _findings
     from ._invariants import is_cut_off_copy
@@ -30,6 +31,17 @@ def test_unexpected_error_is_reported_whichever_order_operations_finish() -> Non
         first.error = RuntimeError('boom')
         with pytest.raises(InvariantViolation, match=r"\[api\.unexpected_error\] first raised RuntimeError\('boom'\)"):
             sim.check()
+
+
+def test_unexpected_consumer_error_is_reported_once() -> None:
+    """An exception other than a `RealtimeError` escaping the session's iterator is a violation, judged once."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.consumer_errors.append(RuntimeError('boom'))
+        with pytest.raises(
+            InvariantViolation, match=r"\[api\.unexpected_error\] iterating the session raised RuntimeError\('boom'\)"
+        ):
+            sim.check()
+        sim.check()
 
 
 def test_ambiguous_send_only_excuses_its_own_duplicate() -> None:
@@ -55,6 +67,38 @@ def test_ambiguous_send_only_excuses_its_own_duplicate() -> None:
         truth.inputs.append(replace(t1))
         with pytest.raises(InvariantViolation, match=r"\[wire\.duplicate\] the server received 't1' 3 times"):
             sim.checker.check_at_rest()
+
+
+def test_codec_contract_violation_is_reported() -> None:
+    """A connection breaking the codec contract fails the next step's check, naming the event that broke it."""
+    with OpenAISimulation(strict=True) as sim:
+        call = ToolCall(tool_call_id='call_1', tool_name='lookup', args='{}')
+        checker = sim.checker
+        checker._codec_issues += checker.lifecycle.feed(call) + checker.lifecycle.feed(call)  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(
+            InvariantViolation,
+            match=r"\[codec\.duplicate_tool_call\] tool call 'call_1' reported twice \(codec event #1\)",
+        ):
+            sim.check()
+
+
+def test_a_reply_settled_by_a_response_that_never_saw_the_input_is_reported() -> None:
+    """The session must settle an input with its own answer, not a response the server started before it had it."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop()
+        sim.send_text(respond=False)
+        session = sim.session
+        assert session is not None
+        (text,) = [input_ for input_ in sim.truth.inputs if input_.kind == 'text']
+        assert text.client_index is not None
+        # What a connection that took the provider's reply for the text's would make the session do.
+        session._core._answered_by[text.client_index] = 'resp_1'  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(
+            InvariantViolation, match=r"\[obligation\.misattributed\] 't1' is settled by resp_1, which the server"
+        ):
+            sim.check()
 
 
 def test_reconnect_without_replay_loses_the_history() -> None:
@@ -91,6 +135,10 @@ def test_findings_need_what_they_are_about() -> None:
         assert not _findings._reply_taken_by_earlier_response(sim, nothing)  # pyright: ignore[reportPrivateUsage]
         spoken = InvariantViolation('wait.early', 'detail', sim.trace, {'response': 'resp_2'})
         assert not _findings._reply_taken_by_earlier_response(sim, spoken)  # pyright: ignore[reportPrivateUsage]
+        # The text's reply started after the text went out: no earlier response took it.
+        [text] = [input_.key for input_ in sim.truth.inputs if input_.kind == 'text']
+        answered = InvariantViolation('wait.early', 'detail', sim.trace, {'input': text})
+        assert not _findings._reply_taken_by_earlier_response(sim, answered)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_cut_off_copy_only_marks_the_response_interrupted_and_moves_cuts_back() -> None:

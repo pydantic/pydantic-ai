@@ -10,9 +10,10 @@ import os
 import secrets
 import tempfile
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 
-from anyio import to_thread
+from anyio import CancelScope, to_thread
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import RenderableType
 
@@ -21,20 +22,22 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer, render_question
 from pydantic_clai2.builtin_plugins.web.app import ASGIApp, create_app
-from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
-from pydantic_clai2.builtin_plugins.web.remote import Observer, Remote
 from pydantic_clai2.builtin_plugins.web.server import LOOPBACK, WebServer
+from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
+from pydantic_clai2.builtin_plugins.web.workspaces import conversation_switched
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     Plugin,
     PluginHost,
     SessionEnd,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
-    UpdateProgress,
 )
+from pydantic_clai2.runtime.permissions import approval_handler
 from pydantic_clai2.ui.browser import open_browser
 
 USAGE = 'Usage: /web [start|stop|status]'
@@ -73,11 +76,14 @@ class WebSettings(BaseModel):
     open_browser: bool = True
     """Open the browser when the server starts."""
     ask_user: bool = True
-    """Answer the model's questions in the browser too, taking over from the `ask_user` plugin while loaded."""
+    """Answer the model's questions and `/permissions` approvals in the browser too, taking over from `ask_user` while loaded."""
 
 
 class WebPlugin(Plugin[WebSettings]):
     """Drive this session from a local web UI: streaming chat, tool cards, sessions sidebar. /web starts it."""
+
+    scope = 'process'
+    """One server for the whole process, which shows every live session; see `WebService`."""
 
     def __init__(self, host: PluginHost[None], settings: WebSettings) -> None:
         super().__init__(host, settings)
@@ -87,19 +93,19 @@ class WebPlugin(Plugin[WebSettings]):
         """This launch's port, replacing the saved one, as `clai2 --web --port` sets it."""
         self.listen: str | None = None
         """This launch's address, replacing the saved one: loopback for a launcher's `clai2 --web --token-file`."""
-        self.hub = Hub()
         terminal = (
             TerminalAnswerer(full_screen=host.full_screen, console=host.console) if host.console.is_terminal else None
         )
-        self.answerer = BrowserAnswerer(publish=self.hub.publish, terminal=terminal)
-        self.remote = Remote(host=host, hub=self.hub, answerer=self.answerer)
+        self.service = WebService(host=host, terminal=terminal)
         self.server: WebServer | None = None
         self.url: str | None = None
         self._launch_page: Path | None = None
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        observer = Observer(self.remote)
-        return (observer, AskUser(answerer=self.answerer)) if self.settings.ask_user else (observer,)
+        observer = Observer(self.service)
+        if not self.settings.ask_user:
+            return (observer,)
+        return (observer, AskUser(answerer=self.service.answerer), approval_handler(self.service.answerer.approve))
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -121,8 +127,12 @@ class WebPlugin(Plugin[WebSettings]):
             started = self.url is None
             url = await self.start()
             if self.settings.open_browser:
+                page = await to_thread.run_sync(_launch_page, url)
+                previous, self._launch_page = self._launch_page, page
+                if previous is not None:
+                    await to_thread.run_sync(partial(previous.unlink, missing_ok=True))
                 # A `$BROWSER` command with `%s` runs in the foreground until the browser quits.
-                await to_thread.run_sync(open_browser, self._launcher(url).as_uri(), abandon_on_cancel=True)
+                await to_thread.run_sync(open_browser, page.as_uri(), abandon_on_cancel=True)
             return f'Web UI {"running" if started else "already running"} at {url}' + (
                 '' if self.settings.host in LOOPBACK else '\nOther machines can reach it: keep the link private.'
             )
@@ -136,21 +146,8 @@ class WebPlugin(Plugin[WebSettings]):
         if args == ['status']:
             if self.url is None:
                 return 'The web UI is not running. Start it with /web.'
-            return f'Web UI at {self.url} with {self.hub.clients} browser(s) connected.'
+            return f'Web UI at {self.url} with {self.service.hub.clients} browser(s) connected.'
         raise ValueError(USAGE)
-
-    def _launcher(self, url: str) -> Path:
-        """A page only you can read that forwards to `url`, so the token never appears in a browser command line."""
-        if self._launch_page is None:
-            descriptor, name = tempfile.mkstemp(prefix='clai2-web-', suffix='.html')
-            os.close(descriptor)
-            self._launch_page = Path(name)
-        self._launch_page.write_text(
-            f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
-            f'<a href="{html.escape(url)}">Open CLAI</a>',
-            encoding='utf-8',
-        )
-        return self._launch_page
 
     async def start(self) -> str:
         """Start serving, once; return the address with this launch's token."""
@@ -165,7 +162,7 @@ class WebPlugin(Plugin[WebSettings]):
             if port == HTTP_PORT:
                 # Browsers leave the scheme's default port out of `Host`.
                 hosts |= frozenset(names)
-            return create_app(remote=self.remote, token=self.token, hosts=hosts)
+            return create_app(service=self.service, token=self.token, hosts=hosts)
 
         self.server = WebServer.serve(app, host=host, port=self.settings.port if self.port is None else self.port)
         self.url = f'http://{address}:{self.server.port}/?token={self.token}'
@@ -174,30 +171,53 @@ class WebPlugin(Plugin[WebSettings]):
     async def stop(self) -> None:
         server, self.server, self.url = self.server, None, None
         # An action waiting on a dialog nobody can now answer backs out, which also lets its menu close.
-        self.remote.dialogs.cancel_all()
+        self.service.dialogs.cancel_all()
         if self._launch_page is not None:
-            self._launch_page.unlink(missing_ok=True)
-            self._launch_page = None
+            launch_page, self._launch_page = self._launch_page, None
+            with CancelScope(shield=True):
+                await to_thread.run_sync(partial(launch_page.unlink, missing_ok=True))
         if server is not None:
             await server.stop()
         # Its chat is in the page alone: a turn no page can watch, or answer, stops.
-        await self.remote.orchestrator.close()
+        await self.service.orchestrator.close()
 
     async def on_session_end(self, event: SessionEnd) -> None:
         await self.stop()
+        self.service.close()
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         # The run ended before the session saved its outcome; the browser's turn ended with the run.
-        self.remote.turn_ended()
+        self.service.turn_ended()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
-        self.remote.conversation_changed(event)
+        try:
+            # Before the page and the orchestrator follow the switch, so they find the workspace naming it.
+            await conversation_switched(self.service, event)
+        finally:
+            self.service.conversation_changed(event)
 
     async def on_command_end(self, event: CommandEnd) -> None:
-        self.remote.command_ended(event)
+        self.service.command_ended(event)
 
-    async def on_task_event(self, event: TaskEvent) -> None:
-        self.remote.workers.observe(event)
+    async def on_task_progress(self, event: TaskProgress) -> None:
+        self.service.task_progress(event)
 
-    async def on_update_progress(self, event: UpdateProgress) -> None:
-        self.remote.update_progress(event)
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        self.service.fork_ended(event)
+
+    async def on_install_progress(self, event: InstallProgress) -> None:
+        self.service.install_progress(event)
+
+
+def _launch_page(url: str) -> Path:
+    """A new page only you can read that forwards to `url`, so the token never appears in a browser command line.
+
+    It is written through the descriptor `mkstemp` opened, never reopened by path, so it stays private.
+    """
+    descriptor, name = tempfile.mkstemp(prefix='clai2-web-', suffix='.html')
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
+        file.write(
+            f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
+            f'<a href="{html.escape(url)}">Open CLAI</a>'
+        )
+    return Path(name)

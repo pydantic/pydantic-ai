@@ -24,32 +24,48 @@ commands, and menus without forking anything.
   background, or rewind it to an earlier prompt. You can even pick up sessions from
   Claude Code and Codex.
 - **Yours to change.** Turn plugins on and off from a menu, install one from Git, or
-  write your own in a few lines of Python.
+  write your own in a few lines of Python. Ask CLAI how: it can look up its own
+  [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#ask-clai-about-itself)
+  and plugin docs when you need them.
 
 CLAI runs commands and edits files as you, with no sandbox and no approval step. Run it
 in a project you trust.
 
-**Contents:** [Install](#install) · [First run](#first-run) · [Updating](#updating) ·
+**Contents:** [Pydantic AI, the Harness, and CLAI](#pydantic-ai-the-harness-and-clai) · [Install](#install) · [First run](#first-run) · [Updating](#updating) ·
 [Models and accounts](#models-and-accounts) · [A tour](#a-tour) · [Make it yours](#make-it-yours) ·
 [Plugins](#plugins) · [CLAI in your own code](#clai-in-your-own-code) · [Reference](#reference)
+
+## Pydantic AI, the Harness, and CLAI
+
+Three packages, each built on the one before it. Start with the one that matches what you are doing:
+
+| Package | What it is | Start here when |
+|---|---|---|
+| [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
+| [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [CLAI](#install) (`pydantic-clai2`) | A coding agent for your terminal, run as `clai2`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-clai2` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
 
 ## Install
 
 CLAI needs Python 3.11 or newer. Install it with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install pydantic-clai2
+uv tool install --compile-bytecode pydantic-clai2
 ```
 
-This gives you the `clai2` command (and `pydantic-clai2`, which does the same). To try it
-without installing, run `uvx pydantic-clai2`.
+This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
+`--compile-bytecode` makes the install take a little longer so the first start doesn't, and
+`/update now` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
+`UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
 installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
 models need an extra:
 
 ```bash
-uv tool install 'pydantic-clai2[typesafe]'
+uv tool install --compile-bytecode 'pydantic-clai2[typesafe]'
 ```
 
 ## First run
@@ -74,7 +90,7 @@ A few keys to know:
 | Key | What it does |
 |---|---|
 | <kbd>Enter</kbd> | Send. While CLAI works, <kbd>Enter</kbd> queues your message for after the current turn. |
-| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>) | Steer: send your message to the turn that is running now. |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
 | <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
@@ -83,8 +99,9 @@ A few keys to know:
 
 Type `/` to see every command, or `/help` for the full list.
 
-CLAI reads `AGENTS.md` or `CLAUDE.md` from the folder you start it in and follows what it
-says (not yet on Windows). If the folder (or a parent) has a `.env` file, CLAI loads it at startup.
+CLAI reads `AGENTS.md` (or `CLAUDE.md`) from the folder you start it in and the folders above
+it, then a subfolder's as it works there, and follows what they say (not yet on Windows). If
+the folder (or a parent) has a `.env` file, CLAI loads it at startup.
 
 ### Where CLAI keeps things
 
@@ -105,8 +122,17 @@ in the reference.
 
 ## Updating
 
-Run `/update`. CLAI installs the newest build, then restarts into it with the same
-conversation open.
+Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
+`/update now` installs without asking, and `clai2 update` (or `clai2 --update`) does it from your shell and exits
+(on Windows, use `/update now` instead).
+CLAI installs the newest build, then restarts into it with the same conversation open.
+In the web UI, **Update…** in Settings › About installs from any session's page, and the
+restart reopens the session the terminal shows, or under `clai2 --web`, the one CLAI started with.
+While other live sessions run turns, as ones the browser opened can, `/update now`
+and `/reload` ask you to try again when they finish; bare `/update` still shows the
+menu. Installs and reloads restart CLAI in the folder it started in, so a session
+from another folder shown in the terminal cannot run them. While another `clai2` process
+runs from the same install, updating would break it, so CLAI asks you to quit it first.
 
 When a newer build is out, the status row tells you, for example
 `update 0.57.0: /update`. CLAI checks once at startup and again when you change channel.
@@ -120,12 +146,12 @@ There are two channels. Pick one with `/set updates.channel`:
 
 ```text
 /set updates.channel main
-/update
+/update now
 ```
 
-`/update` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
+`/update now` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
 first and installs in a new PowerShell window; start `clai2` again when it is done.
-`/update` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
+`/update now` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
 again afterwards. See
 [Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#updating)
 in the reference for the details.
@@ -194,8 +220,8 @@ Variables already set in your shell win. In a folder you do not trust, start CLA
 Shell commands the agent runs do not see your provider API keys.
 
 `/keys` keeps named API keys in an encrypted store. vLLM and OpenRouter connections,
-`/login PROVIDER@PROFILE`, and plugins such as Linear and Notion can use a saved key by
-name, so you change it in one place. The names are labels: CLAI does not set them as
+`/login PROVIDER@PROFILE`, a model's `api_key` in `/model settings`, and plugins such as
+Linear and Notion can use a saved key by name, so you change it in one place. The names are labels: CLAI does not set them as
 environment variables. Press <kbd>a</kbd> to add a key, <kbd>Enter</kbd> to replace one, <kbd>r</kbd> to rename, and
 <kbd>d</kbd> to delete. Values are never shown.
 
@@ -261,8 +287,18 @@ them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to 
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/resume.png)
 
-From your shell, `clai2 --resume` opens the same browser. `/resume claude` and
+From your shell, `clai2 --resume` opens the same browser, and `clai2 --continue` (`-c`)
+restores the most recent session in the current directory. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
+
+With `/web` running, the browser can open other sessions while this one runs. `/resume`
+of one of them shows it here, even mid-turn, instead of copying it; the session you
+left keeps running in the browser.
+
+On Unix, `clai2 sessions` lists live sessions across your terminal tabs and processes,
+including idle sessions and those waiting for an answer. It shows unique session-ID
+prefixes and folder names without opening a session or starting a turn. See
+[Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#sessions).
 
 ### Work in the background: `/fork`
 
@@ -272,11 +308,24 @@ and the session to resume if you want to continue it.
 
 ![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/fork.png)
 
+### Several sessions at once: `clai2 --web`
+
+`clai2 --web` drives CLAI from your browser. Click any session in the sidebar and it
+opens live, even while others run: each works in its own folder, with its own queued
+prompts and running turn, and a dot shows which ones are running or waiting for you.
+Esc stops only the session you are looking at. A session left idle for an hour
+closes; it stays saved, so click it to pick it up again. See
+[Several sessions in the web UI](docs/reference.md#several-sessions-in-the-web-ui).
+
 ### Usage, cost, and `/compact`
 
 `/usage` shows the tokens and cost of each turn, and `/cost` the total. Costs come from
 public price data; a model without a price, like the scripted one in these screenshots,
-shows `unknown`.
+shows `unknown`. Both answer at once, even while a turn runs, and cover the turns that
+have finished.
+
+When a response omits usage, `/usage` and `/cost` label known totals as lower bounds,
+and the status row prefixes a known cost with `>=`.
 
 When the conversation nears the model's context limit, CLAI summarises older messages
 for you. Run `/compact` to do it now, and add a note to say what the summary must keep,
@@ -329,10 +378,13 @@ remove it. Changes apply from your next prompt, with no restart.
 
 These are on from the start:
 
-- `coder`: the file and shell tools, delegating tasks to sub-agents, and Agent Skills
+- `coder`: the file and shell tools, delegating tasks to sub-agents, and Agent Skills.
+  Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
+  specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
-- `repo_context`: reads `AGENTS.md` or `CLAUDE.md`
+- `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
+- `refinement`: `/refine`, which has the model review and revise its last answer
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`
 - `notifications`: a desktop notification when a turn finishes
@@ -346,14 +398,14 @@ path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The second line adds web search from
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+uv tool install --compile-bytecode pydantic-clai2 --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 

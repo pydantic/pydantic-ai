@@ -57,7 +57,7 @@ class FieldSource(Protocol):
         ...
 
     def current(self, row: FieldRow) -> str:
-        """The active value as the user would type it."""
+        """The active value as the user would type it; the typed editor opens holding it unless it is the row's `default`."""
         ...
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -140,8 +140,22 @@ class Dialogs(Protocol):
         ...
 
 
+class CloseMenu(tuple[str, ...]):
+    """The messages an action returns, as `CloseMenu(['Saved.'])`, when its menu should close once the action is done.
+
+    For an action that starts what the menu is for. The terminal closes the menu the action's row is in and
+    shows the messages; leaving a menu another opened returns to that one, as Esc does. The web UI shows the
+    messages, as after any action. Being a sequence of the messages, it is what any other caller expects.
+    """
+
+    __slots__ = ()
+
+
 Action = Callable[[Dialogs], Awaitable[Sequence[str]]]
-"""What a row with more than a value to edit does when chosen: ask through `Dialogs`, save, and return messages to show."""
+"""What a row with more than a value to edit does when chosen: ask through `Dialogs`, save, and return messages to show.
+
+Return them as a `CloseMenu` to close the menu as well.
+"""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -157,4 +171,10 @@ class SettingsMenu:
     Read as this menu opens, so a row an action adds meanwhile opens its menu once this one opens again.
     """
     searchable: bool = True
-    """Whether typing filters the terminal list. A short menu may prefer single-key shortcuts instead."""
+    """Whether the terminal list can be filtered.
+
+    Lists offering Space cycling use `/` to start search; printable keys then edit the query.
+    Cycling requires multiple declared choices and no action/submenu mapping.
+    Lists without eligible rows filter as you type and keep uppercase `R` for reset.
+    Nonsearchable lists have no search and use lowercase `r` for reset.
+    """

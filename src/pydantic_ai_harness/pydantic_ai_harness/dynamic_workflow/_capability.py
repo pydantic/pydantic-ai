@@ -10,12 +10,13 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.dynamic_workflow._toolset import (
     DynamicWorkflowToolset,
     WorkflowAgent,
     WorkflowResourceLimits,
     index_workflow_agents,
-    validate_workflow_agent,
+    validate_workflow_settings,
 )
 
 
@@ -73,29 +74,28 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     """Share the parent run's `usage` accumulator with sub-agents, tallying the whole tree's
     token and request spend in one place.
 
-    This does **not** forward the parent's `usage_limits` into sub-agent runs (`RunContext` does
-    not expose the limit value): set `sub_agent_usage_limits` to bound sub-agents, or
-    `max_agent_calls` for an exact ceiling on the number of runs.
+    Unless `sub_agent_usage_limits` is set, sub-agents also run under the parent run's
+    `usage_limits`, checked against the shared counter, so they bound the whole tree (best-effort
+    under concurrent fan-out). Use `max_agent_calls` for an exact ceiling on the number of runs.
     """
 
     inherit_model: bool = False
     """Run every sub-agent with the parent run's resolved model instead of its constructed model.
 
-    Use this when the host can switch models per run, such as a `/model` command that passes a
-    run-level model override to the parent agent. Without it, that per-run choice silently leaves
-    catalog sub-agents on the model they were bound to when constructed; `inherit_model=True` makes
-    the workflow crew follow the parent run's resolved model. Keep `False` to pin sub-agents to
-    their own configured models.
+    Use this when the host switches models per run (for example a `/model` command passing a
+    run-level model override); without it, catalog sub-agents keep the model they were constructed
+    with. Keep `False` to pin sub-agents to their own configured models.
     """
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or Pydantic AI's default.
 
     With `forward_usage=False`, a per-run `total_tokens_limit` of `T` plus `max_agent_calls` of
     `N` bounds the tree to roughly `N * T` tokens (each run can overshoot by its final response,
     since core checks token limits after a response arrives). With `forward_usage=True` the limit
     is checked against the shared counter -- a tree-wide cap, best-effort under concurrent fan-out.
-    `None` keeps the default (`request_limit=50`, no token limit).
+    `None` runs sub-agents under the parent run's `usage_limits` with `forward_usage=True`, and
+    under Pydantic AI's default (`request_limit=50`, no token limit) with `forward_usage=False`.
     """
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None
@@ -103,7 +103,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
 
     `None` applies a 256 MB backstop with no execution-time cap; `'unlimited'` removes all limits;
     a `WorkflowResourceLimits` mapping is merged onto the backstop, overriding only the caps it
-    names. There is no default `max_duration_secs`: Monty's timer bounds in-sandbox execution time
+    names. There is no default `max_duration_seconds`: Monty's timer bounds in-sandbox execution time
     and time awaiting sub-agents does not count against it, so set one only to guard a pure-CPU
     `while True` loop.
     """
@@ -114,6 +114,8 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return None
 
     def __post_init__(self) -> None:
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflow')
+        validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         catalog = [self._normalize_workflow_agent(entry) for entry in self.agents]
         index_workflow_agents(catalog)
         self._catalog = catalog
@@ -127,7 +129,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return WorkflowAgent(agent=entry)
 
     def reveal(self, agent: AbstractAgent[AgentDepsT, object] | WorkflowAgent[AgentDepsT]) -> None:
-        """Reveal a sub-agent on the next model step (the supported runtime API for doing so).
+        """Reveal a sub-agent on the next model step.
 
         The sub-agent is announced to the model on the next step and becomes callable then; the
         `run_workflow` description stays frozen at the agents present when the run started. Reveal
@@ -137,10 +139,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         all in-flight runs and joins the baseline catalog for runs that start afterwards.
         """
         entry = self._normalize_workflow_agent(agent)
-        existing_names: set[str] = set()
-        for catalog_entry in self._catalog:
-            existing_names.add(validate_workflow_agent(catalog_entry, existing_names))
-        validate_workflow_agent(entry, existing_names)
+        index_workflow_agents([*self._catalog, entry])
         self._catalog.append(entry)
 
     def get_toolset(self) -> DynamicWorkflowToolset[AgentDepsT]:

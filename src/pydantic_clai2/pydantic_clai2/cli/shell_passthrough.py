@@ -11,13 +11,14 @@ import sys
 import threading
 import time
 from collections.abc import Generator
+from pathlib import Path
 from types import FrameType
 
 from rich.console import Console
 from rich.text import Text
 
 from pydantic_clai2.cli.shell_terminal import COMMAND_ENVIRONMENT, PtyRun, attached_terminal
-from pydantic_clai2.runtime._processes import kill_process_tree, signal_process_group
+from pydantic_clai2.runtime.processes import kill_process_tree, signal_process_group
 from pydantic_clai2.ui.menus.menu_worker import full_terminal
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.rendering import theme
@@ -44,6 +45,7 @@ class _ShellOutput(asyncio.SubprocessProtocol):
         self.stdout, self.stderr = io.StringIO(), io.StringIO()
         self.exited, self.closed = asyncio.Event(), asyncio.Event()
         self.needs_newline = False
+        self.exit_code: int | None = None
         self._decoders = {fd: codecs.getincrementaldecoder('utf-8')(errors='replace') for fd in (1, 2)}
 
     def _write(self, fd: int, data: bytes, *, final: bool = False) -> None:
@@ -100,8 +102,8 @@ def shell_command(text: str) -> str | None:
     return command if command.lstrip('!').strip() else None
 
 
-async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts) -> str:
-    """Run locally and return context for the next model request.
+async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts, cwd: Path) -> str:
+    """Run locally in `cwd`, the session's directory, and return context for the next model request.
 
     Output streams to the transcript and is saved. On CLAI's terminal the command runs on a
     pseudo-terminal (`PtyRun`), and a full-screen program gets the terminal itself, saving only its
@@ -110,7 +112,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     shell's process tree.
     """
     if command.startswith('!'):
-        return await run_in_terminal(command[1:].strip(), console=console)
+        return await run_in_terminal(command[1:].strip(), console=console, cwd=cwd)
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print('Shell command and output saved for the next prompt', style=theme.color(theme.MUTED))
     output = _ShellOutput(console=console)
@@ -125,65 +127,12 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
         )
     )
     output.pty = pty
-    exit_code: int | None = None
-
-    async def execute() -> None:
-        nonlocal exit_code
-        loop = asyncio.get_running_loop()
-        # A new POSIX session gives the command a process group to kill; `start_new_session` is
-        # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
-        # still reaches the command.
-        # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
-        spawn_task = asyncio.create_task(
-            loop.subprocess_shell(
-                lambda: output,
-                command,
-                start_new_session=True,
-                stdin=None,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            if pty is None
-            else loop.subprocess_shell(
-                lambda: output,
-                pty.command(command),
-                start_new_session=True,
-                stdin=pty.follower,
-                stdout=pty.follower,
-                stderr=subprocess.PIPE,
-                env={**os.environ, **COMMAND_ENVIRONMENT},
-            )
-        )
-        try:
-            process, _ = await asyncio.shield(spawn_task)
-            if pty is not None:
-                pty.start()
-            await output.exited.wait()
-            await output.drain()
-            if pty is not None:
-                await pty.drain()
-        except asyncio.CancelledError:
-            process, _ = await spawn_task
-            _interrupt(process)
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(output.exited.wait(), _INTERRUPT_GRACE)
-            await kill_process_tree(process)
-            await output.exited.wait()
-            await output.drain()
-            if pty is not None:
-                await pty.drain()
-            raise
-        finally:
-            process, _ = await spawn_task
-            process.close()
-            await output.closed.wait()
-            exit_code = process.get_returncode()
 
     started = time.monotonic()
     error: str | None = None
     completed = True
     try:
-        completed = await interrupts.run(execute())
+        completed = await interrupts.run(_execute(command, output=output, cwd=cwd))
     except (OSError, ValueError) as exc:  # `ValueError`: the command text contains a NUL byte.
         error = str(exc)
     finally:
@@ -194,17 +143,73 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
         console.print()
     if pty is not None and pty.handed_over:
         console.print('Full-screen command: only its exit status is saved', style=theme.color(theme.MUTED))
-        status = _report(console, error=error, completed=completed, exit_code=exit_code, started=started)
+        status = _report(console, error=error, completed=completed, exit_code=output.exit_code, started=started)
         return _interactive_context(command, status)
-    status = _report(console, error=error, completed=completed, exit_code=exit_code, started=started)
+    status = _report(console, error=error, completed=completed, exit_code=output.exit_code, started=started)
     return (
         f'The user ran a local shell command (not an agent tool call):\n'
         f'$ {command}\n{status}\n\nstdout:\n{output.stdout.getvalue()}\n\nstderr:\n{output.stderr.getvalue()}'
     )
 
 
-async def run_in_terminal(command: str, *, console: Console) -> str:
-    """Hand the terminal to a command from the start and return context naming it and its exit status.
+async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:
+    """Run `command` in `cwd` through `output`, on its pseudo-terminal if it has one, and record its exit status."""
+    pty = output.pty
+    loop = asyncio.get_running_loop()
+    # A new POSIX session gives the command a process group to kill; `start_new_session` is
+    # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
+    # still reaches the command.
+    # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
+    spawn_task = asyncio.create_task(
+        loop.subprocess_shell(
+            lambda: output,
+            command,
+            start_new_session=True,
+            stdin=None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+        )
+        if pty is None
+        else loop.subprocess_shell(
+            lambda: output,
+            pty.command(command),
+            start_new_session=True,
+            stdin=pty.follower,
+            stdout=pty.follower,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **COMMAND_ENVIRONMENT},
+            cwd=cwd,
+        )
+    )
+    try:
+        process, _ = await asyncio.shield(spawn_task)
+        if pty is not None:
+            pty.start()
+        await output.exited.wait()
+        await output.drain()
+        if pty is not None:
+            await pty.drain()
+    except asyncio.CancelledError:
+        process, _ = await spawn_task
+        _interrupt(process)
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(output.exited.wait(), _INTERRUPT_GRACE)
+        await kill_process_tree(process)
+        await output.exited.wait()
+        await output.drain()
+        if pty is not None:
+            await pty.drain()
+        raise
+    finally:
+        process, _ = await spawn_task
+        process.close()
+        await output.closed.wait()
+        output.exit_code = process.get_returncode()
+
+
+async def run_in_terminal(command: str, *, console: Console, cwd: Path) -> str:
+    """Hand the terminal to a command in `cwd` from the start; return context naming it and its exit status.
 
     The live panel leaves the screen, the command inherits CLAI's standard streams, and the panel
     repaints once it exits. The command stays in CLAI's process group, in the terminal's foreground,
@@ -219,7 +224,7 @@ async def run_in_terminal(command: str, *, console: Console) -> str:
     exit_code = 0
     with full_terminal(), terminal_modes_kept(), _ctrl_c_ignored():
         try:
-            exit_code = await _wait_in_terminal(command)
+            exit_code = await _wait_in_terminal(command, cwd=cwd)
         except (OSError, ValueError) as exc:  # `ValueError`: the command text contains a NUL byte.
             error = str(exc)
     status = _report(console, error=error, completed=True, exit_code=exit_code, started=started)
@@ -252,10 +257,10 @@ def _interactive_context(command: str, status: str) -> str:
     )
 
 
-async def _wait_in_terminal(command: str) -> int:
+async def _wait_in_terminal(command: str, *, cwd: Path) -> int:
     """Run `command` with CLAI's standard streams and return its exit status; cancellation kills it."""
     # Spawning is shielded, so a cancellation that arrives meanwhile still finds the process to kill.
-    spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr()))
+    spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr(), cwd=cwd))
     try:
         process = await asyncio.shield(spawn)
         return await process.wait()

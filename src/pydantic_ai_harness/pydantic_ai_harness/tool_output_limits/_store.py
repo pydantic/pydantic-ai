@@ -1,10 +1,10 @@
 """Storage backends for spilled tool outputs.
 
-`WorkspaceStore` is the default: it writes each payload to a file inside the run's workspace
+`WorkspaceOverflowStore` is the default: it writes each payload to a file inside the run's workspace
 (`ctx.workspace`), or a workspace of its own, so with a remote sandbox the spilled files live in
 the sandbox, next to the files the agent's other tools see. `OverflowStore` is the narrow
 protocol for any other backend (a blob store, a durable engine's storage): persist a payload
-under a key, read it back by handle. `LocalFileStore` implements it on the host filesystem.
+under a key, read it back by handle. `LocalFileOverflowStore` implements it on the host filesystem.
 """
 
 from __future__ import annotations
@@ -29,6 +29,9 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
 from pydantic_ai_harness._workspace import METADATA_DIR, is_unattached, metadata_dir, secondary_workspace
 
+SPILL_DIR = 'tool-output'
+"""The directory under `.pydantic-ai-harness` in the working directory that `WorkspaceOverflowStore` writes to."""
+
 
 @runtime_checkable
 class OverflowStore(Protocol):
@@ -40,7 +43,11 @@ class OverflowStore(Protocol):
     """
 
     async def write(self, key: str, data: bytes) -> str:
-        """Persist `data` under `key` and return a handle that `read` accepts."""
+        """Persist `data` under `key` and return a handle that `read` accepts.
+
+        Under durable execution, a write that succeeded just before a worker crash runs again on
+        recovery with the same `key`, so treat a repeated `write` of a key as an overwrite.
+        """
         ...  # pragma: no cover
 
     async def read(self, handle: str) -> bytes:
@@ -71,14 +78,14 @@ def _segments(key: str) -> list[str]:
 
 
 @dataclass
-class WorkspaceStore:
+class WorkspaceOverflowStore:
     """The default store: each spilled payload is a file inside the run's workspace.
 
     The handle is the file's absolute workspace path. Files live under
     `.pydantic-ai-harness/tool-output` in the workspace's working directory, which holds a
-    `.gitignore` so they stay out of version control, and the model can open them with
-    `read_tool_result` or with `FileSystem`'s `read_file`, since they are inside the working
-    directory.
+    `.gitignore` so they stay out of version control. The model reads them with
+    `read_tool_result`, or, as they are inside the working directory, with `FileSystem`'s
+    `read_file`, which replaces `read_tool_result` when it is on the agent.
 
     Files are not pruned: they go away with the sandbox, or when the directory is deleted for a
     local workspace. Set `workspace` to keep them in a workspace other than the run's.
@@ -94,7 +101,7 @@ class WorkspaceStore:
     _workspace: Workspace | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._workspace = secondary_workspace(self.workspace, 'WorkspaceStore')
+        self._workspace = secondary_workspace(self.workspace, 'WorkspaceOverflowStore')
 
     def bind(self, workspace: Workspace) -> OverflowStore:
         """Bind a run workspace to the common store interface."""
@@ -114,14 +121,14 @@ class WorkspaceStore:
         `workspace` is the run's; the store's own `workspace`, when set, is used instead.
         """
         workspace = self._target(workspace)
-        path = posixpath.join(await metadata_dir(workspace, 'tool-output'), *_segments(key))
+        path = posixpath.join(await metadata_dir(workspace, SPILL_DIR), *_segments(key))
         await workspace.write_bytes(await _confine(workspace, path, key), data)
         return path
 
     async def read(self, workspace: Workspace, handle: str) -> bytes:
         """Read a payload back; a handle outside the store directory raises `PermissionError`."""
         workspace = self._target(workspace)
-        directory = await metadata_dir(workspace, 'tool-output')
+        directory = await metadata_dir(workspace, SPILL_DIR)
         path = posixpath.normpath(posixpath.join(directory, handle))
         if not path.startswith(directory.rstrip('/') + '/'):
             raise PermissionError(f'Handle {handle!r} is outside the store directory.')
@@ -130,7 +137,7 @@ class WorkspaceStore:
 
 @dataclass
 class _BoundWorkspaceStore:
-    store: WorkspaceStore
+    store: WorkspaceOverflowStore
     workspace: Workspace
 
     async def write(self, key: str, data: bytes) -> str:
@@ -147,7 +154,7 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
     directory itself (or of `.pydantic-ai-harness`) is refused too, not only one inside it.
     """
     real_working_dir = await workspace.realpath(await workspace.working_dir())
-    real_directory = posixpath.join(real_working_dir, METADATA_DIR, 'tool-output')
+    real_directory = posixpath.join(real_working_dir, METADATA_DIR, SPILL_DIR)
     real_path = await workspace.realpath(path)
     if not real_path.startswith(real_directory + '/'):
         raise PermissionError(f'Handle {name!r} is outside the store directory.')
@@ -162,11 +169,11 @@ def _default_root() -> Path:
 
 
 @dataclass
-class LocalFileStore:
+class LocalFileOverflowStore:
     """`OverflowStore` that writes each payload to a file on the host running the agent.
 
     Pass it as `store=` to keep spills on this machine, for instance for a run with no workspace;
-    with a workspace, the default `WorkspaceStore` keeps spills where the agent's other tools can
+    with a workspace, the default `WorkspaceOverflowStore` keeps spills where the agent's other tools can
     see them.
 
     The handle equals the key: a relative `run_id/tool_call_id.retry` path under
@@ -273,7 +280,7 @@ class LocalFileStore:
         try:
             self._prune_sync()
         except Exception as exc:  # never let cleanup fail a run or block the hot path
-            warnings.warn(f'LocalFileStore cleanup failed: {exc}', stacklevel=2)
+            warnings.warn(f'LocalFileOverflowStore cleanup failed: {exc}', stacklevel=2)
 
     def _prune_sync(self) -> None:
         """Delete files older than `cleanup_after` (by `st_mtime`)."""

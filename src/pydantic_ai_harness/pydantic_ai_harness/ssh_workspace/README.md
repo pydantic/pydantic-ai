@@ -6,21 +6,43 @@ Run your agent's commands and file edits on another machine over SSH, using your
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: SSH Workspace: your agent's commands run on another machine over SSH
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. As their ctx.workspace, SSHWorkspace uses your ssh client with key login only to open a new SSH connection to host dev@build-box for each operation, run as the login user. A WorkspaceRef in the message history for the same host and directory reattaches, and any other ref raises ValueError.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history"]
+        ssh["SSHWorkspace()<br/>your ssh client,<br/>key login only"]:::capability
+    end
+    host["host dev@build-box<br/>runs as the login user"]:::external
+    other["ref for any other<br/>host or directory"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| ssh
+    ref -.->|"same host and<br/>directory: reattaches"| ssh
+    ssh <-->|"a new SSH connection<br/>for each operation"| host
+    ssh -.-x|"raises ValueError"| other
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[anthropic]"
+uv add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[anthropic]"
+pip install "pydantic-ai-harness[coder,anthropic]"
 ```
 
-No extra is needed for SSH itself: the capability runs the `ssh` client already on your machine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
+No extra is needed for SSH itself: the capability runs the `ssh` client already on your machine. The `coder` extra is there because the examples use `Coder`; the workspace itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
 
 ## Quick start
 
@@ -35,7 +57,7 @@ agent = Agent(
 result = agent.run_sync('Run the test suite and fix the first failure.')
 ```
 
-`Coder`'s shell and file tools now run on `build-box`, as the user you log in as, with that user's full authority on the host. To confine the commands, wrap the capability in [`BubblewrapSandbox`](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/).
+`Coder`'s shell and file tools now run on `build-box`, as the user you log in as, with that user's full authority on the host. To confine the commands, wrap the capability in [`BubblewrappedWorkspace`](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/).
 
 `working_dir` defaults to the login directory, and a relative one starts there. The directory must already exist. Commands get the remote login environment plus `env=`. For a single run, pass `workspace=SSHWorkspaceBackend('dev@build-box')` to `agent.run` instead.
 
@@ -46,6 +68,8 @@ Logging in needs a key; passwords aren't supported. `ssh` runs with `BatchMode=y
 ## How commands run
 
 Every operation opens an SSH connection, and file operations run as shell commands on the host, so the host needs a POSIX `sh` and the usual file utilities. Turn on connection sharing in your SSH configuration (`ControlMaster auto` with a `ControlPersist` time) to make them fast.
+
+The script that runs each command reaches the host's `sh` on the connection's input rather than on its command line, and the command itself reads an empty input, as it would locally. So a command, however many quotes it holds, can be as long as the host allows one program argument to be: 128 KiB on Linux. If `ssh` doesn't forward its input (`-n` or `-f` in `ssh_args`, or `StdinNull` in your SSH configuration), the script goes on the host's command line instead, where a long command full of quotes can be too long to start.
 
 A host that can't be reached, a missing working directory, or a connection lost mid-command raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is 255, which `ssh` also uses for its own errors.
 
@@ -61,7 +85,7 @@ The ref is `WorkspaceRef(provider='ssh', id='dev@build-box:/srv/app')`, availabl
 
 `SSHWorkspace` has the full authority of the remote user. Neither `working_dir` nor a [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) root jails shell commands. Do not pass your local environment to the host: choose the variables the command needs with `env=`, which is kept out of the capability's `repr`.
 
-`env=` values travel inside the command that `ssh` sends, so while a command runs they are visible in process listings (`ps`) to other users on both this machine and the host. Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
+`env=` values travel inside the script that `ssh` sends, which this machine passes to a local `sh` as arguments, so while a command runs they are visible in process listings (`ps`) to other users on this machine, and on the host too when `ssh` doesn't forward its input (see above). Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
 
 ## Platforms
 

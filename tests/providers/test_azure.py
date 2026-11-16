@@ -202,7 +202,10 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     grok_profile = provider.model_profile('grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
     assert grok_profile is not None
-    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    grok_transformer = grok_profile.get('json_schema_transformer')
+    assert grok_transformer is not None
+    assert issubclass(grok_transformer, OpenAIJsonSchemaTransformer)
+    assert grok_transformer({}).prefer_inlined_defs is True
 
     openai_profile = provider.model_profile('o4-mini')
     openai_model_profile_mock.assert_called_with('o4-mini')

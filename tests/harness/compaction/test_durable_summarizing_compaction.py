@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -16,7 +14,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.compaction import SummarizingCompaction
 
@@ -28,7 +26,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_summarizing_compaction',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
     instance = DBOS(config=config)
     DBOS.launch()
@@ -36,7 +33,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 def _history() -> list[ModelMessage]:
@@ -80,8 +76,8 @@ async def _workflow() -> tuple[str, int]:
     result = await _agent.run('continue', message_history=_history())
     first = result.all_messages()[0]
     assert isinstance(first, ModelRequest)
-    summary_part = first.parts[-1]
-    assert isinstance(summary_part, SystemPromptPart)
+    [summary_part] = first.parts
+    assert isinstance(summary_part, CompactionPart) and summary_part.content is not None
     return summary_part.content, result.usage.requests
 
 
@@ -111,9 +107,9 @@ async def test_dbos_replays_the_recorded_summary(dbos: DBOS) -> None:
     workflow_id = str(uuid.uuid4())
 
     with SetWorkflowID(workflow_id):
-        assert await _workflow() == ('Summary of previous conversation:\n\nsummary 1', 2)
+        assert await _workflow() == ('summary 1', 2)
     with SetWorkflowID(workflow_id):
-        assert await _workflow() == ('Summary of previous conversation:\n\nsummary 1', 2)
+        assert await _workflow() == ('summary 1', 2)
 
     assert _summary_calls == 1
     steps = await dbos.list_workflow_steps_async(workflow_id)

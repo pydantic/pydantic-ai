@@ -11,18 +11,22 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel
@@ -31,8 +35,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_output_limits import (
+    READ_TOOL_RESULT_KIND,
     Band,
-    LocalFileStore,
+    LocalFileOverflowStore,
     Passthrough,
     Spill,
     Summarize,
@@ -61,8 +66,19 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
 )
 from pydantic_ai_harness.tool_output_limits._store import _safe_segment  # pyright: ignore[reportPrivateUsage]
+from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness.conftest import agent_run_names
+
+with try_import() as ag_ui_imports_successful:
+    from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
+
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+with try_import() as vercel_ai_imports_successful:
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai.request_types import DataUIPart
+    from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -93,6 +109,9 @@ def _make_ctx(
         deps: None = None
         conversation_id: str | None = None
 
+        def tool_name_for_kind(self, kind: object) -> str | None:
+            return None
+
     ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
     if model is not None:
         ctx.model = model
@@ -106,6 +125,24 @@ def _fixed_model(text: str) -> FunctionModel:
         return ModelResponse(parts=[TextPart(content=text)])
 
     return FunctionModel(respond)
+
+
+def _ui_event_agent(tmp_path: Path, metadata: object) -> Agent[None, str]:
+    """An agent whose `big_tool` returns spilling output with `metadata` attached."""
+    cap: ToolOutputLimits[object] = ToolOutputLimits(
+        bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
+    )
+    agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
+
+    @agent.tool_plain
+    def big_tool() -> ToolReturn:
+        return ToolReturn(return_value='data line\n' * 500, metadata=metadata)
+
+    return agent
+
+
+def _big_tool_return(messages: list[ModelMessage]) -> ToolReturnPart:
+    return next(p for m in messages for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'big_tool')
 
 
 def _call(tool_name: str = 'big_tool', tool_call_id: str = 'call-1') -> ToolCallPart:
@@ -220,25 +257,25 @@ class TestStore:
         assert _safe_segment('ok-1.2') == 'ok-1.2'
 
     def test_default_root(self):
-        store = LocalFileStore()
+        store = LocalFileOverflowStore()
         assert store._root.name.startswith('pyai_harness_overflow')  # pyright: ignore[reportPrivateUsage]
 
     def test_default_root_is_per_user(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(os, 'geteuid', lambda: 1001, raising=False)
-        first = LocalFileStore()._root  # pyright: ignore[reportPrivateUsage]
+        first = LocalFileOverflowStore()._root  # pyright: ignore[reportPrivateUsage]
         monkeypatch.setattr(os, 'geteuid', lambda: 1002, raising=False)
-        second = LocalFileStore()._root  # pyright: ignore[reportPrivateUsage]
+        second = LocalFileOverflowStore()._root  # pyright: ignore[reportPrivateUsage]
         assert first.name == 'pyai_harness_overflow-1001'
         assert second.name == 'pyai_harness_overflow-1002'
 
     def test_default_root_without_uid(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delattr(os, 'geteuid', raising=False)
-        assert LocalFileStore()._root.name == 'pyai_harness_overflow'  # pyright: ignore[reportPrivateUsage]
+        assert LocalFileOverflowStore()._root.name == 'pyai_harness_overflow'  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
     async def test_new_root_created_0700_regardless_of_umask(self, tmp_path: Path):
         root = tmp_path / 'store'
-        store = LocalFileStore(base_dir=root)
+        store = LocalFileOverflowStore(base_dir=root)
         old_umask = os.umask(0)
         try:
             with patch.object(Path, 'chmod', side_effect=AssertionError('root was not created 0700')):
@@ -252,7 +289,7 @@ class TestStore:
         root = tmp_path / 'store'
         root.mkdir()
         root.chmod(0o777)
-        store = LocalFileStore(base_dir=root)
+        store = LocalFileOverflowStore(base_dir=root)
         await store.write('run/c.0', b'x')
         assert oct(root.stat().st_mode & 0o777) == '0o700'
 
@@ -263,7 +300,7 @@ class TestStore:
         root.chmod(0o777)
         other_uid = root.stat().st_uid + 1
         monkeypatch.setattr(os, 'geteuid', lambda: other_uid)
-        store = LocalFileStore(base_dir=root)
+        store = LocalFileOverflowStore(base_dir=root)
         with pytest.raises(PermissionError, match='not owned by the current user'):
             await store.write('run/c.0', b'secret')
         assert list(root.iterdir()) == []
@@ -274,7 +311,7 @@ class TestStore:
         (target / 'secret').write_bytes(b'secret')
         root = tmp_path / 'store'
         root.symlink_to(target, target_is_directory=True)
-        store = LocalFileStore(base_dir=root)
+        store = LocalFileOverflowStore(base_dir=root)
 
         with pytest.raises(PermissionError, match='is a symbolic link'):
             await store.write('run/c.0', b'spilled')
@@ -284,36 +321,36 @@ class TestStore:
 
     async def test_root_check_skipped_without_uid(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delattr(os, 'geteuid', raising=False)
-        store = LocalFileStore(base_dir=tmp_path / 'store')
+        store = LocalFileOverflowStore(base_dir=tmp_path / 'store')
         handle = await store.write('run/c.0', b'x')
         assert await store.read(handle) == b'x'
 
     async def test_write_read_roundtrip(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path / 'store')
+        store = LocalFileOverflowStore(base_dir=tmp_path / 'store')
         handle = await store.write('run-1/call-1.0', b'payload')
         assert handle == 'run-1/call-1.0'
         assert await store.read(handle) == b'payload'
 
     async def test_root_created_0700(self, tmp_path: Path):
         root = tmp_path / 'store'
-        store = LocalFileStore(base_dir=root)
+        store = LocalFileOverflowStore(base_dir=root)
         await store.write('run/c.0', b'x')
         assert oct(root.stat().st_mode & 0o777) == '0o700'
 
     async def test_empty_key(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path / 'store')
+        store = LocalFileOverflowStore(base_dir=tmp_path / 'store')
         handle = await store.write('', b'data')
         assert await store.read(handle) == b'data'
 
     async def test_read_missing_raises(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path / 'store')
+        store = LocalFileOverflowStore(base_dir=tmp_path / 'store')
         with pytest.raises(OSError):
             await store.read('nope/x.0')
 
     async def test_dotdot_handle_stays_in_root(self, tmp_path: Path):
         # `_safe_segment` neutralizes `..`, so the read resolves inside the root and 404s
         # rather than escaping.
-        store = LocalFileStore(base_dir=tmp_path / 'store')
+        store = LocalFileOverflowStore(base_dir=tmp_path / 'store')
         await store.write('run/c.0', b'inside')
         with pytest.raises(OSError):
             await store.read('../c.0')
@@ -322,7 +359,7 @@ class TestStore:
         secret = tmp_path / 'secret.txt'
         secret.write_bytes(b'top secret')
         root = tmp_path / 'store'
-        store = LocalFileStore(base_dir=root)
+        store = LocalFileOverflowStore(base_dir=root)
         await store.write('run/c.0', b'inside')  # creates the root
         (root / 'evil').symlink_to(secret)
         with pytest.raises(PermissionError, match='outside the store root'):
@@ -336,7 +373,7 @@ class TestStore:
 
 class TestCleanup:
     def test_prune_removes_old_keeps_new(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
+        store = LocalFileOverflowStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
         old = tmp_path / 'old.bin'
         old.write_bytes(b'x')
         new = tmp_path / 'new.bin'
@@ -359,7 +396,7 @@ class TestCleanup:
         os.utime(old, (past, past))
         root = tmp_path / 'store'
         root.symlink_to(target, target_is_directory=True)
-        store = LocalFileStore(base_dir=root, cleanup_after=timedelta(seconds=1))
+        store = LocalFileOverflowStore(base_dir=root, cleanup_after=timedelta(seconds=1))
 
         with pytest.raises(PermissionError, match='is a symbolic link'):
             store._prune_sync()  # pyright: ignore[reportPrivateUsage]
@@ -367,7 +404,7 @@ class TestCleanup:
         assert old.exists()
 
     def test_run_prune_swallows_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        store = LocalFileStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
+        store = LocalFileOverflowStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
 
         def boom() -> None:
             raise OSError('disk gone')
@@ -377,11 +414,11 @@ class TestCleanup:
             store._run_prune()  # pyright: ignore[reportPrivateUsage]
 
     def test_schedule_none_when_disabled(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         assert store._schedule_cleanup() is None  # pyright: ignore[reportPrivateUsage]
 
     def test_schedule_starts_thread(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
+        store = LocalFileOverflowStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
         (tmp_path / 'f.bin').write_bytes(b'z')
         thread = store._schedule_cleanup()  # pyright: ignore[reportPrivateUsage]
         assert thread is not None
@@ -389,7 +426,7 @@ class TestCleanup:
         assert not thread.is_alive()
 
     async def test_write_schedules_cleanup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        store = LocalFileStore(base_dir=tmp_path / 'store', cleanup_after=timedelta(seconds=1))
+        store = LocalFileOverflowStore(base_dir=tmp_path / 'store', cleanup_after=timedelta(seconds=1))
         scheduled: list[int] = []
         monkeypatch.setattr(store, '_schedule_cleanup', lambda: scheduled.append(1))
         await store.write('run/c.0', b'data')
@@ -420,7 +457,7 @@ class TestConstruction:
             ToolOutputLimits(bands=[Band(over=-1, action=Passthrough())])
 
     def test_provided_store_used(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(store=store)
         assert cap._store is store  # pyright: ignore[reportPrivateUsage]
 
@@ -429,16 +466,58 @@ class TestConstruction:
         assert 'read_file' in cap._per_tool  # pyright: ignore[reportPrivateUsage]
 
 
+class TestCombine:
+    async def test_merged_bands_run_largest_threshold_first(self):
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate())]),
+                ToolOutputLimits(bands=[Band(over=1000, action=Summarize(model=_fixed_model('summary')))]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [b.over for b in merged._bands] == [1000, 100]  # pyright: ignore[reportPrivateUsage]
+        assert await _run(merged, 'x' * 1500) == 'summary'
+
+    def test_later_band_wins_a_shared_threshold(self):
+        later = Truncate(max_chars=20)
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate(max_chars=10)), Band(over=500, action=Spill())]),
+                ToolOutputLimits(bands=[Band(over=100, action=later)]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [(b.over, b.action) for b in merged._bands] == [(500, Spill()), (100, later)]  # pyright: ignore[reportPrivateUsage]
+        assert _select_action(merged._bands, 150) is later  # pyright: ignore[reportPrivateUsage]
+
+    def test_stated_store_survives_the_merge(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        merged = ToolOutputLimits[object].combine([ToolOutputLimits(store=store), ToolOutputLimits()])
+        assert isinstance(merged, ToolOutputLimits)
+        assert merged._store is store  # pyright: ignore[reportPrivateUsage]
+
+
 # ---------------------------------------------------------------------------
 # Passthrough / filtering / guards
 # ---------------------------------------------------------------------------
 
 
 class TestPassthrough:
-    async def test_read_tool_exempt(self):
+    async def test_read_tool_exempt_by_kind(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
+        out = await cap.after_tool_execute(
+            _make_ctx(),
+            call=_call('renamed_reader'),
+            tool_def=ToolDefinition(name='renamed_reader', tool_kind=READ_TOOL_RESULT_KIND),
+            args={},
+            result='x' * 100,
+        )
+        assert out == 'x' * 100
+
+    async def test_read_tool_name_alone_is_not_exempt(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
         out = await _run(cap, 'x' * 100, tool_name=READ_TOOL_NAME)
-        assert out == 'x' * 100
+        assert out != 'x' * 100
 
     async def test_tool_filter_skips_unmatched(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -607,7 +686,7 @@ class TestTruncate:
 
 class TestSpill:
     async def test_spill_roundtrip(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=10, action=Spill(preview_chars=20))], store=store
         )
@@ -620,7 +699,7 @@ class TestSpill:
         assert await store.read(handle) == text.encode('utf-8')
 
     async def test_spill_binary_verbatim(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Spill())], store=store)
         data = b'\x00\xff' * 100
         out = await _run(cap, data)
@@ -629,14 +708,14 @@ class TestSpill:
         assert await store.read(out.metadata['overflow_handle']) == data
 
     async def test_spill_structured_includes_sketch(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Spill())], store=store)
         out = await _run(cap, {'rows': list(range(1000)), 'ok': True})
         assert isinstance(out, ToolReturn)
         assert 'shape:' in out.return_value  # type: ignore[operator]
 
     async def test_spill_serializer_json_lines_is_pageable(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=5, action=Spill(preview_chars=80))], serializer=json_lines, store=store
         )
@@ -654,7 +733,7 @@ class TestSpill:
         assert '"record_id":1' in page_2 and '"record_id":0' not in page_2
 
     async def test_spill_serializer_inside_tool_return_envelope(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=5, action=Spill())], serializer=json_lines, store=store
         )
@@ -694,7 +773,7 @@ class TestSpill:
         assert isinstance(out, str) and out.startswith('{"rows":[0,1,')
 
     async def test_spill_serializer_skips_strings(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=5, action=Spill())], serializer=indented_json, store=store
         )
@@ -729,14 +808,14 @@ class TestSpill:
         assert out == 'a' * 100
 
     async def test_handle_distinct_per_retry(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Spill())], store=store)
         out0 = await _run(cap, 'a' * 100, ctx=_make_ctx(retry=0))
         out1 = await _run(cap, 'b' * 100, ctx=_make_ctx(retry=1))
         assert out0.metadata['overflow_handle'] != out1.metadata['overflow_handle']
 
     async def test_spill_merges_existing_metadata(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Spill())], store=store)
         out = await _run(cap, ToolReturn(return_value='a' * 100, metadata={'orig': True}))
         assert isinstance(out, ToolReturn)
@@ -744,7 +823,7 @@ class TestSpill:
         assert 'overflow_handle' in out.metadata
 
     async def test_spill_preserves_non_mapping_metadata(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Spill())], store=store)
         out = await _run(cap, ToolReturn(return_value='a' * 100, metadata='app-request-id-123'))
         assert isinstance(out, ToolReturn)
@@ -767,9 +846,90 @@ class _BrokenStore:
 # ---------------------------------------------------------------------------
 
 
+class TestFilesInReturnValue:
+    image = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
+
+    async def test_file_alone_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, self.image) is self.image
+
+    async def test_short_text_beside_a_file_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10_000, action=Truncate(max_chars=95))])
+        value = ['header', self.image]
+        assert await _run(cap, value) is value
+
+    async def test_data_beside_files_is_reduced_and_the_files_kept(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, ['A' * 300, self.image, 'B' * 300]) == [
+            snapshot("""\
+["
+
+[truncated: 601 chars omitted from the middle; showing first 2 + last 4 of 607 chars]
+
+BB"]\
+"""),
+            self.image,
+        ]
+
+    async def test_data_beside_a_file_spills(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=store)
+        assert await _run(cap, ToolReturn(return_value=['A' * 300, self.image], metadata={'k': 'v'})) == ToolReturn(
+            return_value=[
+                snapshot("""\
+[Tool output too large (300 chars); stored to handle 'run-1/call-1.0'. Read it with read_tool_result(handle='run-1/call-1.0', offset=0, limit=200, from_end=False, pattern=None).]
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
+"""),
+                self.image,
+            ],
+            metadata=snapshot({'k': 'v', 'overflow_handle': 'run-1/call-1.0', 'overflow_bytes': 300}),
+        )
+        assert await store.read('run-1/call-1.0') == ('A' * 300).encode('utf-8')
+
+    async def test_structured_data_beside_a_file_is_reduced_and_the_file_kept(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, [{'rows': list(range(1_000))}, self.image, b'raw bytes']) == [
+            snapshot("""\
+
+
+[truncated: 3,912 chars omitted from the middle; showing first 0 + last 2 of 3,914 chars]
+
+"]\
+"""),
+            self.image,
+        ]
+
+    async def test_raw_bytes_beside_a_file_are_reduced_as_text(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, [b'R' * 5_000, self.image]) == [
+            snapshot("""\
+
+
+[truncated: 5,000 chars omitted from the middle; showing first 0 + last 2 of 5,002 chars]
+
+R"\
+"""),
+            self.image,
+        ]
+
+    async def test_content_beside_a_file_is_still_reduced(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        out = await _run(cap, ToolReturn(return_value=['image', self.image], content='C' * 5_000))
+        assert out == ToolReturn(
+            return_value=['image', self.image],
+            content=snapshot("""\
+
+
+[truncated: 4,998 chars omitted from the middle; showing first 0 + last 2 of 5,000 chars]
+
+CC\
+"""),
+        )
+
+
 class TestContentReduction:
     async def test_large_content_spilled(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=100, action=Spill(preview_chars=20))], store=store
         )
@@ -787,7 +947,7 @@ class TestContentReduction:
         assert isinstance(out.content, str) and 'truncated' in out.content
 
     async def test_both_value_and_content_reduced(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=50, action=Spill())], store=store)
         out = await _run(cap, ToolReturn(return_value='v' * 500, content='c' * 500))
         assert isinstance(out, ToolReturn)
@@ -1095,7 +1255,7 @@ class TestInternals:
 
     def test_build_spill_preview_tokens_unit(self):
         unit = _Unit(binary=False, text='x' * 100, data=b'x' * 100, value='x' * 100, suffix='')
-        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True)
+        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 
 
 # ---------------------------------------------------------------------------
@@ -1105,50 +1265,50 @@ class TestInternals:
 
 class TestReadBack:
     async def test_read_slice_basic(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
         out = await _read_slice(store.read, 'h/1.0', offset=0, limit=3, from_end=False, pattern=None)
         assert 'line 0' in out and 'line 2' in out and 'line 3' not in out
 
     async def test_read_slice_from_end(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
         out = await _read_slice(store.read, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
         assert 'line 49' in out and 'line 48' in out
 
     async def test_read_slice_literal_pattern(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'apple\nbanana\navocado\ncherry')
         out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='av')
         assert 'avocado' in out and 'apple' not in out and 'banana' not in out
 
     async def test_read_slice_pattern_is_literal_not_regex(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'plain line\n^anchored')
         # A regex metacharacter is matched literally, so it cannot trigger backtracking.
         out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='^a')
         assert 'anchored' in out and 'plain line' not in out
 
     async def test_read_slice_offset_negative(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='offset'):
             await _read_slice(store.read, 'h/1.0', offset=-1, limit=10, from_end=False, pattern=None)
 
     async def test_read_slice_limit_too_small(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='limit'):
             await _read_slice(store.read, 'h/1.0', offset=0, limit=0, from_end=False, pattern=None)
 
     async def test_read_slice_limit_clamped(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'l{i}' for i in range(2000)).encode('utf-8'))
         out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10_000, from_end=False, pattern=None)
         assert out.count('\n') <= 1_000  # clamped to the line cap
 
     async def test_read_slice_output_capped(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', ('x' * 60_000).encode('utf-8'))
         out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'output capped' in out
@@ -1157,7 +1317,7 @@ class TestReadBack:
     async def test_read_slice_missing_handle(self, tmp_path: Path):
         # A missing/wrong handle returns a guiding message (it does NOT raise): a bad
         # handle must not consume a retry and escalate to a fatal UnexpectedModelBehavior.
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         out = await _read_slice(store.read, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'No stored tool result' in out
         assert 're-run the original tool' in out
@@ -1165,7 +1325,7 @@ class TestReadBack:
         assert str(tmp_path) not in out
 
     async def test_get_toolset_registers_read_tool(self, tmp_path: Path):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         await store.write('h/1.0', b'hello\nworld')
         cap: ToolOutputLimits[object] = ToolOutputLimits(store=store)
         toolset = cap.get_toolset()
@@ -1182,7 +1342,7 @@ class TestReadBack:
 
 class TestAgentIntegration:
     async def test_spill_persists_in_history(self, tmp_path: Path, anyio_backend: str):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=100, action=Spill(preview_chars=50))], store=store
         )
@@ -1202,7 +1362,7 @@ class TestAgentIntegration:
         assert await store.read(part.metadata['overflow_handle']) == ('data line\n' * 500).encode('utf-8')
 
     async def test_spill_preserves_non_mapping_metadata_through_agent_run(self, tmp_path: Path, anyio_backend: str):
-        store = LocalFileStore(base_dir=tmp_path)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=100, action=Spill())], store=store)
         agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
 
@@ -1218,6 +1378,42 @@ class TestAgentIntegration:
         assert part.metadata is not None
         assert part.metadata['original_metadata'] == 'app-request-id-123'
         assert 'overflow_handle' in part.metadata
+
+    @pytest.mark.parametrize('metadata', [['a', 'b'], ('a', 'b')], ids=['list', 'tuple'])
+    async def test_spill_appends_handles_to_list_metadata(self, tmp_path: Path, metadata: object, anyio_backend: str):
+        result = await _ui_event_agent(tmp_path, metadata).run('go')
+        part = _big_tool_return(result.all_messages())
+        assert part.metadata[:2] == ['a', 'b']
+        assert part.metadata[2].keys() == {'overflow_handle', 'overflow_bytes'}
+
+    @pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
+    @pytest.mark.parametrize('as_list', [True, False], ids=['list', 'single'])
+    async def test_spill_keeps_ag_ui_events(self, tmp_path: Path, as_list: bool, anyio_backend: str):
+        event = CustomEvent(name='cards', value={'n': 100})
+        run_input = RunAgentInput(
+            thread_id='t',
+            run_id='r',
+            messages=[UserMessage(id='u', content='go')],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        adapter = AGUIAdapter(agent=_ui_event_agent(tmp_path, [event] if as_list else event), run_input=run_input)
+        events = [e async for e in adapter.run_stream()]
+        assert [(e.name, e.value) for e in events if isinstance(e, CustomEvent)] == [('cards', {'n': 100})]
+        assert list(tmp_path.rglob('*'))
+
+    @pytest.mark.skipif(not vercel_ai_imports_successful(), reason='vercel ai dependencies not installed')
+    @pytest.mark.parametrize('as_list', [True, False], ids=['list', 'single'])
+    async def test_spill_keeps_vercel_ai_data_chunks(self, tmp_path: Path, as_list: bool, anyio_backend: str):
+        chunk = DataChunk(type='data-search-results', data={'count': 100})
+        result = await _ui_event_agent(tmp_path, [chunk] if as_list else chunk).run('go')
+        assert 'overflow_handle' in _big_tool_return(result.all_messages()).metadata[-1]
+        ui_parts = [p for m in VercelAIAdapter.dump_messages(result.all_messages()) for p in m.parts]
+        assert [(p.type, p.data) for p in ui_parts if isinstance(p, DataUIPart)] == [
+            ('data-search-results', {'count': 100})
+        ]
 
     async def test_structured_return_with_bytes_that_are_not_utf8(self, anyio_backend: str):
         """Binary in a structured return is measured as base64 rather than failing the run."""
@@ -1238,9 +1434,36 @@ class TestAgentIntegration:
         returns = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         assert returns == ['{"blob":"____"}']
 
+    async def test_file_return_reaches_the_model_untruncated(self):
+        image = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
+        requests: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages.copy())
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='read_image', args='{}')])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=10))])],
+        )
+
+        @agent.tool_plain
+        def read_image() -> BinaryContent:
+            return image
+
+        result = await agent.run('read image')
+
+        # The follow-up request is what the model receives; history is what later requests replay.
+        for messages in (requests[1], result.all_messages()):
+            tool_return = messages[2].parts[0]
+            assert isinstance(tool_return, ToolReturnPart)
+            assert tool_return.content == image
+
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=10_000, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
+            bands=[Band(over=10_000, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
         )
         agent = Agent(TestModel(call_tools=['small_tool']), capabilities=[cap])
 
@@ -1252,3 +1475,52 @@ class TestAgentIntegration:
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         small = [p for p in returns if p.tool_name == 'small_tool']
         assert small and small[0].content == 'tiny'
+
+    async def test_capability_load_is_not_reduced(self, anyio_backend: str):
+        """A reduced `load_capability` return would not count as a load, leaving the capability's tools locked."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        refunds = Capability[object](id='refunds', description='Refunds.', defer_loading=True)
+
+        @refunds.tool_plain
+        def refund_status(order_id: str) -> str:
+            return f'Order {order_id}: refunded'
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[refunds, cap])
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [LoadCapabilityReturnPart, ToolReturnPart]
+        assert returns[0].content == {'message': "Capability 'refunds' loaded. Its instructions, if any, follow."}
+        assert returns[1].content == 'Order A1: refunded'
+
+    async def test_tool_search_is_not_reduced(self, anyio_backend: str):
+        """A reduced `search_tools` return would not reveal the tools it found."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['refund']})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain(defer_loading=True)
+        def refund_status(order_id: str) -> str:
+            """Look up a refund."""
+            return f'Order {order_id}: refunded'
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
+        assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
+        assert returns[1].content == 'Order A1: refunded'

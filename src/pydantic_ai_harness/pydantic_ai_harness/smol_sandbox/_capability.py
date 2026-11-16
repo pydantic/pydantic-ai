@@ -9,10 +9,14 @@ from dataclasses import dataclass, field
 import smol
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir, running_on_asyncio
+from pydantic_ai_harness._workspace_provider import (
+    check_integer,
+    check_working_dir,
+    reject_defer_loading,
+    require_asyncio,
+)
 from pydantic_ai_harness.smol_sandbox import _backend
 from pydantic_ai_harness.smol_sandbox._backend import SmolSandboxBackend
 
@@ -47,17 +51,14 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached VM; nothing is read from the host."""
 
     def __post_init__(self) -> None:
-        if self.defer_loading:
-            raise UserError(
-                '`SmolSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('SmolSandbox', self.defer_loading)
         check_integer('cpus', self.cpus, optional=True)
         check_integer('memory_mb', self.memory_mb, optional=True)
         check_working_dir(self.working_dir)
 
     def backend(self, ref: WorkspaceRef) -> SmolSandboxBackend:
-        """Attach lazily to an existing VM."""
+        """Attach lazily to an existing VM, one `SmolSandbox` created."""
+        _backend.check_ref(ref)
         return SmolSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -68,8 +69,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         which boots a stopped VM briefly.
         """
         _backend.check_ref(ref)
-        if not running_on_asyncio():
-            raise UserError(_backend.ASYNCIO_ONLY)
+        require_asyncio(_backend.ASYNCIO_ONLY)
         await _backend.settled(_backend.start_lifecycle(ref.id, lambda: _delete(ref.id)))
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
@@ -77,6 +77,9 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         del ctx
         if ref is not None and ref.provider != 'smol':
             return None
+        if ref is not None:
+            # A ref from message history only reaches VMs `SmolSandbox` created.
+            _backend.check_ref(ref)
         return SmolSandboxBackend(
             ref=ref,
             image=self.image,

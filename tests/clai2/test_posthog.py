@@ -47,7 +47,7 @@ from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import CUSTOM
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
@@ -118,7 +118,7 @@ class Shell:
 
     def capability(self) -> PostHog[None]:
         [capability] = self.loader.capabilities()
-        assert isinstance(capability, PostHog)
+        assert isinstance(capability, PostHog) and capability.defer_loading
         return capability  # pyright: ignore[reportUnknownVariableType]
 
     async def run_capability(self) -> PostHog[None] | None:
@@ -128,7 +128,9 @@ class Shell:
         plugin = entry.loaded.plugin
         assert isinstance(plugin, posthog.PostHogPlugin)
         assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
-        return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert capability is None or capability.defer_loading
+        return capability
 
 
 def script(

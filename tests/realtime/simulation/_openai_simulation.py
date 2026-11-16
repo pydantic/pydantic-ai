@@ -1,4 +1,4 @@
-"""The simulation of a session with an OpenAI Realtime protocol model (OpenAI, Azure OpenAI, xAI)."""
+"""The simulation of a session with an OpenAI Realtime protocol model (OpenAI, Azure OpenAI, xAI, ElevenLabs)."""
 
 from __future__ import annotations as _annotations
 
@@ -7,15 +7,18 @@ from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
+from unittest.mock import patch
 
 from hypothesis import strategies as st
 from hypothesis.stateful import precondition, rule
 
 from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.realtime import RealtimeModel
 from pydantic_ai.realtime.azure import AzureRealtimeModel
+from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeConnection, ElevenLabsRealtimeModel
 from pydantic_ai.realtime.lifecycle import RealtimeFrame, StaleEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 from pydantic_ai.realtime.settings import RealtimeModelSettings
@@ -35,11 +38,15 @@ class OpenAIOptions:
     turn_detection: Literal['server_vad', 'manual'] = 'server_vad'
     transcription: bool = True
     dialect: Dialect = 'openai'
-    """Which provider's model the session connects to: OpenAI, Azure OpenAI, or xAI Grok Voice."""
+    """Which provider's model the session connects to: OpenAI, Azure OpenAI, xAI Grok Voice, or ElevenLabs."""
     vad_interrupts: bool = True
     """Server VAD's `interrupt_response`: whether the user starting to speak cancels the active response."""
     vad_responds: bool = True
     """Server VAD's `create_response`: whether the user stopping answers their turn (xAI answers regardless)."""
+    prune_tool_items: bool = False
+    """`openai_prune_tool_items`: whether answered tool rounds are deleted from the server conversation."""
+    keep_tool_items: frozenset[str] = frozenset()
+    """`openai_keep_tool_items`: the tools whose rounds pruning leaves in the server conversation."""
 
 
 class OpenAISimulation(Simulation):
@@ -56,9 +63,7 @@ class OpenAISimulation(Simulation):
         super().__init__(seed=seed, options=options, strict=strict)
         self.openai = openai or OpenAIOptions()
         self.provider = self.openai.dialect
-        self.server = OpenAIServer(
-            dialect=self.openai.dialect, model='grok-voice-latest' if self.openai.dialect == 'xai' else 'gpt-realtime'
-        )
+        self.server = OpenAIServer(dialect=self.openai.dialect, model=_SERVED_MODELS[self.openai.dialect])
         self.deferred_requests = 0
         """How many requests for a response the connection deferred behind an active one."""
         self.requests_cut_off = 0
@@ -116,30 +121,48 @@ class OpenAISimulation(Simulation):
             )
         if self.openai.dialect == 'xai':
             return XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='simulated'))
+        if self.openai.dialect == 'elevenlabs':
+            return ElevenLabsRealtimeModel(
+                _SERVED_MODELS['elevenlabs'], provider=ElevenLabsProvider(api_key='simulated')
+            )
         return OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='simulated'))
 
     def model_settings(self) -> RealtimeModelSettings:
+        transcription_model = 'auto' if self.openai.dialect == 'elevenlabs' else 'gpt-4o-mini-transcribe'
         settings: OpenAIRealtimeModelSettings = {
             'turn_detection': self.openai.turn_detection == 'server_vad',
-            'input_transcription_model': 'gpt-4o-mini-transcribe' if self.openai.transcription else None,
+            'input_transcription_model': transcription_model if self.openai.transcription else None,
         }
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
+        if self.openai.prune_tool_items:
+            settings['openai_prune_tool_items'] = True
+        if self.openai.keep_tool_items:
+            settings['openai_keep_tool_items'] = self.openai.keep_tool_items
         vad = self.openai
         if (
             vad.turn_detection == 'server_vad'
             and vad.dialect != 'xai'
             and not (vad.vad_interrupts and vad.vad_responds)
         ):
-            settings['openai_turn_detection'] = {
-                'type': 'server_vad',
-                'interrupt_response': vad.vad_interrupts,
-                'create_response': vad.vad_responds,
-            }
+            if vad.dialect == 'elevenlabs':
+                # ElevenLabs only takes semantic VAD, with the same two flags.
+                settings['openai_turn_detection'] = {
+                    'type': 'semantic_vad',
+                    'interrupt_response': vad.vad_interrupts,
+                    'create_response': vad.vad_responds,
+                }
+            else:
+                settings['openai_turn_detection'] = {
+                    'type': 'server_vad',
+                    'interrupt_response': vad.vad_interrupts,
+                    'create_response': vad.vad_responds,
+                }
         return settings
 
     @contextmanager
     def transport(self) -> Generator[None]:
-        with self.server.network.patch():
+        # ElevenLabs' keep-alive is a timer that never stops, so the simulation could never come to rest with it.
+        with self.server.network.patch(), patch.object(ElevenLabsRealtimeConnection, '_keep_alive_after', None):
             yield
 
     # --- provider behavior --------------------------------------------------------------------------
@@ -237,6 +260,9 @@ class OpenAISimulation(Simulation):
             server.network.deliver()
         elif session.late_done is not None:
             server.release_late_done()
+        elif session.stopped_uncommitted is not None:
+            # (Ahead of the reply xAI started at the stop, which says nothing until the turn is committed.)
+            server.commit_stopped()
         elif session.active is not None:
             if not session.active.truth.words and not session.active.truth.tool_calls:
                 server.speak(1)
@@ -251,11 +277,26 @@ class OpenAISimulation(Simulation):
         return True
 
 
+_SERVED_MODELS: dict[Dialect, str] = {
+    'openai': 'gpt-realtime',
+    'azure': 'gpt-realtime',
+    'xai': 'grok-voice-latest',
+    'elevenlabs': 'eleven_realtime_v1_mini',
+}
+"""The model each dialect's server reports in `session.created`."""
+
+
 def _options(dialect: Dialect) -> st.SearchStrategy[OpenAIOptions]:
     # The VAD flags only matter under server VAD, and xAI ignores them.
     vad_flag = st.just(True) if dialect == 'xai' else st.booleans()
+    # (xAI's settings have no `openai_prune_tool_items`.)
+    prune = st.just(False) if dialect == 'xai' else st.booleans()
     manual = st.builds(
-        OpenAIOptions, turn_detection=st.just('manual'), transcription=st.booleans(), dialect=st.just(dialect)
+        OpenAIOptions,
+        turn_detection=st.just('manual'),
+        transcription=st.booleans(),
+        dialect=st.just(dialect),
+        prune_tool_items=prune,
     )
     server_vad = st.builds(
         OpenAIOptions,
@@ -264,6 +305,7 @@ def _options(dialect: Dialect) -> st.SearchStrategy[OpenAIOptions]:
         dialect=st.just(dialect),
         vad_interrupts=vad_flag,
         vad_responds=vad_flag,
+        prune_tool_items=prune,
     )
     return manual | server_vad
 
@@ -290,7 +332,8 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
 
     def active(self) -> bool:
         session = self.server_session()
-        return session is not None and session.active is not None
+        # The reply xAI starts at its VAD's stop says nothing until it commits the turn.
+        return session is not None and session.active is not None and session.stopped_reply is None
 
     def can_drop(self) -> bool:
         return self.server_session() is not None
@@ -353,8 +396,6 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
     @precondition(lambda self: (session := self.server_session()) is not None and session.speaking is not None)
     @rule(deliver=st.booleans(), ticks=TICKS, commit=st.booleans())
     def speech_stop(self, deliver: bool, ticks: int | None, commit: bool) -> None:
-        # xAI adds a turn's item when it hears speech start, so a stop it takes back is not modeled there.
-        commit = commit or self.openai_sim.openai.dialect == 'xai'
         self.run(lambda: self.openai_sim.speech_stop(deliver=deliver, ticks=ticks, commit=commit))
 
     @precondition(lambda self: (session := self.server_session()) is not None and bool(session.pending_transcripts))
@@ -393,3 +434,9 @@ class XaiMachine(OpenAIMachine):  # pragma: lax no cover (driven only by randomi
     """Randomized traces against the simulated server speaking as xAI Grok Voice."""
 
     provider_options = _options('xai')
+
+
+class ElevenLabsMachine(OpenAIMachine):  # pragma: lax no cover (driven only by randomized exploration)
+    """Randomized traces against the simulated server speaking as ElevenLabs."""
+
+    provider_options = _options('elevenlabs')
