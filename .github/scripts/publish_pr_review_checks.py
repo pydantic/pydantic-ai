@@ -1,4 +1,7 @@
-"""Gate and publish the `PR Review Checks` commit status from trusted default-branch code."""
+"""Gate and publish the `PR Review Checks` commit status from trusted default-branch code.
+
+`trusted` answers the same trust question for the other workflows that `RUN_LABEL` activates.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ from pr_gates import Commit, GateError, GhCli, Label
 from pydantic import BaseModel, Field, TypeAdapter
 
 CONTEXT = 'PR Review Checks'
-RUN_LABEL = 'pr-review-checks:run'
+RUN_LABEL = 'trusted:ci-run'
 ACCEPTED_LABEL = 'pr-review-checks:accepted'
 MARKER = re.compile(r'\n\n<!-- pr-review-checks run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
 FINDING_KEY = re.compile(r'<!-- pr-review-checks finding=([0-9a-f]{64}) -->')
@@ -149,7 +152,7 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
             raise GateError(f'Only a user with write access can apply `{ACCEPTED_LABEL}`.')
         github.status(head, 'success', f'Findings accepted by @{sender} for this head.', url)
         return False
-    author_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
+    author_trusted = _author_trusted(github, pull)
     if action == 'labeled' and label == RUN_LABEL and author_trusted:
         print(f'The author has write access, so `{RUN_LABEL}` changes nothing.')
         return False
@@ -161,6 +164,17 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
         return False
     github.status(head, 'pending', 'Reviewing this head.', url)
     return True
+
+
+def trusted(github: ReviewChecksGitHub) -> bool:
+    """Whether a user with write access opened the pull request or applied `RUN_LABEL` to it last."""
+    pull = github.pull_request()
+    return _author_trusted(github, pull) or _run_label_trusted(github, {label.name for label in pull.labels})
+
+
+def _author_trusted(github: ReviewChecksGitHub, pull: LivePullRequest) -> bool:
+    """An app's branch is never trusted on its own: its content can come from outside text."""
+    return pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
 
 
 def _run_label_trusted(github: ReviewChecksGitHub, labels: set[str]) -> bool:
@@ -377,13 +391,22 @@ class ReviewChecksGhCli(GhCli):
 
 
 def main() -> None:
-    """`gate` decides whether this event reviews its head; `publish` posts the result."""
+    """Run one subcommand.
+
+    `gate` decides whether this event reviews its head, `trusted` whether the other workflows `RUN_LABEL`
+    activates run on this pull request, and `publish` posts the result.
+    """
     env = os.environ
     github = ReviewChecksGhCli(env['GITHUB_REPOSITORY'], int(env.get('PR_NUMBER') or '0'))
     if sys.argv[1] == 'gate':
         review = gate(github, env)
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
             output.write(f'review={str(review).lower()}\n')
+    elif sys.argv[1] == 'trusted':
+        result = trusted(github)
+        print(f'Trusted: {result}')
+        with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+            output.write(f'trusted={str(result).lower()}\n')
     else:
         publish(github, env)
 

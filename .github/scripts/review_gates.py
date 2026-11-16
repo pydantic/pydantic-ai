@@ -418,7 +418,7 @@ class ReviewGhCli(GhCli):
         run = ReviewRun.model_validate_json(self._api(f'{self._repo}/actions/runs/{run_id}'))
         if not (
             run.path == '.github/workflows/bots.yml'
-            and run.event == 'pull_request_target'
+            and run.event == 'pull_request'
             and run.name == 'PR Bots'
             and run.head_sha == head
             and run.conclusion == 'success'

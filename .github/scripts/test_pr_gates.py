@@ -385,7 +385,7 @@ if (data.scenario === 'foreign-workflow-repository') serverRun.repository.full_n
 if (data.scenario === 'observer-bot-event') serverRun.event = 'pull_request_target';
 if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.name = 'PR Bots'; serverRun.path = '.github/workflows/bots.yml';
-  serverRun.event = 'pull_request_target';
+  serverRun.event = 'pull_request';
 }
 if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
 const context = {
@@ -1013,12 +1013,12 @@ def test_review_publication_errors_fail_closed(
 @pytest.mark.parametrize(
     ('path', 'event', 'run_head', 'conclusion', 'job_conclusion', 'valid'),
     [
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'success', True),
-        ('.github/workflows/other.yml', 'pull_request_target', HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', OLD_HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'failure', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'failure', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', True),
+        ('.github/workflows/other.yml', 'pull_request', HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', OLD_HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'failure', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'failure', False),
     ],
 )
 def test_gh_cli_verifies_both_jobs_and_originating_run(

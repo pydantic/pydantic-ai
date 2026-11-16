@@ -2,17 +2,17 @@
 name: Docs Navigation Check
 
 # Adding `trigger:docs-preview` requests navigation validation and a rendered
-# preview for same-repository PRs. Fork PRs receive navigation validation only.
+# preview for same-repository PRs. Fork PRs receive neither: their runs hold no
+# DOCS_APP credentials.
 #
 # This workflow only dispatches; validation, rendering, and final reports run in
 # unified-docs. It never checks out or executes PR content. The label is removed
 # after dispatch; re-add it after source changes.
 
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target is required so fork PRs can
-  # access the DOCS_APP credentials. The dispatch explicitly verifies that the label
-  # actor has write access, and this workflow does not check out or execute PR code.
-  pull_request_target:
+  # The dispatch verifies that the label actor has write access, and this workflow does
+  # not check out or execute PR code.
+  pull_request:
     types: [labeled]
 
 permissions: {}
@@ -24,7 +24,7 @@ concurrency:
 jobs:
   dispatch:
     name: Dispatch Docs Navigation Check
-    if: github.event.label.name == 'trigger:docs-preview'
+    if: github.event.label.name == 'trigger:docs-preview' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -86,7 +86,7 @@ jobs:
           body=$(cat <<EOF
           ## Docs Navigation Check — queued
 
-          Navigation validation for commit \`${sha7}\` has been queued. A rendered preview is also requested for same-repository PRs. \`pydantic-docs[bot]\` posts separate result comments on this PR; fork PRs receive navigation validation only.
+          Navigation validation for commit \`${sha7}\` has been queued, and a rendered preview is requested. \`pydantic-docs[bot]\` posts separate result comments on this PR.
           EOF
           )
 
