@@ -10,8 +10,9 @@ from typing import Any, get_args, overload
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
@@ -44,6 +45,29 @@ class _SkillSource:
     workspace: Workspace | None
     """The `workspace=` the libraries are read from, or `None` for the run's workspace."""
     scanner: ArtifactScanner | None
+    read_files: bool
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """A skill in the catalog, with the workspace it was read from and the configuration that selected it."""
+
+    skill: SkillDefinition
+    workspace: Workspace
+    source: _SkillSource
+
+
+class _SkillFiles(AbstractCapability[AgentDepsT]):
+    """The `read_skill_file` tool, offered for a run alongside its skills.
+
+    The toolset is the one `Skills` built at construction, so a durable engine finds the toolset it registered.
+    """
+
+    def __init__(self, toolset: FunctionToolset[AgentDepsT]) -> None:
+        self.toolset = toolset
+
+    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
+        return self.toolset
 
 
 class _Skill(AbstractCapability[AgentDepsT]):
@@ -82,6 +106,9 @@ class Skills(AbstractCapability[AgentDepsT]):
     `load` reads the same skills outside a run, for a host that lets a person invoke a skill
     itself; render one with `SkillDefinition.render`.
 
+    With `read_files=True`, the model also gets a `read_skill_file` tool that reads the text files in
+    a loaded skill's directory, such as `references/guide.md`, and nothing outside it.
+
     Two `Skills` on one agent combine, so every library either names stays reachable.
     """
 
@@ -110,11 +137,17 @@ class Skills(AbstractCapability[AgentDepsT]):
     scanner: ArtifactScanner | None
     """Scans each skill's description and body before it is offered, skipping flagged skills; see `__init__`."""
 
+    read_files: bool
+    """Whether the model gets a `read_skill_file` tool for a loaded skill's files; see `__init__`."""
+
     id: str | None = 'skills'
     """One per agent: two `Skills` combine into one catalog."""
 
     _sources: tuple[_SkillSource, ...] = field(default=(), init=False, repr=False, compare=False)
     """Every configuration this instance serves: its own, plus those of any `Skills` combined into it."""
+
+    _toolset: FunctionToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    """The `read_skill_file` tool, when any configuration this instance serves has `read_files=True`."""
 
     @overload
     def __init__(  # pragma: no cover - overload is enforced by static type checking
@@ -128,6 +161,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
         scanner: ArtifactScanner | None = None,
+        read_files: bool = False,
     ) -> None: ...
 
     @overload
@@ -142,6 +176,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
         scanner: ArtifactScanner | None = None,
+        read_files: bool = False,
     ) -> None: ...
 
     def __init__(
@@ -155,6 +190,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
         scanner: ArtifactScanner | None = None,
+        read_files: bool = False,
     ) -> None:
         """Configure the skill libraries to read at the start of each run.
 
@@ -180,6 +216,11 @@ class Skills(AbstractCapability[AgentDepsT]):
             scanner: An `ArtifactScanner` that checks each skill's description and body for prompt injection,
                 credential exfiltration, and hidden content. A flagged skill is left out of the catalog, with
                 a warning, as a `SkippedSkill` whose `reason` is `'flagged'`. Omit to load skills unscanned.
+                With `read_files`, it also scans each file the model reads, and withholds a flagged one.
+            read_files: Give the model a `read_skill_file` tool that reads a UTF-8 text file in the
+                directory of a skill it has loaded, from the workspace the skill was read from. It
+                works without file tools and for a `workspace=` library, and does not reach files
+                outside the skill's directory, through `..` or a symlink.
         """
         if include is not None and exclude is not None:
             raise ValueError('include and exclude cannot be used together.')
@@ -199,6 +240,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         self.unknown_names = unknown_names
         self.workspace = workspace
         self.scanner = scanner
+        self.read_files = read_files
         own = secondary_workspace(workspace, 'Skills')
         self._sources = (
             _SkillSource(
@@ -210,8 +252,10 @@ class Skills(AbstractCapability[AgentDepsT]):
                 unknown_names,
                 own,
                 scanner,
+                read_files,
             ),
         )
+        self._toolset = self._build_toolset()
 
     @classmethod
     def from_spec(
@@ -223,6 +267,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         missing_directories: MissingDirectories = 'error',
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
+        read_files: bool = False,
         **kwargs: Any,
     ) -> Skills[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -238,6 +283,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             'missing_directories': missing_directories,
             'duplicate_names': duplicate_names,
             'unknown_names': unknown_names,
+            'read_files': read_files,
             **kwargs,
         }
         # One dict, because `__init__`'s overloads reject an `include` and `exclude` that are both optional.
@@ -251,6 +297,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             f'missing_directories={self.missing_directories!r}, duplicate_names={self.duplicate_names!r}, '
             f'unknown_names={self.unknown_names!r}'
             + ('' if self.scanner is None else f', scanner={self.scanner!r}')
+            + (', read_files=True' if self.read_files else '')
             + ')'
         )
 
@@ -292,13 +339,58 @@ class Skills(AbstractCapability[AgentDepsT]):
             sources.extend(source for source in capability._sources if source not in sources)
         merged = replace_no_init(first)
         merged._sources = tuple(sources)
+        merged._toolset = merged._build_toolset()
         return merged
+
+    def _build_toolset(self) -> FunctionToolset[AgentDepsT] | None:
+        if not any(source.read_files for source in self._sources):
+            return None
+        toolset = FunctionToolset[AgentDepsT](id='skills')
+        toolset.add_function(self._read_skill_file, name='read_skill_file')
+        return toolset
+
+    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
+        """The `read_skill_file` tool when `read_files` is set, so a durable engine registers it with the agent."""
+        return self._toolset
+
+    async def _read_skill_file(self, ctx: RunContext[AgentDepsT], skill: str, path: str) -> str:
+        """Read a text file bundled with a skill you have loaded, such as `references/guide.md`.
+
+        Args:
+            ctx: The run context.
+            skill: The name of the loaded skill.
+            path: The file's path, relative to the skill's directory.
+        """
+        if skill not in ctx.loaded_capability_ids:
+            raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
+        entries, _ = await self._read(ctx.workspace)
+        entry = entries.get(skill)
+        if entry is None or not entry.source.read_files:
+            raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
+        workspace, directory = entry.workspace, entry.skill.directory
+        root = await workspace.realpath(directory)
+        target = await workspace.realpath(await workspace.resolve(path, base=directory))
+        if not target.startswith(root + workspace.paths.sep):
+            raise ModelRetry(f'{path!r} is outside the directory of skill {skill!r}.')
+        try:
+            text = await workspace.read_text(target)
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+            raise ModelRetry(f'Skill {skill!r} has no file {path!r}.') from None
+        except UnicodeDecodeError:
+            raise ModelRetry(f'{path!r} in skill {skill!r} is not a UTF-8 text file.') from None
+        scanner = entry.source.scanner
+        if scanner is not None and (scan := scanner.scan(text, source=f'skill:{skill}/{path}')).flagged:
+            record_flagged(
+                ctx.tracer, scan, artifact='skill', action='withheld', include_content=ctx.trace_include_content
+            )
+            raise ModelRetry(f'{path!r} in skill {skill!r} was withheld: an artifact scan flagged it.')
+        return text
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
 
-        Returns one deferred capability per skill the model may load, or, without any, this capability,
-        which adds no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or
+        Returns one deferred capability per skill the model may load, with the `read_skill_file` tool when
+        `read_files` is set; without any skills, it adds no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or
         library path, an overlong description, or unsupported frontmatter. Raises `UserError` when a configuration without
         `workspace=` meets a run without a workspace.
         """
@@ -316,8 +408,12 @@ class Skills(AbstractCapability[AgentDepsT]):
                 )
         for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
-        offered = [_Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable]
-        return CombinedCapability(offered) if offered else self
+        offered: list[AbstractCapability[AgentDepsT]] = [
+            _Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable
+        ]
+        if offered and self._toolset is not None:
+            offered.append(_SkillFiles(self._toolset))
+        return CombinedCapability(offered)
 
     async def load(self, workspace: WorkspaceBackend | None = None) -> SkillCatalog:
         """Read the selected skills now, as a run does at its start, without emitting warnings.
@@ -345,9 +441,13 @@ class Skills(AbstractCapability[AgentDepsT]):
         return await self._load(run_workspace)
 
     async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
+        entries, skipped = await self._read(run_workspace)
+        return SkillCatalog(skills=tuple(entry.skill for entry in entries.values()), skipped=skipped)
+
+    async def _read(self, run_workspace: Workspace | None) -> tuple[dict[str, _Entry], tuple[SkippedSkill, ...]]:
         # Where each name's first `SKILL.md` is, whether it was kept or flagged.
         claimed: dict[str, tuple[Workspace, str]] = {}
-        by_name: dict[str, SkillDefinition] = {}
+        by_name: dict[str, _Entry] = {}
         messages: list[SkippedSkill] = []
         for source in self._sources:
             workspace = source.workspace or run_workspace
@@ -376,8 +476,10 @@ class Skills(AbstractCapability[AgentDepsT]):
                     messages.append(flagged)
                     continue
                 # A library read from `workspace=` is not where the model's file tools work.
-                by_name[skill.name] = replace(skill, in_run_workspace=source.workspace is None)
-        return SkillCatalog(skills=tuple(by_name.values()), skipped=tuple(messages))
+                by_name[skill.name] = _Entry(
+                    replace(skill, in_run_workspace=source.workspace is None), workspace, source
+                )
+        return by_name, tuple(messages)
 
     @staticmethod
     def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:

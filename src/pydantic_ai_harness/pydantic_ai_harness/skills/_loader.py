@@ -95,6 +95,9 @@ Skipping suits a selection shared by several projects, such as a person's list o
 _ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
 """`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
 
+_DIRECTORY_PLACEHOLDER = re.compile(r'\$\{(?:CLAUDE_)?SKILL_DIR\}')
+"""Claude Code's `${CLAUDE_SKILL_DIR}`, and the `${SKILL_DIR}` other clients use."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class SkillDefinition:
@@ -148,9 +151,12 @@ class SkillDefinition:
         `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the
         model gets when it loads the skill.
 
-        The directory line is left out unless `in_run_workspace`.
+        When `in_run_workspace`, `${CLAUDE_SKILL_DIR}` and `${SKILL_DIR}` in the body become the skill's
+        directory. Otherwise they are left unchanged, and the directory line is left out.
         """
         body = self.body
+        if self.in_run_workspace:
+            body = _DIRECTORY_PLACEHOLDER.sub(lambda _: self.directory, body)
         if arguments is not None:
             if _ARGUMENTS_PLACEHOLDER.search(body):
                 # A function, so backslashes in the arguments are not read as group references.

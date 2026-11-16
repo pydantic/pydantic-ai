@@ -315,8 +315,10 @@ Gotchas:
 - With no skills found, `Skills` adds no instructions and no `load_capability` tool.
 - `description` is required. The loaded instructions name the skill's directory in the run's
   workspace (not for a `workspace=` library), so a model with file or shell tools can follow
-  `references/` or run `scripts/`; `Skills` itself never reads or
-  runs them, and `${CLAUDE_SKILL_DIR}` is not substituted. Fields like `allowed-tools`, `model`,
+  `references/` or run `scripts/`, and `${CLAUDE_SKILL_DIR}`/`${SKILL_DIR}` become that directory.
+  `Skills` never runs bundled files. `Skills(..., read_files=True)` adds a `read_skill_file(skill,
+  path)` tool for a loaded skill's text files, confined to its directory and working for a
+  `workspace=` library too, so no `FileSystem` is needed. Fields like `allowed-tools`, `model`,
   `hooks` are accepted but not implemented (one aggregated `UserWarning`).
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
   catalog selection, not access control.
