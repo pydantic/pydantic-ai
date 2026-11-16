@@ -7,8 +7,7 @@ test is how `NativeCompaction` maps a `CompactionRequest` onto the model and bac
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -525,35 +524,8 @@ async def test_run_compact_runs_the_full_lifecycle():
     assert len(result.compactions) == 1
 
 
-def _with_own_event_loop(run: Callable[[], list[CompactionRecord]]) -> list[CompactionRecord]:
-    """Call `run` with an event loop of this thread's own, closed after it, for a sync run method off the main thread.
-
-    Without one, the run method creates a loop for the thread and leaves it open, which a later test's
-    `pytest.warns` then catches as an unclosed-loop `ResourceWarning` when it's garbage-collected.
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return run()
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
-
-
 async def _run_with_compact(agent: AbstractAgent[None, str], method: str) -> list[CompactionRecord]:
-    """Run `agent` on `history()` with `compact=True` through the run method `method`, returning its compactions."""
-    if method == 'run_sync':
-        return await asyncio.to_thread(
-            _with_own_event_loop, lambda: agent.run_sync('hi', message_history=history(), compact=True).compactions
-        )
-    if method == 'run_stream_sync':
-
-        def stream_sync() -> list[CompactionRecord]:
-            result = agent.run_stream_sync('hi', message_history=history(), compact=True)
-            result.get_output()
-            return result.compactions
-
-        return await asyncio.to_thread(_with_own_event_loop, stream_sync)
+    """Run `agent` on `history()` with `compact=True` through the async run method `method`, returning its compactions."""
     if method == 'run_stream':
         async with agent.run_stream('hi', message_history=history(), compact=True) as stream:
             await stream.get_output()
@@ -570,7 +542,7 @@ async def _run_with_compact(agent: AbstractAgent[None, str], method: str) -> lis
     return agent_run.result.compactions
 
 
-@pytest.mark.parametrize('method', ['run_sync', 'run_stream_sync', 'run_stream', 'run_stream_events', 'iter'])
+@pytest.mark.parametrize('method', ['run_stream', 'run_stream_events', 'iter'])
 @pytest.mark.parametrize('wrapped', [False, True], ids=['agent', 'wrapper-agent'])
 async def test_run_methods_compact(method: str, wrapped: bool):
     """Every run method, on an `Agent` and a `WrapperAgent`, compacts once before the first request with `compact=`."""
@@ -580,6 +552,26 @@ async def test_run_methods_compact(method: str, wrapped: bool):
         agent = WrapperAgent(agent)
 
     compactions = await _run_with_compact(agent, method)
+
+    assert model.compacted == [(history(), None)]
+    assert [record.handler for record in compactions] == ['native']
+
+
+@pytest.mark.parametrize('method', ['run_sync', 'run_stream_sync'])
+@pytest.mark.parametrize('wrapped', [False, True], ids=['agent', 'wrapper-agent'])
+def test_sync_run_methods_compact(method: str, wrapped: bool):
+    """The sync run methods, on an `Agent` and a `WrapperAgent`, compact once before the first request with `compact=`."""
+    model = CompactingModel('primary')
+    agent: AbstractAgent[None, str] = Agent(model, capabilities=[NativeCompaction()])
+    if wrapped:
+        agent = WrapperAgent(agent)
+
+    if method == 'run_sync':
+        compactions = agent.run_sync('hi', message_history=history(), compact=True).compactions
+    else:
+        result = agent.run_stream_sync('hi', message_history=history(), compact=True)
+        result.get_output()
+        compactions = result.compactions
 
     assert model.compacted == [(history(), None)]
     assert [record.handler for record in compactions] == ['native']
