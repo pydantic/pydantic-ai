@@ -339,6 +339,8 @@ All parameters are keyword-only: `agents` (required), `tool_name='run_workflow'`
 `run_workflow` calls), `max_retries=3`, `forward_usage=True`, `inherit_model=False` (children keep their own
 models; `True` makes them follow the parent run's resolved model, e.g. after a per-run model override), `sub_agent_usage_limits=None` (applied to each child run),
 `resource_limits=None` (backstop 256 MB, no time cap; dict merges, `'unlimited'` disables),
+`call_scheduler=None` (a `(RunContext) -> WorkflowCallScheduler` factory, called once per `run_workflow`
+call, for integrations that decide when sub-agent calls start; not called under `DBOSDurability`),
 `id`/`description`/`defer_loading`.
 
 Gotchas:
@@ -360,6 +362,10 @@ Gotchas:
 - Children do not inherit the parent's workspace: give each its own workspace capability. Children
   gathered in parallel on one checkout can overwrite each other's edits.
 - `defer_loading=True` requires a stable `id`. `workflow.reveal(agent)` adds a sub-agent mid-run.
+- A `WorkflowCallScheduler` gets each call as a `WorkflowCall` (`agent_name`, `start`) and must release
+  held calls in `flush`. Under `AWSLambdaDurability` a released call has to await `call.start()`
+  without suspending first (no semaphore or other await before it), or it
+  misses the `parallel` batch and the script hangs.
 - Not agent-spec serializable.
 
 ## Advisor
