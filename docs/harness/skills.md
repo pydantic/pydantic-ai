@@ -10,7 +10,8 @@ specialized instructions without putting every instruction in its initial
 prompt.
 
 Point `Skills` at one or more skill libraries. The model first sees each
-skill's name and description. When a skill is useful, the model loads it with
+skill's name and description, followed by its `when_to_use` text if it has one.
+When a skill is useful, the model loads it with
 the `load_capability` tool to receive that skill's instructions.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/skills/)
@@ -93,7 +94,7 @@ At the start of every run, `Skills`:
 2. Scans the immediate child directories and validates the selected `SKILL.md` files.
 3. Offers each selected skill as a
    [deferred capability](../capabilities/on-demand.md)
-   named after it: the model sees its name and description, and loads it with the
+   named after it: the model sees its name, description and `when_to_use`, and loads it with the
    `load_capability` tool.
 
 Loading a skill returns a `# Skill: <name>` heading, a line naming the skill's
@@ -220,6 +221,7 @@ The loader uses these parts of `SKILL.md`:
 |---|---|
 | `name` | Optional. Defaults to the parent directory name. If provided, it must match the directory after Unicode normalization. |
 | `description` | Required and non-blank. The Agent Skills limit is 1,024 characters; longer descriptions load with a warning. This appears in the initial catalog. |
+| `when_to_use` | Optional. Appended to the description in the catalog, so write the whole trigger clause, such as "Use when ...". A blank value counts as unset. |
 | Markdown body | Optional. This is loaded under a generated `# Skill: <name>` heading. |
 | `disable-model-invocation` | Optional, `true` or `false`. `true` leaves the skill out of the model's catalog; see [Invoke a skill yourself](#invoke-a-skill-yourself). |
 | `user-invocable` | Optional, `true` or `false`. `false` tells a host not to offer the skill as a command; the model still sees it. |
@@ -322,7 +324,7 @@ behavior is not implemented:
 
 ```text
 agent, allowed-tools, argument-hint, arguments, context, dependencies,
-disallowed-tools, effort, hooks, model, paths, shell, tools, when_to_use
+disallowed-tools, effort, hooks, model, paths, shell, tools
 ```
 
 If a selected skill uses any of these fields, the run emits one aggregated
@@ -330,6 +332,20 @@ If a selected skill uses any of these fields, the run emits one aggregated
 `advice`. Fields such as `license`, `compatibility`, and `metadata` are
 accepted without changing runtime behavior. Other unknown, non-behavioral fields
 are also accepted.
+
+`when_to_use` is not one of them: its text is appended to the skill's
+description in the model's catalog, so the model sees when to load the skill.
+Multiline values keep their line breaks, with continuation lines indented
+inside the catalog entry. Write the whole trigger clause, since it's appended
+as written:
+
+```markdown
+---
+name: review
+description: Review a pull request.
+when_to_use: Use when the user asks for a review or a second opinion on a diff.
+---
+```
 
 To keep a skill's tools hidden until the skill is loaded, define that skill as
 an [on-demand capability with its tools](../capabilities/on-demand.md#hide-tools-until-loaded)
@@ -366,7 +382,7 @@ a `reason`, and the `message` a run would warn with, for the host to show:
 | `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
 | `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
 | `'unreadable'` | A library directory the workspace raises `PermissionError` for, such as a local one without permission, with `missing_directories='skip'` |
-| `'flagged'` | A skill whose description or body the `scanner` flagged; see [Scan skills before loading them](#scan-skills-before-loading-them) |
+| `'flagged'` | A skill whose description, `when_to_use` or body the `scanner` flagged; see [Scan skills before loading them](#scan-skills-before-loading-them) |
 
 A skipped library path leaves out every skill it holds, so `SkippedSkill`
 covers library paths as well as single `SKILL.md` files.
@@ -376,8 +392,9 @@ that did load: descriptions over the 1,024-character limit, and frontmatter
 fields whose behavior isn't implemented. A host that hides warnings, such as a
 terminal client, can show them instead.
 
-Each `SkillDefinition` has the skill's `name`, `description`, `body`, `path`,
-`directory`, `in_run_workspace`, `model_invocable`, and `user_invocable`. The
+Each `SkillDefinition` has the skill's `name`, `description`, `when_to_use`,
+`body`, `path`, `directory`, `in_run_workspace`, `model_invocable`, and
+`user_invocable`. The
 catalog includes skills with `disable-model-invocation: true`
 (`model_invocable` is `False`), which a run leaves out of the model's catalog,
 so a host can offer them as commands only. `Skills` doesn't offer commands
@@ -419,7 +436,7 @@ agent specs.
 
 ## Scan skills before loading them
 
-Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](artifact-scanning.md) to check each skill's description and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
+Skills an agent wrote, or that came from a third party, can carry instructions that take effect in a later session. Pass an [`ArtifactScanner`](artifact-scanning.md) to check each skill's description, `when_to_use` and body for prompt injection, credential exfiltration, HTML comments, and invisible characters before it is offered:
 
 ```python
 from pydantic_ai import Agent

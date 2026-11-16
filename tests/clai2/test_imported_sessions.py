@@ -43,7 +43,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
+from pydantic_ai_harness.sub_agents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli import cli, headless

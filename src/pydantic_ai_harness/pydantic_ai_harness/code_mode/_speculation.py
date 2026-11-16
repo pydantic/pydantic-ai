@@ -206,7 +206,7 @@ _StrictBool = Annotated[bool, Strict()]
 """A declaration counts only when it is literally `True`, not a truthy stand-in."""
 
 
-class _McpSafetyHints(TypedDict, total=False):
+class _MCPSafetyHints(TypedDict, total=False):
     """The MCP tool annotations that vouch for early execution, as they arrive in tool metadata."""
 
     readOnlyHint: _StrictBool
@@ -216,7 +216,7 @@ class _SafetyDeclarations(TypedDict, total=False):
     """The tool metadata keys `speculate='declared'` reads; unrelated keys are ignored."""
 
     read_only: _StrictBool
-    annotations: _McpSafetyHints
+    annotations: _MCPSafetyHints
 
 
 _SAFETY_ADAPTER = TypeAdapter(_SafetyDeclarations)
