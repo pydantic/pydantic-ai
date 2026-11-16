@@ -43,6 +43,7 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     _combination_roots,  # pyright: ignore[reportPrivateUsage]
+    _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 from .wrapper import WrapperCapability
 
@@ -275,6 +276,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def _has_compact_history(self) -> bool:
         return any(c._has_compact_history for c in self._dispatch)
+
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        return any(
+            capability._has_compact_history
+            and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None
+            and capability._handles_compact_history(cap_ctx)
+            for capability in self._dispatch
+        )
 
     @property
     def _can_supply_model(self) -> bool:
@@ -568,6 +577,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_default_run_id(self) -> str | None:
         for capability in reversed(self._dispatch):
             if (run_id := capability.get_default_run_id()) is not None:
+                return run_id
+        return None
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        if type(self).get_default_run_id is not CombinedCapability.get_default_run_id:
+            return self.get_default_run_id()
+        for capability in reversed(self._dispatch):
+            if (run_id := await capability._get_default_run_id_for_inputs(get_inputs)) is not None:
                 return run_id
         return None
 

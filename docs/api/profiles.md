@@ -40,4 +40,6 @@
 
 ::: pydantic_ai.profiles.zai
 
+::: pydantic_ai.profiles.minimax
+
 ::: pydantic_ai.profiles.decision

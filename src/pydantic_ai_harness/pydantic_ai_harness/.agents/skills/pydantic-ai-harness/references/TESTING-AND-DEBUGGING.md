@@ -170,7 +170,7 @@ print(asked[0].questions[0].header)
 
 ## Memory with an In-Memory Store
 
-`Memory()` defaults to `InMemoryStore`. Seed it with `InMemoryStore({'<scope>/<file>': text})`, where
+`Memory()` defaults to `InMemoryMemoryStore`. Seed it with `InMemoryMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
 afterwards. The snapshot is a user-role `TextContent` starting with `<memory>`, kept in
 message history and added on a run's first request only when memory changed since the last one.
@@ -181,9 +181,9 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
-store = InMemoryStore({'main/MEMORY.md': '- prefers tabs'})
+store = InMemoryMemoryStore({'main/MEMORY.md': '- prefers tabs'})
 injected: list[str] = []
 
 
@@ -204,8 +204,8 @@ print(store.files['main/MEMORY.md'])
 """
 ```
 
-`FileStore` needs a workspace: without one the run fails at start with a `UserError`; attach a
-`LocalWorkspace` or pass `FileStore(..., workspace=LocalWorkspaceBackend(tmp))`.
+`FileMemoryStore` needs a workspace: without one the run fails at start with a `UserError`; attach a
+`LocalWorkspace` or pass `FileMemoryStore(..., workspace=LocalWorkspaceBackend(tmp))`.
 
 ## CodeMode: Drive `run_code` Directly
 
@@ -299,7 +299,7 @@ spans: call `Agent.instrument_all(True)` in a fixture, then read `capfire.export
 
 ## Debug Common Failures
 
-**Missing workspace.** `FileSystem`, `Shell`, `Coder`, and `Memory(store=FileStore(...))` fail the run
+**Missing workspace.** `FileSystem`, `Shell`, `Coder`, and `Memory(store=FileMemoryStore(...))` fail the run
 at start, before any model request:
 
 ```python

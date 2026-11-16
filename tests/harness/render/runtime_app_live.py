@@ -21,7 +21,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import RenderWorkflows
 from pydantic_ai_harness.memory import Memory, SqliteMemoryStore
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 
 class RuntimeDeps(TypedDict):

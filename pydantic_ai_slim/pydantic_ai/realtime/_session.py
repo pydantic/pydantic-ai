@@ -24,7 +24,7 @@ from typing_extensions import TypeAliasType
 
 from .. import _agent_graph, _instructions, _system_prompt
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
-from .._framing import SYSTEM_TAG, wrap
+from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import (
     _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
@@ -551,7 +551,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
                 # User-channel text, including content a capability added such as a task report: never system voice.
                 from_user = True
             elif isinstance(part, SystemPromptPart):
-                texts.append(wrap(SYSTEM_TAG, part.content))
+                texts.append(frame(SYSTEM_TAG, part.content))
                 system_prompts.append(part.content)
             else:
                 raise error
@@ -582,24 +582,38 @@ def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] |
 
 
 class _RealtimePendingMessages(PendingMessageQueue):
-    """A `RunContext.enqueue` queue that validates content and wakes the live session for delivery."""
+    """A `RunContext.enqueue` queue that validates content and wakes the live session when queued content is added or changed."""
 
     def __init__(self) -> None:
         super().__init__()
-        self._on_append: Callable[[PendingMessagePriority], None] | None = None
+        self._on_change: Callable[[PendingMessagePriority], None] | None = None
 
-    def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
-        self._on_append = on_append
+    def bind(self, on_change: Callable[[PendingMessagePriority], None]) -> None:
+        self._on_change = on_change
 
     def unbind(self) -> None:
         """Drop the callback, which holds a bound method back to the session."""
-        self._on_append = None
+        self._on_change = None
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
         super().append(pending)
-        if self._on_append is not None:
-            self._on_append(pending.priority)
+        if self._on_change is not None:
+            self._on_change(pending.priority)
+
+    def dequeue(self, enqueue_id: str) -> bool:
+        removed = super().dequeue(enqueue_id)
+        if removed and self._on_change is not None:
+            # A `when_idle` drain backs off while an `asap` item is queued, so removing one may unblock it.
+            self._on_change('when_idle')
+        return removed
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        changed = super().set_enqueue_priority(enqueue_id, priority)
+        if changed and self._on_change is not None:
+            # Only an append starts a drain, so a promoted item needs the same wake-up.
+            self._on_change(priority)
+        return changed
 
     def has_priority(self, priority: PendingMessagePriority) -> bool:
         with self._lock:
@@ -1053,12 +1067,12 @@ class RealtimeSession:
                 return
             request = self._new_request([*statements, *update.parts])
             text = self._render_instruction_change(history, request)
-            frame: RealtimeInput = (
-                InstructionChangeContext(wrap(SYSTEM_TAG, text), system_prompt=text)
+            instruction_frame: RealtimeInput = (
+                InstructionChangeContext(frame(SYSTEM_TAG, text), system_prompt=text)
                 if self._profile.get('supports_system_messages', False)
-                else TextContext(wrap(SYSTEM_TAG, text))
+                else TextContext(frame(SYSTEM_TAG, text))
             )
-            await self._send_frame(frame, request=request)
+            await self._send_frame(instruction_frame, request=request)
             self._instruction_changes.append(request)
 
     async def __aenter__(self) -> RealtimeSession:
@@ -1905,6 +1919,38 @@ class RealtimeSession:
             return None
         self._pending_messages.append(pending)
         return pending.enqueue_id
+
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove content queued with [`enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] before it's delivered.
+
+        Works like [`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue], which a tool running in
+        the session can call too.
+
+        Args:
+            enqueue_id: The ID `enqueue()` returned.
+
+        Returns:
+            `True` if the content was still queued and is now removed, or `False` if it was already
+            delivered, dequeued, or never queued in this session.
+        """
+        return self._pending_messages.dequeue(enqueue_id)
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when content queued with [`enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] is delivered.
+
+        Works like [`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority]: the content
+        keeps its place and its `enqueue_id`. Promoted to `'asap'`, it's delivered as soon as no reply
+        is being generated.
+
+        Args:
+            enqueue_id: The ID `enqueue()` returned.
+            priority: The new priority, with the same meaning as in `enqueue()`.
+
+        Returns:
+            `True` if the content was still queued, or `False` if it was already delivered, dequeued,
+            or never queued in this session.
+        """
+        return self._pending_messages.set_enqueue_priority(enqueue_id, priority)
 
     async def _send_audio_content(self, content: BinaryContent) -> None:
         if content.media_type == _WAV_MEDIA_TYPE:

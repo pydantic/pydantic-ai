@@ -11,6 +11,7 @@ from pydantic_ai._json_schema import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -133,6 +134,7 @@ class AzureProvider(_OpenAISDKProvider):
         }
 
         base: ModelProfile | None = None
+        route_profile = special_token_route_profile('azure', model_name)
         is_mistral = False
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix):
@@ -167,6 +169,7 @@ class AzureProvider(_OpenAISDKProvider):
         base = merge_profile(
             base,
             OpenAIModelProfile(openai_chat_supports_document_input=False, openai_responses_supports_websocket=False),
+            route_profile,
         )
 
         # Reported in #6593 (not verified against the live API here): Azure AI Foundry's

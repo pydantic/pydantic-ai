@@ -22,6 +22,7 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableToolsetBase,
     resolve_tool_durable_config,
+    revalidate_function_args,
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
@@ -395,13 +396,13 @@ def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[
 
 
 async def call_tool_in_activity(
-    toolset: AbstractToolset[AgentDepsT],
+    toolset: FunctionToolset[AgentDepsT],
     name: str,
     tool_args: dict[str, Any],
     ctx: RunContext[AgentDepsT],
     tool: ToolsetTool[AgentDepsT],
 ) -> CallToolResult:
-    args = tool.args_validator.validate_python(tool_args)
+    args = revalidate_function_args(toolset, tool, tool_args)
     return await wrap_tool_call_result(toolset.call_tool(name, args, ctx, tool))
 
 

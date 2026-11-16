@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
+from pydantic_core import to_json
 
 from pydantic_ai import (
     Agent,
@@ -71,6 +72,7 @@ from pydantic_ai.durable_exec._toolset import (
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
+    _ToolContentResult,  # pyright: ignore[reportPrivateUsage]
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
     call_dynamic_tool,
@@ -82,6 +84,9 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult, StreamedModelRequestResult
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    DocumentUrl,
+    FileUrl,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponseStreamEvent,
@@ -90,8 +95,11 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPartDelta,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
+    _file_digest,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -2018,3 +2026,78 @@ async def test_instruction_units_ride_the_session_the_run_holds() -> None:
 
     assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
     assert instructions == snapshot(['Be a helpful assistant.'] * 3)
+
+
+_CALL_TOOL_RESULT_ADAPTER = TypeAdapter[Any](CallToolResult)
+
+
+def _dumped_file(item: FileUrl | UploadedFile) -> dict[str, Any]:
+    """The mapping a tool result serializes `item` to, which a tool could also return as data."""
+    return _CALL_TOOL_RESULT_ADAPTER.dump_python(_ToolReturn(result=item), mode='json')['result']
+
+
+def test_tool_call_results_record_their_files():
+    """A durable tool-call result keeps a tool's files files and its file-shaped data data across the journal.
+
+    Durable execution carries a tool's result between steps in these, outside any `ToolReturnPart`, so a
+    lookalike there would otherwise be rebuilt within a single run.
+    """
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
+    for result in (
+        _ToolReturn(result=[uploaded, lookalike]),
+        _ToolReturn(result=ToolReturn(return_value=[uploaded, lookalike])),
+        _ToolContentResult(result={'kind': 'tool-return', 'items': [uploaded, lookalike]}),
+    ):
+        for payload in (_CALL_TOOL_RESULT_ADAPTER.dump_json(result), to_json(result)):
+            assert _CALL_TOOL_RESULT_ADAPTER.validate_json(payload) == result
+
+
+def test_tool_call_result_nested_return_keeps_its_own_record():
+    """A file in a nested `ToolReturn`'s `metadata` doesn't count toward a mapping in its `return_value`."""
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(uploaded)
+    result = _ToolReturn(result=ToolReturn(return_value=[lookalike], metadata=uploaded))
+
+    reloaded = _CALL_TOOL_RESULT_ADAPTER.validate_json(_CALL_TOOL_RESULT_ADAPTER.dump_json(result))
+
+    assert reloaded.result.return_value == [lookalike]
+    assert type(reloaded.result.return_value[0]) is dict
+
+
+@pytest.mark.parametrize('nested_record', ['missing', 'own digest'])
+def test_tool_call_result_nested_return_cannot_widen_the_record(nested_record: str):
+    """A nested result's own record, which the data around it could have written, can only narrow the outer one.
+
+    Decoded as a journal entry, too: the outer result's record still governs what the nested one rebuilds.
+    """
+    lookalike = _dumped_file(DocumentUrl('https://example.com/report.txt', force_download='allow-local'))
+    journaled = _CALL_TOOL_RESULT_ADAPTER.dump_python(
+        _ToolReturn(result=ToolReturn(return_value=[lookalike])), mode='json'
+    )
+    assert journaled['content_file_digests'] == []
+    if nested_record == 'missing':
+        del journaled['result']['content_file_digests']
+    else:
+        journaled['result']['content_file_digests'] = [_file_digest(lookalike)]
+
+    for loaded in (_CALL_TOOL_RESULT_ADAPTER.validate_python(journaled), JSON_CODEC.load(CallToolResult, journaled)):
+        assert loaded.result.return_value == [lookalike]
+        assert type(loaded.result.return_value[0]) is dict
+
+
+def test_journal_written_before_records_loads_completely():
+    """A journal entry an earlier worker wrote has no record, and still decodes with every file it held.
+
+    The application's own worker wrote it, so a run in flight across an upgrade keeps its tool results.
+    """
+    files: list[FileUrl | UploadedFile] = [
+        UploadedFile('file-1', 'openai'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+    ]
+    result = _ToolReturn(result=files)
+    journaled = _CALL_TOOL_RESULT_ADAPTER.dump_python(result, mode='json')
+    del journaled['content_file_digests']
+
+    assert JSON_CODEC.load(CallToolResult, journaled) == result

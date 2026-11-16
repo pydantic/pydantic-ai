@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from render import RenderAsync
 
@@ -57,6 +58,33 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         reject_defer_loading('RenderSandbox', self.defer_loading)
         check_sandbox_timeout(self.sandbox_timeout)
         check_working_dir(self.working_dir)
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        allow_internet_access: bool = True,
+        sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> RenderSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and
+        `client`'s `RenderAsync` hint has no JSON schema, so only the bare `'RenderSandbox'` is published.
+        """
+        return cls(
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            allow_internet_access=allow_internet_access,
+            sandbox_timeout=sandbox_timeout,
+            working_dir=working_dir,
+            env=env,
+        )
 
     def backend(self, ref: WorkspaceRef) -> RenderSandboxBackend:
         """Attach lazily to an existing Render sandbox."""

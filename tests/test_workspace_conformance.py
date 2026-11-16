@@ -15,7 +15,7 @@ from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     WorkspaceBackend,
     WorkspaceRef,
-    local as local_module,
+    _host as host_module,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
@@ -36,7 +36,7 @@ def short_output_drain_grace(monkeypatch: pytest.MonkeyPatch) -> None:
     The rule only asserts that the command returns while its background child holds stdout open, not
     how long the backend keeps reading first.
     """
-    monkeypatch.setattr(local_module, '_OUTPUT_DRAIN_GRACE', 0.05)
+    monkeypatch.setattr(host_module, '_OUTPUT_DRAIN_GRACE', 0.05)
 
 
 def _local_destroy_environment() -> Callable[[WorkspaceBackend], Awaitable[None]]:

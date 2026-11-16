@@ -16,13 +16,17 @@ from . import _utils, exceptions, messages as _messages, models
 from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
 from ._output import (
+    BaseObjectOutputProcessor,
+    BaseOutputProcessor,
     OutputDataT_inv,
     OutputSchema,
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    is_incomplete_json,
     run_image_process_hooks,
     run_output_with_hooks,
+    truncated_output_message,
 )
 from ._run_context import AgentDepsT, RunContext, dispatch_event_stream, recorded_workspace_ref
 from ._sync_stream import SyncStreamBridge
@@ -65,6 +69,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
+    _max_tokens_getter: Callable[[], int | None] = field(default=lambda: None, repr=False)
+    """The `max_tokens` the request was made with, for the error raised when the token limit cut off the output."""
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -336,16 +342,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 if not message.tool_calls:
                     text = text or text_before_native_tool_call
 
-                run_ctx = replace(self._run_ctx, partial_output=allow_partial)
-                return await run_output_with_hooks(
+                return await self._validate_text_output(
                     text_processor,
-                    text=text,
-                    run_context=run_ctx,
-                    capability=self._root_capability,
-                    schema=self._output_schema,
+                    text,
+                    # Only text parsed against a schema, as for `NativeOutput` and `PromptedOutput`, names the limit.
+                    cut_off=message.finish_reason == 'length' and isinstance(text_processor, BaseObjectOutputProcessor),
                     allow_partial=allow_partial,
-                    wrap_validation_errors=False,
-                    output_validators=self._output_validators,
                 )
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -356,6 +358,28 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
+            raise
+
+    async def _validate_text_output(
+        self, text_processor: BaseOutputProcessor[OutputDataT], text: str, *, cut_off: bool, allow_partial: bool
+    ) -> OutputDataT:
+        """Run process hooks (including output validators) for text output, which the token limit may have `cut_off`."""
+        run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+        try:
+            return await run_output_with_hooks(
+                text_processor,
+                text=text,
+                run_context=run_ctx,
+                capability=self._root_capability,
+                schema=self._output_schema,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+                output_validators=self._output_validators,
+            )
+        except ValidationError as e:
+            # Say that the token limit cut the output off, as `CallToolsNode` does, rather than only that it's invalid.
+            if cut_off and not allow_partial and is_incomplete_json(e):
+                raise exceptions.OutputTokenLimitExceeded(truncated_output_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
@@ -645,6 +669,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         A settled result is for handing the run to code that outlives the stream, which is exactly
         when the span has closed and the ambient trace context is gone, so it cannot be read lazily.
         """
+        self._completion_raised = False
+        """Whether finishing the run raised or was cancelled after the stream was received in full.
+
+        `is_complete` is already `True` by then, and the output can't tell either: a validated output
+        can be `None`, and a tool call can fail after the output was validated.
+        """
 
     @property
     def result(self) -> AgentRunResult[OutputDataT]:
@@ -657,8 +687,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         for this to hand the run to code that outlives the stream.
 
         Raises:
-            UserError: If the stream hasn't finished, or was cancelled before producing an output,
-                so the run has no settled output to settle on.
+            UserError: If the stream hasn't finished, was cancelled before producing an output, or the run
+                stopped before it finished, so the run has no settled output to settle on.
         """
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
@@ -670,6 +700,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UserError(
                     'The run is still streaming, so it has no settled result yet. Await `stream_output()`, '
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
+                )
+            elif self._completion_raised:
+                raise exceptions.UserError(
+                    'The run stopped before it finished, so this run has no settled result. The messages recorded '
+                    'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
             result = AgentRunResult(
@@ -870,10 +905,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def compactions(self) -> list[_messages.CompactionRecord]:
         """The compactions this run kept so far, in the order it kept them.
 
-        The message history only shows the compacted history: [`new_messages()`][pydantic_ai.result.StreamedRunResult.new_messages] are this run's messages
-        still in it. Each [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you
-        can tell which messages were summarized, for example to store the conversation's full log. A compaction made
-        for an attempt that then failed isn't included.
+        The message history only shows the compacted history:
+        [`new_messages()`][pydantic_ai.result.StreamedRunResult.new_messages] are this run's messages still in it. Each
+        [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you can tell which
+        messages were summarized, for example to store the conversation's full log. A compaction made for an attempt
+        that then failed isn't included.
         """
         if self._run_result is not None:
             return self._run_result.compactions
@@ -971,7 +1007,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if message is not None:
             self._record_response(message)
         if self._on_complete is not None:
-            await self._on_complete()
+            try:
+                await self._on_complete()
+            # `BaseException`, as a run cancelled while it finishes didn't finish either.
+            except BaseException:
+                self._completion_raised = True
+                raise
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.
@@ -1205,7 +1246,10 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def compactions(self) -> list[_messages.CompactionRecord]:
-        """The compactions this run kept so far; see [`StreamedRunResult.compactions`][pydantic_ai.result.StreamedRunResult.compactions]."""
+        """The compactions this run kept so far.
+
+        See [`StreamedRunResult.compactions`][pydantic_ai.result.StreamedRunResult.compactions].
+        """
         return self._streamed_run_result.compactions
 
     @property

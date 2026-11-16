@@ -2,6 +2,8 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import functools
+import sys
+import warnings
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -230,3 +232,12 @@ async def test_running_on_asyncio_without_sniffio(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr('pydantic_evals._utils._sniffio', None)
     assert running_on_asyncio()
     assert not await anyio.to_thread.run_sync(running_on_asyncio)
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.usefixtures('fresh_event_loop_policy')
+def test_get_event_loop_does_not_warn_without_a_current_loop():
+    """On Python 3.12 and 3.13, `evaluate_sync` in a script used to warn `There is no current event loop` (#1196)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        get_event_loop()

@@ -200,6 +200,11 @@ def test_public_engine_builder_exports() -> None:
         'WorkspaceCall',
         'WorkspaceCallParams',
         'WorkspaceCallResult',
+        'ExternalEventError',
+        'ExternalEventWaiter',
+        'external_event_scope',
+        'record_durable_unit',
+        'replay_scope',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -289,6 +294,11 @@ DBOS_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
+}
+
+DBOS_CHILD_WORKFLOW_NAMES = {
+    'compat__function_toolset__<agent>.call_tool__child_workflow',
+    'compat__function_toolset__functions.call_tool__child_workflow',
 }
 
 RENDER_TASK_NAMES = {
@@ -525,6 +535,22 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     assert backend is not None
     registered_names = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
     assert registered_names == DBOS_OPERATION_NAMES
+    # Child workflows are registered only for toolsets that can select one.
+    assert durability._child_workflow_toolsets == {}  # pyright: ignore[reportPrivateUsage]
+    child_workflow_agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=list(_synthetic_toolsets()),
+        capabilities=[SetToolMetadata(dbos={'child_workflow': {}}), DBOSDurability()],
+    )
+    child_workflow_durability = DBOSDurability.from_agent(child_workflow_agent)
+    assert child_workflow_durability is not None
+    child_workflow_names = {
+        registration.dbos_function_name
+        for toolset in child_workflow_durability._child_workflow_toolsets.values()  # pyright: ignore[reportPrivateUsage]
+        for registration in toolset.durable_registrations
+    }
+    assert child_workflow_names == DBOS_CHILD_WORKFLOW_NAMES
 
     with_workspace = Agent(
         TestModel(),
@@ -643,6 +669,10 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         (_ToolReturn('ok'), {'result': 'ok', 'kind': 'tool_return'}),
         (_ApprovalRequired({'scope': 'write'}), {'metadata': {'scope': 'write'}, 'kind': 'approval_required'}),
         (_CallDeferred({'ticket': 7}), {'metadata': {'ticket': 7}, 'kind': 'call_deferred'}),
+        (
+            _CallDeferred({'ticket': 7}, call_kind='question'),
+            {'metadata': {'ticket': 7}, 'call_kind': 'question', 'kind': 'call_deferred'},
+        ),
         (_ModelRetry('retry me'), {'message': 'retry me', 'kind': 'model_retry'}),
         (
             _ValidationError(
@@ -874,6 +904,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'revealed_tool_names': [],
             'introduced_tool_names': [],
             'deferred_capability_ids': [],
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -1066,6 +1097,8 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
                 messages_before=4,
                 messages_after=2,
                 kept_from=1,
+                part_message_index=0,
+                part_index=0,
             ),
             usage=RequestUsage(input_tokens=100, output_tokens=10),
         ),
@@ -1211,3 +1244,30 @@ async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[Ru
     with pytest.raises(exc_type, match='the sub-agent stopped') as exc_info:
         unwrap_recorded_tool_call_result(payload)
     assert type(exc_info.value) is exc_type
+
+
+def test_the_json_codec_leaves_out_what_a_compaction_replaced() -> None:
+    """A JSON-mode durable operation crosses its boundary through `JSON_CODEC`, which leaves out `replaced`.
+
+    DBOS and Prefect durability pass objects (`IDENTITY_CODEC`); DBOS's pickling of a run result is covered by
+    `test_a_pickled_result_leaves_out_what_a_compaction_replaced`.
+    """
+    record = CompactionRecord(
+        part=CompactionPart(content='summary'),
+        handler='summarize',
+        reason='manual',
+        model_name='m',
+        provider_name='p',
+        messages_before=1,
+        messages_after=1,
+        kept_from=1,
+        part_message_index=0,
+        part_index=0,
+        replaced=[ModelRequest(parts=[UserPromptPart('the replaced history')])],
+    )
+    event = CompactionEndEvent(record=record)
+    assert 'replaced' not in JSON_CODEC.dump(CompactionRecord, record)
+    assert 'replaced' not in JSON_CODEC.dump(AgentStreamEvent, event)['record']
+    loaded = JSON_CODEC.load(AgentStreamEvent, JSON_CODEC.dump(AgentStreamEvent, event))
+    assert isinstance(loaded, CompactionEndEvent)
+    assert loaded.record == record and loaded.record.replaced is None

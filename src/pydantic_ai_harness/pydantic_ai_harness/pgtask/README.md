@@ -16,7 +16,28 @@ follow `parallel_execution_mode`, which runs them one at a time by default (see
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![An agent named analyst runs inside a pgtask task. On the first attempt its model request and its tool call each finish and are saved to Postgres as pgtask steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. pgtask runs the task again: the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.](https://pydantic.dev/docs/ai/img/harness/pgtask.svg)
+```mermaid
+flowchart TB
+    accTitle: pgtask Durability: pick up a crashed run where it left off
+    accDescr: In attempt 1, the worker finishes a model request and a tool call, and each is saved to Postgres as a pgtask step. The worker then crashes during the next model request, before that step is saved. pgtask runs the task again: the PGTaskDurability capability returns the stored results of the saved steps with no model or tool call, and then the next model request runs live.
+    subgraph first["Worker, attempt 1"]
+        done["model request, tool call<br/>each one finishes"]
+        crash["next model request<br/>worker crashes before<br/>the step is saved"]:::blocked
+    end
+    steps[("Postgres<br/>pgtask steps")]:::external
+    subgraph retry["Task run again"]
+        replay["PGTaskDurability()<br/>returns stored results,<br/>no model or tool call"]:::capability
+        live["next model request<br/>runs live"]
+    end
+    done -.-x crash
+    done -->|"each saved as a step"| steps
+    crash -.->|"pgtask runs<br/>the task again"| replay
+    steps -->|"saved steps"| replay
+    replay --> live
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Installation
 

@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness._message_text import user_prompt_texts
 from pydantic_ai_harness.media import SqliteMediaStore, externalize_media, restore_media
 
@@ -308,7 +309,9 @@ class SqliteConversationStore:
         """Load exactly one ID, rejecting missing or malformed data."""
         summary, payload = await run_sync(self._get, conversation_id)
         restored = await restore_media(json.loads(payload), media_store=self.media)
-        return SavedConversation(summary=summary, messages=ModelMessagesTypeAdapter.validate_python(restored))
+        return SavedConversation(
+            summary=summary, messages=ModelMessagesTypeAdapter.validate_python(restored, context=STORED_HISTORY_CONTEXT)
+        )
 
     def _get(self, conversation_id: str) -> tuple[ConversationSummary, str]:
         with self._connection() as conn:

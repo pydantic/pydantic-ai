@@ -62,6 +62,7 @@ from pydantic_ai._utils import (
     now_utc,
 )
 from pydantic_ai._uuid import uuid7
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.capabilities.compaction import CompactionModelRequest, CompactionRequest, CompactionResult
 from pydantic_ai.models import (
@@ -93,7 +94,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
-from ._capability_loads import keep_capability_loads
+from ._capability_loads import deferred_capability_ids, keep_loaded_state
 from ._compaction_requests import CompactionRequests, RequestedCompaction
 from ._compaction_view import CompactionView
 from ._context_size import (
@@ -819,14 +820,21 @@ class _AttemptCompaction:
 
     def commit(self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
         """Replace the run's history with the compacted one, now that a response to it is kept."""
-        if self.requested is not None:
+        # A compaction that failed sent nothing compacted, so the request stays pending for the next request.
+        if self.requested is not None and self.error is None:
             ctx.state.compaction_requests.settle(self.requested)
-        if self.committed is None or self.record is None:
+        if self.committed is None or self.record is None or self.record.replaced is None:
             return
         history = ctx.state.message_history
-        removed = len(history) - len(self.committed)
+        # The history the compaction replaced is the start of the run's: what hooks appended to it since, like an
+        # `after_model_request` hook's `ctx.messages.append(...)`, is kept after the compacted history.
+        compacted = len(self.record.replaced)
+        removed = compacted - len(self.committed)
         # In place: `capture_run_messages` and every `RunContext` of the run hold this list.
-        history[:] = self.committed
+        history[:] = [*self.committed, *history[compacted:]]
+        # Located again where the part now is in the run's history, so the record can't disagree with it.
+        position = _part_position(history, self.record.part)
+        self.record.part_message_index, self.record.part_index = position
         ctx.state.compactions.append(self.record)
         if ctx.deps.resumed_request_index is not None:
             # As after the before-chain: the request a run resumes from history is the last one, which compaction keeps.
@@ -953,10 +961,11 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
         ),
         None,
     )
-    if latest is None or latest[1] != part:
+    # By identity: the record locates the part in the committed history by it.
+    if latest is None or latest[1] is not part:
         raise exceptions.UserError(
-            f'The history compacted by {handler!r} must contain its `CompactionResult.part`, as its latest '
-            '`CompactionPart`: that is where the compacted history starts.'
+            f'The history compacted by {handler!r} must contain its `CompactionResult.part` object itself, as its '
+            'latest `CompactionPart`: that is where the compacted history starts.'
         )
     if _is_empty_summary(part):
         raise exceptions.UnexpectedModelBehavior(
@@ -984,8 +993,7 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
 def _standing_prompt_count(messages: Sequence[_messages.ModelMessage]) -> int:
     """How many `SystemPromptPart`s the standing system prompt of `messages` has, as the request to a model counts it.
 
-    That's the opening parts of its first request, after the requests at the start are merged into one, as they are
-    before they're sent.
+    The requests a history starts with are merged into one before they're sent, so their parts are counted together.
     """
     parts: list[_messages.ModelRequestPart] = []
     for message in messages:
@@ -993,6 +1001,33 @@ def _standing_prompt_count(messages: Sequence[_messages.ModelMessage]) -> int:
             break
         parts.extend(message.parts)
     return models._standing_system_prompt_count(_messages.ModelRequest(parts=parts))  # pyright: ignore[reportPrivateUsage]
+
+
+class _PartPosition(NamedTuple):
+    message_index: int
+    part_index: int
+
+
+def _part_position(messages: Sequence[_messages.ModelMessage], part: _messages.CompactionPart) -> _PartPosition:
+    """Where `part` is in `messages`, by identity: the checks, the loads step and the commit all keep the object."""
+    for message_index, message in enumerate(messages):
+        for part_index, candidate in enumerate(message.parts):
+            if candidate is part:
+                return _PartPosition(message_index, part_index)
+    raise AssertionError('The compacted history was checked to contain its `CompactionPart`.')  # pragma: no cover
+
+
+def _compaction_timestamp(holder: _messages.ModelMessage, answered: _messages.ModelMessage) -> datetime:
+    """When a compaction's usage is priced: a timestamp from the history, not the clock.
+
+    A durable replay or recovery reads the clock differently, which could price it differently and flip a cost limit.
+    The provider's compaction response has its own; a summary written into a request is priced at the request being
+    answered, which the request step stamped before the attempt.
+    """
+    if isinstance(holder, _messages.ModelResponse):
+        return holder.timestamp
+    assert isinstance(answered, _messages.ModelRequest) and answered.timestamp is not None
+    return answered.timestamp
 
 
 def _is_empty_summary(part: _messages.CompactionPart) -> bool:
@@ -1033,18 +1068,15 @@ def _keep_capability_loads(
     compacted: list[_messages.ModelMessage],
     kept_from: int,
 ) -> tuple[list[_messages.ModelMessage], int]:
-    """Record again, after the compaction, the deferred capability loads it dropped, whichever capability compacted.
+    """Record again, after the compaction, the deferred capability loads and tool discoveries it dropped.
 
-    Returns the compacted history with the records, and where its kept messages start now: the records go ahead of
-    them, or, after a provider's compaction response and the requests following it, into them, which ends the kept tail
-    after them.
-
-    TODO(#11264): tool search discoveries are dropped the same way, and aren't recorded again yet.
+    Whichever capability compacted. Returns the compacted history with the records, and where its kept messages start
+    now: the records go ahead of them, or, after a provider's compaction response and the requests following it, into
+    them, which ends the kept tail after them.
     """
-    deferred_ids = {
-        capability_id for capability_id, capability in run_context.capabilities.items() if capability.defer_loading
-    }
-    messages = keep_capability_loads(original, compacted, kept_from=kept_from, deferred_ids=deferred_ids)
+    messages = keep_loaded_state(
+        original, compacted, kept_from=kept_from, deferred_ids=deferred_capability_ids(run_context)
+    )
     if messages is compacted:
         return compacted, kept_from
     inserted = len(messages) - len(compacted)
@@ -1824,6 +1856,16 @@ async def _resolve_native_tool_factory(
     return tool
 
 
+async def _deferred_capability_catalog(run_context: RunContext[DepsT]) -> list[models.DeferredCapabilityEntry]:
+    """The step's deferred capability catalog, from the loader that renders it into the instructions.
+
+    Called after the instructions are rendered, which is when the loader resolves the catalog for the step, so both
+    read the same resolution.
+    """
+    loader = next((cap for cap in run_context.capabilities.values() if isinstance(cap, DeferredCapabilityLoader)), None)
+    return [] if loader is None else await loader.catalog(run_context)
+
+
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
@@ -1898,6 +1940,7 @@ async def _prepare_request_parameters(
         _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
         _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
+        deferred_capabilities=await _deferred_capability_catalog(run_context),
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
@@ -3006,6 +3049,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
+            _max_tokens_getter=lambda: ctx.state.last_max_tokens,
         )
 
     async def _make_request(
@@ -3140,9 +3184,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> _OverflowRetry | None:
         """How to compact and resend this attempt if the model rejects it for exceeding its context window.
 
-        `None` when no capability has a `compact_history` hook to compact it with.
+        `None` when no capability has a `compact_history` hook that can run, like one of a deferred capability that
+        isn't loaded.
         """
-        if not ctx.deps.root_capability._has_compact_history:  # pyright: ignore[reportPrivateUsage]
+        if not ctx.deps.root_capability._handles_compact_history(run_context):  # pyright: ignore[reportPrivateUsage]
             return None
         return partial(self._retry_overflow, ctx, run_context, request_context, prepared, compaction)
 
@@ -3608,6 +3653,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages,
                 loaded_parts,
                 recording_targets,
+                history=ctx.state.message_history,
                 keep_without_parts={
                     capability_id
                     for capability_id, capability in ctx.deps.capabilities.items()
@@ -3740,6 +3786,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # After the whole `prepare_model_request` chain, so it's for the model serving this attempt, after a sticky
         # or pinned redirect and as durability left it, and before the batch wrapper and token counting.
+        # For this attempt's model already, in case compacting fails and an error hook recovers without sending it:
+        # `_prepare_attempt` replaces them with the wrapped model when it is sent.
+        self._serving_model = prepared.model
+        self._serving_model_id = prepared.model_id or prepared.model.model_id
         compaction = _AttemptCompaction()
         await self._compact_attempt(ctx, run_context, request_context, prepared, compaction)
         if compaction.error is None:
@@ -3785,8 +3835,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = request_context.messages
         model_settings = request_context.model_settings
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
-        model_request_parameters = _keep_default_output_mode(
-            ctx.state, model, model_settings, request_context.model_request_parameters
+        model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
+            _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
+            model_settings,
         )
         request_context.model_request_parameters = model_request_parameters
 
@@ -3970,6 +4021,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         compaction.result = result
         compaction.committed = committed
         compaction.sent = sent
+        # Where the part is in what's committed: the end event reports it before the commit, which writes this history
+        # at the start of the run's, so the position holds after it too.
+        position = _part_position(committed, result.part)
         compaction.record = record = _messages.CompactionRecord(
             part=result.part,
             handler=result.handler,
@@ -3979,6 +4033,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages_before=len(history),
             messages_after=len(committed),
             kept_from=committed_kept_from,
+            part_message_index=position.message_index,
+            part_index=position.part_index,
             replaced=history,
             metadata=result.metadata,
         )
@@ -3989,6 +4045,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_name=model.model_name,
             provider_name=model.system,
             provider_url=model.base_url,
+            timestamp=_compaction_timestamp(holder, history[-1]),
         )
         self._record_response_usage(ctx, compaction.billed, request_context=request_context)
         # Before the request is sent, like the check a later attempt gets for an earlier one's rejected response.
@@ -4576,7 +4633,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
                 if self.model_response.finish_reason == 'length':
-                    raise exceptions.UnexpectedModelBehavior(
+                    raise exceptions.OutputTokenLimitExceeded(
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
@@ -4711,6 +4768,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
+                _raise_if_cut_off_output(
+                    self.model_response, e, output_schema=output_schema, max_tokens=ctx.state.last_max_tokens
+                )
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
@@ -5046,6 +5106,30 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     ctx.deps.model = model
     ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
+
+
+def _raise_if_cut_off_output(
+    response: _messages.ModelResponse,
+    error: ToolRetryError,
+    *,
+    output_schema: _output.OutputSchema[Any],
+    max_tokens: int | None,
+) -> None:
+    """Raise instead of retrying when the token limit cut off structured text output into incomplete JSON.
+
+    Re-prompting the model with the same limit would only run into it again. Only `NativeOutput` and `PromptedOutput`
+    text is parsed as JSON: a `TextOutput` function raising `ValidationError` on plain text keeps its retry, and so
+    does JSON that parsed but that the schema or an output validator rejected.
+    """
+    if (
+        response.finish_reason == 'length'
+        and isinstance(output_schema.text_processor, _output.BaseObjectOutputProcessor)
+        and isinstance(error.tool_retry, _messages.RetryFeedbackPart)
+        and error.tool_retry.retry.cause == 'validation_error'
+        and _output.is_incomplete_json(error.__cause__)
+    ):
+        # Chained to the `ValidationError`, as in `run_stream()`.
+        raise exceptions.OutputTokenLimitExceeded(_output.truncated_output_message(max_tokens)) from error.__cause__
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

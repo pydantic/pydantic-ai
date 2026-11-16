@@ -14,7 +14,22 @@ Ask a second model whether a tool call may run, and stop it before the tool func
 !!! tip "Approval Reviewer or Tool Call Judge?"
     Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use Tool Call Judge when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use [Approval Reviewer](approval-reviewer.md) when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
 
-![ToolCallJudge runs in the before_tool_execute hook, after the arguments are validated and before the tool function runs. A second model is asked one question about the call delete_file(path='./old-report.txt'). A yes blocks the call and the model gets the denial message instead of a result; a no lets the tool run; unsure or a failed judgement follows on_uncertain, which blocks by default.](../img/harness/tool-call-judge.svg)
+```mermaid
+flowchart TB
+    accTitle: Tool Call Judge: a second model can stop a tool call
+    accDescr: The model's tool call, with validated args, goes to the before_tool_execute hook of the ToolCallJudge capability. The hook asks a judge model one risk question. On no, your tool runs the function, and on yes, or on unsure with on_uncertain='block', the call is blocked and the model gets denial_message.
+    model(["model"])
+    judge["ToolCallJudge()<br/>before_tool_execute<br/>hook"]:::capability
+    second(["judge model"])
+    tool["your tool<br/>runs the function"]
+    blocked["blocked: the model gets<br/>denial_message"]:::blocked
+    model -->|"tool call,<br/>validated args"| judge
+    judge <-->|"one risk<br/>question"| second
+    judge -->|"no"| tool
+    judge -.-x|"yes, or unsure with<br/>on_uncertain='block'"| blocked
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -113,7 +128,7 @@ A tool registered with `requires_approval=True` and a judge are two gates, and b
 
 1. The call's arguments are validated and the call is deferred, before any execution hook runs. The judge does not see it and is not billed for it.
 2. A person approves or denies it.
-3. On denial the call is over. On approval the call is executed, and the judge is asked then, about the same validated arguments the person saw.
+3. On denial the call is over. On approval the call is executed, and the judge is asked then, about the same arguments the person saw, unless a [tool validation hook](../hooks.md#tool-validation-hooks) rewrote them: the person sees the model's arguments, the judge the rewritten ones.
 
 So the judge is the second gate, not the first, and the effective rule is that both must allow. The judge can still block a call a person approved; it can never release one a person denied, because a denied call never reaches execution. Adding a judge to a tool that already asks a person can only narrow what runs.
 

@@ -6,7 +6,7 @@
 -  },
 -  {
 -   "role": "system",
--   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-   "content": "<pyai:context id=\"capability:refunds\">\nQuote the refund policy.\n</pyai:context>"
 -  },
 -  {
 @@ -343,12 +334,0 @@
@@ -28,7 +28,7 @@
 -  },
 -  {
 -   "role": "system",
--   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-   "content": "<pyai:context id=\"capability:refunds\">\nQuote the refund policy.\n</pyai:context>"
 -  },
 -  {
 @@ -439,0 +412,8 @@
@@ -39,14 +39,14 @@
 +  },
 +  {
 +   "role": "system",
-+   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
++   "content": "<pyai:context id=\"capability:refunds\">\nQuote the refund policy.\n</pyai:context>"
 @@ -521,8 +500,0 @@
 -   "role": "system",
 -   "content": "The following tool(s) are now available: `refund_status`"
 -  },
 -  {
 -   "role": "system",
--   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-   "content": "<pyai:context id=\"capability:refunds\">\nQuote the refund policy.\n</pyai:context>"
 -  },
 -  {
 @@ -572,0 +545,8 @@
@@ -57,4 +57,4 @@
 +  },
 +  {
 +   "role": "system",
-+   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
++   "content": "<pyai:context id=\"capability:refunds\">\nQuote the refund policy.\n</pyai:context>"

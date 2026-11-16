@@ -33,7 +33,6 @@ LatestVoyageAIEmbeddingModelNames = Literal[
     'voyage-code-3',
     'voyage-finance-2',
     'voyage-law-2',
-    'voyage-code-2',
 ]
 """Latest VoyageAI embedding models.
 

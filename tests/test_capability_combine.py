@@ -16,6 +16,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from types import MethodType
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
+from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -43,6 +44,7 @@ from pydantic_ai.capabilities import (
     UseThreadExecutor,
     WebFetch,
     WebSearch,
+    WindowsWorkspace,
     XSearch,
 )
 from pydantic_ai.capabilities._merge import merge_capability_fields
@@ -160,6 +162,12 @@ def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
     assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
+def _windows_workspaces() -> tuple[WindowsWorkspace[Any], WindowsWorkspace[Any]]:
+    # Built as if on Windows, which they need; combining them touches no backend.
+    with patch('pydantic_ai.workspaces.windows._on_windows', return_value=True):
+        return WindowsWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), WindowsWorkspace('/second')
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -246,6 +254,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
         _check_local_workspace,
     ),
+    'WindowsWorkspace': Combines(
+        'the later configuration replaces the earlier one whole, as with `LocalWorkspace`',
+        _windows_workspaces,
+        _check_local_workspace,
+    ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
         lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
@@ -276,6 +289,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Toolset': Anonymous('one per toolset'),
     'Hooks': Anonymous('several hook bundles compose'),
     'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
+    'RequestInput': Anonymous('deprecated alias of `HandleDeferredToolCalls`, chained the same way'),
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
     'ModelFallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),

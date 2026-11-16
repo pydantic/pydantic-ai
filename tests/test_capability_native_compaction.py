@@ -19,6 +19,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     CompactionEndEvent,
     CompactionPart,
+    CompactionRecord,
     CompactionStartEvent,
     FunctionToolCallEvent,
     ModelMessage,
@@ -31,10 +32,9 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.agent import AgentRunResult, CompactionOptions, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, CompactionOptions, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
-    CompactionModelRequest,
     CompactionRequest,
     CompactionResult,
     ModelFallback,
@@ -43,19 +43,14 @@ from pydantic_ai.capabilities import (
     on_event,
 )
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import CompactionInstructionsMode, ModelProfile
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, try_import
-
-with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
+from .conftest import IsDatetime
 
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
 TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
@@ -204,6 +199,10 @@ async def test_native_compaction_keeps_the_standing_system_prompt():
         assert isinstance(system_prompt, SystemPromptPart) and system_prompt.content == 'You are a pirate.'
         [record] = result.compactions
         assert record.kept_from == 2
+        # The provider's compaction is the first part of the response after the standing system prompt.
+        assert (record.part_message_index, record.part_index) == (1, 0)
+        holder = result.all_messages()[record.part_message_index]
+        assert isinstance(holder, ModelResponse) and holder.parts[record.part_index] is record.part
     # The request sent after each compaction still opens with the system prompt, ahead of the provider's compaction.
     for sent in model.seen[1:]:
         opening = sent[0]
@@ -251,6 +250,46 @@ async def test_native_compaction_keeps_a_tool_call_with_its_result():
     assert messages[1].parts == [ToolCallPart('compact_now', {}, tool_call_id='call')]
     assert isinstance(messages[2].parts[0], ToolReturnPart)
     assert result.compactions[0].kept_from == 1
+
+
+async def test_native_compaction_keeps_the_system_prompt_when_a_tool_compacts_the_first_turn():
+    """Compacting on a run's first turn, where only its opening request precedes the tool call, keeps the system prompt."""
+    model = CompactingModel('primary')
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart('compact_now', {}, tool_call_id='call')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    model.function = respond
+    agent = Agent(model, system_prompt='You are a pirate.', capabilities=[NativeCompaction()])
+
+    @agent.tool
+    def compact_now(ctx: RunContext[Any]) -> str:
+        ctx.request_compaction()
+        return 'compacting'
+
+    result = await agent.run('Compact, please.')
+
+    [(compacted, _)] = model.compacted
+    [opening_request] = compacted
+    assert isinstance(opening_request, ModelRequest)
+    messages = result.all_messages()
+    assert [type(message).__name__ for message in messages] == [
+        'ModelRequest',
+        'ModelResponse',
+        'ModelResponse',
+        'ModelRequest',
+        'ModelResponse',
+    ]
+    [system_prompt] = messages[0].parts
+    assert isinstance(system_prompt, SystemPromptPart) and system_prompt.content == 'You are a pirate.'
+    assert isinstance(messages[1].parts[0], CompactionPart)
+    assert messages[2].parts == [ToolCallPart('compact_now', {}, tool_call_id='call')]
+    assert result.compactions[0].kept_from == 2
 
 
 async def test_native_compaction_leaves_an_unsupported_model_to_the_next_capability():
@@ -485,58 +524,57 @@ async def test_run_compact_runs_the_full_lifecycle():
     assert len(result.compactions) == 1
 
 
-def test_run_sync_compact():
+async def _run_with_compact(agent: AbstractAgent[None, str], method: str) -> list[CompactionRecord]:
+    """Run `agent` on `history()` with `compact=True` through the async run method `method`, returning its compactions."""
+    if method == 'run_stream':
+        async with agent.run_stream('hi', message_history=history(), compact=True) as stream:
+            await stream.get_output()
+        return stream.compactions
+    if method == 'run_stream_events':
+        async with agent.run_stream_events('hi', message_history=history(), compact=True) as events:
+            [*_, final] = [event async for event in events]
+        assert isinstance(final, AgentRunResultEvent)
+        return final.result.compactions
+    async with agent.iter('hi', message_history=history(), compact=True) as agent_run:
+        async for _ in agent_run:
+            pass
+    assert agent_run.result is not None
+    return agent_run.result.compactions
+
+
+@pytest.mark.parametrize('method', ['run_stream', 'run_stream_events', 'iter'])
+@pytest.mark.parametrize('wrapped', [False, True], ids=['agent', 'wrapper-agent'])
+async def test_run_methods_compact(method: str, wrapped: bool):
+    """Every run method, on an `Agent` and a `WrapperAgent`, compacts once before the first request with `compact=`."""
     model = CompactingModel('primary')
-    agent = Agent(model, capabilities=[NativeCompaction()])
+    agent: AbstractAgent[None, str] = Agent(model, capabilities=[NativeCompaction()])
+    if wrapped:
+        agent = WrapperAgent(agent)
 
-    result = agent.run_sync('hi', message_history=history(), compact={'focus': 'the name'})
-
-    assert model.compacted == [(history(), 'the name')]
-    assert len(result.compactions) == 1
-
-
-def test_run_stream_sync_compact():
-    model = CompactingModel('primary')
-    agent = Agent(model, capabilities=[NativeCompaction()])
-
-    result = agent.run_stream_sync('hi', message_history=history(), compact=True)
-    result.get_output()
+    compactions = await _run_with_compact(agent, method)
 
     assert model.compacted == [(history(), None)]
-    assert len(result.compactions) == 1
+    assert [record.handler for record in compactions] == ['native']
 
 
-async def test_run_stream_compact():
+@pytest.mark.parametrize('method', ['run_sync', 'run_stream_sync'])
+@pytest.mark.parametrize('wrapped', [False, True], ids=['agent', 'wrapper-agent'])
+def test_sync_run_methods_compact(method: str, wrapped: bool):
+    """The sync run methods, on an `Agent` and a `WrapperAgent`, compact once before the first request with `compact=`."""
     model = CompactingModel('primary')
-    agent = Agent(model, capabilities=[NativeCompaction()])
+    agent: AbstractAgent[None, str] = Agent(model, capabilities=[NativeCompaction()])
+    if wrapped:
+        agent = WrapperAgent(agent)
 
-    async with agent.run_stream('hi', message_history=history(), compact=True) as stream:
-        assert await stream.get_output() == 'answered by primary'
+    if method == 'run_sync':
+        compactions = agent.run_sync('hi', message_history=history(), compact=True).compactions
+    else:
+        result = agent.run_stream_sync('hi', message_history=history(), compact=True)
+        result.get_output()
+        compactions = result.compactions
 
-    assert len(model.compacted) == 1
-    assert [record.handler for record in stream.compactions] == ['native']
-
-
-async def test_run_stream_events_compact():
-    model = CompactingModel('primary')
-    agent = Agent(model, capabilities=[NativeCompaction()])
-
-    async with agent.run_stream_events('hi', message_history=history(), compact=True) as stream:
-        events = [event async for event in stream]
-
-    assert len(model.compacted) == 1
-    assert isinstance(final := events[-1], AgentRunResultEvent)
-    assert len(final.result.compactions) == 1
-
-
-async def test_wrapper_agent_run_compact():
-    model = CompactingModel('primary')
-    agent = WrapperAgent(Agent(model, capabilities=[NativeCompaction()]))
-
-    result = await agent.run('hi', message_history=history(), compact=True)
-
-    assert len(model.compacted) == 1
-    assert len(result.compactions) == 1
+    assert model.compacted == [(history(), None)]
+    assert [record.handler for record in compactions] == ['native']
 
 
 async def test_agent_run_request_compaction_mid_run():
@@ -582,58 +620,3 @@ async def test_run_stream_events_request_compaction():
     assert [focus for _, focus in model.compacted] == ['the name']
     assert events.result is not None
     assert len(events.result.compactions) == 1
-
-
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
-async def test_stateful_openai_compaction_leaves_requested_compaction_to_the_next_capability():
-    """Only `OpenAICompaction`'s stateless mode compacts on request: the stateful one leaves it to OpenAI."""
-    summarize = Summarize()
-    agent = Agent(CompactingModel('primary'), capabilities=[RequestOnce(), OpenAICompaction(), summarize])
-    result = await agent.run('hi', message_history=history())
-
-    assert result.compactions[0].handler == 'summarize'
-
-
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
-@pytest.mark.parametrize('instructions_mode', ['system_prompt', None])
-async def test_stateless_openai_compaction_drops_a_focus_it_cannot_send(
-    instructions_mode: CompactionInstructionsMode | None,
-):
-    """A focus merged in from elsewhere doesn't stop stateless `OpenAICompaction` compacting at its own trigger."""
-    compacted: list[str | None] = []
-
-    class Responses(OpenAIResponsesModel):
-        async def compact_messages(
-            self, request_context: ModelRequestContext, *, instructions: str | None = None
-        ) -> ModelResponse:
-            compacted.append(instructions)
-            return ModelResponse(parts=[CompactionPart(content='summary')], timestamp=TIMESTAMP)
-
-    model = Responses(
-        'gpt-5.4-nano',
-        provider=OpenAIProvider(api_key='test'),
-        profile=ModelProfile(compaction_instructions=instructions_mode),
-    )
-    request = CompactionRequest(
-        reason='threshold',
-        messages=[*history(), ModelRequest(parts=[UserPromptPart('What is my name?')])],
-        conversation_request=CompactionModelRequest(model=model, settings=None, parameters=ModelRequestParameters()),
-        focus='the name',
-    )
-    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
-
-    result = await OpenAICompaction(message_count_threshold=2).compact_history(ctx, request)
-
-    assert result is not None and result.handler == 'native'
-    assert compacted == [None]
-
-
-@pytest.mark.skipif(not openai_available(), reason='openai not installed')
-async def test_stateless_openai_compaction_leaves_another_model_to_the_next_capability():
-    """Stateless `OpenAICompaction` serves only an OpenAI Responses model, however it's wrapped."""
-    summarize = Summarize()
-    model = WrapperModel(CompactingModel('primary'))
-    agent = Agent(model, capabilities=[RequestOnce(), OpenAICompaction(message_count_threshold=100), summarize])
-    result = await agent.run('hi', message_history=history())
-
-    assert result.compactions[0].handler == 'summarize'

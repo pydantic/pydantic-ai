@@ -9,7 +9,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
-from typing_extensions import deprecated
+from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import _utils
 from pydantic_ai._instructions import (
@@ -24,8 +24,10 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
+    UserContent,
 )
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -58,6 +60,19 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+
+class _RunIdInputs(TypedDict):
+    prompt: str | Sequence[UserContent] | None
+    messages: list[ModelMessage]
+    message_history_ids: list[tuple[str | None, str | None]]
+    conversation_id: str | None
+    deps: object
+    metadata: dict[str, object] | None
+
+
+_RunIdInputsFactory: TypeAlias = Callable[[], _RunIdInputs]
+
 
 # --- Handler type aliases for use in hook method signatures ---
 # These make it easier to write correct type annotations when subclassing AbstractCapability.
@@ -238,6 +253,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     Internal, in-tree only. The durability capabilities set it, since an agent runs under one durable
     engine. The agent checks it before binding anything, so a configuration it refuses has not yet
     registered durable operations.
+    """
+
+    _durable_operations_need_id: ClassVar[bool] = True
+    """Whether binding this capability's durable operations requires an `id`.
+
+    Internal, in-tree only. An id-less instance of a class that sets this to `False` binds no durable
+    operations, so the class must reject its own id-less runs inside a durable workflow or flow.
     """
 
     _safe_at_runtime: ClassVar[bool] = False
@@ -432,6 +454,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     @property
     def _has_compact_history(self) -> bool:
         return type(self).compact_history is not AbstractCapability.compact_history
+
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Whether a `compact_history` hook can run in this run: one is overridden and, if deferred, loaded.
+
+        The agent only retries a context overflow with compaction, and primes streamed requests for it, when one can.
+        """
+        return self._has_compact_history
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -660,6 +689,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `run_id` it had the first time. When several capabilities return one, the one listed last wins.
         """
         return None
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        """Resolve a bootstrap identity without changing the public no-argument extension point."""
+        return self.get_default_run_id()
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.

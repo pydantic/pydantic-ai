@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from itertools import takewhile
-from typing import cast
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelRequestPart, ModelResponse
-from pydantic_ai.models import ModelRequestContext, _standing_system_prompt_count  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    SystemPromptPart,
+)
+from pydantic_ai.models import (
+    ModelRequestContext,
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles import CompactionInstructionsMode
 
 from .compaction import CompactionRequest, CompactionResult
@@ -55,7 +63,7 @@ async def compact_with_model(
     # The provider's compaction stands for the conversation, not the application's system prompt: that keeps opening
     # the history, so it's still sent as the system prompt after the compaction, and found again for the next one.
     standing = _standing_system_prompt(request.messages[:kept_from])
-    opening: list[ModelMessage] = [ModelRequest(parts=standing)] if standing else []
+    opening: list[ModelMessage] = [ModelRequest(parts=list(standing))] if standing else []
     return CompactionResult(
         messages=[*opening, response, *request.messages[kept_from:]],
         part=part,
@@ -65,14 +73,15 @@ async def compact_with_model(
     )
 
 
-def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
-    """The `SystemPromptPart`s the standing system prompt of `messages` is made of, as the request to a model counts it.
-
-    That's the opening parts of the requests the history starts with, merged as they are before they're sent.
-    """
-    opening = takewhile(lambda message: isinstance(message, ModelRequest), messages)
-    parts: list[ModelRequestPart] = [part for message in opening for part in cast(ModelRequest, message).parts]
-    return parts[: _standing_system_prompt_count(ModelRequest(parts=parts))]
+def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+    """The parts of the standing system prompt of `messages`: the opening parts of the requests it starts with, merged."""
+    parts: list[ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            break
+        parts.extend(message.parts)
+    count = _standing_system_prompt_count(ModelRequest(parts=parts))
+    return [part for part in parts[:count] if isinstance(part, SystemPromptPart)]
 
 
 def _turn_start(messages: Sequence[ModelMessage]) -> int:

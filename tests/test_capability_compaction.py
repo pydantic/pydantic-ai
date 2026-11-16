@@ -1,10 +1,13 @@
 """The `compact_history` capability hook, `RunContext.request_compaction()` and the compaction events.
 
-Every test runs `Agent`s on `FunctionModel`s: what's under test is core's attempt loop, not a provider.
+Not VCR tests: what's under test is core's attempt loop, with `FunctionModel`s and `TestModel`s standing in for a
+provider, and the event types and run-context guards, which make no provider request.
 """
 
 from __future__ import annotations
 
+import copy
+import pickle
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -54,7 +57,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import CapabilityLoadDeltaPart, ModelRequestPart
+from pydantic_ai.messages import CapabilityLoadDeltaPart, ModelMessagesTypeAdapter, ModelRequestPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -371,6 +374,31 @@ async def test_compaction_failure_reaches_on_model_request_error():
     assert result.output == 'recovered from compaction rate limited'
 
 
+async def test_a_response_recovered_from_a_failed_compaction_is_stamped_with_its_model():
+    """The serving model is this attempt's before it compacts, so a recovered response names the right model."""
+
+    seen: list[str] = []
+
+    async def recover(ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        # `ModelFallback` hands on the attempts it gave up on as a group.
+        seen.append(repr(getattr(error, 'exceptions', error)))
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    agent = Agent(
+        FunctionModel(failure, model_name='primary'),
+        capabilities=[
+            RequestOnce(),
+            FailFor('fallback'),
+            ModelFallback(seen_by([])),
+            Hooks(model_request_error=recover),
+        ],
+    )
+    result = await agent.run('hi')
+    assert result.output == 'recovered'
+    assert result.response.model_id == 'function:fallback'
+    assert len(seen) == 1 and 'compaction rate limited' in seen[0]
+
+
 async def test_compaction_failure_without_fallback_fails_the_run():
     agent = Agent(FunctionModel(failure, model_name='primary'), capabilities=[RequestOnce(), FailFor('primary')])
     with pytest.raises(ModelAPIError, match='compaction rate limited'):
@@ -450,6 +478,8 @@ async def test_events():
                     messages_before=3,
                     messages_after=3,
                     kept_from=1,
+                    part_message_index=0,
+                    part_index=0,
                 ),
                 tokens_before=220,
                 summary_tokens=50,
@@ -485,6 +515,7 @@ async def test_cancelled_start_skips_compaction():
 
 
 def test_events_round_trip():
+    """The events serialize and load back; no model request is involved."""
     adapter = pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent)
     start = CompactionStartEvent(reason='manual', model_name='m', provider_name='p', messages_before=4)
     replaced: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('the history')])]
@@ -497,6 +528,8 @@ def test_events_round_trip():
         messages_before=4,
         messages_after=2,
         kept_from=1,
+        part_message_index=0,
+        part_index=0,
         replaced=replaced,
     )
     end = CompactionEndEvent(record=record)
@@ -729,6 +762,58 @@ async def test_merged_requests_keep_both_focuses():
     assert await compacted_with(('manual', 'the decisions'), ('manual', 'the decisions')) == ('manual', 'the decisions')
 
 
+async def test_history_written_while_the_compacted_attempt_ran_is_kept():
+    """What `after_model_request` writes to the history while a compacted attempt is answered survives the commit."""
+    note = ModelRequest(parts=[UserPromptPart('a note from after_model_request')])
+
+    async def after(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        # The run makes a single request, the compacted one.
+        ctx.messages.append(note)
+        return response
+
+    agent = Agent(TestModel(), capabilities=[RequestOnce(), Summarize(), Hooks(after_model_request=after)])
+    result = await agent.run('hi')
+    assert note in result.all_messages()
+    assert isinstance(result.all_messages()[0].parts[0], CompactionPart)
+
+
+async def test_a_failed_compaction_recovered_from_keeps_the_request_pending():
+    """When compacting fails and an error hook recovers, nothing compacted was sent, so the next request compacts."""
+    recovered: list[bool] = []
+
+    async def recover(ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        recovered.append(True)
+        return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+    @dataclass
+    class FailOnce(AbstractCapability[Any]):
+        failed: bool = False
+
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            if not self.failed:
+                self.failed = True
+                raise ModelAPIError(model_name='m', message='compaction rate limited')
+            return None
+
+    summarize = Summarize()
+    agent = Agent(
+        TestModel(),
+        capabilities=[RequestOnce(), FailOnce(), summarize, Hooks(model_request_error=recover)],
+    )
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'ok'
+
+    result = await agent.run('hi')
+    assert recovered == [True]
+    # The request was compacted on the next step instead.
+    assert len(summarize.calls) == 1
+    assert len(result.compactions) == 1
+
+
 async def test_request_made_during_the_attempt_stays_pending():
     """Accepting an attempt settles the request it compacted for, not one made while it ran."""
 
@@ -784,9 +869,16 @@ async def test_resumed_suspended_response_is_not_compacted():
 
 async def test_resumed_request_stays_out_of_new_messages():
     """Compacting a run resumed from history without a prompt keeps that request out of `new_messages()`."""
+
+    def keep_only_the_request(request: CompactionRequest) -> CompactionResult:
+        part = CompactionPart(content='summary')
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='h', kept_from=1
+        )
+
     agent = Agent(
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
-        capabilities=[RequestOnce(), Summarize()],
+        capabilities=[RequestOnce(), Returns(keep_only_the_request)],
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('first')]),
@@ -794,16 +886,18 @@ async def test_resumed_request_stays_out_of_new_messages():
         ModelRequest(parts=[UserPromptPart('second')]),
     ]
     result = await agent.run(message_history=history)
-    assert [type(m).__name__ for m in result.all_messages()] == [
-        'ModelRequest',
-        'ModelResponse',
-        'ModelRequest',
-        'ModelResponse',
-    ]
+    # The compaction removed a message ahead of the resumed request, so its index shifted.
+    [record] = result.compactions
+    assert (record.messages_before, record.messages_after) == (3, 2)
+    summary, resumed, response = result.all_messages()
+    assert summary == ModelRequest(parts=[CompactionPart(content='summary')])
+    assert isinstance(resumed, ModelRequest) and resumed.parts == history[2].parts
+    assert isinstance(response, ModelResponse)
     assert result.new_messages() == [result.all_messages()[-1]]
 
 
 async def test_request_compaction_needs_a_run():
+    """The guard raises before any run exists, so no model request is involved."""
     ctx = RunContext[None](deps=None, model=FunctionModel(lambda m, i: ModelResponse(parts=[])), usage=RunUsage())
     with pytest.raises(UserError, match='`request_compaction` is only available during an agent run'):
         ctx.request_compaction()
@@ -896,6 +990,41 @@ async def test_context_overflow_twice_raises_the_overflow():
     # Retried once, not again.
     assert calls == ['primary', 'primary']
     assert len(summarize.calls) == 1
+
+
+async def test_context_overflow_with_only_an_unloaded_deferred_hook_raises_the_overflow():
+    """A `compact_history` hook of a deferred capability that isn't loaded can't run, so no compaction is attempted."""
+
+    class DeferredSummarize(Summarize):
+        def __init__(self) -> None:
+            super().__init__()
+            self.id = 'summarizer'
+            self.description = 'Summarizes the conversation.'
+            self.defer_loading = True
+
+    calls: list[str] = []
+    events = RecordEvents()
+    deferred = DeferredSummarize()
+    with pytest.raises(ModelContextWindowExceededError):
+        await Agent(always_overflows(calls), capabilities=[events, deferred]).run('hi')
+    assert calls == ['primary']
+    assert (deferred.calls, events.events) == ([], [])
+
+
+async def test_context_overflow_is_compacted_by_a_wrapper_with_its_own_hook():
+    """A wrapper overriding `compact_history` compacts an overflow even when what it wraps has no hook."""
+
+    @dataclass
+    class SummarizingWrapper(WrapperCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            messages, part = summary_window(request, 'wrapper summary')
+            return CompactionResult(messages=messages, part=part, handler='wrapper')
+
+    calls: list[str] = []
+    agent = Agent(overflows_until_compacted(calls), capabilities=[SummarizingWrapper(Decline('inner', []))])
+    result = await agent.run('hi')
+    assert result.output == 'fits now'
+    assert [record.handler for record in result.compactions] == ['wrapper']
 
 
 async def test_context_overflow_without_a_compaction_raises_the_overflow():
@@ -1033,6 +1162,8 @@ async def test_run_result_reports_the_kept_compactions():
             messages_before=3,
             messages_after=3,
             kept_from=1,
+            part_message_index=0,
+            part_index=0,
         )
     )
     # `new_messages()` are this run's messages still in the compacted history.
@@ -1101,6 +1232,85 @@ async def test_records_rebuild_the_full_conversation():
     )
 
 
+def _provider_response_after_the_system_prompt(request: CompactionRequest) -> CompactionResult:
+    """Shaped like `NativeCompaction`'s result: the standing system prompt, then the provider's compaction response."""
+    opening = request.messages[0]
+    assert isinstance(opening, ModelRequest)
+    part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})
+    return CompactionResult(
+        messages=[
+            ModelRequest(parts=opening.parts[:1]),
+            ModelResponse(parts=[part], provider_name='openai'),
+            request.messages[-1],
+        ],
+        part=part,
+        handler='native',
+        kept_from=2,
+    )
+
+
+@pytest.mark.parametrize(
+    ('build', 'position', 'holder'),
+    [
+        (_summary_after_the_system_prompt, (0, 1), ModelRequest),
+        (_provider_response_after_the_system_prompt, (1, 0), ModelResponse),
+    ],
+)
+async def test_records_locate_their_part_after_a_round_trip(
+    build: CompactionBuilder, position: tuple[int, int], holder: type[ModelMessage]
+):
+    """A record's part position locates the part in the compacted history, also after both are loaded from JSON."""
+    agent = Agent(seen_by([]), system_prompt='You are a pirate.', capabilities=[RequestOnce(), Returns(build)])
+    result = await agent.run('hi')
+    [record] = result.compactions
+    assert (record.part_message_index, record.part_index) == position
+    message = result.all_messages()[record.part_message_index]
+    assert isinstance(message, holder) and message.parts[record.part_index] is record.part
+
+    adapter = pydantic.TypeAdapter(AgentRunResult[str])
+    loaded = adapter.validate_json(adapter.dump_json(result))
+    [loaded_record] = loaded.compactions
+    assert loaded_record.replaced is None
+    # A store keeping the messages on their own finds the part the same way.
+    messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+    for history in (loaded.all_messages(), messages):
+        assert history[loaded_record.part_message_index].parts[loaded_record.part_index] == loaded_record.part
+
+
+async def test_a_pickled_result_leaves_out_what_a_compaction_replaced():
+    """DBOS pickles a run result: the record keeps everything but the history it replaced."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('the replaced history')]),
+        ModelResponse(parts=[TextPart('a')]),
+    ]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
+    result = await agent.run('hi', message_history=history)
+    [record] = result.compactions
+    assert record.replaced is not None
+
+    data = pickle.dumps(result)
+    assert b'the replaced history' not in data
+    [loaded] = pickle.loads(data).compactions
+    assert loaded == record and loaded.replaced is None
+    # The live record is untouched.
+    assert record.replaced is not None
+    # A copy of the record itself keeps it.
+    assert copy.deepcopy(record).replaced == record.replaced
+
+
+async def test_a_part_equal_to_but_not_the_one_in_the_history_is_refused():
+    def twice(request: CompactionRequest) -> CompactionResult:
+        return CompactionResult(
+            messages=[ModelRequest(parts=[CompactionPart(content='summary')]), request.messages[-1]],
+            part=CompactionPart(content='summary'),
+            handler='h',
+        )
+
+    agent = Agent(TestModel(), capabilities=[RequestOnce(), Returns(twice)])
+    with pytest.raises(UserError, match=r'must contain its `CompactionResult.part` object itself'):
+        await agent.run('hi')
+
+
 async def test_compactions_serialize_without_what_they_replaced():
     agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
     result = await agent.run('hi')
@@ -1124,6 +1334,8 @@ async def test_compactions_serialize_without_what_they_replaced():
                 'messages_before': 1,
                 'messages_after': 2,
                 'kept_from': 1,
+                'part_message_index': 0,
+                'part_index': 0,
                 'metadata': None,
             }
         ]
@@ -1767,3 +1979,38 @@ async def test_substitutes_of_another_kind_and_left_out_parts():
     assert texts(request.messages) == ['q', 'the answer was a', 'again']
     assert texts(seen[0]) == ['summary', 'q', 'the answer was a', 'again']
     assert texts(result.all_messages()) == ['summary', 'q', 'private', 'a', 'again', 'done']
+
+
+@pytest.mark.parametrize('append_reminder', [False, True])
+@pytest.mark.parametrize('build', [_summary_after_the_system_prompt, _provider_response_after_the_system_prompt])
+async def test_compaction_usage_is_priced_at_a_timestamp_from_the_history(
+    build: CompactionBuilder, append_reminder: bool, monkeypatch: pytest.MonkeyPatch
+):
+    """Not the clock, which a durable replay or recovery reads differently: the cost has to price the same."""
+    import pydantic_ai._agent_graph as agent_graph
+
+    priced: list[ModelResponse] = []
+    original = agent_graph.fill_response_cost
+
+    def record(response: ModelResponse) -> None:
+        priced.append(response)
+        original(response)
+
+    monkeypatch.setattr(agent_graph, 'fill_response_cost', record)
+    capabilities: list[AbstractCapability[Any]] = [RequestOnce(), Returns(build)]
+    if append_reminder:
+        # A request only this attempt adds: it's sent after the request being answered, but never in the history.
+        capabilities.append(Rewrite(lambda messages: [*messages, ModelRequest(parts=[UserPromptPart('reminder')])]))
+    agent = Agent(seen_by([]), system_prompt='You are a pirate.', capabilities=capabilities)
+    result = await agent.run('hi')
+
+    [record_] = result.compactions
+    holder = result.all_messages()[record_.part_message_index]
+    [compaction_billed] = [r for r in priced if r.parts and r.parts[0] is record_.part]
+    if isinstance(holder, ModelResponse):
+        expected = holder.timestamp
+    else:
+        answered = result.all_messages()[-2]
+        assert isinstance(answered, ModelRequest)
+        expected = answered.timestamp
+    assert compaction_billed.timestamp == expected

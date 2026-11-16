@@ -86,7 +86,7 @@ def test_invalid_model_suggestion(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
             'Error initializing claude:sonnet-5:',
-            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
         ]
     )
 

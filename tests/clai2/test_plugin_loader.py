@@ -890,6 +890,44 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
         )
 
 
+@pytest.mark.parametrize('under_home', [True, False])
+async def test_repo_context_builtin_walks_up_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, under_home: bool
+) -> None:
+    # Under home the walk stops at home; elsewhere it stops at the repository root.
+    base = Path.home() if under_home else tmp_path / 'srv'
+    repo = base / 'repo'
+    workspace = repo / 'pkg'
+    workspace.mkdir(parents=True)
+    (repo / '.git').mkdir()
+    (workspace / 'AGENTS.md').write_text('project\n')
+    (repo / 'AGENTS.md').write_text('repo root\n')
+    (base / 'AGENTS.md').write_text('above the repo\n')
+    monkeypatch.chdir(workspace)
+    repo_context = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'repo_context')
+    harness = Harness(tmp_path, builtin=(repo_context,))
+    await harness.loader.load_all()
+
+    async def instructions() -> str:
+        model = TestModel(call_tools=[])
+        await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+            'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+        assert model.last_model_request_parameters is not None
+        return '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+
+    text = await instructions()
+    assert text.index('repo root') < text.index('project')
+    assert ('above the repo' in text) is under_home
+
+    off = '{"walk_up": false}'
+    assert await harness.loader.command(['add', 'repo_context', repo_context.factory, off]) == (
+        'Replaced built-in repo_context.'
+    )
+    text = await instructions()
+    assert 'project' in text and 'repo root' not in text
+
+
 @pytest.mark.parametrize('error', ['RuntimeError', 'CancelledError'])
 async def test_failed_start_reports_cleanup_error_without_masking_start_failure(tmp_path: Path, error: str) -> None:
     harness = Harness(tmp_path)
