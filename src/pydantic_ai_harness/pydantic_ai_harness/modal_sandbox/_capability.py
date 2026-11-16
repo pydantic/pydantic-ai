@@ -29,7 +29,6 @@ from pydantic_ai_harness.modal_sandbox._backend import (
 
 if TYPE_CHECKING:
     import modal
-    import modal.experimental
 
 UPGRADE_DOCS_URL = 'https://pydantic.dev/docs/ai/harness/modal-sandbox/#upgrading-from-the-previous-modalsandbox'
 
@@ -198,13 +197,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     the client from the run's `deps` and pass it to `ModalSandboxBackend`.
     """
 
-    outbound_policy: modal.experimental.OutboundPolicy | None = field(default=None, repr=False)
-    """Modal's outbound policy for a new sandbox, passed to `Sandbox.create` unchanged; a spec cannot set it.
-
-    Modal's proxy, outside the sandbox, sets its headers on requests to a domain, so the agent's commands can
-    use a credential they cannot read. Modal marks the API experimental.
-    """
-
     warn_if_no_tools: bool = True
     """Warn, once per `ModalSandbox` instance, when none of a run's tools has a `Shell` or `FileSystem` tool name.
 
@@ -236,7 +228,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         warn_if_no_tools: bool = True,
         workdir: str | None = None,
         client: modal.Client | None = None,
-        outbound_policy: modal.experimental.OutboundPolicy | None = None,
         **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous
@@ -275,7 +266,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.working_dir = working_dir
         self.env = env
         self.client = client
-        self.outbound_policy = outbound_policy
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
         self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
@@ -346,7 +336,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             client=self.client,
-            outbound_policy=self.outbound_policy,
         )
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:

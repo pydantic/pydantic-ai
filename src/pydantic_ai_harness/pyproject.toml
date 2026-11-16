@@ -62,8 +62,7 @@ dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distan
 # `logfire.variables` needs `pydantic_handlebars.extract_dependencies` (0.2.1), which logfire does not require.
 logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-handlebars>=0.2.1"]
 render = ["render>=1.6.0"]
-# 1.6.0 is the first with `modal.experimental.OutboundPolicy` and `Sandbox.create(_experimental_outbound_policy=...)`.
-modal = ["modal>=1.6.0"]
+modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
 # 1.0.11, the newest release, is the one the backend is verified against: its `get_sandbox` fails at once for a
 # missing claim instead of waiting for it. 1.0.9 was the first with the streaming

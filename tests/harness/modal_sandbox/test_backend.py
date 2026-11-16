@@ -19,7 +19,6 @@ from typing import Any
 
 import anyio
 import pytest
-from modal.experimental import OutboundPolicy
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -858,13 +857,6 @@ class TestCreate:
         # so it would end a conversation that pauses for a while.
         assert fake_modal.create_kwargs[-1]['timeout'] == 86_400
         assert fake_modal.create_kwargs[-1]['idle_timeout'] is None
-        assert fake_modal.create_kwargs[-1]['outbound_policy'] is None
-
-    async def test_outbound_policy_passes_through(self, fake_modal: FakeModal) -> None:
-        policy = OutboundPolicy()
-        await started(outbound_policy=policy, env={'GH_TOKEN': 'placeholder'})
-        assert fake_modal.create_kwargs[-1]['outbound_policy'] is policy
-        assert fake_modal.create_kwargs[-1]['env'] == {'GH_TOKEN': 'placeholder'}
 
     @pytest.mark.parametrize(
         ('name', 'match'),
