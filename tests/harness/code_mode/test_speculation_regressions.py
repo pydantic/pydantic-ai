@@ -355,5 +355,5 @@ class TestTextScanCost:
         for depth in (200, 400, 800):
             code = _CountingCode('x = ' + 'lookup(' * depth + "key='k'" + ')' * depth)
             assert not await _stream_whole(code)
-            # Unbounded, the walks alone cover about `7 * depth ** 2` characters.
+            # Unbounded, the walks alone cover about `4 * depth ** 2` characters.
             assert code.touched <= 2 * budget
