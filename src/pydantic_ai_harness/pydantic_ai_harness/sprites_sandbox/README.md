@@ -78,11 +78,11 @@ The follow-up run finds the Sprite in the message history and works in it, so th
 
 ## Choose the tools
 
-For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../filesystem/) instead of `Coder`, or write your own tool that runs in the Sprite:
+For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../file_system/) instead of `Coder`, or write your own tool that runs in the Sprite:
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 

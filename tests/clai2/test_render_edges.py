@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering import theme

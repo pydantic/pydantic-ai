@@ -2375,7 +2375,8 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Claude Code,
     and Cursor. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
     in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name as prefix
-    to disambiguate tools across multiple servers.
+    to disambiguate tools across multiple servers. An entry with both `command` and `url` runs `command`
+    and ignores `url` and `headers`.
 
     Environment variables can be referenced in the configuration file using:
 

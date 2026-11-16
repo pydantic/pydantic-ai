@@ -49,6 +49,7 @@ from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import (
+    _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
@@ -458,6 +459,8 @@ class _Conversation:
         elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             # A direct `request()` skips `prepare_messages`; send the deprecated part as what it always meant.
             self._request_part(_translate_legacy_retry_part(part), calls)
+        elif isinstance(part, CompactionPart):
+            self._user([_conversation_summary_text(part.content)])
         elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
             raise _unprojected_instruction_delta_error()
         elif isinstance(part, _UnpreparedPart):  # pragma: no cover
