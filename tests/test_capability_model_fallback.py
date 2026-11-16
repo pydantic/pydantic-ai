@@ -3132,3 +3132,85 @@ async def test_instruction_parts_a_hook_changed_reach_every_model():
     assert sent == snapshot([('backup', 'You are primary.\n\nBe brief.', 0.9)])
     assert max_tokens == [10, 10]
     assert _recorded_instructions(result.all_messages()) == snapshot(['You are primary.\n\nBe brief.'])
+
+
+async def test_returning_to_the_step_model_records_its_own_instructions_again():
+    """An attempt back at the step's model, after one at another, is sent and records what was resolved for it."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    backup = _sent('backup', sent, fails=True)
+
+    @dataclass
+    class BackAndForth(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            if request_context.attempt == 1:
+                raise RetryModelRequest(backup)
+            raise RetryModelRequest(ctx.model)
+
+    attempts = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        sent.append(('primary', info.instructions, (info.model_settings or {}).get('temperature')))
+        if attempts == 1:
+            raise ModelAPIError(model_name='primary', message='down')
+        return ModelResponse(parts=[TextPart('primary')])
+
+    agent = Agent(FunctionModel(primary, model_name='primary'), capabilities=[_PerModel(seen), BackAndForth()])
+    result = await agent.run('x')
+    assert result.output == 'primary'
+    assert sent == snapshot(
+        [('primary', 'You are primary.', 0.1), ('backup', 'You are backup.', 0.9), ('primary', 'You are primary.', 0.1)]
+    )
+    # The step's own model is resolved for once, at the start of the step.
+    assert seen == snapshot(
+        [('instructions', 'primary'), ('settings', 'primary'), ('instructions', 'backup'), ('settings', 'backup')]
+    )
+    assert _recorded_instructions(result.all_messages()) == snapshot(['You are primary.'])
+
+
+async def test_a_model_without_instructions_of_its_own_is_sent_none():
+    """A model the instructions resolve to nothing for is sent none, and history records none."""
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def instructions(ctx: RunContext[Any]) -> str | None:
+        return 'Be brief.' if ctx.model.model_name == 'primary' else None
+
+    agent = Agent(
+        _sent('primary', sent, fails=True),
+        instructions=instructions,
+        capabilities=[ModelFallback(_sent('backup', sent))],
+    )
+    result = await agent.run('x')
+    assert sent[:2] == snapshot([('primary', 'Be brief.', None), ('backup', None, None)])
+    assert _recorded_instructions(result.all_messages())[0] is None
+
+
+async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_was_sent():
+    """The thinking effort history records is the one resolved for the model that answered."""
+
+    def respond(name: str, fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(fn, model_name=name, profile=ModelProfile(supports_thinking=True))
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        return {'thinking': 'high' if ctx.model.model_name == 'backup' else 'low'}
+
+    agent = Agent(
+        respond('primary', True), model_settings=settings, capabilities=[ModelFallback(respond('backup', False))]
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, _messages.ModelSettingsDeltaPart)
+    ] == snapshot([_messages.ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True)])
