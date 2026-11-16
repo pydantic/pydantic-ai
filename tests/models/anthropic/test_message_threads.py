@@ -347,7 +347,7 @@ _CLIENTS: dict[str, Callable[[httpx2.AsyncClient], AsyncAnthropicClient]] = {
 
 
 async def _first_request_thread(
-    client_name: str, supported: bool, provider_type: type[AnthropicProvider] = AnthropicProvider
+    client_name: str, supported: bool, provider_type: type[AnthropicProvider]
 ) -> tuple[object, bool]:
     """The `thread` the first request on a client sends, and whether it sends the threads beta.
 
@@ -380,7 +380,7 @@ async def test_thread_by_client(allow_model_requests: None, client_name: str):
     """
     supported = client_name in ('api', 'foundry')
     expected = ({'type': 'create'}, True) if supported else (None, False)
-    assert await _first_request_thread(client_name, supported) == expected
+    assert await _first_request_thread(client_name, supported, AnthropicProvider) == expected
 
 
 @pytest.mark.parametrize(
