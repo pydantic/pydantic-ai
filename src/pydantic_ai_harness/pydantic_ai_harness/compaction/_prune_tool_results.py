@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from itertools import islice
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import ToolKind
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
@@ -21,7 +22,6 @@ from pydantic_ai_harness.compaction._shared import (
     cleared_return,
     compact_with_span,
     context_for_request,
-    rebuild_with_cleared,
 )
 from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction
@@ -149,10 +149,7 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
         messages: list[ModelMessage] = list(ctx.messages)
 
         async def prune() -> list[ModelMessage]:
-            pruned = messages
-            for tool_call_id, content in pending.items():
-                pruned = rebuild_with_cleared(pruned, {tool_call_id}, set(), content)
-            return pruned
+            return [_pruned(message, pending) if isinstance(message, ModelRequest) else message for message in messages]
 
         pruned = await compact_with_span(
             context_for_request(ctx, request_context),
@@ -168,8 +165,23 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
 def _latest_returns(messages: Sequence[ModelMessage]) -> list[ToolReturnPart]:
     """The tool results the latest model response, the last message, answered."""
     returns: list[ToolReturnPart] = []
-    for message in reversed(messages[:-1]):
+    for message in islice(reversed(messages), 1, None):
         if isinstance(message, ModelResponse):
             break
         returns.extend(part for part in message.parts if isinstance(part, ToolReturnPart))
     return returns
+
+
+def _pruned(message: ModelRequest, contents: Mapping[str, str]) -> ModelRequest:
+    """*message* with the results in *contents* replaced, or *message* itself when it holds none of them."""
+    if not any(isinstance(part, ToolReturnPart) and part.tool_call_id in contents for part in message.parts):
+        return message
+    return replace(
+        message,
+        parts=[
+            (cleared_return(part, contents[part.tool_call_id]) or part)
+            if isinstance(part, ToolReturnPart) and part.tool_call_id in contents
+            else part
+            for part in message.parts
+        ],
+    )

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -15,11 +15,18 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness import PruneToolResults
 from pydantic_ai_harness.compaction import ClearToolResults
+from tests.conftest import try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
+
+with try_import() as logfire_import_successful:
+    from logfire.testing import CaptureLogfire
 
 JUNK = 'build/fingerprint.json: abc123\n' * 200
 
@@ -39,12 +46,12 @@ class Script:
         return FunctionModel(respond)
 
 
-def _agent(script: Script, *capabilities: Any) -> Agent[None, str]:
+def _agent(script: Script, *capabilities: AbstractCapability[None]) -> Agent[None, str]:
     def grep(pattern: str) -> str:
         """Search the repository."""
         return JUNK
 
-    return Agent(script.model(), tools=[grep], capabilities=list(capabilities))
+    return Agent(script.model(), deps_type=type(None), tools=[grep], capabilities=list(capabilities))
 
 
 def _prune(tool_call_id: str, summary: str = 'grep matched build fingerprints only') -> ModelResponse:
@@ -118,6 +125,24 @@ class TestPruneToolResults:
             "Not pruned: 'nope' is not a result from your previous step that can be pruned."
         )
 
+    async def test_refuses_a_typed_result(self) -> None:
+        search = ToolSearchReturnPart(
+            content={'discovered_tools': [{'name': f'tool_{i}'} for i in range(50)]}, tool_call_id='ts1'
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('find the TODOs')]),
+            ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['todo']}, tool_call_id='ts1')]),
+            ModelRequest(parts=[search]),
+        ]
+        script = Script([_prune('ts1'), DONE])
+
+        result = await _agent(script, PruneToolResults()).run(message_history=history)
+
+        assert _returns(result.all_messages())['p1'] == (
+            "Not pruned: 'ts1' is not a result from your previous step that can be pruned."
+        )
+        assert result.all_messages()[2].parts == [search]
+
     async def test_refuses_a_summary_not_shorter_than_the_result(self) -> None:
         script = Script([GREP, _prune('g1', JUNK), DONE])
 
@@ -126,3 +151,19 @@ class TestPruneToolResults:
         returns = _returns(result.all_messages())
         assert returns['g1'] == JUNK
         assert returns['p1'] == 'Not pruned: the summary is not shorter than the result.'
+
+
+@pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_span_marks_the_prune_model_requested(capfire: CaptureLogfire) -> None:
+    agent = _agent(Script([GREP, _prune('g1'), DONE]), PruneToolResults())
+    agent.instrument = InstrumentationSettings()
+
+    await agent.run('find the TODOs')
+
+    [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'compact_messages']
+    attributes = span['attributes']
+    assert attributes['compaction.strategy'] == 'PruneToolResults'
+    assert attributes['compaction.model_requested'] is True
+    assert attributes['compaction.messages_before'] == attributes['compaction.messages_after'] == 5
+    assert attributes['compaction.tokens_after'] < attributes['compaction.tokens_before']
