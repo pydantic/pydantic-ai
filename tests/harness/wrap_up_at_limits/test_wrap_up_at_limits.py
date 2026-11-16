@@ -232,7 +232,9 @@ class TestWrapUpAtLimits:
             assert wrap_ups(result.new_messages()) == []
 
     @pytest.mark.moves_cache_prefix(reason="with tool output, `tool_choice='none'` sends only the output tools")
-    async def test_structured_output_is_still_produced(self) -> None:
+    # With `tool_calls_limit`, the output call is checked against the used-up budget and must not count toward it.
+    @pytest.mark.parametrize('limits', [UsageLimits(request_limit=2), UsageLimits(tool_calls_limit=1)])
+    async def test_structured_output_is_still_produced(self, limits: UsageLimits) -> None:
         class Report(BaseModel):
             summary: str
 
@@ -247,9 +249,10 @@ class TestWrapUpAtLimits:
         def look_up(topic: str) -> str:
             return topic
 
-        result = await agent.run('Research', usage_limits=UsageLimits(request_limit=2))
+        result = await agent.run('Research', usage_limits=limits)
 
         assert result.output == Report(summary='partial')
+        assert result.usage.requests == 2
 
     async def test_limit_raises_when_no_request_is_left(self) -> None:
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
