@@ -47,6 +47,7 @@ from pydantic_ai_harness.detect_loops._detectors import (
     StreamChannel,
     StreamSample,
 )
+from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -456,15 +457,19 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         # A `ScopedTask` takes the cancellation that stops it as a cancel of its own scope, so the agent's shielded
         # teardown of the model stream inside it finishes.
         request = ScopedTask(run_request())
-        stopped_by: list[Exception] = []
+        errors: list[Exception] = []
 
         async def act_on_loops(stop: anyio.CancelScope) -> None:
             while True:
                 await check.detected.wait()
+                # Stopping the request would cancel a parallel input guard that hasn't decided, and the retry
+                # isn't screened again, so the verdict comes first. A guard that didn't allow ends the request.
+                if not await input_guardrails_allow(ctx):
+                    return
                 try:
                     await self._act(ctx, check.take(), in_response=True)
                 except Exception as error:
-                    stopped_by.append(error)
+                    errors.append(error)
                     stop.cancel()
                     return
                 self._reported_in_stream = True
@@ -474,13 +479,17 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         try:
             async with anyio.create_task_group() as tasks:
                 tasks.start_soon(act_on_loops, tasks.cancel_scope)
-                response = await request.result()
+                # Raised outside the task group, which would wrap it in an `ExceptionGroup`.
+                try:
+                    response = await request.result()
+                except Exception as error:
+                    errors.append(error)
                 tasks.cancel_scope.cancel()
         finally:
             # Only now that the request has stopped, and with it the agent's pull of the stream, is the stream released.
             check.release(stopped=True)
-        if stopped_by:
-            raise stopped_by[0]
+        if errors:
+            raise errors[0]
         assert response is not None
         return response
 

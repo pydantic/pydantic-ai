@@ -41,7 +41,7 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness import DetectLoops, GuardrailResult, InputGuardrail
 from pydantic_ai_harness.detect_loops import (
     DetectedLoop,
     LoopDetectedError,
@@ -359,6 +359,19 @@ class TestDetectLoops:
         result = await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
         assert result.output == LOOP * 40
+
+    async def test_a_pending_parallel_input_guard_decides_before_the_retry(self):
+        async def slow_block(prompt: str) -> GuardrailResult:
+            await asyncio.sleep(0.05)
+            return GuardrailResult.block('Not allowed.')
+
+        script = _script([*(_thinking(LOOP) for _ in range(60)), 'answer'], ['second'])
+        agent = Agent(script.model(), capabilities=[DetectLoops(), InputGuardrail(guard=slow_block, parallel=True)])
+
+        result = await agent.run('Explain', event_stream_handler=_drain)
+
+        assert result.output == 'Not allowed.'
+        assert len(script.requests) == 1
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)

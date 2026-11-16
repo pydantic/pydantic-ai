@@ -180,6 +180,8 @@ For a [loop within a response](#loops-within-a-response), the stream is also sto
 
 A nudge doesn't stop a model that ignores it. Combine it with [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) for a hard stop. A stopped stream adds no request or tokens to the run's usage, so for a loop within a response the hard stop is the output retries, or `action='error'`.
 
+A loop found while an `InputGuardrail(parallel=True)` is still deciding is acted on once the guard allows the prompt. If it blocks, the run ends with the guard's message, as it would without the loop.
+
 ### `'error'`
 
 The capability raises `LoopDetectedError`, stopping the stream first for a loop within a response. It's a subclass of [`AgentRunError`](https://pydantic.dev/docs/ai/api/pydantic-ai/exceptions/#pydantic_ai.exceptions.AgentRunError), which ends the run. The detected loop is on its `loop` attribute:
