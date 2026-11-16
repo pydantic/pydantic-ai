@@ -198,7 +198,7 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
         await shell.loader.load_all()
         first_id = shell.session.summary.id
         assert (await shell.run_turn(TurnStart(text='first'), headless=True)).outcome == 'completed'
-        child = shell.fork_session(None, [])
+        child = await shell.fork_session(None, [])
         await child.prompt('fork')
         await shell.session.clear()
         second_id = shell.session.summary.id

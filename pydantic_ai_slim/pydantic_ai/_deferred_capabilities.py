@@ -56,6 +56,9 @@ class LoadCapabilityReturn(TypedDict):
     """
 
 
+DEFERRED_CAPABILITY_CATALOG_ID = 'deferred_capabilities'
+"""The source key of the deferred capability catalog's instruction block, whose id is `capability:deferred_capabilities`."""
+
 CAPABILITY_LOAD_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
     'capability-load', args=LoadCapabilityArgs, content=LoadCapabilityReturn
 )

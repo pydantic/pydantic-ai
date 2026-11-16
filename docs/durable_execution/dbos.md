@@ -180,6 +180,8 @@ Function tools and event stream handlers registered on the agent directly or thr
 
 A function tool running in the workflow can load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability], but a tool running as a step can't; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable).
 
+A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] applies its `sequential=True` and `defer_loading=True` to the [`Tool`][pydantic_ai.tools.Tool] instances it holds. Workflows started before Pydantic AI did so keep listing those tools without them, so that they recover with the steps they recorded: a run holding such a tool [patches](https://docs.dbos.dev/python/tutorials/upgrading-workflows) its workflow when it starts, and a workflow without the patch marker gets the old listing.
+
 All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies
@@ -192,6 +194,7 @@ If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.a
 ### Workspaces
 
 Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
+A tool that runs in a [child workflow](#child-workflows) records its workspace calls as steps of the child workflow instead, after one more step that reattaches to the workspace.
 
 DBOS stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
 Keep secrets in the workspace capability's `env=` instead of passing them to workspace calls;
@@ -244,6 +247,14 @@ A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflo
 
 The deadline bounds the agent run, not the workflow. To bound the whole workflow as well, start it inside DBOS's `SetWorkflowTimeout`, which cancels the workflow when it expires.
 
+### Counting Tokens Before a Request
+
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count runs as a `{name}__model.count_tokens` step ahead of each model request step, so recovery replays the recorded count instead of calling the provider again.
+
+!!! warning "Compatibility impact: recorded token-count steps"
+
+    Recording the count as a step adds a step ahead of each model request step of a run that sets `count_tokens_before_request=True`. Before upgrading, let in-flight workflows that set it finish, or deploy the upgrade as a new DBOS application version. Recovering an older workflow with the new code can raise `DBOSUnexpectedStepError`. Runs without `count_tokens_before_request` keep their existing step sequence.
+
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate steps, with durable sleeps between checks.
@@ -290,6 +301,38 @@ Each `research` call starts a `lead__function_toolset__delegation.call_tool__chi
 
 Child workflows are only supported for async tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] with a unique `id`. Select the child workflow before the agent is constructed, in the tool's metadata or with a `SetToolMetadata` passed to the agent: that's when its toolset registers the child workflow, which DBOS must have before `DBOS.launch()` to recover it. A tool decorated with `@agent.tool` after construction raises a `UserError` inside a workflow, and a `SetToolMetadata` passed at run time, or a `prepare` function that adds the metadata, is only honored in toolsets that already register a child workflow: in any other toolset the tool runs in the parent workflow. DBOS hashes registered workflows into the [application version](https://docs.dbos.dev/python/tutorials/upgrading-workflows) it computes, so adding a child workflow, or renaming its toolset `id` or agent `name`, is a version change: let in-flight workflows finish or pin `application_version` before such deploys.
 
+### Concurrent Agent Runs
+
+Every run of an agent records its model requests and tool calls as steps with the same names, and DBOS replays a recovered workflow's steps in the order they start, checking only their names. When one workflow runs the same agent more than once at the same time, like `asyncio.gather(agent.run(...), agent.run(...))` or parallel tool calls that each run the same nested agent, the runs can start their steps in a different order during recovery than they originally did. Recovery then hands each run the results the other one recorded, and the workflow carries on with them.
+
+A run holding a `Tool` instance that a `FunctionToolset` made sequential or deferred also patches its workflow when it starts. If another run in the workflow starts a step at that moment, the workflow lists those tools without `sequential` and `defer_loading`, as Pydantic AI did before applying them. If the patch was recorded, recovery can fail with `DBOSUnexpectedStepError` when another run starts a step while recovery checks for it.
+
+Give each concurrent run a workflow of its own, so its steps are recorded and replayed in a sequence of their own: call a `@DBOS.workflow` function that runs the agent once, or run a tool that runs a nested agent in a [child workflow](#child-workflows).
+
+```python {title="dbos_concurrent_runs.py" test="skip"}
+import asyncio
+
+from dbos import DBOS
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+agent = Agent('{{ openai:medium }}', name='geography', capabilities=[DBOSDurability()])
+
+
+@DBOS.workflow()
+async def answer(question: str) -> str:  # (1)!
+    result = await agent.run(question)
+    return result.output
+
+
+@DBOS.workflow()
+async def answer_both(first: str, second: str) -> list[str]:
+    return list(await asyncio.gather(answer(first), answer(second)))
+```
+
+1. Called from another workflow, `answer` runs as a child workflow with steps of its own.
+
 ### Parallel Tool Execution
 
 Under DBOS, tools are executed in parallel by default to minimize latency. Tool result events are emitted in tool-call order after all parallel tool calls complete.
@@ -297,10 +340,10 @@ It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mod
 
 !!! warning "Durable calls in parallel tools"
 
-    DBOS requires durable steps to start in a deterministic order. When tools run concurrently, a tool that awaits one durable operation before starting another can interleave differently with sibling tools or their emitted-event handlers during replay, causing recovery to fail.
+    DBOS requires durable steps to start in a deterministic order. When tools run concurrently, a tool that awaits one durable operation before starting another can interleave differently with sibling tools or their emitted-event handlers during replay. Recovery then fails or, when the reordered steps have the same name, hands one call's recorded results to another.
 
     For this pattern, set `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. To run independent sequences concurrently, put each sequence in a separate [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial#running-async-steps-in-parallel).
-A run with a [workspace](../workspace.md) always runs its tool calls sequentially.
+A run with a [workspace](../workspace.md) runs its tool calls sequentially, except for tools that run in a [child workflow](#child-workflows): their workspace calls are steps of their own child workflow, so they still run in parallel, while every other tool call runs alone. Tool hooks such as `before_tool_execute` still run in the parent workflow, so they shouldn't make workspace calls.
 
 ### Toolsets at Runtime
 

@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, TypeAlias
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framework_frame import framework_frame_text
+from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.exceptions import UserError
@@ -359,13 +360,15 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
 
         The random `ref` is made here so a replay reuses the recorded one and delivers the same steering.
         """
-        result = await self._judge.run(
-            prompt,
-            output_type=[AllGood, Steer],
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=usage_limits,
-        )
+        # Inside the durable operation, which may run in another context (a Temporal activity, say).
+        with second_model_prompt():
+            result = await self._judge.run(
+                prompt,
+                output_type=[AllGood, Steer],
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=usage_limits,
+            )
         return result.output, secrets.token_hex(8)
 
     def _collect_finished(self) -> None:
@@ -421,12 +424,13 @@ def _steering_parts(judge: str, message: str, ref: str) -> tuple[SystemPromptPar
     continued conversations.
 
     The random `ref` ties the note to its frame. Both parts store it in their text (and in the metadata), so
-    every later request sends them byte for byte and the prompt cache holds.
+    every later request sends them byte for byte and the prompt cache holds. The frame is marked as the framework's
+    (`framework_frame_text`), so the lookalike check leaves it alone.
     """
     metadata = {'origin': _STEERING_ORIGIN, 'judge': judge, 'ref': ref}
     body = _STEERING_TAG_OPENER.sub('&lt;', neutralize_tags(message))
     data = f'<{_STEERING_TAG} judge="{html.escape(judge)}" ref="{ref}">\n{body}\n</{_STEERING_TAG}>'
-    return SystemPromptPart(_steering_note(ref), metadata=metadata), TextContent(data, metadata=dict(metadata))
+    return SystemPromptPart(_steering_note(ref), metadata=metadata), framework_frame_text(data, metadata=metadata)
 
 
 def _steering_judge(part: UserPromptPart) -> str | None:
@@ -512,15 +516,21 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
         if isinstance(message, ModelResponse):
             user_lines = lines
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and (judge := _steering_judge(part)) is not None:
-                lines.append(f'trajectory judge {judge} steered: {user_prompt_text(part)}')
-            elif isinstance(part, UserPromptPart):
-                text = user_prompt_text(part)
-                if text:
-                    user_lines.append(f'user: {text}')
+            if isinstance(part, UserPromptPart):
+                _render_user_prompt(part, user_lines, lines)
             elif (line := render_part(part)) is not None:
                 # A tool return or retry is the agent's activity, so it ends the opening request.
                 if isinstance(part, ToolReturnPart | RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
                     user_lines = lines
                 (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
     return request, lines
+
+
+def _render_user_prompt(part: UserPromptPart, user_lines: list[str], lines: list[str]) -> None:
+    """Render a user prompt as a judge's steering in `lines`, or as the user's words in `user_lines`."""
+    if (judge := _steering_judge(part)) is not None:
+        lines.append(f'trajectory judge {judge} steered: {user_prompt_text(part)}')
+        return
+    text = user_prompt_text(part)
+    if text:
+        user_lines.append(f'user: {text}')

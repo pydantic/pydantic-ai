@@ -22,6 +22,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _with_framing_announcement,  # pyright: ignore[reportPrivateUsage]
     infer_model_profile,
     parse_model_id,
 )
@@ -579,7 +580,13 @@ class TemporalModel(WrapperModel):
         if params.model_id is None or params.model_id in self._models_by_id:
             return params.messages
 
-        prepared = model_for_request.prepare_messages(params.messages, params.model_request_parameters)
+        # `framing_announcement` isn't serialized with the parameters, so it's restored from the request's settings.
+        prepared = model_for_request.prepare_messages(
+            params.messages,
+            _with_framing_announcement(
+                params.model_request_parameters, cast(ModelSettings | None, params.model_settings)
+            ),
+        )
         if prepared is params.messages:
             return prepared
         return repair_messages(prepared, repair_last_response=True)

@@ -12,7 +12,21 @@ the `load_capability` tool to receive that skill's instructions.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![At the start of every run, Skills reads each SKILL.md in the configured libraries from the run's workspace, such as .agents/skills/code-review/SKILL.md, and puts a catalog of skill names and descriptions in the model's instructions. When a skill is useful, the model calls load_capability with its name and gets back a "# Skill: code-review" heading, the skill's directory and the Markdown body of SKILL.md.](https://pydantic.dev/docs/ai/img/harness/skills.svg)
+```mermaid
+flowchart TB
+    accTitle: Skills: load SKILL.md instructions on demand
+    accDescr: At run start, the Skills capability reads the workspace files under .agents/skills/, here code-review/SKILL.md and release-notes/SKILL.md. It puts each skill's name and description in the model's instructions. When a skill is needed, the model calls load_capability and gets a heading, the skill directory and the SKILL.md body.
+    subgraph workspace["Workspace"]
+        files[".agents/skills/<br/>code-review/SKILL.md<br/>release-notes/SKILL.md"]
+    end
+    skills["Skills()"]:::capability
+    model(["model"])
+    load["load_capability"]:::capability
+    files -->|"read at run start"| skills
+    skills -->|"instructions: each skill's<br/>name and description"| model
+    model <-->|"when a skill is needed:<br/>heading, skill directory,<br/>SKILL.md body"| load
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## Installation
 
@@ -91,20 +105,60 @@ same on every run over the same files, so it stays in the cached prefix; a new
 or renamed skill appears in it on the next run. Without any skills, `Skills`
 adds no instructions and no `load_capability` tool.
 
-A run without a workspace fails at its start. To read skills from somewhere
-else, such as skills shipped with your application while the agent works in a
-sandbox, pass a workspace backend:
+A run without a workspace fails at its start, unless every library has its own
+`workspace=` backend, as in [Ship skills with your application](#ship-skills-with-your-application).
+
+## Ship skills with your application
+
+To load skills that ship inside your application, keep `Skills` and pass
+`workspace=` a `LocalWorkspaceBackend` rooted at your application's files.
+`Skills` then reads its libraries from that directory instead of the run's
+workspace, and discovers, validates, and selects `SKILL.md` packages the same
+way. The agent needs no workspace of its own:
 
 ```python
+from pathlib import Path
+
+from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Skills
 
-skills = Skills('skills', workspace=LocalWorkspaceBackend('/app'))
+APP_DIR = Path(__file__).parent  # contains skills/code-review/SKILL.md
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[Skills('skills', workspace=LocalWorkspaceBackend(APP_DIR))],
+)
 ```
 
-`workspace=` takes a backend, not the `LocalWorkspace` capability. Under a
-durable engine such as Temporal, a `workspace=` backend is read in-process, not
-through the workflow.
+Relative library paths resolve against the backend's directory, so `'skills'`
+above is `APP_DIR / 'skills'`. `LocalWorkspaceBackend` takes a path on disk:
+build it from `Path(__file__)`, not from `importlib.resources.files()`, which
+returns a `Traversable` that is a real directory only when the package is
+installed unzipped.
+
+The model sees each skill's name and description in the catalog, and loading a
+skill returns its heading and `SKILL.md` body. The loaded instructions do not
+name the skill's directory, and `Skills` gives the model no tools, so the model
+cannot read a skill's `references/` or run its `scripts/` from here. For a skill
+whose bundled files the model should use, put its library in the run's
+workspace instead and give the agent file or shell tools there, such as
+`LocalWorkspace(APP_DIR)` with `FileSystem` or `Shell`; see
+[Bundled files](#bundled-files).
+
+The same backend works when the agent's own workspace is a sandbox: `Skills`
+reads the skills from your application's files, and the agent's tools act in the
+sandbox. `workspace=` takes a backend, not the `LocalWorkspace` capability.
+Under a durable engine such as Temporal, a `workspace=` backend is read
+in-process, not through the workflow.
+
+For instructions that are not `SKILL.md` packages in a directory, such as
+runbooks kept in a database or files in a custom format, skip `Skills` and
+define each one as a deferred `Capability`:
+[Loading skills from Markdown files](https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files)
+shows a file loader, and
+[Loading runbooks from a database](https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database)
+reads the instructions at run time.
 
 ## Choose which skills to expose
 

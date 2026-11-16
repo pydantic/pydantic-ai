@@ -34,7 +34,6 @@ from pydantic_ai_harness.guardrails import (
     ToolResultInfo,
 )
 from pydantic_ai_harness.guardrails._exceptions import InputBlocked, ToolBlocked
-from tests.conftest import detach_dbos_logging
 from tests.harness._recording_durability import RecordingDurability
 
 pytestmark = pytest.mark.anyio
@@ -50,7 +49,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_guardrails',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
     instance = DBOS(config=config)
     DBOS.launch()
@@ -58,7 +56,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 _calls: list[str] = []

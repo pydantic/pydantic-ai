@@ -424,7 +424,7 @@ async def test_fork_keeps_how_the_model_was_chosen(tmp_path: Path, model: str | 
     )
     recorder = Recorder()
     shell.session.resolve_model = recorder.resolve
-    fork = shell.fork_session(model, [])
+    fork = await shell.fork_session(model, [])
     await fork.prompt('hello')
     assert recorder.calls[-1][0] == (model or 'openai:gpt-6-luna')
 

@@ -57,7 +57,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.exceptions import ContentFilterError, OutputTokenLimitExceeded
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     InstructionPart,
@@ -127,8 +127,8 @@ with try_import() as imports_successful:
         OpenAIChatModelSettings,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
-        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openai._native_tools import resolve_openai_image_generation_size
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
@@ -186,14 +186,14 @@ def test_openai_image_generation_size_valid_combinations(
 ) -> None:
     """Test valid combinations of aspect_ratio and size for OpenAI image generation."""
     tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=size)
-    assert _resolve_openai_image_generation_size(tool) == expected
+    assert resolve_openai_image_generation_size(tool) == expected
 
 
 def test_openai_image_generation_tool_aspect_ratio_invalid() -> None:
     """Test that invalid aspect_ratio raises UserError."""
     tool = ImageGenerationTool(aspect_ratio='16:9')
     with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 async def test_request_simple_success(allow_model_requests: None):
@@ -792,6 +792,21 @@ async def test_request_choice_without_message_is_invalid_response(allow_model_re
 
     with pytest.raises(UnexpectedModelBehavior, match='Invalid response from openai chat completions endpoint'):
         await agent.run('hello')
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_fast(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    result = await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='fast'))
+    assert (result.response.provider_details or {}).get('service_tier') == 'fast'
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_service_tier_ultrafast_rejected_on_chat(allow_model_requests: None, openai_api_key: str) -> None:
+    """The setting's type allows `ultrafast` here because the Responses settings inherit it; OpenAI rejects it."""
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    with pytest.raises(ModelHTTPError, match='Invalid service_tier argument'):
+        await Agent(model).run('Say hi.', model_settings=OpenAIChatModelSettings(openai_service_tier='ultrafast'))
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
@@ -1502,7 +1517,7 @@ async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai._chat_model.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
             'content_type': 'image/png',
@@ -1535,7 +1550,7 @@ async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai._chat_model.download_item', new_callable=AsyncMock) as mock_download:
         messages = [
             ModelRequest(
                 parts=[
@@ -1562,7 +1577,7 @@ async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai._responses_model.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:application/pdf;base64,JVBERi0xLjQK',
             'data_type': 'pdf',
@@ -1595,7 +1610,7 @@ async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai._responses_model.download_item', new_callable=AsyncMock) as mock_download:
         messages = [
             ModelRequest(
                 parts=[
@@ -1622,7 +1637,7 @@ async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
-    with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
+    with patch('pydantic_ai.models.openai._responses_model.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
             'data': 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2',
             'data_type': 'mp3',
@@ -5330,7 +5345,7 @@ async def test_openai_native_output_cut_off_by_max_tokens(
     prompt = 'List the 20 largest cities in the world.'
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(20\) exceeded while generating structured output, resulting in incomplete JSON\.',
     ) as exc_info:
         if stream:
@@ -7584,7 +7599,7 @@ async def test_openai_chat_audio_url_default_base64(allow_model_requests: None):
     # Mock download_item to return base64 data
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
 
-    with patch('pydantic_ai.models.openai.download_item') as mock_download:
+    with patch('pydantic_ai.models.openai._chat_model.download_item') as mock_download:
         mock_download.return_value = {'data': fake_base64_data, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])
@@ -7616,7 +7631,7 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     fake_base64_data = base64.b64encode(b'fake_downloaded_audio').decode('utf-8')
     data_uri = f'data:audio/mpeg;base64,{fake_base64_data}'
 
-    with patch('pydantic_ai.models.openai.download_item') as mock_download:
+    with patch('pydantic_ai.models.openai._chat_model.download_item') as mock_download:
         mock_download.return_value = {'data': data_uri, 'data_type': 'mp3'}
 
         await agent.run(['Process this audio url', audio_url])
@@ -7634,7 +7649,7 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
 
 
 async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_requests: None):
-    """OpenAI's `_support_tool_forcing` raises when the model profile disables tool forcing.
+    """OpenAI's `support_openai_tool_forcing` raises when the model profile disables tool forcing.
 
     Goes via `direct.model_request` so the agent-level baseline validator is bypassed and
     we actually exercise the OpenAI-specific error path.
@@ -7662,7 +7677,7 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
 
 
 async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model_requests: None):
-    """tuple-resolved forcing (e.g. `tool_choice=['x']` with extra tools) must also be checked against `_support_tool_forcing`.
+    """tuple-resolved forcing (e.g. `tool_choice=['x']` with extra tools) must also be checked against `support_openai_tool_forcing`.
 
     Regression for https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r3127128012 — the tuple
     branch in `_get_tool_choice` previously sent the forced tool choice without consulting the model
@@ -7946,6 +7961,31 @@ async def test_openai_chat_refusal_falls_back_with_model_fallback(allow_model_re
 
     assert result.output == 'from backup'
     assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('gpt-4o', 'rejected')]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_chat_cut_off_response_with_model_fallback(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """`ModelFallback` falls back by default when a response reaches `max_tokens`; a streamed one is accepted as is."""
+    m = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)], model_settings=ModelSettings(max_tokens=5))
+    prompt = 'Describe the history of Paris in three paragraphs.'
+
+    if stream:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            async with agent.run_stream(prompt) as result:
+                output = await result.get_output()
+        assert output == snapshot('Paris, the capital of')
+        assert result.response.finish_reason == 'length'
+    else:
+        result = await agent.run(prompt)
+        assert result.output == 'from backup'
+        assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [
+            ('gpt-4.1-mini-2025-04-14', 'rejected')
+        ]
 
 
 async def test_openai_chat_streamed_refusal_with_model_fallback(allow_model_requests: None):
