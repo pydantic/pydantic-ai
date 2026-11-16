@@ -7,15 +7,14 @@ import dataclasses
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     ModelMessage,
@@ -30,12 +29,13 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
+from tests.harness.conftest import Instrumented
 
 # Patched to make a feed fail outside the snippet the way a dead worker or a host-binding bug does.
 MONTY_EXECUTOR_RUN = 'pydantic_ai_harness._monty_exec.MontyExecutor.run'
 
 
-def code_mode_attributes(exporter: InMemorySpanExporter) -> list[tuple[str, dict[str, Any]]]:
+def code_mode_attributes(exporter: InMemorySpanExporter) -> list[tuple[str, dict[str, AttributeValue]]]:
     """Each span with `code_mode.*` attributes, as its name and those attributes, in the order the spans ended."""
     found = [
         (span.name, {key: value for key, value in (span.attributes or {}).items() if key.startswith('code_mode.')})
@@ -65,9 +65,9 @@ async def failure_attributes(
     *snippets: str,
     capability: CodeMode[object] | None = None,
     before_sending: Callable[[int], None] | None = None,
-    instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
-) -> list[tuple[str, dict[str, Any]]]:
-    instrumentation, exporter = instrumented(True)
+    instrumented: Instrumented,
+) -> list[tuple[str, dict[str, AttributeValue]]]:
+    instrumentation, exporter = instrumented(False)
     agent = Agent(
         run_code_snippets(*snippets, before_sending=before_sending),
         capabilities=[capability or CodeMode[object](), instrumentation],
@@ -100,8 +100,8 @@ class DisconnectError(Exception):
 
 
 async def diverged_prefix_attributes(
-    original: str, rewritten: str, *, ready: Callable[[], Any], sync_code: str, capability: CodeMode[None]
-) -> list[tuple[str, dict[str, Any]]]:
+    original: str, rewritten: str, *, ready: Callable[[], object], sync_code: str, capability: CodeMode[None]
+) -> list[tuple[str, dict[str, AttributeValue]]]:
     """Stream `original` to an eager `run_code` call, let its statements run, then dispatch it as `rewritten`.
 
     `original`'s last fed statement calls `ready`, which must set the event the helper waits on, and
@@ -115,7 +115,7 @@ async def diverged_prefix_attributes(
     tracer = provider.get_tracer('test')
     started = asyncio.Event()
 
-    async def ready_tool() -> Any:
+    async def ready_tool() -> object:
         started.set()
         return ready()
 
@@ -162,16 +162,14 @@ async def diverged_prefix_attributes(
     return code_mode_attributes(exporter)
 
 
-def run_code_span(*, budget_exhausted: bool = False, **failure: Any) -> tuple[str, dict[str, Any]]:
+def run_code_span(*, budget_exhausted: bool = False, **failure: str | bool) -> tuple[str, dict[str, AttributeValue]]:
     """An `execute_tool run_code` span as `code_mode_attributes` lists it, with `failure` as `code_mode.*` keys."""
     attributes = {f'code_mode.{key}': value for key, value in failure.items()}
     return ('execute_tool run_code', {'code_mode.budget_exhausted': budget_exhausted, **attributes})
 
 
 class TestRunCodeFailureTelemetry:
-    async def test_a_successful_call_records_only_the_budget(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_successful_call_records_only_the_budget(self, instrumented: Instrumented):
         assert await failure_attributes('await add(a=1, b=2)', instrumented=instrumented) == [run_code_span()]
 
     @pytest.mark.parametrize(
@@ -240,36 +238,46 @@ class TestRunCodeFailureTelemetry:
         self,
         snippets: tuple[str, ...],
         capability: CodeMode[object] | None,
-        expected: list[tuple[str, dict[str, Any]]],
-        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+        expected: list[tuple[str, dict[str, AttributeValue]]],
+        instrumented: Instrumented,
     ):
         assert await failure_attributes(*snippets, capability=capability, instrumented=instrumented) == expected
 
     @pytest.mark.parametrize(
         ('error', 'expected'),
         [
-            pytest.param(CrashedError(timed_out=False), {'error_kind': 'crashed'}, id='crashed'),
+            pytest.param(
+                CrashedError(timed_out=False), run_code_span(session_reset=True, error_kind='crashed'), id='crashed'
+            ),
             pytest.param(
                 CrashedError(timed_out=True),
-                {'error_kind': 'resource_limit', 'limit': 'max_duration_secs'},
+                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_secs'),
                 id='worker-timed-out',
             ),
             pytest.param(
                 DisconnectError(cause='turn_timeout'),
-                {'error_kind': 'resource_limit', 'limit': 'max_duration_secs'},
+                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_secs'),
                 id='turn-timeout',
             ),
-            pytest.param(DisconnectError(cause=None), {'error_kind': 'disconnected'}, id='disconnected'),
-            pytest.param(RuntimeError('host binding failed'), {'error_kind': 'host'}, id='host'),
-            pytest.param(PanicException('sandbox aborted'), {'error_kind': 'panic'}, id='panic'),
+            pytest.param(
+                DisconnectError(cause=None),
+                run_code_span(session_reset=True, error_kind='disconnected'),
+                id='disconnected',
+            ),
+            pytest.param(
+                RuntimeError('host binding failed'), run_code_span(session_reset=True, error_kind='host'), id='host'
+            ),
+            pytest.param(
+                PanicException('sandbox aborted'), run_code_span(session_reset=True, error_kind='panic'), id='panic'
+            ),
         ],
     )
     async def test_a_failure_outside_the_snippet_is_recorded_by_kind(
         self,
         monkeypatch: pytest.MonkeyPatch,
         error: BaseException,
-        expected: dict[str, Any],
-        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+        expected: tuple[str, dict[str, AttributeValue]],
+        instrumented: Instrumented,
     ):
         """The second snippet fails, so the reset discards the state the first one left."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
@@ -285,15 +293,12 @@ class TestRunCodeFailureTelemetry:
 
         assert await failure_attributes(
             'x = 1', '1 + 1', before_sending=fail_the_second_snippet, instrumented=instrumented
-        ) == [
-            run_code_span(),
-            run_code_span(session_reset=True, **expected),
-        ]
+        ) == [run_code_span(), expected]
 
     async def test_a_worker_crash_in_the_first_snippet_resets_the_state_it_built(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+        instrumented: Instrumented,
     ):
         """No earlier snippet ran, but the crashed snippet had started, so what it defined is lost."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
@@ -307,9 +312,7 @@ class TestRunCodeFailureTelemetry:
             run_code_span(error_kind='crashed', session_reset=True)
         ]
 
-    async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(self, instrumented: Instrumented):
         """Eager execution runs statements before `run_code`'s span opens; the failure still lands on that span."""
         code = 'boom = 1 // 0\n"unused"'
         args = json.dumps({'code': code})
@@ -323,7 +326,7 @@ class TestRunCodeFailureTelemetry:
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
                 await asyncio.sleep(0)
 
-        instrumentation, exporter = instrumented(True)
+        instrumentation, exporter = instrumented(False)
         agent = Agent(
             FunctionModel(stream_function=stream_once), capabilities=[CodeMode[object](eager=True), instrumentation]
         )
