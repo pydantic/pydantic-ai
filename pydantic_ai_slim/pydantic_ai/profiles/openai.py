@@ -705,12 +705,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
-    if _is_computer_use_model(model_name):
-        # gpt-5.4 and gpt-5.6 click exactly up to 2560x1440 and miss by hundreds of pixels at 3840x2160. gpt-5.5 clicks
-        # exactly up to 1920x1200 but often misses from 2048x1280 up.
-        max_side, max_height = (1920, 1200) if model_name.startswith('gpt-5.5') else (2560, 1440)
-        profile['computer_use_screenshot_max_side'] = max_side
-        profile['computer_use_screenshot_max_pixels'] = max_side * max_height
     if model_name.startswith('gpt-oss'):
         # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter and Bedrock Converse,
         # render `<system>` blocks, and gpt-oss keeps to its system prompt more reliably once told what they mean, so

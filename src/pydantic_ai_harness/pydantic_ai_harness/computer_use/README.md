@@ -108,12 +108,10 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
 ## Screen size
 
 Some models only take screenshots up to a size, set by `computer_use_screenshot_max_side` and
-`computer_use_screenshot_max_pixels` in their profile:
+`computer_use_screenshot_max_pixels` in their profile. `ComputerUse` sends screenshots at the screen's size, so a
+larger screen stops the run with an error naming the largest size that fits. A 1280x800 screen fits every model.
 
-- GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
-
-`ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
-largest size that fits. A 1280x800 screen fits every model.
+GPT-5.4 and GPT-5.5 take any size, but click less accurately above 2560x1440 (measured).
 
 ## When something goes wrong
 
