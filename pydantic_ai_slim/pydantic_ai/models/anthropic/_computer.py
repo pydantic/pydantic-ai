@@ -226,6 +226,9 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
 
+COMPUTER_RESULT_ON_LAST = 'The result is on the last call of this turn.'
+"""The result of each member call but the last when the result doesn't say which calls ran."""
+
 _COMPUTER_CLICKS = {
     'left_click': ('left', 1),
     'right_click': ('right', 1),
