@@ -1396,6 +1396,19 @@ class TestLoadActive:
         assert [type(capability).__name__ for capability in active] == ['Authored']
         assert (tmp_path / 'ran').exists()
 
+    async def test_store_directory_outside_the_workspace_must_be_named_in_path_authority(self, tmp_path: Path) -> None:
+        (tmp_path / 'workspace').mkdir()
+        store = _stored_without_validation(tmp_path)
+        creation = CapabilityCreation[None](store)
+        backend = LocalWorkspaceBackend(tmp_path / 'workspace')
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await creation.load_active(backend)
+        assert not (tmp_path / 'ran').exists()
+
+        named = AuthorityWorkspace(Workspace(backend), authority='operator', path_authority={str(store): 'operator'})
+        assert len(await creation.load_active(named)) == 1
+        assert (tmp_path / 'ran').exists()
+
 
 def _stored_without_validation(tmp_path: Path) -> Path:
     """A store holding the `_author_call` module, written without running it, so only a load can leave `ran`."""

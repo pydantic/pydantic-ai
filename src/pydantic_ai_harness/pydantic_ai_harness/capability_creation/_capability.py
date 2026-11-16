@@ -119,7 +119,7 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
         Raises `UserError`, before running any authored code, when `workspace` would refuse a run.
         """
         await self._check_workspace(Workspace(workspace))
-        return await anyio.to_thread.run_sync(self.store.load_active)
+        return await anyio.to_thread.run_sync(self.store.load_active, abandon_on_cancel=True)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Refuse the run up front, rather than on the first tool call, when the workspace doesn't allow authoring."""

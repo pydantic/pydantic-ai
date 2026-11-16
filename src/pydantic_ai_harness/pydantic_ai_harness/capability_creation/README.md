@@ -186,9 +186,13 @@ With `defer_loading=True`, a run starts before the capability loads, so these ch
 writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
 
 `creation.load_active(workspace)` makes the same checks against `workspace` before it loads
-anything. `creation.store.load_active()` has no workspace to ask, so it runs the code it finds:
-call it only on a directory you would run yourself. The checks also only look at who controls the directory, not what the model has read: to keep text in a lower
-workspace from steering what gets authored, require approval as shown below.
+anything. For a `directory` outside the working directory, pass a workspace that names it, and
+pass the same one to `agent.run(..., workspace=...)`:
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('./project')), authority='operator', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+`creation.store.load_active()` has no workspace to ask, so it runs the code it finds: call it
+only on a directory you would run yourself. The checks also only look at who controls the
+directory, not what the model has read: to keep text in a lower workspace from steering what
+gets authored, require approval as shown below.
 
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files
@@ -204,7 +208,8 @@ worker thread runs until the code returns and then finishes the write, so code t
 validation is still saved and loaded by the next `load_active()`; disable it if you did not
 want it. Other authoring, listing, and disabling calls are not held up by it.
 `store.load_active()` runs authored code in its calling thread, so an authored module that
-blocks also blocks that call. Loads of the same source from different threads run one at a
+blocks also blocks that call. `creation.load_active()` runs it in a worker thread: cancelling
+it stops waiting, but the thread runs until the code returns. Loads of the same source from different threads run one at a
 time, so it also holds up every other load of that source, such as a `load_active()` call
 in another thread.
 
