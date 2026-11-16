@@ -107,6 +107,7 @@ def _computer_request(*extra_tools: str) -> ModelRequestParameters:
 async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
+    """The recording's `gpt-5.5` resolved to the `gpt-5.5-2026-04-23` snapshot."""
     provider = ScreenProvider()
     agent = Agent(_gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse()])
 
@@ -114,8 +115,9 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
         async for _ in events:
             pass
 
-    await agent.run(TASK, event_stream_handler=drain)
+    result = await agent.run(TASK, event_stream_handler=drain)
 
+    assert result.response.model_name == 'gpt-5.5-2026-04-23'
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/responses')
     # The capability's `computer` tool went out as OpenAI's own, not as a function.
