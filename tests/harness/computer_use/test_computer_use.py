@@ -1291,7 +1291,9 @@ Each call runs a list of actions in order and returns a screenshot of the result
             tasks.cancel_scope.cancel()
         assert provider.actions == [MouseDown(), MouseUp()]
 
-    async def test_a_call_cancelled_while_taking_its_screenshot_releases_its_buttons(self) -> None:
+    async def test_a_call_cancelled_while_taking_its_screenshot_releases_its_buttons(
+        self, durability: list[AbstractCapability[object]]
+    ) -> None:
         """A tool timeout can cancel a call after it acted; the next call mustn't find the button still pressed."""
         hung = False
 
@@ -1313,7 +1315,8 @@ Each call runs a list of actions in order and returns a screenshot of the result
         provider = Provider()
         agent = Agent(
             _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}]),
-            capabilities=[provider.capability(), ComputerUse(), PrepareTools(with_timeout)],
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), PrepareTools(with_timeout), *durability],
         )
         await agent.run('Go.')
 
@@ -1346,6 +1349,49 @@ Each call runs a list of actions in order and returns a screenshot of the result
         with pytest.raises(UserError, match='The screen is 1280x800, larger than the model can see'):
             await agent.run('Go.')
         assert provider.actions == []
+
+    async def test_a_press_on_a_new_screen_whose_size_cant_be_read_is_never_released(
+        self, durability: list[AbstractCapability[object]]
+    ) -> None:
+        class NoSize(ScreenBackend):
+            async def display_size(self) -> tuple[int, int]:
+                raise WorkspaceError('cannot read the size')
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return NoSize(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(native=False), *durability],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.outcome == 'failed'
+        assert provider.actions == []
+
+    async def test_a_drag_or_a_click_releases_a_pressed_button(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted(
+                [{'type': 'mouse_down'}, {'type': 'drag', 'path': [{'x': 1, 'y': 1}, {'x': 5, 'y': 5}]}],
+                [{'type': 'mouse_down', 'button': 'right'}, {'type': 'click', 'button': 'right'}],
+            ),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        dragged, clicked = _returns((await agent.run('Go.')).all_messages())
+
+        assert dragged.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
+        assert clicked.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
+        # The run's end has nothing left to release.
+        assert provider.actions == [
+            MouseDown(),
+            Drag(path=(Point(x=1, y=1), Point(x=5, y=5))),
+            MouseDown(button='right'),
+            Click(button='right'),
+        ]
 
     async def test_an_environment_gone_at_the_end_of_a_run_leaves_its_result(self) -> None:
         class LostOnRelease(ScreenBackend):
