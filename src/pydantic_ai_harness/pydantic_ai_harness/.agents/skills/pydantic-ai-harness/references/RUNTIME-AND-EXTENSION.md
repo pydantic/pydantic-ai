@@ -98,8 +98,8 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   write, so the user needs index-creation privileges.
 - `PostgresStepStore(pool, *, table='step_persistence')`: `pool` is your own `asyncpg` pool (the
   driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
-  is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
-  `CREATE` on the schema.
+  is a prefix of at most 40 characters. It creates its tables on first use unless they all exist, so only that
+  first call needs `CREATE` on the schema.
 
 File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
