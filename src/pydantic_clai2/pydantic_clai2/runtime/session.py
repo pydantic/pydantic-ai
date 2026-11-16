@@ -138,8 +138,13 @@ def supports_local_workspace() -> bool:
     return sys.platform != 'win32'
 
 
-def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dynamic: bool = True) -> bool:
-    """Whether a plugin, such as a sandbox, supplies the run's workspace, so clai adds no `LocalWorkspace`.
+def _supplies_workspace(
+    plugins: Sequence[AgentCapability[DepsT]],
+    *,
+    include_dynamic: bool = True,
+    messages: Sequence[ModelMessage] = (),
+) -> bool:
+    """Whether a plugin, such as a sandbox, supplies the workspace of a run over `messages`, so clai adds no `LocalWorkspace`.
 
     A plugin counts when it has a leaf, loaded up front, that overrides `get_workspace`. With
     `include_dynamic`, a capability function counts too, as its capability is known only once the run starts.
@@ -159,11 +164,14 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dy
         elif include_dynamic:
             return True
     return any(
-        not leaf.defer_loading and _overrides_get_workspace(leaf, include_dynamic=include_dynamic) for leaf in leaves
+        not leaf.defer_loading and _overrides_get_workspace(leaf, include_dynamic=include_dynamic, messages=messages)
+        for leaf in leaves
     )
 
 
-def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic: bool) -> bool:
+def _overrides_get_workspace(
+    leaf: AbstractCapability[DepsT], *, include_dynamic: bool, messages: Sequence[ModelMessage]
+) -> bool:
     while isinstance(leaf, WrapperCapability):
         if type(leaf).get_workspace is not WrapperCapability.get_workspace:
             return True
@@ -173,10 +181,25 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic
             # A wrapped tree's leaves are visited on their own; only a lone wrapped capability hides behind its wrapper.
             return False
         leaf = leaf.wrapped
+    if isinstance(leaf, ConversationWorkspace):
+        return leaf.supplies(messages)
     if isinstance(leaf, DynamicCapability):
         # A capability function's capability, and so its workspace, is known only once the run starts.
         return include_dynamic and not isinstance(leaf, WorkspacelessCapability)
     return type(leaf).get_workspace is not AbstractCapability.get_workspace
+
+
+class ConversationWorkspace(AbstractCapability[DepsT]):
+    """A capability that supplies the run's workspace in some conversations only, such as the `sandbox` plugin's.
+
+    CLAI asks `supplies` before each run, with the history the run continues. While it is false, CLAI attaches
+    the session's directory as it would without this capability; while it is true, `get_workspace` supplies
+    the run's workspace instead.
+    """
+
+    def supplies(self, messages: Sequence[ModelMessage]) -> bool:
+        """Whether the workspace of a run continuing `messages` comes from this capability."""
+        return False
 
 
 class WorkspacelessCapability(DynamicCapability[DepsT]):
@@ -369,15 +392,15 @@ def _command_env() -> dict[str, str]:
 
 
 def local_workspace(
-    configured: Sequence[AgentCapability[DepsT]], directory: str | Path
+    configured: Sequence[AgentCapability[DepsT]], directory: str | Path, messages: Sequence[ModelMessage] = ()
 ) -> AgentCapability[DepsT] | None:
     """The workspace at `directory` that CLAI adds beside `configured`; `None` when it adds none.
 
     That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows. None is added when a capability loaded
-    up front supplies the workspace, such as a sandbox. When only a capability function might, the local
-    one defers to it.
+    up front supplies the workspace of a run continuing `messages`, such as a sandbox. When only a capability
+    function might, the local one defers to it.
     """
-    if _supplies_workspace(configured, include_dynamic=False):
+    if _supplies_workspace(configured, include_dynamic=False, messages=messages):
         return None
     local, fallback_type = (
         (LocalWorkspace[DepsT], _LocalFallback[DepsT])
@@ -1047,7 +1070,7 @@ class Session(Generic[DepsT, OutputT]):
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
         """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
         configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
-        if (local := local_workspace(configured, self.workspace)) is None:
+        if (local := local_workspace(configured, self.workspace, self._messages)) is None:
             return False
         capabilities.append(local)
         return True
