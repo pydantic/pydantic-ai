@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -1364,11 +1365,14 @@ class TestTracing:
         with pytest.raises(SpendLimitExceeded):
             await _gate(guard, ctx=_run_ctx(tracer=tracer))
 
-        attributes = dict(_only_span(exporter).attributes or {})
-        assert (attributes['spend.limit_kind'], attributes['spend.limit'], attributes['spend.spent']) == (
-            'tokens',
-            1000,
-            1100,
+        assert dict(_only_span(exporter).attributes or {}) == snapshot(
+            {
+                'spend.budget': 'default',
+                'spend.window': 'day',
+                'spend.limit_kind': 'tokens',
+                'spend.limit': 1000,
+                'spend.spent': 1100,
+            }
         )
 
     async def test_both_ceilings_exceeded_records_the_dollar_one(self):

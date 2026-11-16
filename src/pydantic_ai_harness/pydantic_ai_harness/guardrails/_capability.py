@@ -52,6 +52,7 @@ from pydantic_ai_harness._background_completion import get_background_completion
 from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
+    GuardCallable,
     GuardOutcome,
     GuardrailResult,
     RecordedVerdict,
@@ -346,7 +347,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         evaluation happens before anything is rewritten, and the redaction spans
         are recorded once every rewrite has succeeded.
         """
-        verdict, position = await self._screen(ctx, prompt)
+        guards = as_guards(self.guard, capability='InputGuardrail')
+        verdict, position = await self._screen(ctx, prompt, guards)
         if verdict.action == 'allow':
             return
         if self.parallel:
@@ -368,12 +370,11 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         same_text = original is not None and original.content == parts[0].content
         own_redaction = None
         if original is not None and not same_text:
-            own_redaction = await self._history_redaction(ctx, original)
+            own_redaction = await self._history_redaction(ctx, original, guards)
         for part in parts:
             _replace_prompt(part, replacement)
         if original is not None and (same_text or own_redaction is not None):
             _replace_prompt(original, replacement if own_redaction is None else own_redaction[0])
-        guards = as_guards(self.guard, capability='InputGuardrail')
         trace_redaction(ctx, direction='input', guard=guards[position], position=position, replacement=replacement)
         if own_redaction is not None:
             own_replacement, own_position = own_redaction
@@ -381,7 +382,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 ctx, direction='input', guard=guards[own_position], position=own_position, replacement=own_replacement
             )
 
-    async def _screen(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[GuardrailResult, int]:
+    async def _screen(
+        self, ctx: RunContext[AgentDepsT], prompt: str, guards: tuple[GuardCallable, ...]
+    ) -> tuple[GuardrailResult, int]:
         """Run the guard chain on `prompt`, returning an `allow` or `replace` verdict and raising for the others.
 
         `block` raises `SkipModelRequest`; `retry` and `approve` raise `UserError`.
@@ -402,8 +405,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 )
             case 'block':
                 message = verdict.message or _DEFAULT_INPUT_BLOCK_MESSAGE
-                guard = as_guards(self.guard, capability='InputGuardrail')[position]
-                trace_block(ctx, direction='input', guard=guard, position=position, message=message)
+                trace_block(ctx, direction='input', guard=guards[position], position=position, message=message)
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
@@ -414,7 +416,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         guards = as_guards(self.guard, capability='InputGuardrail')
         return await record_verdict(evaluate_all(guards, ctx, prompt, check_replacement=_require_prompt_text))
 
-    async def _history_redaction(self, ctx: RunContext[AgentDepsT], original: UserPromptPart) -> tuple[str, int] | None:
+    async def _history_redaction(
+        self, ctx: RunContext[AgentDepsT], original: UserPromptPart, guards: tuple[GuardCallable, ...]
+    ) -> tuple[str, int] | None:
         """The redaction of the history's `original` of a prompt the model was sent a changed copy of.
 
         The history is what later requests in the run, and any stored conversation, replay, so a
@@ -427,7 +431,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         Returns the replacement and the position of the guard that made it, or `None` when the
         original is left as it is.
         """
-        verdict, position = await self._screen(ctx, _prompt_text(original.content))
+        verdict, position = await self._screen(ctx, _prompt_text(original.content), guards)
         if verdict.action == 'allow':
             return None
         return _require_prompt_text(verdict.replacement, position), position
