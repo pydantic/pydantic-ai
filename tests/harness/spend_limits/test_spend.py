@@ -533,6 +533,121 @@ class TestScope:
         assert (await guard.status(scope='tenant-b'))[0].spent.usd == Decimal('0')
 
 
+@dataclass
+class _Account:
+    id: str
+    allowance_usd: Decimal | None = None
+    allowance_tokens: int | None = None
+
+
+def _account_budget(**kwargs: Any) -> Budget[_Account]:
+    return Budget[_Account](
+        usd=lambda ctx: ctx.deps.allowance_usd,
+        scope=lambda ctx: ctx.deps.id,
+        name='account',
+        **kwargs,
+    )
+
+
+class TestResolvedCeiling:
+    """A callable ceiling gives each scope partition its own allowance."""
+
+    async def test_each_partition_is_held_to_its_own_ceiling(self):
+        guard = SpendLimits(budgets=[_account_budget()], price=lambda r: Decimal('6'))
+        small = _Account('u1', allowance_usd=Decimal('5'))
+        large = _Account('u2', allowance_usd=Decimal('50'))
+        await _record(guard, ctx=_run_ctx(run_id='r1', deps=small))
+        await _record(guard, ctx=_run_ctx(run_id='r2', deps=large))
+
+        with pytest.raises(SpendLimitExceeded, match=r"'account' exhausted for this day: spent \$6 of \$5"):
+            await _gate(guard, ctx=_run_ctx(deps=small))
+        await _gate(guard, ctx=_run_ctx(deps=large))
+
+        [small_status] = await guard.status(_run_ctx(deps=small))
+        [large_status] = await guard.status(_run_ctx(deps=large))
+        assert (small_status.budget.usd, small_status.remaining_usd, small_status.exhausted) == (
+            Decimal('5'),
+            Decimal('-1'),
+            True,
+        )
+        assert (large_status.budget.usd, large_status.remaining_usd, large_status.exhausted) == (
+            Decimal('50'),
+            Decimal('44'),
+            False,
+        )
+
+    async def test_a_warning_fraction_applies_to_the_resolved_ceiling(self):
+        guard = SpendLimits(budgets=[_account_budget(warn_at=0.5)], price=lambda r: Decimal('6'))
+        ctx = _run_ctx(deps=_Account('u1', allowance_usd=Decimal('10')))
+        await _record(guard, ctx=ctx)
+
+        events: list[object] = list(ctx._event_stream_buffer or ())  # pyright: ignore[reportPrivateUsage]
+        [event] = events
+        assert isinstance(event, SpendRecordedEvent)
+        [budget] = event.budgets
+        assert (budget.usd_limit, budget.remaining_usd, budget.warning) == (Decimal('10'), Decimal('4'), True)
+
+    async def test_a_token_ceiling_resolves_too(self):
+        guard = SpendLimits(
+            budgets=[Budget[_Account](tokens=lambda ctx: ctx.deps.allowance_tokens, scope=lambda ctx: ctx.deps.id)]
+        )
+        account = _Account('u1', allowance_tokens=1000)
+        await _record(guard, ctx=_run_ctx(deps=account))
+
+        with pytest.raises(SpendLimitExceeded, match='used 1100 of 1000 tokens'):
+            await _gate(guard, ctx=_run_ctx(deps=account))
+
+    async def test_none_means_no_ceiling_for_that_partition(self):
+        guard = SpendLimits(budgets=[_account_budget(warn_at=0.5)], price=lambda r: Decimal('6'))
+        unlimited = _Account('u1')
+        await _record(guard, ctx=_run_ctx(deps=unlimited))
+
+        await _gate(guard, ctx=_run_ctx(deps=unlimited))
+        [status] = await guard.status(_run_ctx(deps=unlimited))
+        assert (status.remaining_usd, status.warning, status.exhausted) == (None, False, False)
+
+    async def test_the_counter_key_does_not_depend_on_the_ceiling(self):
+        """What is already spent carries over when an allowance changes."""
+        guard = SpendLimits(budgets=[_account_budget()], price=lambda r: Decimal('6'))
+        before = _run_ctx(deps=_Account('u1', allowance_usd=Decimal('5')))
+        await _record(guard, ctx=before)
+
+        [status] = await guard.status(_run_ctx(deps=_Account('u1', allowance_usd=Decimal('20'))))
+        assert status.key == (await guard.status(before))[0].key
+        assert (status.spent.usd, status.remaining_usd) == (Decimal('6'), Decimal('14'))
+
+    @pytest.mark.parametrize(
+        ('allowance', 'match'),
+        [
+            (6.5, 'must return Decimal or None; got float'),
+            (Decimal('0'), 'Budget.usd must be positive'),
+            (Decimal('NaN'), 'Budget.usd must be a finite amount'),
+        ],
+    )
+    async def test_a_resolved_ceiling_is_validated(self, allowance: Any, match: str):
+        guard = SpendLimits(budgets=[_account_budget()])
+
+        with pytest.raises(UserError, match=match):
+            await _gate(guard, ctx=_run_ctx(deps=_Account('u1', allowance_usd=allowance)))
+
+    async def test_a_boolean_token_ceiling_is_refused(self):
+        guard = SpendLimits(budgets=[Budget[Any](tokens=lambda ctx: True)])
+
+        with pytest.raises(UserError, match="`tokens` ceiling of budget 'default' must return int or None; got bool"):
+            await _gate(guard)
+
+    async def test_status_without_a_run_omits_it_and_exhausted_names_it(self):
+        guard = SpendLimits(budgets=[_account_budget(), Budget[_Account](window='total', name='all')])
+
+        assert [status.budget.name for status in await guard.status(scope='u1')] == ['all']
+        with pytest.raises(UserError, match=r"Cannot read budget\(s\) \['account'\]"):
+            await guard.exhausted(scope='u1')
+
+    def test_a_spec_cannot_carry_a_callable_ceiling(self):
+        with pytest.raises(UserError, match="budget 'usd' callable cannot be expressed in a spec"):
+            SpendLimits[None].from_spec(budgets=_spec_budgets({'usd': print}))
+
+
 class TestEnforcement:
     """The gate refuses the next request once a window is spent."""
 

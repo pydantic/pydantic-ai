@@ -91,10 +91,10 @@ class BudgetStatus:
     """A budget and how much of it is left."""
 
     budget: Budget[Any]
-    """The budget this describes.
+    """The budget this describes, with a callable ceiling resolved to the value it read.
 
     Unparameterised because this is a reading: the dependency type only types
-    `Budget.scope`, and nothing calls a scope through a status.
+    the callables of a `Budget`, and nothing calls one through a status.
     """
 
     key: str

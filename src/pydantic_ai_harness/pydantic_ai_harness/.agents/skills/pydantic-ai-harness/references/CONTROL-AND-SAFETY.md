@@ -491,7 +491,10 @@ limits = SpendLimits(
 windows: `'run' | 'conversation' | 'day' | 'month' | 'total'` (UTC). `'conversation'` keys on
 `ctx.conversation_id` (`run(conversation_id=...)`, else inherited from `message_history`, else new), so
 separate `agent.run` calls that pass the history share one bucket, kept 30 days by default. A budget
-with no ceiling is a counter only. `scope` returns a partition key string (tenant, user, model). `SpendLimits(budgets=(),
+with no ceiling is a counter only. `scope` returns a partition key string (tenant, user, model). `usd` and
+`tokens` also take a callable of the run context, so each partition gets its own ceiling
+(`usd=lambda ctx: ctx.deps.allowance_usd`; `None` means no ceiling); `status()` without `ctx` omits such a
+budget, and a spec cannot express one. `SpendLimits(budgets=(),
 store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, ...)`.
 
 - Readings: `await limits.status(ctx_or_none, scope='acme')` returns `BudgetStatus` list (`spent`,

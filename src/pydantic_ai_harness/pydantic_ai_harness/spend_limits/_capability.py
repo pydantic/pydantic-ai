@@ -25,7 +25,17 @@ from pydantic_ai.models._continuation import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.spend_limits._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
+from pydantic_ai_harness.spend_limits._budget import (
+    Budget,
+    BudgetSpec,
+    bucket,
+    ceilings,
+    delimited,
+    resolve_ceilings,
+    resolves_from_run,
+    scope_key,
+    store_key,
+)
 from pydantic_ai_harness.spend_limits._events import SpendBudgetStatus, SpendRecordedEvent
 from pydantic_ai_harness.spend_limits._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
 from pydantic_ai_harness.spend_limits._snapshot import BudgetStatus, SpendSnapshot, Spent, money_precision
@@ -430,8 +440,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     SpendBudgetStatus(
                         name=status.budget.name,
                         window=status.budget.window,
-                        usd_limit=status.budget.usd,
-                        token_limit=status.budget.tokens,
+                        usd_limit=ceilings(status.budget)[0],
+                        token_limit=ceilings(status.budget)[1],
                         key=status.key,
                         spent_usd=status.spent.usd,
                         spent_tokens=status.spent.tokens,
@@ -572,8 +582,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
         Inside a run, pass `ctx` and every budget resolves. Without one, budgets on a
         `run` or `conversation` window are omitted, since those periods have no meaning
-        outside a run, and a budget declaring a `scope` is omitted unless `scope` names
-        the partition to read.
+        outside a run, a budget whose ceiling is a callable is omitted, since only a run
+        resolves it, and a budget declaring a `scope` is omitted unless `scope` names the
+        partition to read.
 
         Use [`exhausted`][pydantic_ai_harness.spend_limits.SpendLimits.exhausted] when the answer
         gates something.
@@ -599,10 +610,15 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         keyed: list[tuple[Budget[AgentDepsT], str]] = []
         unresolved: list[str] = []
         for budget in self.budgets:
-            if ctx is None and (budget.window in _RUN_SCOPED_WINDOWS or (budget.scope is not None and scope is None)):
+            if ctx is None and (
+                budget.window in _RUN_SCOPED_WINDOWS
+                or resolves_from_run(budget)
+                or (budget.scope is not None and scope is None)
+            ):
                 unresolved.append(budget.name)
                 continue
-            keyed.append((budget, self._key(budget, ctx, now, scope)))
+            resolved = budget if ctx is None else resolve_ceilings(budget, ctx)
+            keyed.append((resolved, self._key(budget, ctx, now, scope)))
         read = await self._read(list(dict.fromkeys(key for _, key in keyed)))
         return tuple(_status(budget, key, read[key]) for budget, key in keyed), tuple(unresolved)
 
@@ -625,7 +641,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         if unresolved:
             raise UserError(
                 f'Cannot read budget(s) {sorted(unresolved)} without a run context or a `scope`, so this check '
-                'would pass having inspected nothing. Pass `scope=` for a scoped budget, or call it inside a run.'
+                'would pass having inspected nothing. Pass `scope=` for a scoped budget, or call it inside a run, '
+                'which a run or conversation window and a callable ceiling need.'
             )
         return any(status.exhausted for status in statuses)
 
@@ -743,10 +760,11 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
         """Raise if `spent` has reached either of the budget's ceilings."""
-        if budget.usd is not None and spent.usd >= budget.usd:
-            self._refuse(budget, ctx, f'spent ${spent.usd} of ${budget.usd}')
-        if budget.tokens is not None and spent.tokens >= budget.tokens:
-            self._refuse(budget, ctx, f'used {spent.tokens} of {budget.tokens} tokens')
+        usd, tokens = ceilings(budget)
+        if usd is not None and spent.usd >= usd:
+            self._refuse(budget, ctx, f'spent ${spent.usd} of ${usd}')
+        if tokens is not None and spent.tokens >= tokens:
+            self._refuse(budget, ctx, f'used {spent.tokens} of {tokens} tokens')
 
     def _refuse(self, budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT], detail: str) -> None:
         """Record the refusal as a span and raise."""
@@ -773,9 +791,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return await self._store.add_many(entries) if entries else {}
 
     async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
-        """Each budget paired with the store key it accumulates under right now."""
+        """Each budget, its ceilings resolved for this run, paired with the store key it accumulates under right now."""
         now = await self._now()
-        return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
+        return [(resolve_ceilings(budget, ctx), self._key(budget, ctx, now, None)) for budget in self.budgets]
 
     def _price_of(self, response: ModelResponse, *, failed_attempt: bool = False) -> tuple[Decimal, bool, str | None]:
         """What cost to record, whether it prices the whole response, and why it was rejected.
@@ -921,9 +939,10 @@ def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:
     application that lowered `Decimal` precision for its own arithmetic would otherwise be
     told a rounded number by a store that holds an exact one.
     """
+    usd, tokens = ceilings(budget)
     with money_precision():
-        remaining_usd = None if budget.usd is None else budget.usd - spent.usd
-    remaining_tokens = None if budget.tokens is None else budget.tokens - spent.tokens
+        remaining_usd = None if usd is None else usd - spent.usd
+    remaining_tokens = None if tokens is None else tokens - spent.tokens
     return BudgetStatus(
         budget=budget,
         key=key,
@@ -945,10 +964,11 @@ def _warning(budget: Budget[Any], spent: Spent) -> bool:
     if budget.warn_at is None:
         return False
     fraction = Decimal(str(budget.warn_at))
+    usd, tokens = ceilings(budget)
     with money_precision():
-        if budget.usd is not None and spent.usd >= budget.usd * fraction:
+        if usd is not None and spent.usd >= usd * fraction:
             return True
-    return budget.tokens is not None and spent.tokens >= budget.tokens * fraction
+    return tokens is not None and spent.tokens >= tokens * fraction
 
 
 def _is_spec_mapping(entry: object) -> TypeGuard[Mapping[str, Any]]:
@@ -967,6 +987,9 @@ def _budget_from_spec(entry: Any) -> Budget[Any]:
     fields = dict(entry)
     if 'scope' in fields:
         raise UserError('A SpendLimits budget scope is a callable and cannot be expressed in a spec.')
+    for name in ('usd', 'tokens'):
+        if callable(fields.get(name)):
+            raise UserError(f'A SpendLimits budget {name!r} callable cannot be expressed in a spec.')
     # Every number a spec can carry, not just `usd`: the others reached
     # `Budget.__post_init__` as strings and compared str to int there, which
     # surfaces as a bare TypeError naming no field.

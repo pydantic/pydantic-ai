@@ -8,7 +8,7 @@ counter. A new day is a new key.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Generic, Literal, assert_never
@@ -85,14 +85,20 @@ class Budget(Generic[AgentDepsT]):
     Budget(usd=Decimal('100'), window='day')
     Budget(usd=Decimal('10'), window='day', scope=lambda ctx: ctx.deps.tenant_id)
     Budget(window='month', name='accounting')  # counts, never blocks
+    Budget(usd=lambda ctx: ctx.deps.allowance_usd, window='month', scope=lambda ctx: ctx.deps.account_id)
     ```
+
+    A callable ceiling is resolved from the run on every request, alongside `scope`, so each
+    partition can carry its own allowance. Returning `None` means no ceiling for that partition.
+    Under durable execution it must return the same value when replayed with the same run
+    context: it is read in orchestration, so a changed value can flip a replayed refusal.
     """
 
-    usd: Decimal | None = None
-    """Ceiling in US dollars. `None` means this budget does not limit spend."""
+    usd: Decimal | Callable[[RunContext[AgentDepsT]], Decimal | None] | None = None
+    """Ceiling in US dollars, or a callable resolving it from the run. `None` means this budget does not limit spend."""
 
-    tokens: int | None = None
-    """Ceiling in total tokens. `None` means this budget does not limit tokens."""
+    tokens: int | Callable[[RunContext[AgentDepsT]], int | None] | None = None
+    """Ceiling in total tokens, or a callable resolving it from the run. `None` means this budget does not limit tokens."""
 
     window: Window = 'day'
     """The period the ceiling applies to."""
@@ -136,16 +142,7 @@ class Budget(Generic[AgentDepsT]):
             raise UserError(f'Budget.window must be one of {sorted(WINDOWS)}; got {self.window!r}.')
         if not self.name or SEPARATOR in self.name:
             raise UserError(f'Budget.name must be non-empty and must not contain {SEPARATOR!r}; got {self.name!r}.')
-        if self.usd is not None:
-            # Checked before the comparison, which raises `InvalidOperation` on a NaN
-            # rather than returning False. An infinity passes it and reads as a ceiling
-            # that can never be reached, which `usd=None` already says outright.
-            if not self.usd.is_finite():
-                raise UserError(f'Budget.usd must be a finite amount; got {self.usd}. Use `usd=None` for no ceiling.')
-            if self.usd <= 0:
-                raise UserError(f'Budget.usd must be positive; got {self.usd}. Use `usd=None` for no ceiling.')
-        if self.tokens is not None and self.tokens <= 0:
-            raise UserError(f'Budget.tokens must be positive; got {self.tokens}. Use `tokens=None` for no ceiling.')
+        self._check_ceilings()
         self._check_retain()
         if self.warn_at is not None:
             if not 0 < self.warn_at <= 1:
@@ -155,6 +152,19 @@ class Budget(Generic[AgentDepsT]):
                     f'Budget {self.name!r} sets warn_at but no `usd` or `tokens` ceiling, so the warning could '
                     'never fire. Add a ceiling, or drop warn_at to leave it a plain counter.'
                 )
+
+    def _check_ceilings(self) -> None:
+        """Validate plain ceilings; a callable's are validated once `resolve_ceilings` has its value."""
+        if self.usd is not None and not callable(self.usd):
+            # Checked before the comparison, which raises `InvalidOperation` on a NaN
+            # rather than returning False. An infinity passes it and reads as a ceiling
+            # that can never be reached, which `usd=None` already says outright.
+            if not self.usd.is_finite():
+                raise UserError(f'Budget.usd must be a finite amount; got {self.usd}. Use `usd=None` for no ceiling.')
+            if self.usd <= 0:
+                raise UserError(f'Budget.usd must be positive; got {self.usd}. Use `usd=None` for no ceiling.')
+        if self.tokens is not None and not callable(self.tokens) and self.tokens <= 0:
+            raise UserError(f'Budget.tokens must be positive; got {self.tokens}. Use `tokens=None` for no ceiling.')
 
     def _check_retain(self) -> None:
         if isinstance(self.retain, timedelta):
@@ -267,6 +277,39 @@ def scope_key(budget: Budget[Any], ctx: RunContext[Any] | None, explicit: str | 
             "so returning it would share that budget's counter."
         )
     return resolved
+
+
+def resolves_from_run(budget: Budget[Any]) -> bool:
+    """Whether a ceiling of `budget` is a callable, which only a run context can resolve."""
+    return callable(budget.usd) or callable(budget.tokens)
+
+
+def resolve_ceilings(budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT]) -> Budget[AgentDepsT]:
+    """`budget` with its callable ceilings resolved for this run, validated as a plain ceiling is.
+
+    A partition resolved to no ceiling at all drops `warn_at`, which has nothing left to be a fraction of.
+    """
+    if not resolves_from_run(budget):
+        return budget
+    usd = budget.usd(ctx) if callable(budget.usd) else budget.usd
+    tokens = budget.tokens(ctx) if callable(budget.tokens) else budget.tokens
+    for kind, resolved, expected in (('usd', usd, Decimal), ('tokens', tokens, int)):
+        # Checked rather than coerced, as `scope` is: an allowance read from deps is often a float.
+        if resolved is not None and (isinstance(resolved, bool) or not isinstance(resolved, expected)):
+            raise UserError(
+                f'The `{kind}` ceiling of budget {budget.name!r} must return {expected.__name__} or None; '
+                f'got {type(resolved).__name__}.'
+            )
+    warn_at = None if usd is None and tokens is None else budget.warn_at
+    return replace(budget, usd=usd, tokens=tokens, warn_at=warn_at)
+
+
+def ceilings(budget: Budget[Any]) -> tuple[Decimal | None, int | None]:
+    """The USD and token ceilings of a budget `resolve_ceilings` has resolved."""
+    usd, tokens = budget.usd, budget.tokens
+    if callable(usd) or callable(tokens):  # pragma: no cover - callers resolve first
+        raise UserError(f'Budget {budget.name!r} resolves its ceiling from the run, which needs a run context.')
+    return usd, tokens
 
 
 def store_key(budget: Budget[Any], bucket_id: str, scope: str) -> str:
