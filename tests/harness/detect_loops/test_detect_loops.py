@@ -429,6 +429,22 @@ class TestDetectLoops:
         assert 'detect_loops.fingerprints' not in (span.attributes or {})
         assert (span.attributes or {})['detect_loops.pattern'] == 'repeated_result'
 
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_tool_name_the_run_does_not_offer_is_content(self, include_content: bool):
+        """The model made the name up, so it is model output, not one of the run's tool names."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = _agent([[_call('made_up_tool')]] * 3, DetectLoops())
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=include_content)
+
+        await agent.run('Read it')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop detected']
+        attributes = dict(span.attributes or {})
+        assert attributes['detect_loops.tool_names'] == ()
+        assert attributes.get('detect_loops.unknown_tool_names') == (('made_up_tool',) if include_content else None)
+
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_cleared_tool_results_are_not_mistaken_for_a_loop(self):
         loops, detector = _collect()

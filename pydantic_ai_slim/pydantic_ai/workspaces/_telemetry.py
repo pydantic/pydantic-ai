@@ -112,12 +112,11 @@ def _span(
     backend: WorkspaceBackend | None = None,
 ) -> Generator[Span]:
     """Open `workspace {name}`, naming the environment it ran in when given `backend`."""
-    token = _opened_by.set(current_run_telemetry())
+    telemetry = current_run_telemetry()
+    token = _opened_by.set(telemetry)
     try:
         # A missing file is often an expected answer, not a failure.
-        with open_span(
-            current_run_telemetry(), f'workspace {name}', attributes=attributes, not_errors=(FileNotFoundError,)
-        ) as span:
+        with open_span(telemetry, f'workspace {name}', attributes=attributes, not_errors=(FileNotFoundError,)) as span:
             # The ref is read only when recording, so an untraced call never touches it.
             traced = backend if span.is_recording() else None
             if traced is not None:
