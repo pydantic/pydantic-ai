@@ -487,6 +487,7 @@ def test_logfire(
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -1283,6 +1284,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'tool',
                         'output_object': None,
                         'output_tools': [
@@ -1598,6 +1600,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
