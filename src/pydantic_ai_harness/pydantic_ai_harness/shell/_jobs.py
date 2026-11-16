@@ -347,6 +347,10 @@ class Job:
                 log_limit=log_limit,
                 interval=_LOG_CHECK_INTERVAL,
             )
+        if workspace.platform == 'windows':
+            raise WorkspaceError(
+                "Shell commands on a `'windows'` workspace need a backend that implements `JobScripts`."
+            )
         script = cls._launch_script(
             directory, cwd, exclusive=exclusive, combined=combined, file_limit=file_limit, log_limit=log_limit
         )

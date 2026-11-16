@@ -541,8 +541,9 @@ class TestRootDir:
         assert await call_tools([FileSystem[None](root_dir='/srv')], [], workspace=UntouchableWorkspace()) == []
 
     async def test_no_workspace_fails_the_run(self) -> None:
-        with pytest.raises(UserError, match='`FileSystem` needs a workspace'):
+        with pytest.raises(UserError, match='`FileSystem` needs a workspace') as error:
             await call_tool([FileSystem[None]()], 'list_directory', {})
+        assert "Add `LocalWorkspace('.')`" in str(error.value)
 
     async def test_no_workspace_names_the_one_the_history_continues_in(self, tmp_path: Path) -> None:
         capabilities: list[AbstractCapability[object]] = [LocalWorkspace(tmp_path), FileSystem[object]()]

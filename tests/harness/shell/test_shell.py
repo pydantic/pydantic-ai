@@ -2509,6 +2509,12 @@ class _WindowsCommandsBackend:
 
 
 class TestShellOnWindowsWorkspace:
+    async def test_a_backend_without_job_scripts_is_refused(self) -> None:
+        """The `sh` launcher would reach PowerShell and fail there, rather than say what is missing."""
+        workspace = Workspace(_WindowsCommandsBackend())
+        with pytest.raises(WorkspaceError, match='need a backend that implements `JobScripts`'):
+            await Job.launch(workspace, 'Write-Output hi', base='C:\\jobs', cwd='C:\\project', env=None, combined=True)
+
     async def test_tools_name_powershell_and_leave_out_run_command(self) -> None:
         """`run_command` wraps commands in `sh`, and the `shell` description would otherwise teach `tail` and `kill`."""
         offered: dict[str, str | None] = {}
