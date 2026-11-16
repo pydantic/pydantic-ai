@@ -45,7 +45,7 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
-from ...exceptions import UnexpectedModelBehavior
+from ...exceptions import ModelAPIError
 from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
@@ -128,12 +128,14 @@ class AnthropicStreamedResponse(StreamedResponse):
             if (
                 native_computer
                 and not self._ended
+                and not self.cancelled
                 and (self._computer_batch.blocks or native_computer.answers(self._current_block))
             ):
                 # The stream stopped early: a call after the ones that arrived may be missing, and they run as one.
                 # OpenAI doesn't raise here: its computer calls each arrive whole, while these toolset calls are a batch.
-                raise UnexpectedModelBehavior(
-                    'The response ended before Claude finished its computer use calls, so none of them ran.'
+                raise ModelAPIError(
+                    model_name=self.model_name,
+                    message='The response ended before Claude finished its computer use calls, so none of them ran.',
                 )
             for event_ in self._start_computer_batch():
                 yield event_

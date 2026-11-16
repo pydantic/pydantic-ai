@@ -13,7 +13,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import Hooks, NativeTool, ValidatedToolArgs
 from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys
-from pydantic_ai.exceptions import ToolFailed, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -871,6 +871,15 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [(False, ['OK']), (False, ['Ran 2 actions.'])],
             id='screenshot-removed',
         ),
+        # A zoom's image is its call's output, not the screen, which was removed.
+        pytest.param(
+            [{'id': 'toolu_1', 'name': 'zoom', 'input': {'region': [0, 0, 4, 4]}}, _CLICK_TYPE[0]],
+            [1, 1],
+            ['Ran 2 actions.', _PNG],
+            {'performed': 2},
+            [(False, ['OK', 'image']), (False, ['Ran 2 actions.'])],
+            id='zoom-without-the-screen',
+        ),
         # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
         pytest.param(
             _CLICK_TYPE,
@@ -1145,10 +1154,11 @@ async def test_a_stream_that_ends_inside_the_batch_runs_none_of_it(allow_model_r
         BetaRawContentBlockStopEvent,
     ]
     with pytest.raises(
-        UnexpectedModelBehavior,
+        ModelAPIError,
         match=r'^The response ended before Claude finished its computer use calls, so none of them ran\.$',
-    ):
+    ) as error:
         await _streamed(events[:kept])
+    assert error.value.model_name == 'claude-sonnet-5-5'
 
 
 @pytest.mark.parametrize('stop_reason', ['refusal', 'max_tokens'])

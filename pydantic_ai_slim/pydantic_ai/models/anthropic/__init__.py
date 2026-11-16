@@ -3301,10 +3301,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 is_error=False,
             )
 
-        # A `computer` result is read as validated, so content stored as a JSON string keeps its screenshot.
-        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-        items = list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
-        tool_result_content = [await self._map_tool_result_item(item, map_context) for item in items]
+        tool_result_content = [await self._map_tool_result_item(item, map_context) for item in _result_items(part)]
 
         return beta_tool_result_block_param.BetaToolResultBlockParam(
             tool_use_id=_guard_tool_call_id(t=part),
@@ -3396,16 +3393,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 computer_tool=replay['computer_tool'],
                 computer_action_counts=replay['computer_action_counts'],
             )
-            toolset: dict[str, Any] = {}
             if sent_computer.is_toolset:
                 map_context.computer_calls[part_id] = replay
-                toolset = {'toolset_name': 'computer'}
-            assistant_content_params.extend(
-                BetaToolUseBlockParam(
-                    id=block['id'], type='tool_use', name=block['name'], input=block['input'], **toolset
-                )
-                for block in replay['computer_blocks']
-            )
+            for block in replay['computer_blocks']:
+                call = BetaToolUseBlockParam(id=block['id'], type='tool_use', name=block['name'], input=block['input'])
+                if sent_computer.is_toolset:
+                    call['toolset_name'] = 'computer'
+                assistant_content_params.append(call)
         else:
             assistant_content_params.append(
                 BetaToolUseBlockParam(
@@ -4118,10 +4112,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 response = SCREENSHOT_NOT_LAST  # in place of a validation error Claude can't read
             text = BetaTextBlockParam(text=response, type='text')
             return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
-        # A summary, what each action returned, then the screen, unless something such as a history processor dropped
-        # it or left a note in its place. Read as validated, so content stored as a JSON string still reads as a list.
-        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-        content: list[str | MultiModalContent] = list(typed) if typed is not None else part.content_items(mode='str')
+        content = _result_items(part)
         if not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
             # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: each call gets
             # the summary instead of `OK`, and the last one the rest. With no content at all, each still gets a result.
@@ -4130,14 +4121,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 _computer_result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
                 for index, block in enumerate(blocks)
             ]
-        return await self._map_computer_outcome(replay, metadata, content, part.screenshot, map_context)
+        return await self._map_computer_outcome(replay, metadata, content, map_context)
 
     async def _map_computer_outcome(
         self,
         replay: ComputerReplay,
         metadata: ComputerResult,
         content: list[str | MultiModalContent],
-        screen: BinaryImage | None,
         map_context: _MapMessagesContext,
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """The results of the calls once the outcome says how many of their actions ran."""
@@ -4145,22 +4135,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The number of actions up to and including each call's: each call may have become several, such as keys.
         ends = list(itertools.accumulate(counts))
         performed, error = metadata['performed'], metadata.get('error')
-        # The index of the last call whose actions all ran, or -1.
-        last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
-        summary = content[0] if content and isinstance(content[0], str) else None
-        # What each action returned, such as a zoom's image, in order, then any note left in the screenshot's place.
-        outputs = content[summary is not None : len(content) - (screen is not None)]
+        ran = [index for index, end in enumerate(ends) if end <= performed]
+        returned = sum(blocks[index]['name'] in RETURNS_OUTPUT for index in ran)
+        outputs, screen, note = _split_computer_content(content, returned)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, (block, end, count) in enumerate(zip(blocks, ends, counts)):
             if end <= performed:
-                is_last_ran = index == last_ran
-                results.append(
-                    await self._map_ran_computer_call(block, is_last_ran, screen, summary, outputs, map_context)
-                )
+                output = next(outputs, None) if block['name'] in RETURNS_OUTPUT else None
+                is_last_ran = index == ran[-1]
+                results.append(await self._map_ran_computer_call(block, is_last_ran, screen, note, output, map_context))
             elif error is not None and end - count <= performed:
                 # Its first action was reached, so one of its actions is the one that failed.
                 # Only when no call before it ran does it carry the screen.
-                screen_carrier = screen if last_ran == -1 else None
+                screen_carrier = None if ran else screen
                 results.append(await self._map_failed_computer_call(block, error, screen_carrier, map_context))
             else:
                 results.append(
@@ -4173,23 +4160,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         block: ComputerBlock,
         is_last_ran: bool,
         screen: BinaryImage | None,
-        summary: str | None,
-        outputs: list[str | MultiModalContent],
+        note: str,
+        output: str | MultiModalContent | None,
         map_context: _MapMessagesContext,
     ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """`OK` and what the call's action returned, taken from `outputs`; the last call that ran also gets the screen."""
-        returned = (
-            [await self._map_tool_result_item(outputs.pop(0), map_context)]
-            if block['name'] in RETURNS_OUTPUT and outputs
-            else []
-        )
+        """`OK` and what the call's action returned; the last call that ran also gets the screen, or `note` without it."""
+        returned = [await self._map_tool_result_item(output, map_context)] if output is not None else []
         ok = BetaTextBlockParam(text='OK', type='text')
         if not is_last_ran:
             return _computer_result(block, False, ok, *returned)
         if screen is None:
-            # The screenshot was left out of this request: the call gets the summary and any note saying why.
-            text = ' '.join(item for item in (summary, *outputs) if isinstance(item, str)) or 'OK'
-            return _computer_result(block, False, BetaTextBlockParam(text=text, type='text'), *returned)
+            return _computer_result(block, False, BetaTextBlockParam(text=note, type='text'), *returned)
         return _computer_result(block, False, ok, *returned, await self._map_tool_result_item(screen, map_context))
 
     async def _map_failed_computer_call(
@@ -4568,6 +4549,28 @@ def _computer_tool_params(
             'cannot be sent beside a function tool named `computer`. Rename one of them.'
         )
     return [native_computer.tool_param()]
+
+
+def _split_computer_content(
+    content: list[str | MultiModalContent], returned: int
+) -> tuple[Iterator[str | MultiModalContent], BinaryImage | None, str]:
+    """A `computer` result's outputs, its screen, and the text the last call that ran gets without the screen.
+
+    The content is a summary, what the `returned` calls with an output returned, such as a zoom's image, then the
+    screen, unless something such as a history processor dropped it or left a note in its place.
+    """
+    summary = content[0] if content and isinstance(content[0], str) else None
+    start = int(summary is not None)
+    rest = content[start + returned :]
+    screen = rest[0] if rest and isinstance(rest[0], BinaryImage) else None
+    note = ' '.join(item for item in (summary, *rest) if isinstance(item, str)) or 'OK'
+    return iter(content[start : start + returned]), screen, note
+
+
+def _result_items(part: ToolReturnPart) -> list[str | MultiModalContent]:
+    """A result's content items; a `computer` result's as validated, so content stored as a JSON string keeps its images."""
+    typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
+    return list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
 
 
 def _computer_result(
