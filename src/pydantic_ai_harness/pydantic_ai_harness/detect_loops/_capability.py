@@ -347,6 +347,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
 
     async def _act(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
+        # The names come from the model's tool calls, so one the run doesn't offer is model output.
+        offered = ctx.tools
+        unknown_tool_names = tuple(name for name in loop.tool_names if name not in offered)
         record_decision(
             ctx,
             'loop detected',
@@ -355,10 +358,13 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
                 'detect_loops.action': action if isinstance(action, str) else 'handler',
                 'detect_loops.count': loop.count,
                 'detect_loops.window': loop.window,
-                'detect_loops.tool_names': loop.tool_names,
+                'detect_loops.tool_names': tuple(name for name in loop.tool_names if name in offered),
             },
-            # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
-            content={'detect_loops.fingerprints': loop.fingerprints},
+            content={
+                # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
+                'detect_loops.fingerprints': loop.fingerprints,
+                **({'detect_loops.unknown_tool_names': unknown_tool_names} if unknown_tool_names else {}),
+            },
         )
         if not isinstance(action, str):
             result = action(ctx, loop)
