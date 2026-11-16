@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -46,6 +45,7 @@ from pydantic_ai_harness.dynamic_workflow import (
     DynamicWorkflow,
     DynamicWorkflowToolset,
     WorkflowAgent,
+    WorkflowCall,
     WorkflowResourceLimits,
 )
 
@@ -1532,12 +1532,23 @@ async def test_call_scheduler_registers_calls_before_starting_them() -> None:
     )
     out = await _run_script(workflow.get_toolset(), code, ctx)
     assert out == snapshot(['A', 'B', 'A'])
-    assert events == snapshot(['register', 'register', 'flush', 'start', 'start', 'register', 'flush', 'start'])
+    assert events == snapshot(
+        [
+            'register alpha',
+            'register beta',
+            'flush',
+            'start alpha',
+            'start beta',
+            'register alpha',
+            'flush',
+            'start alpha',
+        ]
+    )
     assert contexts == [ctx]
 
 
 class _FailingScheduler:
-    async def run(self, start: Callable[[], Awaitable[object]]) -> object:
+    async def run(self, call: WorkflowCall) -> object:
         raise ValueError('host detail')
 
     async def flush(self) -> None:

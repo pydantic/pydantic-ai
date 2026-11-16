@@ -506,29 +506,28 @@ Under other engines, sub-agents run concurrently.
 ### Scheduling sub-agent calls
 
 `call_scheduler` decides when the script's sub-agent calls start. It is called with the run
-context once per `run_workflow` call, and returns a `WorkflowCallScheduler`: each call goes through
-its `run`, which starts the sub-agent by awaiting `start()`, and its `flush` is awaited each time
-the script waits on its calls, once every call made before the wait has reached `run`. A durable
-engine integration can use this to register every call of a batch, in the order the script made
+context once per `run_workflow` call, and returns a `WorkflowCallScheduler`. Each call reaches its
+`run` as a `WorkflowCall` carrying the sub-agent's `agent_name`, and starts when `run` awaits
+`call.start()`. Its `flush` is awaited each time the script waits on its calls, once every call
+made before the wait has reached `run`. A durable engine integration can use this to register every call of a batch, in the order the script made
 them, before any of them starts:
 
 ```python
 import asyncio
-from collections.abc import Awaitable, Callable
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowCall
 
 
 class StartTogether:
     def __init__(self) -> None:
         self._held: list[asyncio.Future[None]] = []
 
-    async def run(self, start: Callable[[], Awaitable[object]]) -> object:
+    async def run(self, call: WorkflowCall) -> object:
         held = asyncio.get_running_loop().create_future()
-        self._held.append(held)  # register the call with the engine here
+        self._held.append(held)  # register `call.agent_name` with the engine here
         await held
-        return await start()
+        return await call.start()
 
     async def flush(self) -> None:
         for held in self._held:
@@ -544,10 +543,10 @@ reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for 
 workflow = DynamicWorkflow(agents=[reviewer], call_scheduler=start_together)
 ```
 
-A call only completes after `run` awaits its `start()`, so a scheduler that holds calls back has to
-release them in `flush`. Under `AWSLambdaDurability`, the calls that have started when `flush`
-returns run as one `parallel` operation, so a released call has to await `start()` without
-suspending first: one that waits on something else first, such as a concurrency limit, misses the
+A call only completes after `run` awaits its `call.start()`, so a scheduler that holds calls back
+has to release them in `flush`. Under `AWSLambdaDurability`, the calls that have started when
+`flush` returns run as one `parallel` operation, so a released call has to await `call.start()`
+without suspending first: one that waits on something else first, such as a concurrency limit, misses the
 operation and the script waits on it indefinitely. An exception that `run` raises itself reaches
 the script as a `RuntimeError` naming only its type. Under `DBOSDurability` the calls already
 start one at a time in dispatch order, and the `call_scheduler` factory is not called.

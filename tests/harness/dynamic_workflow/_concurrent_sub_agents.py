@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowCall
 
 SCRIPT = "import asyncio\nawait asyncio.gather(summarize(task='alpha'), summarize(task='beta'))"
 EXPECTED = "done: ['summary of alpha', 'summary of beta']"
@@ -23,13 +23,13 @@ class DeferredStarts:
         self.events = events
         self._gates: list[asyncio.Future[None]] = []
 
-    async def run(self, start: Callable[[], Awaitable[object]]) -> object:
+    async def run(self, call: WorkflowCall) -> object:
         gate = asyncio.get_running_loop().create_future()
         self._gates.append(gate)
-        self.events.append('register')
+        self.events.append(f'register {call.agent_name}')
         await gate
-        self.events.append('start')
-        return await start()
+        self.events.append(f'start {call.agent_name}')
+        return await call.start()
 
     async def flush(self) -> None:
         self.events.append('flush')

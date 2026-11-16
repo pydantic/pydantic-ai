@@ -219,23 +219,34 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
 }
 
 
+@dataclass(frozen=True)
+class WorkflowCall:
+    """One sub-agent call a workflow script made, handed to a `WorkflowCallScheduler`."""
+
+    agent_name: str
+    """The sandbox function name the script called."""
+
+    start: Callable[[], Awaitable[object]]
+    """Runs the sub-agent and returns its output."""
+
+
 class WorkflowCallScheduler(Protocol):
     """Decides when the sub-agent calls of one workflow script start.
 
     `DynamicWorkflow(call_scheduler=...)` creates one for each `run_workflow` call.
     """
 
-    async def run(self, start: Callable[[], Awaitable[object]]) -> object:
-        """Run one sub-agent call by awaiting `start()`, which runs the sub-agent and returns its output."""
+    async def run(self, call: WorkflowCall) -> object:
+        """Run one sub-agent call by awaiting `call.start()`, and return its output."""
         ...
 
     async def flush(self) -> None:
         """Called each time the script waits on its calls, once every call it made before the wait has reached `run`.
 
-        A call the script is waiting on only completes once `run` awaits its `start()`, so a
+        A call the script is waiting on only completes once `run` awaits its `call.start()`, so a
         scheduler that holds calls back must release them here. A durable engine that batches the
         calls, like `AWSLambdaDurability`, takes its batch right after this returns, so under one a
-        released call has to await `start()` without suspending first, or it misses the batch
+        released call has to await `call.start()` without suspending first, or it misses the batch
         and the script waits on it indefinitely.
         """
         ...
@@ -257,7 +268,7 @@ def _apply_scheduler(
                 raise
 
         try:
-            return await scheduler.run(start)
+            return await scheduler.run(WorkflowCall(agent_name, start))
         except Exception as exc:
             if exc in dispatch_errors:
                 raise

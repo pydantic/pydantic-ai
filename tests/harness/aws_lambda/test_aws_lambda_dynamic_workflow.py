@@ -373,7 +373,7 @@ def test_calls_a_scheduler_releases_join_the_parallel_operation() -> None:
     orchestrator = Agent(orchestrator_model(script), name='orchestrator', deps_type=type(None), capabilities=[workflow])
     service = _Service()
     assert service.invoke(orchestrator) == EXPECTED
-    assert events == ['register', 'register', 'flush', 'start', 'start']
+    assert events == ['register alpha', 'register beta', 'flush', 'start alpha', 'start beta']
     assert [op.name for op in service.children('run_workflow')] == ['parallel-branch-0', 'parallel-branch-1']
 
 
