@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -80,15 +79,13 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
 
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
-    for 1280x800, or its `(width, height)`. The size applies to a new sandbox; an attached one keeps its own. A public
-    sandbox's desktop is refused, since its preview links need no token."""
+    for 1280x800, or its `(width, height)`. The size applies to a new sandbox; an attached one keeps its own."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('DaytonaSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
-        desktop_size(self.desktop)
 
     @classmethod
     def from_spec(

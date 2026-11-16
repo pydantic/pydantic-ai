@@ -12,7 +12,8 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 - `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
   emoji.
 - `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
-  scroll lock and media keys.
+  scroll lock and media keys (`unsupported key "print"`), and the desktop keeps working.
+- The mouse has no `back` or `forward` button (`unsupported mouse button "back"`).
 - Its keypad digits are `num0` to `num9`, which follow Num Lock, and Num Lock is `num_lock`. Its other keypad names
   type other keys (`num_plus` types `n`), and the display refuses `menu`.
 - Pressing `f13` to `f24` crashes the computer-use process for good.
@@ -54,7 +55,7 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import png_from_base64
-from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
+from pydantic_ai_harness._drag import DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness._workspace_provider import run_to_completion
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
@@ -81,46 +82,28 @@ _TYPED_PER_REQUEST = 2_000
 _SCROLLED_PER_REQUEST = 500
 """Wheel clicks scrolled by one request, well inside `_REQUEST_TIMEOUT`: 1,000 take about 21 seconds."""
 
-_BUTTONS = frozenset({'left', 'middle', 'right'})
+_MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'cmd'})
+"""Daytona's names for the modifier keys."""
 
-_MODIFIERS = {'ctrl': 'ctrl', 'shift': 'shift', 'alt': 'alt', 'super': 'cmd'}
+_RENAMED_KEYS = {'super': 'cmd', **{f'numpad{n}': f'num{n}' for n in range(10)}, 'numlock': 'num_lock'}
+"""Normalized key names Daytona presses under another name; it presses the rest under their own, or refuses them."""
 
-_NAMED_KEYS = frozenset(
+_REFUSED_KEYS = frozenset(
     {
-        'enter',
-        'escape',
-        'tab',
-        'backspace',
-        'delete',
-        'insert',
-        'home',
-        'end',
-        'pageup',
-        'pagedown',
-        'up',
-        'down',
-        'left',
-        'right',
-        'space',
-        'capslock',
-        *(f'f{n}' for n in range(1, 13)),
+        *(f'f{n}' for n in range(13, 25)),
+        'numpad_enter',
+        'numpad_add',
+        'numpad_subtract',
+        'numpad_multiply',
+        'numpad_divide',
+        'numpad_decimal',
     }
 )
-"""Normalized key names Daytona presses under the same name; `f13` to `f24` crash its desktop."""
-
-_RENAMED_KEYS = {**{f'numpad{n}': f'num{n}' for n in range(10)}, 'numlock': 'num_lock'}
-"""Normalized key names Daytona presses under another name."""
-
-_UNSHIFTED = frozenset("abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./")
+"""Normalized key names Daytona would get wrong: `f13` to `f24` crash its desktop, and its keypad operator and Enter
+keys type other characters."""
 
 _SHIFTED = dict(zip('~!@#$%^&*()_+{}|:"<>?', "`1234567890-=[]\\;',./"))
 """A symbol typed with shift, and the key it is on: Daytona's display has a US keyboard layout."""
-
-
-def _button(button: str) -> str:
-    if button not in _BUTTONS:
-        raise UnsupportedActionError(f"Daytona's desktop has no {button!r} mouse button.")
-    return button
 
 
 async def _send_input(request: Callable[[], Awaitable[_T]]) -> _T:
@@ -172,16 +155,12 @@ def _keys(keys: Sequence[str]) -> list[str]:
     """Daytona's names for the keys, in order, with `shift` before a shifted symbol."""
     names: list[str] = []
     for key in keys:
-        if key in _MODIFIERS:
-            names.append(_MODIFIERS[key])
-        elif key in _NAMED_KEYS or key in _UNSHIFTED:
-            names.append(key)
-        elif key in _RENAMED_KEYS:
-            names.append(_RENAMED_KEYS[key])
-        elif key in _SHIFTED:
+        if key in _REFUSED_KEYS:
+            raise UnsupportedActionError(f"Daytona's desktop cannot press the key {key!r}.")
+        if key in _SHIFTED:
             names += ['shift', _SHIFTED[key]]
         else:
-            raise UnsupportedActionError(f"Daytona's desktop cannot press the key {key!r}.")
+            names.append(_RENAMED_KEYS.get(key, key))
     return list(dict.fromkeys(names))
 
 
@@ -286,7 +265,7 @@ class DaytonaDesktop:
         mouse = self._computer_use().mouse
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
-                button, held = _button(button), _keys(modifiers)
+                held = _keys(modifiers)
                 x, y = await self._at(x, y)
                 await _send_input(
                     partial(mouse.click, x, y, button, clicks=count, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
@@ -298,9 +277,9 @@ class DaytonaDesktop:
                 async with self._holding(_keys(modifiers)):
                     await self._drag(path)
             case MouseDown(button=button):
-                await _send_input(partial(mouse.down, button=_button(button), request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.down, button=button, request_timeout=_REQUEST_TIMEOUT))
             case MouseUp(button=button):
-                await _send_input(partial(mouse.up, button=_button(button), request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.up, button=button, request_timeout=_REQUEST_TIMEOUT))
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 held = _keys(modifiers)
                 await self._scroll(*await self._at(x, y), direction, amount, held)
@@ -318,18 +297,16 @@ class DaytonaDesktop:
         mouse, start, end = self._computer_use().mouse, path[0], path[-1]
         try:
             await _send_input(partial(mouse.down, start.x, start.y, request_timeout=_REQUEST_TIMEOUT))
-            await anyio.sleep(DRAG_PRESS_PAUSE)
             for point in drag_steps(path):
                 await anyio.sleep(DRAG_STEP_PAUSE)
                 await _send_input(partial(mouse.move, point.x, point.y, request_timeout=_REQUEST_TIMEOUT))
-            await anyio.sleep(DRAG_PRESS_PAUSE)
             await _send_input(partial(mouse.up, end.x, end.y, request_timeout=_REQUEST_TIMEOUT))
         except BaseException as error:
             await _let_go(error, ['the left mouse button'], lambda _: mouse.up(request_timeout=_REQUEST_TIMEOUT))
             raise
 
     async def _press(self, names: list[str], repeat: int) -> None:
-        modifiers = [name for name in names if name in _MODIFIERS.values()]
+        modifiers = [name for name in names if name in _MODIFIERS]
         others = [name for name in names if name not in modifiers]
         for _ in range(repeat):
             if len(others) == 1:
