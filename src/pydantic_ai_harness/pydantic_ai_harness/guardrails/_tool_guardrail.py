@@ -46,6 +46,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
+    GuardrailDirection,
     RecordedVerdict,
     evaluate_all,
     record_verdict,
@@ -64,8 +65,8 @@ _DEFAULT_ARGS_BLOCK_MESSAGE = 'Tool call blocked by tool guardrail.'
 _DEFAULT_RESULT_BLOCK_MESSAGE = 'Tool result blocked by tool guardrail.'
 _DEFAULT_RETRY_MESSAGE = 'Tool call rejected by tool guardrail.'
 
-_ARGS_DIRECTION = 'tool args'
-_RESULT_DIRECTION = 'tool result'
+_ARGS_DIRECTION: GuardrailDirection = 'tool args'
+_RESULT_DIRECTION: GuardrailDirection = 'tool result'
 
 # What `_screen_result` returns for `allow`: the tool's own result or failure goes to the model.
 _UNCHANGED = object()

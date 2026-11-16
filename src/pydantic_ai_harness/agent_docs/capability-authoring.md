@@ -342,6 +342,13 @@ What to record, and where:
   is outermost; a capability that is also outermost and listed before an explicit `Instrumentation`
   sees the enclosing span instead. Don't call `opentelemetry.trace.get_current_span()` directly: in an
   uninstrumented run it returns whatever span the application has open, such as its request span.
+- `current_span(ctx)` in a tool's own body, including a toolset's `call_tool`, is also that call's
+  `execute_tool` span, not only the span seen by tool hooks.
+- Take `current_span(ctx)` before or after nested work, never while a child span may be current in
+  another task.
+- A durable-unit context that did not carry the tracer makes every telemetry helper a no-op: the unit
+  is untraced.
+- Holding a `RunTelemetry` for one operation and clearing it in `finally` is not storing a tracer.
 - Give a decision its own `record_decision` when there's no span to put it on, when one span can see
   several decisions (guards in a chain), or when operators should find it by name across capabilities
   (`guardrail blocked input`, `spend budget exhausted`). It is currently a zero-duration span and may

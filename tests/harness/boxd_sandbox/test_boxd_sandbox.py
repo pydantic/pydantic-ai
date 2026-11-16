@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -10,9 +11,6 @@ import anyio
 import boxd
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
@@ -25,7 +23,6 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -206,23 +203,22 @@ async def test_continuing_the_history_attaches_to_the_same_machine(host: FakeBox
     assert second.workspace.ref == first.workspace.ref
 
 
-async def test_the_machines_lifecycle_is_traced(host: FakeBoxd) -> None:
+async def test_the_machines_lifecycle_is_traced(
+    host: FakeBoxd, instrumented: Callable[[bool], tuple[Instrumentation, Any]]
+) -> None:
     """Creating, reattaching to and destroying the machine each get a span, under the call or tool that needed it."""
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-    settings = InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
+    tracing, exporter = instrumented(False)
     sandbox = BoxdSandbox[None]()
     agent = Agent(
         TestModel(call_tools=['_touch']),
         deps_type=type(None),
         tools=[_touch],
-        capabilities=[sandbox, Instrumentation(settings=settings)],
+        capabilities=[sandbox, tracing],
     )
     ref = (await agent.run('touch')).workspace.ref
     assert ref is not None
     await agent.run('touch', workspace=ref)
-    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[Instrumentation(settings=settings)])
+    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[tracing])
 
     @cleanup.tool_plain
     async def destroy() -> None:

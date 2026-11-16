@@ -4,20 +4,18 @@ from __future__ import annotations
 
 import os
 import secrets
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
@@ -351,14 +349,15 @@ async def test_a_run_without_instrumentation_traces_nothing_even_under_instrumen
     assert capfire.exporter.exported_spans_as_dict() == []
 
 
-async def test_the_containers_lifecycle_is_traced(docker: FakeDocker, container_dir: Path) -> None:
+async def test_the_containers_lifecycle_is_traced(
+    docker: FakeDocker,
+    container_dir: Path,
+    instrumented: Callable[[bool], tuple[Instrumentation, Any]],
+) -> None:
     """Creating, reattaching to and destroying the container each get a span, under the call or tool that needed it."""
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-    settings = InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
+    tracing, exporter = instrumented(False)
     sandbox = DockerSandbox(image='image', working_dir=str(container_dir))
-    agent = Agent(TestModel(call_tools=['look']), capabilities=[sandbox, Instrumentation(settings=settings)])
+    agent = Agent(TestModel(call_tools=['look']), capabilities=[sandbox, tracing])
 
     @agent.tool
     async def look(ctx: RunContext[object]) -> bool:
@@ -367,7 +366,7 @@ async def test_the_containers_lifecycle_is_traced(docker: FakeDocker, container_
     ref = (await agent.run('go')).workspace.ref
     assert ref is not None
     await agent.run('go', workspace=ref)
-    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[Instrumentation(settings=settings)])
+    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[tracing])
 
     @cleanup.tool_plain
     async def destroy() -> None:
