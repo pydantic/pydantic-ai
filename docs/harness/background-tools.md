@@ -178,7 +178,7 @@ tool's actual work as a `background_tools execute {tool_name}` span. The task st
 | `gen_ai.tool.name` | The tool's name. |
 | `gen_ai.tool.call.id` | The call's ID, the same as on the `execute_tool` span and the result's `tool_call_id`. |
 | `background_tools.outcome` | How the call ended: `success`, `retried`, `failed`, `interrupted` or `error`. |
-| `background_tools.retry_cause` | Only when `retried`: `model_retry` or `validation_error`, the values Pydantic AI records as `pydantic_ai.tool.retry.cause` on a foreground call's `execute_tool` span. |
+| `background_tools.retry_cause` | Only when `retried`: why the call is made again, such as `model_retry` or `validation_error`, as Pydantic AI records it in `pydantic_ai.tool.retry.cause` on a foreground call's `execute_tool` span (see [`ToolRetryCause`][pydantic_ai.messages.ToolRetryCause]). |
 
 `retried` is a `ModelRetry` or a validation error, which reaches the model as a failed result and counts
 toward the tool's `max_retries`. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`,
