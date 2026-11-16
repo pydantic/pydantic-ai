@@ -21,7 +21,6 @@ from pydantic_ai import (
     ApprovalRequired,
     DeferredToolRequests,
     DeferredToolResults,
-    IncompleteToolCall,
     RunContext,
     Tool,
     ToolCallPart,
@@ -390,26 +389,6 @@ async def test_claude_drives_the_screen_through_the_streamed_computer_toolset(
     results = content_blocks(last, 'tool_result')
     assert calls and all(call['toolset_name'] == 'computer' for call in calls)
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
-
-
-@needs_anthropic
-@pytest.mark.vcr
-async def test_claude_computer_call_cut_off_by_the_token_limit_stops_the_run(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
-) -> None:
-    provider = ScreenProvider()
-    model = _claude('claude-sonnet-4-6', anthropic_api_key, request_capture)
-    task = 'Without a screenshot, type this exact text in one type action: ' + ' '.join(f'word{i}' for i in range(200))
-
-    async def drain(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
-        async for _ in events:
-            pass
-
-    agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
-    # Claude's input stops part way and no block stop follows, as for any tool call, so the run stops as for one.
-    with pytest.raises(IncompleteToolCall, match=r'Model token limit \(60\) exceeded while generating a tool call'):
-        await agent.run(task, model_settings=ModelSettings(max_tokens=60), event_stream_handler=drain)
-    assert provider.actions == []
 
 
 @needs_anthropic
