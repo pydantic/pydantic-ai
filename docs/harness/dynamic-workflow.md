@@ -311,7 +311,7 @@ returns run as one `parallel` operation, so a released call has to await `start(
 suspending first: one that waits on something else first, such as a concurrency limit, misses the
 operation and the script waits on it indefinitely. An exception that `run` raises itself reaches
 the script as a `RuntimeError` naming only its type. Under `DBOSDurability` the calls already
-start one at a time in dispatch order, and `call_scheduler` is not used.
+start one at a time in dispatch order, and the `call_scheduler` factory is not called.
 
 ## Observability
 

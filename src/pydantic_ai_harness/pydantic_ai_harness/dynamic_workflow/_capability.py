@@ -115,8 +115,8 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
 
     `None` starts each call as soon as the script makes it. A durable engine integration can use a
     scheduler to hold the calls back until the script waits on them, then register them in the
-    order the script made them before starting them together. Under `DBOSDurability` the calls
-    already run one at a time in that order, and the scheduler is not used.
+    order the script made them before starting them together. When a sub-agent runs under
+    `DBOSDurability`, the calls already run one at a time in that order, and the factory is not called.
     """
 
     @classmethod
