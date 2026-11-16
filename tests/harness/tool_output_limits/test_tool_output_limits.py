@@ -1326,7 +1326,7 @@ class TestReadBack:
 
     @pytest.mark.parametrize('from_end', [False, True])
     @pytest.mark.parametrize('pattern', [None, 'é'])
-    @pytest.mark.parametrize('text', ['é1\r\nb\rcé\n\nd\u2028é2\x85f\r\n\ré3', 'é1\r\nb\ré2\r'])
+    @pytest.mark.parametrize('text', ['é1\r\nb\rcé\n\nd\u2028é2\x85f\r\n\ré3', 'é1\r\nb\ré2\r', 'ab\r\nc\r\ré'])
     async def test_read_slice_streams_like_splitlines(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_end: bool, pattern: str | None, text: str
     ):
