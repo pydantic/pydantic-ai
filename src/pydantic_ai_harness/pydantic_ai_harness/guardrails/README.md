@@ -179,6 +179,8 @@ a different result from sanitizing each part, the span becomes one part carrying
 first part's metadata, and a `CachePoint` between merged parts moves ahead of it;
 otherwise each part keeps its own metadata. Images and other non-text parts are kept,
 in `return_value` and `content` alike, as are `ToolReturn` metadata and kind.
+The model also sees each file's identifier in a content-list `return_value`, so the
+detector checks it too; one it would redact blocks the result, since an identifier can't be rewritten.
 
 As with `for_text`, a non-text result raises by default. `on_other='allow'`
 skips the whole result, including the `content` of a `ToolReturn` whose
