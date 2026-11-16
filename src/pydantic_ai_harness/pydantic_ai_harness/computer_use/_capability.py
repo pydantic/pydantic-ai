@@ -115,6 +115,8 @@ class _RunButtons:
 
     run_id: str | None
     held: list[MouseButton] = field(default_factory=list[MouseButton])
+    sure: bool = True
+    """Whether `held` is exactly the buttons pressed, rather than every button a call that failed may have left so."""
 
 
 _RUN_BUTTONS: ContextVar[_RunButtons | None] = ContextVar('_RUN_BUTTONS', default=None)
@@ -179,6 +181,8 @@ class _Plan:
     held: list[MouseButton]
     """The mouse buttons the run's earlier calls left pressed."""
     keeps_held: bool
+    unsure: bool
+    """Whether `held` may name buttons that aren't pressed, so the call releases them before it acts."""
     """Whether buttons left pressed stay pressed for the run's end to release, rather than the call's end."""
 
 
@@ -643,11 +647,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             model_name=ctx.model.model_name,
             held=list(run.held) if run else [],
             keeps_held=run is not None,
+            unsure=run is not None and not run.sure,
         )
         if run is not None:
             # A press can take effect in a call that then fails, so until it returns, the run's end releases them all.
             pressing: list[MouseButton] = [action.button for action in actions if isinstance(action, MouseDown)]
-            run.held = list(dict.fromkeys(plan.held + pressing))
+            run.held, run.sure = list(dict.fromkeys(plan.held + pressing)), False
         tool_return, held = await self._call(ctx, actions, plan)
         result: ComputerResult = tool_return.metadata
         size = result.get('screenshot_size')
@@ -655,7 +660,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         width, height = size  # a list once a durable unit's result has been through JSON
         result['screenshot_size'] = (width, height)
         if run is not None:
-            run.held = held
+            run.held, run.sure = held, True
         # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
         await ctx.emit(ActionsPerformedEvent(result=result))
         return tool_return
@@ -707,6 +712,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 raise ToolFailed(refused)
             pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
             held = list(plan.held)
+            if plan.unsure:
+                # Released first, so the result reports only the buttons this call knows are pressed.
+                await _release(display, held)
             return await self._act_and_look(display, pixels, mapping, plan, held), held
 
     async def _act_and_look(

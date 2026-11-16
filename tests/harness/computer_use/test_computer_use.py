@@ -1275,6 +1275,34 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert pressed.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
         assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
 
+    async def test_a_call_after_one_that_failed_after_a_press_releases_it_before_reporting_what_is_held(
+        self,
+    ) -> None:
+        class FirstScreenshotFails(ScreenBackend):
+            failed = False
+
+            async def screenshot(self) -> bytes:
+                if not FirstScreenshotFails.failed:
+                    FirstScreenshotFails.failed = True
+                    raise WorkspaceError('the capture failed')
+                return await super().screenshot()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return FirstScreenshotFails(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        failed, moved = _returns((await agent.run('Go.')).all_messages())
+
+        assert failed.outcome == 'failed'
+        # The press may or may not have stuck, so the next call releases it rather than call it still pressed.
+        assert moved.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
+        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
+
     async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
