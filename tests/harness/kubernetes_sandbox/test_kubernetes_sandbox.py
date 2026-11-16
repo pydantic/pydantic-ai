@@ -188,40 +188,14 @@ async def test_env_reaches_the_program_unchanged_by_the_launcher(cluster: FakeCl
 
 
 @pytest.mark.parametrize('working_dir', [None, '/tmp'])
-async def test_each_argument_keeps_its_own_size_limit(cluster: FakeCluster, working_dir: str | None) -> None:
-    """Two 100 KB arguments with quotes in them run as given.
-
-    Linux limits each `execve` string to 128 KiB. Quoted into one `/bin/sh -c` script, these two
-    would pass that limit together, and each `'` would take five characters.
-    """
+async def test_arguments_with_quotes_run_as_given(cluster: FakeCluster, working_dir: str | None) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool', working_dir=working_dir)
-    first, second = "'a" * 50_000, '"b' * 50_000
+    first, second = "it's $HOME", '"b" `c` \\'
     result = await backend.run(['sh', '-c', 'printf %s "$1" "$2"', 'sh', first, second])
     assert result.exit_code == 0 and result.stdout == first + second
-    # One argument past the limit fails, as it would in an argv.
+    # Past Linux's 128 KiB limit on one `execve` string, as for any command line.
     with pytest.raises(RuntimeError, match='argument list too long'):
         await backend.run(['printf', '%s', 'x' * 200_000])
-    await backend.aclose()
-
-
-async def test_many_short_arguments_fit_like_an_argv(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The script stays the same size however many arguments there are.
-
-    A script naming each argument's variable would pass the per-string limit with enough of them, while
-    an argv of the same arguments fits. A small limit proves it with few arguments.
-    """
-    monkeypatch.setattr('tests.harness.kubernetes_sandbox.fake_sandboxd._MAX_ARG_STRLEN', 4096)
-    backend = KubernetesSandboxBackend(warm_pool='pool', working_dir='/tmp')
-    numbers = [str(number) for number in range(300)]
-    result = await backend.run(['printf', '%s,', *numbers])
-    assert result.exit_code == 0 and result.stdout == ','.join(numbers) + ','
-    await backend.aclose()
-
-
-async def test_the_argument_variables_do_not_reach_the_command(cluster: FakeCluster) -> None:
-    backend = KubernetesSandboxBackend(warm_pool='pool')
-    result = await backend.run(['sh', '-c', 'env | grep -c PYDANTIC_AI_HARNESS_ARG_ || true'])
-    assert result.stdout == '0\n'
     await backend.aclose()
 
 
@@ -510,22 +484,18 @@ async def test_a_lost_connection_to_a_live_sandbox_propagates(
     await backend.aclose()
 
 
-@pytest.mark.parametrize('negative', [False, True], ids=['128+n', 'sandboxd-before-1.0.7'])
-async def test_a_signal_exit_in_a_live_sandbox_keeps_its_exit_code(cluster: FakeCluster, negative: bool) -> None:
+async def test_a_signal_exit_in_a_live_sandbox_keeps_its_exit_code(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
-    _sandboxd(cluster, backend.ref).negative_signal_exits = negative
-    assert (await backend.run(['sh', '-c', 'kill -TERM $$'])).exit_code == (-1 if negative else 143)
+    assert (await backend.run(['sh', '-c', 'kill -TERM $$'])).exit_code == 143
     await backend.aclose()
 
 
-@pytest.mark.parametrize('negative', [False, True], ids=['128+n', 'sandboxd-before-1.0.7'])
-async def test_a_signal_exit_in_a_deleted_sandbox_is_unavailable(cluster: FakeCluster, negative: bool) -> None:
+async def test_a_signal_exit_in_a_deleted_sandbox_is_unavailable(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
     assert backend.ref is not None
     sandboxd = _sandboxd(cluster, backend.ref)
-    sandboxd.negative_signal_exits = negative
     # The API server no longer has the Sandbox, while its sandboxd still answers until the pod stops.
     namespace, claim_name = backend.ref.id.split('/')
     del cluster.claims[namespace, claim_name]

@@ -119,8 +119,6 @@ class FakeSandboxd:
         self._next_id = 0
         self.send_exit = True
         """When false, `Start` ends its stream without the exit event."""
-        self.negative_signal_exits = False
-        """When set, a signal death exits -1, as sandboxd before v1.0.7 reports it."""
         self.sandbox_id = f'sandbox-{uuid.uuid4().hex[:8]}'
         """The name of the Sandbox object the claim binds."""
 
@@ -201,9 +199,7 @@ class FakeSandboxd:
                     yield event
             code = await waiter
             if self.send_exit:
-                yield Response(
-                    exit={'exit_code': code if code >= 0 else -1 if self.negative_signal_exits else 128 - code}
-                )
+                yield Response(exit={'exit_code': code if code >= 0 else 128 - code})
         finally:
             # Reached on cancellation too, which is how sandboxd stops a command whose call ends.
             if not waiter.done():

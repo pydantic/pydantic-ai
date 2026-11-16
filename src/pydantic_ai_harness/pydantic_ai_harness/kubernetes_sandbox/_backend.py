@@ -33,6 +33,7 @@ import asyncio
 import importlib
 import logging
 import re
+import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
@@ -106,21 +107,6 @@ _ACQUIRE_TIMEOUT = _READY_TIMEOUT + _API_SERVER_TIMEOUT
 _SETUP_TIMEOUT = 60.0
 """Seconds `working_dir()` waits for `pwd -P`, so a wedged pod or stalled tunnel fails instead of hanging."""
 
-_ARGUMENT_PREFIX = 'PYDANTIC_AI_HARNESS_ARG_'
-"""Names the environment variables that carry a command's arguments into its script; unset before it runs."""
-
-# `eval` sees only this text and the loop's own counter, never an argument's value.
-_ARGUMENTS_SCRIPT = f"""set --
-{_ARGUMENT_PREFIX}INDEX=0
-while [ "${_ARGUMENT_PREFIX}INDEX" -lt {{count}} ]; do
-eval "set -- \\"\\$@\\" \\"\\${_ARGUMENT_PREFIX}${_ARGUMENT_PREFIX}INDEX\\""
-unset "{_ARGUMENT_PREFIX}${_ARGUMENT_PREFIX}INDEX"
-{_ARGUMENT_PREFIX}INDEX=$(({_ARGUMENT_PREFIX}INDEX + 1))
-done
-unset {_ARGUMENT_PREFIX}INDEX
-"""
-"""Moves the `count` argument variables into the positional parameters, in order, and unsets them."""
-
 # Output is collected in this process, so `yes` or a large `cat` stops at the cap instead of growing
 # it. sandboxd's own output limits cover only its unary `Execute` RPCs, not the streaming `Start`
 # that `commands.start()` uses (https://github.com/kubernetes-sigs/agent-sandbox/pull/2117).
@@ -130,17 +116,6 @@ _OUTPUT_PREVIEW_BYTES = 64 * 1024
 ConnectionMode = Literal['port-forward', 'in-cluster-service', 'in-cluster-pod-ip']
 """How the client reaches a sandbox's sandboxd: a `kubectl port-forward` to the pod (from outside the
 cluster), or directly from inside the cluster through the sandbox's Service or its pod IP."""
-
-_InClusterMode = Literal['in-cluster-service', 'in-cluster-pod-ip']
-
-_IN_CLUSTER_MODES: dict[_InClusterMode, _InClusterMode] = {
-    'in-cluster-service': 'in-cluster-service',
-    'in-cluster-pod-ip': 'in-cluster-pod-ip',
-}
-"""Our in-cluster mode names to `SandboxdInClusterConnectionConfig.mode`'s. They match today, but the
-SDK renamed its values once (v1.0.6), and our names are public API: a rename upstream changes only
-this map's values. The keys are checked against our modes, and the values against the SDK's own
-`Literal` where the backend passes them, so type checking catches a rename on either side."""
 
 SandboxdConnectionConfig: TypeAlias = SandboxdPodTunnelConnectionConfig | SandboxdInClusterConnectionConfig
 """The SDK's connection configs that reach sandboxd."""
@@ -255,7 +230,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         if connection == 'port-forward':
             self._connection_config: SandboxdConnectionConfig = SandboxdPodTunnelConnectionConfig()
         elif isinstance(connection, str):
-            self._connection_config = SandboxdInClusterConnectionConfig(mode=_IN_CLUSTER_MODES[connection])
+            self._connection_config = SandboxdInClusterConnectionConfig(mode=connection)
         else:
             self._connection_config = connection
         self._sandbox_timeout = sandbox_timeout
@@ -317,25 +292,18 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_env_types(env)
         argv = command_argv(command, shell)
         require_asyncio(_ASYNCIO_ONLY)
-        # `commands.start()` runs one string under sandboxd's `/bin/sh -c`. Each argument goes in its
-        # own environment variable, which the script moves into its positional parameters and unsets,
-        # so each is still one `execve` string under Linux's 128 KiB limit per string, as it would
-        # be in an argv; quoted into the script, they would share that limit. The script reads them
-        # in a loop, so its own size does not grow with the number of arguments. Workaround: sandboxd's
-        # `Start` leaves stdin open, where the protocol wants it at EOF, so the exec script redirects
-        # it. sandboxd also moves a `cwd` outside its root under the root instead of refusing it, so
-        # another directory is entered from the shell. Not tracked upstream yet.
+        # `commands.start()` runs one string under sandboxd's `/bin/sh -c`, so the arguments are quoted
+        # into it, as Daytona's backend does. Workaround: sandboxd's `Start` leaves stdin open, where the
+        # protocol wants it at EOF, so the exec script redirects it. sandboxd also moves a `cwd` outside its
+        # root under the root instead of refusing it, so another directory is entered from the shell. Not
+        # tracked upstream yet.
         arguments = argv if self._working_dir is None else [self._working_dir, *argv]
-        command_env = {
-            **self._env,
-            **(env or {}),
-            **{f'{_ARGUMENT_PREFIX}{index}': argument for index, argument in enumerate(arguments)},
-        }
+        command_env = {**self._env, **(env or {})}
         async with self._operation():
             async with self._lock:
                 session = await self._acquire()
             creating = self._working_dir_pending
-            script = _ARGUMENTS_SCRIPT.format(count=len(arguments)) + self._enter_script(creating) + EXEC_SCRIPT
+            script = f'set -- {shlex.join(arguments)}\n' + self._enter_script(creating) + EXEC_SCRIPT
             try:
                 result = await self._exec(session, script, command_env, timeout)
             except (WorkspaceTimeoutError, WorkspaceOutputLimitError):
@@ -354,10 +322,9 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                     'Create it there, or pass a working_dir that exists.'
                 )
             self._working_dir_pending = False
-            if result.exit_code > 128 or result.exit_code < 0:
+            if result.exit_code > 128:
                 # Deleting a sandbox stops its pod with SIGTERM, and sandboxd reports the command it
                 # interrupted as an ordinary exit, 143. A command killed by a signal may be one of those.
-                # sandboxd before v1.0.7 reports a signal death as -1, as `ProcessExitEvent` still documents.
                 await self._raise_if_gone(session, None)
             return result
 
