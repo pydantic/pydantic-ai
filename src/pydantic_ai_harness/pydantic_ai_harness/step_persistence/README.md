@@ -603,8 +603,8 @@ dies mid-write can't leave half of one behind.
   indexing it is repaired by the run's next write.
 - With `expire_seconds`, every write refreshes the TTL of all the run's keys,
   so a run expires as a unit, that long after its last write. A `runs:*` set is
-  refreshed by the writes that carry its id, so it expires with the last run it
-  holds. While it is busier than its runs it can hold ids whose run has
+  refreshed by every write to a run it indexes, under the lineage of the run's
+  stored `RunRecord`, so it expires with the last run it holds. While it is busier than its runs it can hold ids whose run has
   expired; `list_runs` removes those as it reads.
 - The server needs Lua scripting, which Redis has had since 2.6. CI exercises
   the store against `redis:8`.

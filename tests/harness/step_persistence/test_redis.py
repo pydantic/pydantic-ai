@@ -721,12 +721,22 @@ class TestRedisStepStoreExpiry:
         )
         assert index_keys <= set(client.expiries)
 
-        # `ToolEffectRecord` carries no lineage ids, so only `runs:all` is refreshed.
+    async def test_a_write_without_lineage_refreshes_the_records_index_sets(self) -> None:
+        """A filtered `list_runs` keeps finding a run whose last writes carry no lineage ids."""
+        client = FakeRedis()
+        store = RedisStepStore(client, expire_seconds=120)
+        index_keys = {f'{_P}:runs:all', f'{_P}:runs:conversation:c1', f'{_P}:runs:parent:p1'}
+        await store.register_run(RunRecord(run_id='r1', conversation_id='c1', parent_run_id='p1'))
+
         client.expiries.clear()
         await store.record_tool_effect(
             ToolEffectRecord(tool_call_id='t1', tool_name='x', run_id='r1', status='started')
         )
-        assert set(client.expiries) & index_keys == {all_runs}
+        assert index_keys <= set(client.expiries)
+
+        client.expiries.clear()
+        await store.append_event(StepEvent(run_id='r1', kind='run_completed', step_index=0))
+        assert index_keys <= set(client.expiries)
 
 
 class TestRedisStepStoreMedia:

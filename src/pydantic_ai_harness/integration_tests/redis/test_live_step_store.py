@@ -17,13 +17,17 @@ correct:
   zset, hash), and that a later write refreshes the whole run;
 - that `SET ... NX` refuses a second registration;
 - that a client left on redis-py's default `bytes` replies reads back what a
-  `decode_responses=True` client wrote.
+  `decode_responses=True` client wrote;
+- that every key one write script takes shares the run's Cluster slot, on the
+  single-node cluster at `REDIS_CLUSTER_TEST_URL`, which refuses a script whose
+  keys span slots with `CROSSSLOT`.
 
 This file covers exactly those. It is not a second copy of the unit suite --
 API-shape coverage belongs there, where it runs on every matrix leg.
 
 Run against a local server with `make integration-redis` after starting one, e.g.
-`docker run -d -p 6379:6379 redis:8`. Without a reachable server the tests skip,
+`docker run -d -p 6379:6379 redis:8`; the cluster tests want the second server
+described in `test_live_redis.py`. Without a reachable server the tests skip,
 unless `REDIS_REQUIRE_LIVE` is set (CI does), where an unreachable server fails
 instead -- a service container that never came up must not pass as a silent skip.
 
@@ -41,6 +45,9 @@ External assumptions, verified 2026-10-18 against Redis 8 (`redis:8`):
   <https://redis.io/docs/latest/commands/expire/>.
 - `SET` with `NX` writes only when the key is absent, replying nil otherwise.
   Source: <https://redis.io/docs/latest/commands/set/>.
+- A cluster node refuses a command whose keys hash to different slots with
+  `CROSSSLOT`, and only the part of a key inside its first `{...}` is hashed.
+  Source: <https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/>.
 """
 
 from __future__ import annotations
@@ -54,7 +61,8 @@ from urllib.parse import urlsplit
 import anyio
 import pytest
 from redis.asyncio import Redis
-from redis.exceptions import RedisError
+from redis.asyncio.cluster import RedisCluster
+from redis.exceptions import RedisClusterException, RedisError, ResponseError
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai_harness.step_persistence import (
@@ -80,18 +88,22 @@ def _redis_url() -> str:
     return os.environ.get('REDIS_TEST_URL', 'redis://127.0.0.1:6379')
 
 
-def _redis_target() -> str:
+def _cluster_url() -> str:
+    return os.environ.get('REDIS_CLUSTER_TEST_URL', 'redis://127.0.0.1:6380')
+
+
+def _redis_target(url: str) -> str:
     """Host and port, without the credentials a Redis URL may carry.
 
-    `REDIS_TEST_URL` accepts `redis://user:password@host:6379`, and the only place
+    `REDIS_TEST_URL` and `REDIS_CLUSTER_TEST_URL` accept `redis://user:password@host:6379`, and the only place
     this string is used is a skip or failure message -- which CI keeps. Naming the
     variable rather than echoing an unparsable value keeps that true for a URL
     `urlsplit` cannot make sense of.
     """
-    host = urlsplit(_redis_url()).hostname
+    host = urlsplit(url).hostname
     if host is None:
-        return 'the server named by REDIS_TEST_URL'
-    port = urlsplit(_redis_url()).port
+        return 'the server named by REDIS_TEST_URL or REDIS_CLUSTER_TEST_URL'
+    port = urlsplit(url).port
     return host if port is None else f'{host}:{port}'
 
 
@@ -115,7 +127,7 @@ async def redis_client(prefix: str) -> AsyncGenerator[Redis]:
         await client.ping()  # pyright: ignore[reportUnknownMemberType]
     except (RedisError, OSError) as error:
         await client.aclose()
-        _unavailable(f'no reachable Redis at {_redis_target()}: {error}')
+        _unavailable(f'no reachable Redis at {_redis_target(_redis_url())}: {error}')
 
     try:
         yield client
@@ -126,6 +138,30 @@ async def redis_client(prefix: str) -> AsyncGenerator[Redis]:
             keys = [key async for key in client.scan_iter(match=f'{prefix}:*')]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             if keys:
                 await client.delete(*keys)  # pyright: ignore[reportUnknownArgumentType]
+        finally:
+            await client.aclose()
+
+
+@pytest.fixture
+async def cluster_client(prefix: str) -> AsyncGenerator[RedisCluster]:
+    """A `RedisCluster` client whose `{prefix}:*` keys are removed after the test.
+
+    `RedisCluster` refuses a standalone server on connect, so the cluster tests
+    cannot quietly pass against one.
+    """
+    client = RedisCluster.from_url(_cluster_url(), decode_responses=True)
+    try:
+        await client.initialize()
+    except (RedisError, RedisClusterException, OSError) as error:
+        await client.aclose()
+        _unavailable(f'no reachable Redis Cluster at {_redis_target(_cluster_url())}: {error}')
+
+    try:
+        yield client
+    finally:
+        try:
+            async for key in client.scan_iter(match=f'{prefix}:*'):  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                await client.delete(key)  # pyright: ignore[reportUnknownArgumentType]
         finally:
             await client.aclose()
 
@@ -280,3 +316,41 @@ class TestLiveRedisStepStore:
             assert [r.tool_call_id for r in await raw.list_unresolved_tool_effects(run_id='r1')] == ['t1']
         finally:
             await raw_client.aclose()
+
+
+class TestLiveRedisStepStoreCluster:
+    """The reason a run's keys carry a hash tag, which a standalone server cannot check."""
+
+    async def test_every_write_is_one_script_on_a_cluster(self, cluster_client: RedisCluster, prefix: str) -> None:
+        """`RedisCluster` refuses a script whose keys span slots, so this fails if any run key escapes the tag."""
+        store = RedisStepStore(cluster_client, prefix=prefix, expire_seconds=60, max_snapshots_per_run=1)
+        await store.register_run(RunRecord(run_id='r1', conversation_id='c1', parent_run_id='p1'))
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='e0'))
+        for step in range(3):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=_messages()))
+        await store.record_tool_effect(
+            ToolEffectRecord(tool_call_id='t1', tool_name='ship', run_id='r1', status='started')
+        )
+
+        assert [r.run_id for r in await store.list_runs(parent_run_id='p1', conversation_id='c1')] == ['r1']
+        assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [2]
+        assert [e.kind for e in await store.list_events(run_id='r1')] == ['run_started']
+
+    async def test_the_same_keys_without_the_tag_are_refused(self, prefix: str) -> None:
+        """The control: this server enforces slots, so the test above is not passing by default.
+
+        Sent through a plain client so the refusal is the server's `CROSSSLOT` rather
+        than `RedisCluster`'s own check, and through a script that writes nothing.
+        """
+        client = Redis.from_url(_cluster_url())  # pyright: ignore[reportUnknownMemberType]
+        try:
+            await client.ping()  # pyright: ignore[reportUnknownMemberType]
+        except (RedisError, OSError) as error:
+            await client.aclose()
+            _unavailable(f'no reachable Redis Cluster at {_redis_target(_cluster_url())}: {error}')
+
+        try:
+            with pytest.raises(ResponseError, match="don't hash to the same slot"):
+                await client.eval('return 1', 2, f'{prefix}:run:r1', f'{prefix}:events:r1')
+        finally:
+            await client.aclose()

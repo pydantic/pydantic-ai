@@ -417,7 +417,7 @@ Every key that belongs to one run carries a `{run_id}` hash tag, so on Redis Clu
 
 - A `run_id` that is empty or starts with `}`, and a `prefix` containing `{` or `}`, raise `ValueError`: the hash tag would be empty or come from the prefix, and on a cluster the script would fail with `CROSSSLOT`.
 - The `runs:*` sets index runs on other slots, so they are written with separate commands after the script. Every write adds its run to them, not only `register_run`, so a worker that died between registering a run and indexing it is repaired by the run's next write.
-- With `expire_seconds`, every write refreshes the TTL of all the run's keys, so a run expires as a unit, that long after its last write. A `runs:*` set is refreshed by the writes that carry its id, so it expires with the last run it holds. While it is busier than its runs it can hold ids whose run has expired; `list_runs` removes those as it reads.
+- With `expire_seconds`, every write refreshes the TTL of all the run's keys, so a run expires as a unit, that long after its last write. A `runs:*` set is refreshed by every write to a run it indexes, under the lineage of the run's stored `RunRecord`, so it expires with the last run it holds. While it is busier than its runs it can hold ids whose run has expired; `list_runs` removes those as it reads.
 - The server needs Lua scripting, which Redis has had since 2.6. CI exercises the store against `redis:8`.
 
 ```python

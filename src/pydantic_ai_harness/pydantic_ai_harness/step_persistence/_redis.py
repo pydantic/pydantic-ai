@@ -287,8 +287,8 @@ class RedisStepStore:
 
     `expire_seconds` (default `None`) gives a run's keys a TTL that every write
     to the run refreshes, so the run expires as a unit that long after its last
-    write. The `runs:*` index sets take it too, refreshed by every write whose
-    ids they index, so a set expires with the last run it holds. A set busier
+    write. The `runs:*` index sets take it too, refreshed by every write to a
+    run they index, so a set expires with the last run it holds. A set busier
     than the runs in it still holds ids whose run has expired; `list_runs`
     drops those as it reads.
 
@@ -377,6 +377,19 @@ class RedisStepStore:
             if self._expire_seconds is not None:
                 await self._client.expire(key, self._expire_seconds)
 
+    async def _reindex(self, run_id: str, conversation_id: str | None, parent_run_id: str | None) -> None:
+        """`_index` under the stored `RunRecord`'s lineage, falling back to the write's own ids.
+
+        `list_runs` filters on the record, so the sets that answer for it are the
+        record's: a write that omits lineage, such as a tool effect, still keeps the
+        run's conversation and parent sets alive as long as its run keys.
+        """
+        raw = await self._client.get(self._key('run', run_id))
+        if raw is not None:
+            record = _run_from_dict(_load_json_object(_as_text(raw)))
+            conversation_id, parent_run_id = record.conversation_id, record.parent_run_id
+        await self._index(run_id, conversation_id, parent_run_id)
+
     async def _write(self, run_id: str, *args: str) -> None:
         keys = self._run_keys(run_id)
         await self._client.eval(_WRITE_SCRIPT, len(keys), *keys, *args)
@@ -458,7 +471,7 @@ class RedisStepStore:
             key or '',
             json.dumps(_event_to_dict(event)),
         )
-        await self._index(event.run_id, event.conversation_id, event.parent_run_id)
+        await self._reindex(event.run_id, event.conversation_id, event.parent_run_id)
 
     async def list_events(self, *, run_id: str) -> list[StepEvent]:
         raw_events = await self._client.lrange(self._key('events', run_id), 0, -1)
@@ -501,7 +514,7 @@ class RedisStepStore:
             str(self._max_snapshots_per_run or 0),
             *(value for pair in keyed for value in pair),
         )
-        await self._index(snapshot.run_id, snapshot.conversation_id, snapshot.parent_run_id)
+        await self._reindex(snapshot.run_id, snapshot.conversation_id, snapshot.parent_run_id)
 
     async def _snapshot_entries(self, run_id: str) -> list[tuple[int, SnapshotState]]:
         """The run's `(seq, state)` pairs, ascending, from the index alone."""
@@ -581,9 +594,7 @@ class RedisStepStore:
             record.tool_call_id,
             json.dumps(_tool_effect_to_dict(record)),
         )
-        # `ToolEffectRecord` carries no lineage ids, so only `runs:all` is written here;
-        # `StepPersistence` follows each tool-effect write with an event that carries them.
-        await self._index(record.run_id, None, None)
+        await self._reindex(record.run_id, None, None)
 
     async def get_tool_effect(self, *, run_id: str, tool_call_id: str) -> ToolEffectRecord | None:
         raw = await self._client.hget(self._key('tool_effects', run_id), tool_call_id)
