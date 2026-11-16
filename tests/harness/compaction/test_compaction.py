@@ -24,7 +24,7 @@ from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -612,9 +612,10 @@ class TestEstimateMessageTokens:
 
 
 class TestSlidingWindowCompaction:
-    def test_validation_no_trigger(self):
-        with pytest.raises(ValueError, match='At least one of max_messages, max_tokens, or max_fraction must be set'):
-            SlidingWindowCompaction()
+    async def test_registered_without_trigger_raises(self):
+        agent = Agent(TestModel(), capabilities=[SlidingWindowCompaction()])
+        with pytest.raises(UserError, match='`SlidingWindowCompaction` registered as a capability needs one of'):
+            await agent.run('hi')
 
     def test_validation_negative_max_messages(self):
         with pytest.raises(ValueError, match='max_messages must be positive'):
@@ -1069,9 +1070,10 @@ Complete the current task immediately and avoid unnecessary tool calls.</system>
 
 
 class TestCompaction:
-    def test_validation_no_trigger(self):
-        with pytest.raises(ValueError, match='At least one of max_messages, max_tokens, or max_fraction must be set'):
-            SummarizingCompaction(model='test', max_messages=None, max_tokens=None)
+    async def test_registered_without_trigger_raises(self):
+        agent = Agent(TestModel(), capabilities=[SummarizingCompaction(model='test')])
+        with pytest.raises(UserError, match='`SummarizingCompaction` registered as a capability needs one of'):
+            await agent.run('hi')
 
     def test_validation_negative_max_messages(self):
         with pytest.raises(ValueError, match='max_messages must be positive'):
@@ -2392,9 +2394,10 @@ class TestIterToolPairs:
 
 
 class TestClearToolResults:
-    def test_validation_no_trigger(self):
-        with pytest.raises(ValueError, match='At least one of max_messages, max_tokens, or max_fraction must be set'):
-            ClearToolResults()
+    async def test_registered_without_trigger_raises(self):
+        agent = Agent(TestModel(), capabilities=[ClearToolResults()])
+        with pytest.raises(UserError, match='`ClearToolResults` registered as a capability needs one of'):
+            await agent.run('hi')
 
     def test_validation_negative_max_messages(self):
         with pytest.raises(ValueError, match='max_messages must be positive'):
@@ -2704,10 +2707,68 @@ class _RecordingTier:
         return messages[self.drop :] if self.drop else messages
 
 
+@dataclasses.dataclass
+class _FailingTier:
+    error: Exception
+
+    async def compact(self, messages: list[ModelMessage], ctx: Any) -> list[ModelMessage]:
+        raise self.error
+
+
 class TestTieredCompaction:
     def test_validation_empty_tiers(self):
         with pytest.raises(ValueError, match='tiers must not be empty'):
             TieredCompaction(tiers=[], target_tokens=10)
+
+    def test_validation_skip_on(self):
+        with pytest.raises(ValueError, match='skip_on must contain only Exception subclasses'):
+            TieredCompaction(tiers=[ClearToolResults()], target_tokens=10, skip_on=(BaseException,))  # pyright: ignore[reportArgumentType]
+
+    async def test_programming_error_in_a_tier_propagates(self):
+        cap = TieredCompaction(tiers=[_FailingTier(RuntimeError('bug'))], target_tokens=1)
+        messages: list[ModelMessage] = [_user('x' * 40)]
+        rc = _make_request_context(messages)
+        with pytest.raises(RuntimeError, match='bug'):
+            await cap.before_model_request(_make_ctx(rc.messages), rc)
+
+    async def test_direct_compact_propagates_a_tier_failure(self):
+        cap = TieredCompaction(tiers=[_FailingTier(ModelAPIError('m', 'down'))], target_tokens=1)
+        messages: list[ModelMessage] = [_user('x' * 40)]
+        with pytest.raises(ModelAPIError, match='down'):
+            await cap.compact(messages, _make_ctx(messages))
+
+    async def test_skip_on_empty_propagates_a_tier_failure(self):
+        cap = TieredCompaction(tiers=[_FailingTier(ModelAPIError('m', 'down'))], target_tokens=1, skip_on=())
+        messages: list[ModelMessage] = [_user('x' * 40)]
+        rc = _make_request_context(messages)
+        with pytest.raises(ModelAPIError, match='down'):
+            await cap.before_model_request(_make_ctx(rc.messages), rc)
+
+    async def test_triggerless_tiers_with_a_failing_summarizer_in_an_agent_run(self):
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('summarizer', 'overloaded')
+
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                TieredCompaction(
+                    tiers=[SummarizingCompaction(FunctionModel(summarize)), SlidingWindowCompaction(keep_messages=1)],
+                    target_tokens=1,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a' * 400), _assistant('b' * 400), _user('c' * 400), _assistant('d')]
+        await agent.run('latest', message_history=history)
+
+        prompts = [
+            part.content
+            for message in seen[0]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+        assert prompts == ['a' * 400, 'latest']
 
     def test_validation_target_tokens(self):
         with pytest.raises(ValueError, match='target_tokens must be positive'):
@@ -3842,6 +3903,35 @@ class TestCompactionSpan:
         assert 'compaction.target_unreached' not in _compact_spans(capfire)[0]['attributes']
         assert caplog.messages == []
 
+    async def test_tiered_skips_a_failing_tier_and_records_it(
+        self, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        calls: list[str] = []
+        comp: TieredCompaction[None] = TieredCompaction(
+            tiers=[_FailingTier(ModelAPIError('summarizer', 'overloaded')), _RecordingTier('next', calls, drop=4)],
+            target_tokens=15,
+        )
+        messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
+
+        result = await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
+
+        assert calls == ['next']
+        assert result.messages == messages[-1:]
+        skipped, tiered = (span['attributes'] for span in _compact_spans(capfire))
+        assert {key: value for key, value in skipped.items() if key.startswith(('compaction.', 'error.'))} == snapshot(
+            {
+                'compaction.strategy': '_FailingTier',
+                'compaction.skipped': 'tier_failed',
+                'error.type': 'pydantic_ai.exceptions.ModelAPIError',
+                'compaction.messages_before': 5,
+                'compaction.tokens_before': 50,
+            }
+        )
+        assert tiered['compaction.strategy'] == 'TieredCompaction'
+        assert caplog.messages == snapshot(
+            ["`TieredCompaction` skipped its `_FailingTier` tier, which raised: ModelAPIError('overloaded')"]
+        )
+
     async def test_direct_tiered_compact_logs_an_unreachable_target_without_a_span_scope(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -4374,6 +4464,23 @@ class TestReceiptSpanEvent:
         assert attrs['compaction.receipt.strategy'] == 'SlidingWindowCompaction'
         assert attrs['compaction.receipt.by'] == 'the harness'
         assert 'compaction.receipt.handle' not in attrs
+
+    async def test_tiered_keeps_receipts_of_successful_tiers_only(self, capfire: CaptureLogfire) -> None:
+        sw = SlidingWindowCompaction(keep_messages=1, receipts=True, preserve_first_user_message=False)
+
+        @dataclasses.dataclass
+        class _FailsAfterCompacting:
+            async def compact(self, messages: list[ModelMessage], ctx: Any) -> list[ModelMessage]:
+                await sw.compact(messages, ctx)
+                raise ModelAPIError('m', 'down')
+
+        tiered: TieredCompaction[None] = TieredCompaction(tiers=[_FailsAfterCompacting(), sw], target_tokens=1)
+        messages: list[ModelMessage] = [_user('a' * 40), _assistant('b' * 40), _user('c' * 40), _assistant('d')]
+        await tiered.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
+
+        span = next(s for s in _compact_spans(capfire) if s['attributes']['compaction.strategy'] == 'TieredCompaction')
+        events: list[dict[str, Any]] = span.get('events') or []
+        assert [e['name'] for e in events if e['name'] == 'compaction.receipt'] == ['compaction.receipt']
 
     async def test_receipt_event_carries_handle(self, capfire: CaptureLogfire) -> None:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)
