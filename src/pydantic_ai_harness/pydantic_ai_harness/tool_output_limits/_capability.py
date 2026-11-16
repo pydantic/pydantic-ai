@@ -788,7 +788,7 @@ def _is_ui_event(value: object) -> bool:
     """Whether `value` is a single AG-UI event or Vercel AI data chunk the UI adapters pass through."""
     try:
         from ag_ui.core import BaseEvent
-    except ImportError:  # pragma: no cover
+    except ImportError:
         pass
     else:
         if isinstance(value, BaseEvent):

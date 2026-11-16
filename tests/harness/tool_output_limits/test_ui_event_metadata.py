@@ -15,7 +15,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileOverflowStore, Spill, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits._capability import _with_handles  # pyright: ignore[reportPrivateUsage]
 from tests.conftest import try_import
 
@@ -57,7 +57,7 @@ async def _stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterato
 
 def _agent(tmp_path: Path, metadata: object) -> Agent[None, str]:
     cap: ToolOutputLimits[object] = ToolOutputLimits(
-        bands=[Band(over=100, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
+        bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
     )
     agent = Agent(FunctionModel(_respond, stream_function=_stream), capabilities=[cap])
 
