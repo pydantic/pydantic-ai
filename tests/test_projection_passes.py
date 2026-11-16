@@ -15,6 +15,9 @@ are covered. Three properties are checked (#11030):
 
 A property that fails for a history here on the base branch is a known finding, pinned by a strict expected failure on
 that history, as `tests/test_history_properties.py` does.
+
+These are not VCR tests: no request is sent. The properties compare what each pass and each adapter's own mapping
+produce for many histories and targets, and a cassette holds one recorded body per test and isn't always matched on it.
 """
 
 from __future__ import annotations as _annotations
@@ -355,7 +358,11 @@ async def _google_body(messages: list[ModelMessage], parameters: ModelRequestPar
 
 @cache
 def _groq_model() -> GroqModel:
-    """A model without mid-conversation system messages, so the `system_voice` pass wraps them."""
+    """A model whose profile allows mid-conversation system messages, so the `system_voice` pass leaves them as they are.
+
+    Groq's provider profile sets `supports_inline_system_prompts`; the wrap and announcement are covered by the
+    OpenRouter, Anthropic and Google targets.
+    """
     return GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key='test-key'))
 
 
