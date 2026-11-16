@@ -384,7 +384,7 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   named boxd network.
 - `BoxdSandbox(desktop=True)` gives the agent the machine's 1280x800 desktop for `ComputerUse()`, or pass
   `desktop=(w, h)`. It needs a machine on boxd's current default image (not a fork or snapshot of an older one),
-  has no window manager or launcher (open apps with `agent-browser open <url>` or `boxd-desktop-launch '<cmd>'`),
+  has no window manager or launcher (open a browser with `agent-browser open <url>`),
   and types any text, emoji included.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
