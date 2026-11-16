@@ -59,10 +59,11 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
     )
+    from anthropic.types.beta import BetaCompactionConfigParam
 
     from pydantic_ai.models._history_digest import continuation_digest, history_hasher
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.models.anthropic._threads import thread_digest
+    from pydantic_ai.models.anthropic._threads import may_use_thread, thread_digest
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
@@ -453,6 +454,19 @@ async def test_paused_turn_is_resumed_in_a_full_history_create(allow_model_reque
     assert result.output == 'PausedDone'
 
 
+async def test_interrupted_response_starts_a_new_thread(allow_model_requests: None):
+    """A response that wasn't received in full isn't continued, so a new prompt after it creates a new thread."""
+    api = _Api()
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        request, response = (await agent.run('Hi')).all_messages()
+        assert isinstance(response, ModelResponse)
+        await agent.run('Again', message_history=[request, replace(response, state='interrupted')])
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert _user_texts(api.bodies[1]) == ['Hi', 'OK', 'Again']
+
+
 async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
     """`container.skills` is fixed for a thread, so changing it creates a new thread."""
     api = _Api()
@@ -633,6 +647,16 @@ async def test_compaction_request_is_sent_without_a_thread(allow_model_requests:
     assert 'thread' not in api.bodies[1]
     assert _BETA in api.betas[0]
     assert _BETA not in api.betas[1]
+
+
+def test_compaction_request_never_uses_a_thread():
+    """`may_use_thread` turns a compaction request down even with `anthropic_thread` set.
+
+    A unit test: `compact_messages` passes no thread record, so the public path above never reaches this guard.
+    """
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key='x'))
+    assert may_use_thread(model, _SETTINGS, None)
+    assert not may_use_thread(model, _SETTINGS, BetaCompactionConfigParam(type='summarize'))
 
 
 async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
