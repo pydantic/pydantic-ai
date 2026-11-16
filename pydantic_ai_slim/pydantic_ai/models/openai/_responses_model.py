@@ -309,6 +309,7 @@ class _ResponsesCreateParams(TypedDict):
     top_logprobs: int | Omit
     store: bool | Omit | None
     user: str | Omit
+    safety_identifier: str | Omit
     include: list[responses.ResponseIncludable] | Omit
     prompt_cache_key: str | Omit
     prompt_cache_retention: Literal['in_memory', '24h'] | Omit
@@ -1978,6 +1979,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
             store=store,
             user=model_settings.get('openai_user', OMIT),
+            safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
             include=include or OMIT,
             prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
             prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),

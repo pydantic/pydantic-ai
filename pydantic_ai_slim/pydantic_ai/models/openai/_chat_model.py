@@ -569,6 +569,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
+                    safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
                     web_search_options=web_search_options or OMIT,
                     # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
                     service_tier=cast(Any, resolve_openai_service_tier(model_settings)),

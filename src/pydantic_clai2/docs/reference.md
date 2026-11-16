@@ -267,9 +267,15 @@ conversation. Bytecode compiles during installation, so the restart skips it. Sw
 back to `stable` offers the latest release. Run from a source checkout, it installs
 CLAI as a `uv tool` the same way and restarts into that.
 
+Installing replaces the files of the `uv tool` environment, which would break any other
+`clai2` process running from it. So on Linux and macOS, while another `clai2` runs from that
+install, `/update now` and `clai2 update` install nothing and name the processes' IDs: quit
+them, then update again. A `clai2` started while uv installs is not covered, so start none then.
+
 `clai2 update` (or `clai2 --update`) installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `clai2`
-is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
+is the new build. It exits with status 1 when the check, uv, or finding uv failed, or
+when other `clai2` processes run from the install. On
 Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
 an interactive session, which installs after CLAI exits. The flag cannot be combined with
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
@@ -2849,9 +2855,11 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds.
-**New worktree…**, on a folder's row or below the list for the row the arrow keys
+asks which folder. It lists one row per project it has sessions in, which starts
+in the checkout you are in, else the main one; the row's chevron, or → and ←, shows
+and hides every worktree of its repository, to start in one of those instead. It also
+completes a typed path to any directory, listing each repository it finds with its
+worktrees shown. **New worktree…**, on a row or below the list for the row the arrow keys
 select, checks out a new branch of that folder's repository
 first, from the base you name (by default its `HEAD`), in `.worktrees/` as
 [`--worktree`](#git-worktrees) does, and starts the session there; without a branch

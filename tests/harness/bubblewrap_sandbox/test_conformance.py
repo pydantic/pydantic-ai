@@ -20,7 +20,7 @@ from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
 from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 
-from .._fake_remote_tools import BWRAP_WORKS
+from .._fake_remote_tools import require_bwrap
 
 # The module, not the class: a `Test*` name imported here would be collected and run a second time.
 from ..ssh_workspace import test_conformance as ssh_conformance
@@ -41,8 +41,11 @@ class TestBubblewrapAroundSSH(ssh_conformance.TestSSHWorkspaceBackend):
 
 
 # The same rules hold with every command in a real bubblewrap sandbox.
-@pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap(WorkspaceBackendSuite):  # pragma: lax no cover - CI hosts may not have bubblewrap
+    @pytest.fixture(autouse=True)
+    def _require_bwrap(self) -> None:
+        require_bwrap()
+
     @pytest.fixture
     def backend(self, tmp_path: Path) -> WorkspaceBackend:
         return BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
