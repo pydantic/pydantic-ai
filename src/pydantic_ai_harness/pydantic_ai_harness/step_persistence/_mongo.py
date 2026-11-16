@@ -41,7 +41,7 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
-from pydantic_ai_harness._mongo_client import harness_driver_info
+from pydantic_ai_harness._mongo_driver_info import harness_driver_info
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.media._mongo import MongoMediaStore
 from pydantic_ai_harness.step_persistence._messages import (

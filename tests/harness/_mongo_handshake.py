@@ -10,38 +10,27 @@ import struct
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from importlib.metadata import version
-from typing import TypeGuard
 
 import pymongo
-import pytest
 from bson import BSON, encode
 
+from pydantic_ai_harness._typeguards import is_object_dict
 from tests.harness.conftest import IsStr
 
 _OP_MSG = 2013
 
-HARNESS_DRIVER = {
+HARNESS_DRIVER: dict[str, object] = {
     'name': IsStr(regex=r'PyMongo\|.*\|pydantic-ai-harness'),
     'version': f'{pymongo.version}|{version("pydantic-ai-harness")}',
 }
 
 
-def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(value, dict)
-
-
-def _no_container_env() -> dict[str, str]:
-    return {}
-
-
 @asynccontextmanager
-async def handshake_server(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[tuple[str, list[dict[object, object]]]]:
+async def handshake_server() -> AsyncGenerator[tuple[str, list[dict[object, object]]]]:
     """Yield a connection string and the list that collects each handshake's `client.driver` document.
 
     The server answers a handshake as a writable primary, `find` with an empty batch, and any other command with `ok`.
     """
-    # PyMongo stats `/.dockerenv` while it builds the handshake, a blocking call on the event loop.
-    monkeypatch.setattr('pymongo.pool_options.get_container_env_info', _no_container_env)
     drivers: list[dict[object, object]] = []
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -52,9 +41,9 @@ async def handshake_server(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[tu
                 # The command document follows 4 bytes of flag bits and a 1-byte section kind.
                 command = BSON((await reader.readexactly(length - 16))[5:]).decode()
                 client = command.get('client')
-                if _is_object_dict(client):
+                if is_object_dict(client):
                     driver = client['driver']
-                    assert _is_object_dict(driver)
+                    assert is_object_dict(driver)
                     drivers.append(driver)
                     reply: dict[str, object] = {
                         'ok': 1,

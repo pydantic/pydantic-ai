@@ -102,8 +102,9 @@ class TestMongoMediaStoreConstruction:
         monkeypatch.undo()
         await client.close()
 
-    async def test_db_url_client_names_harness_in_handshake(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        async with handshake_server(monkeypatch) as (url, drivers):
+    async def test_db_url_client_names_harness_in_handshake(self) -> None:
+        """The handshake is MongoDB wire protocol, which cassettes cannot record, so a local server captures it."""
+        async with handshake_server() as (url, drivers):
             store = await anyio.to_thread.run_sync(lambda: MongoMediaStore(db_url=url, database='t'))
             try:
                 assert not await store.exists(_MISSING_URI)

@@ -35,7 +35,7 @@ from bson.binary import Binary
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 
-from pydantic_ai_harness._mongo_client import harness_driver_info
+from pydantic_ai_harness._mongo_driver_info import harness_driver_info
 from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
