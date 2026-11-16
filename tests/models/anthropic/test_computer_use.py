@@ -6,6 +6,7 @@ produces, such as stored histories and cut-off streams; the recorded runs are in
 
 from __future__ import annotations as _annotations
 
+import base64
 import json
 from collections.abc import AsyncIterable, Callable
 from typing import Any, Literal
@@ -147,7 +148,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     ]
     assert [r['content'][0]['text'] for r in results] == [
         'OK',
-        'OK',
+        "Ran 3 of 5 actions. The next one failed: the fake display cannot perform 'hold_key'",
         "the fake display cannot perform 'hold_key'",
         NOT_EXECUTED,
     ]
@@ -751,101 +752,24 @@ async def test_a_tool_added_mid_run_is_declared_when_tool_choice_leaves_out_the_
     assert [(tool['name'], tool.get('defer_loading', False)) for tool in sent['tools']] == [('new_tool', False)]
 
 
-_CLICK_TYPE: list[dict[str, Any]] = [
+_MEMBERS: list[dict[str, Any]] = [
     {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
     {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
+    {'id': 'toolu_3', 'name': 'key', 'input': {'text': 'Return'}},
 ]
 _PNG = BinaryImage(data=b'png', media_type='image/png')
 _FAILED = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
 _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
 
 
-@pytest.mark.parametrize(
-    'blocks,counts,content,metadata,results',
-    [
-        # As a capability that drops old screenshots leaves it: the summary, then the note in place of the screenshot.
-        pytest.param(
-            _CLICK_TYPE,
-            [1, 1],
-            ['Ran 2 actions.', '[Older screenshot removed.]'],
-            {'performed': 2},
-            [(False, ['OK']), (False, ['Ran 2 actions. [Older screenshot removed.]'])],
-            id='screenshot-dropped',
-        ),
-        # As a history processor that removes old screenshots outright leaves it: the summary still reaches the model.
-        pytest.param(
-            _CLICK_TYPE,
-            [1, 1],
-            ['Ran 2 actions.'],
-            {'performed': 2},
-            [(False, ['OK']), (False, ['Ran 2 actions.'])],
-            id='screenshot-removed',
-        ),
-        # A zoom's image is its call's output, not the screen, which was removed.
-        pytest.param(
-            [{'id': 'toolu_1', 'name': 'zoom', 'input': {'region': [0, 0, 4, 4]}}, _CLICK_TYPE[0]],
-            [1, 1],
-            ['Ran 2 actions.', _PNG],
-            {'performed': 2},
-            [(False, ['OK', 'image']), (False, ['Ran 2 actions.'])],
-            id='zoom-without-the-screen',
-        ),
-        # A hook put an image of its own before the result: the screen is still the last item, and the image goes
-        # beside it.
-        pytest.param(
-            _CLICK_TYPE,
-            [1, 1],
-            [BinaryImage(data=b'picture', media_type='image/png'), 'Ran 2 actions.', _PNG],
-            {'performed': 2},
-            [(False, ['OK']), (False, ['OK', 'image', 'Ran 2 actions.', 'image'])],
-            id='an-image-before-the-result',
-        ),
-        # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
-        pytest.param(
-            _CLICK_TYPE,
-            [1, 1],
-            [_CHANGED, _PNG],
-            {'performed': 1, 'changed': True},
-            [(False, [_CHANGED]), (False, [_CHANGED, 'image'])],
-            id='changed-before-it-ran',
-        ),
-        # As a UI rebuilds it, or a guardrail answers: nothing says which calls ran, so no call is said to have run.
-        pytest.param(
-            _CLICK_TYPE,
-            [1, 1],
-            [_FAILED, _PNG],
-            None,
-            [(False, [_FAILED]), (False, [_FAILED, 'image'])],
-            id='no-metadata',
-        ),
-        # Content stored as a JSON string reads as the list it encodes, screenshot and all.
-        pytest.param(
-            _CLICK_TYPE,
-            [1, 1],
-            json.dumps(['Ran 2 actions.', {'kind': 'binary', 'data': 'cG5n', 'media_type': 'image/png'}]),
-            {'performed': 2},
-            [(False, ['OK']), (False, ['OK', 'image'])],
-            id='json-string-content',
-        ),
-        # The counts recorded with the call decide which calls ran, even where mapping again would split differently.
-        pytest.param(
-            [{'id': 'toolu_1', 'name': 'key', 'input': {'text': 'a b'}}, _CLICK_TYPE[1]],
-            [1, 1],
-            ['Action 2 of 2 (type) failed: no keyboard.', _PNG],
-            {'performed': 1, 'error': 'no keyboard'},
-            [(False, ['OK', 'image']), (True, ['no keyboard'])],
-            id='recorded-counts',
-        ),
-    ],
-)
-async def test_a_result_answers_each_member_call(
-    allow_model_requests: None,
+async def _sent_results(
     blocks: list[dict[str, Any]],
     counts: list[int],
     content: list[Any] | str,
     metadata: dict[str, Any] | None,
-    results: list[tuple[bool, list[str]]],
-) -> None:
+    outcome: Literal['success', 'denied'] = 'success',
+) -> list[dict[str, Any]]:
+    """The results a request sends for a toolset call whose result is `content`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     details: dict[str, Any] = {
@@ -858,25 +782,131 @@ async def test_a_result_answers_each_member_call(
     call = ComputerCallPart(
         'computer', {'actions': actions}, tool_call_id='toolu_1', provider_name='anthropic', provider_details=details
     )
+    result = ToolReturnPart(
+        'computer', content, tool_call_id='toolu_1', metadata=metadata, tool_kind=COMPUTER_KIND.id, outcome=outcome
+    )
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Go.'),
         ModelResponse(parts=[call], provider_name='anthropic'),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    'computer', content, tool_call_id='toolu_1', metadata=metadata, tool_kind=COMPUTER_KIND.id
-                )
-            ]
-        ),
+        ModelRequest(parts=[result]),
     ]
     await model.request(
         history,
         None,
         ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
     )
-
     (body,) = get_mock_chat_completion_kwargs(client)
-    sent = body['messages'][-1]['content']
+    return body['messages'][-1]['content']
+
+
+def _item(block: dict[str, Any]) -> str:
+    return block['text'] if block['type'] == 'text' else block['source']['data']
+
+
+_HOOK_IMAGE = BinaryImage(data=b'picture', media_type='image/png')
+
+
+@pytest.mark.parametrize('members', [1, 2, 3])
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(['Ran the actions.', _PNG], id='canonical'),
+        pytest.param([_HOOK_IMAGE, 'Ran the actions.', _PNG], id='hook-added-image-before'),
+        pytest.param(['Ran the actions.'], id='no-screenshot'),
+        pytest.param(['Ran the actions.', 'A note a hook added.', _PNG], id='extra-text'),
+    ],
+)
+@pytest.mark.parametrize('outcome', ['all-ran', 'partial', 'failed-first', 'failed-middle', 'denied'])
+async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole(
+    allow_model_requests: None, outcome: str, content: list[Any], members: int
+) -> None:
+    blocks = _MEMBERS[:members]
+    # Two actions per call, so a call can fail part way.
+    counts = [2] * members
+    performed = {
+        'all-ran': 2 * members,
+        'partial': 2 * members - 1,
+        'failed-first': 0,
+        'failed-middle': 2 * (members // 2),
+        'denied': 0,
+    }[outcome]
+    metadata = {'performed': performed} if outcome == 'all-ran' else {'performed': performed, 'error': 'no keyboard'}
+    sent = await _sent_results(blocks, counts, content, metadata, 'denied' if outcome == 'denied' else 'success')
+
+    assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
+    assert all(block['type'] == 'text' for r in sent if r['is_error'] for block in r['content'])
+    if outcome != 'denied':
+        # Besides the `OK`s and the failure, the content goes back once, whole and in order.
+        carried = [
+            _item(block)
+            for r in sent
+            if not r['is_error']
+            for block in r['content']
+            if block['type'] != 'text' or not (block['text'] == 'OK' or block['text'].startswith('Failed: '))
+        ]
+        expected = [item if isinstance(item, str) else base64.b64encode(item.data).decode() for item in content]
+        assert carried == expected
+
+
+@pytest.mark.parametrize(
+    'blocks,counts,content,metadata,results',
+    [
+        # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
+        pytest.param(
+            _MEMBERS[:2],
+            [1, 1],
+            [_CHANGED, _PNG],
+            {'performed': 1, 'changed': True},
+            [(False, [_CHANGED]), (False, [_CHANGED, 'image'])],
+            id='changed-before-it-ran',
+        ),
+        # As a UI rebuilds it, or a guardrail answers: nothing says which calls ran, so no call is said to have run.
+        pytest.param(
+            _MEMBERS[:2],
+            [1, 1],
+            [_FAILED, _PNG],
+            None,
+            [(False, [_FAILED]), (False, [_FAILED, 'image'])],
+            id='no-metadata',
+        ),
+        # Content stored as a JSON string reads as the list it encodes, screenshot and all.
+        pytest.param(
+            _MEMBERS[:2],
+            [1, 1],
+            json.dumps(['Ran 2 actions.', {'kind': 'binary', 'data': 'cG5n', 'media_type': 'image/png'}]),
+            {'performed': 2},
+            [(False, ['OK']), (False, ['Ran 2 actions.', 'image'])],
+            id='json-string-content',
+        ),
+        # The counts recorded with the call decide which calls ran, even where mapping again would split differently.
+        pytest.param(
+            [{'id': 'toolu_1', 'name': 'key', 'input': {'text': 'a b'}}, _MEMBERS[1]],
+            [1, 1],
+            ['Action 2 of 2 (type) failed: no keyboard.', _PNG],
+            {'performed': 1, 'error': 'no keyboard'},
+            [(False, ['Action 2 of 2 (type) failed: no keyboard.', 'image']), (True, ['no keyboard'])],
+            id='recorded-counts',
+        ),
+        # Nothing ran: the first call carries the result and states its failure in text, as an error can't hold it.
+        pytest.param(
+            _MEMBERS[:2],
+            [1, 1],
+            ['Action 1 of 2 (click) failed: no mouse.', _PNG],
+            {'performed': 0, 'error': 'no mouse'},
+            [(False, ['Failed: no mouse', 'Action 1 of 2 (click) failed: no mouse.', 'image']), (True, [NOT_EXECUTED])],
+            id='failed-first',
+        ),
+    ],
+)
+async def test_a_result_answers_each_member_call(
+    allow_model_requests: None,
+    blocks: list[dict[str, Any]],
+    counts: list[int],
+    content: list[Any] | str,
+    metadata: dict[str, Any] | None,
+    results: list[tuple[bool, list[str]]],
+) -> None:
+    sent = await _sent_results(blocks, counts, content, metadata)
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert [
         (r['is_error'], [b['text'] if b['type'] == 'text' else b['type'] for b in r['content']]) for r in sent

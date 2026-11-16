@@ -69,7 +69,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5e4069645c3554b374880a51ac4fcda6-509567dca04327b5-01
+      - 00-80e2817d19641445607c3810baa985a1-4170fa3a48b1dd24-01
       transfer-encoding:
       - chunked
       vary:
@@ -78,42 +78,54 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6SDVoRzRDBmdBtpMadK","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":123,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":123,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6pyuHM5TxCUgL1WdUN4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":123,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":123,"ephemeral_1h_input_tokens":0},"output_tokens":9,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01MdPzkm2zeX1yD81bifiQTm","name":"zoom","input":{},"toolset_name":"computer","caller":{"type":"direct"}}               }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"region\":[0,0,200,100]}"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS2wYKEAgTGAI4AUIIdGhpbmtpbmcSDC2fzeptdOux1ckhTBoMEBGZ1QFFDZFDbW/+IjBTdHHKC7wcl80pFji5p+Kus5BOcWhAk7C9waZSR0alfMa3HY0mr2LQ4H7NgfKGpt8q+AUtceDGx+oJbRbfqJyDLMTmBnJYtZ7jTw6zayQPialqPj8LSe6+wOPv1B2X1zezBH/19TxArvOQLngS639biDuAYRGhe1g7xzR3x0hbnkAc7Or9ZNfOyiH2sXopfrZjPLnKS7SgyYeSGvc0cGY47vPHNSvAOLSemBl2FLbIdkzF9bKgQoEw16sBKPpF361KOJ7U5MOZerXSjgTjfFwBfPpAVXY4sFgyg3qsZo4x+UXkNrrtZOSxWvra4jw/T3/YZyEJJzSpVEWqC/XUv5lltEw2VmbegR8VNbnv4ClUPzcckjRmiX02j3yB9Bt8YOKlmef2mgw3Rwm+7/DpPWwLF0CzeVWFDP0PuuLt57NGJ5GctO2GrlohpWWmneLWW6IDDYtbcHa4xcKvsK77QskyNVdAKaXw1Csm6kPiD61cxFDf/BQ3gh4TeNLR9K3wctEBiBYQI99JK6devcoj3qGzlk96VJRmLo7q8XWmBPsVQ/5i2whDfG1AMk/nd+WnPOS26/xPd7vYKFIGw+hrZkU1Y6k5eIaC9SmtV9mnIjkEsGJEwmNORLs5fYcejDFS0iVJ9cSbPSVOznyRXszdLvR9YDOGiwTxQ5LZrnYI7ijIliCLoPZUxLQ3bGj7cszhmxM/XNqXvXJ4WFs2ymo9KxnhL2G+MY0Apv804Q8kyjn8CoTW4sVF9doDiM9sTdUK8gVuPZdm9ulnYZMnOrMhhp6ClUw/9+AS2OuBbfy3KzdORFqn+T8XowbrjHrX0J9bUPPBk0zBRgndlsvl7jPWyjiaBu0UW3LzMYJ8d8uuRj4AcZqbE4foSPpjnE5RzK60r2co7zCa8HKx0IxhJsiKgtHGcdxzkGSKHxjMSCCWV97NSPIPgx/acn79ycAQzSJa837onIxx/R7UeTds+iKa3JrxI/EDrircOMRyfa6IWfBolY7MRBoAnkx2mHnbDAT0PopryALYCUZOEMpU7IyswAUPej5eBV51lBmsjnPYr24PEjUP7utOB6c9JWJfGAE="}        }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0              }
+        data: {"type":"content_block_stop","index":0               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01B33zA8MXACmya8FNzwYmEy","name":"cursor_position","input":{},"toolset_name":"computer","caller":{"type":"direct"}}            }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01LjczCTatjxuzimYLkxAEYJ","name":"zoom","input":{},"toolset_name":"computer","caller":{"type":"direct"}}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"region\":[0,0,200,100]}"}               }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1  }
+        data: {"type":"content_block_stop","index":1      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01Wj3YPVtz28p3D9qX1EvXia","name":"cursor_position","input":{},"toolset_name":"computer","caller":{"type":"direct"}}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{}"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":123,"cache_read_input_tokens":5098,"output_tokens":86,"output_tokens_details":{"thinking_tokens":0}}    }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":123,"cache_read_input_tokens":5098,"output_tokens":167,"output_tokens_details":{"thinking_tokens":80}}    }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"       }
 
-  recorded_at: 2026-11-16T10:17:59.897974+00:00
+  recorded_at: 2026-11-16T15:16:32.401680+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -125,7 +137,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "7556"
+      - "8805"
       content-type:
       - application/json
       host:
@@ -143,7 +155,11 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01MdPzkm2zeX1yD81bifiQTm
+          - thinking: ""
+            signature: >-
+              CAQS2wYKEAgTGAI4AUIIdGhpbmtpbmcSDC2fzeptdOux1ckhTBoMEBGZ1QFFDZFDbW/+IjBTdHHKC7wcl80pFji5p+Kus5BOcWhAk7C9waZSR0alfMa3HY0mr2LQ4H7NgfKGpt8q+AUtceDGx+oJbRbfqJyDLMTmBnJYtZ7jTw6zayQPialqPj8LSe6+wOPv1B2X1zezBH/19TxArvOQLngS639biDuAYRGhe1g7xzR3x0hbnkAc7Or9ZNfOyiH2sXopfrZjPLnKS7SgyYeSGvc0cGY47vPHNSvAOLSemBl2FLbIdkzF9bKgQoEw16sBKPpF361KOJ7U5MOZerXSjgTjfFwBfPpAVXY4sFgyg3qsZo4x+UXkNrrtZOSxWvra4jw/T3/YZyEJJzSpVEWqC/XUv5lltEw2VmbegR8VNbnv4ClUPzcckjRmiX02j3yB9Bt8YOKlmef2mgw3Rwm+7/DpPWwLF0CzeVWFDP0PuuLt57NGJ5GctO2GrlohpWWmneLWW6IDDYtbcHa4xcKvsK77QskyNVdAKaXw1Csm6kPiD61cxFDf/BQ3gh4TeNLR9K3wctEBiBYQI99JK6devcoj3qGzlk96VJRmLo7q8XWmBPsVQ/5i2whDfG1AMk/nd+WnPOS26/xPd7vYKFIGw+hrZkU1Y6k5eIaC9SmtV9mnIjkEsGJEwmNORLs5fYcejDFS0iVJ9cSbPSVOznyRXszdLvR9YDOGiwTxQ5LZrnYI7ijIliCLoPZUxLQ3bGj7cszhmxM/XNqXvXJ4WFs2ymo9KxnhL2G+MY0Apv804Q8kyjn8CoTW4sVF9doDiM9sTdUK8gVuPZdm9ulnYZMnOrMhhp6ClUw/9+AS2OuBbfy3KzdORFqn+T8XowbrjHrX0J9bUPPBk0zBRgndlsvl7jPWyjiaBu0UW3LzMYJ8d8uuRj4AcZqbE4foSPpjnE5RzK60r2co7zCa8HKx0IxhJsiKgtHGcdxzkGSKHxjMSCCWV97NSPIPgx/acn79ycAQzSJa837onIxx/R7UeTds+iKa3JrxI/EDrircOMRyfa6IWfBolY7MRBoAnkx2mHnbDAT0PopryALYCUZOEMpU7IyswAUPej5eBV51lBmsjnPYr24PEjUP7utOB6c9JWJfGAE=
+            type: thinking
+          - id: toolu_01LjczCTatjxuzimYLkxAEYJ
             type: tool_use
             name: zoom
             input:
@@ -153,17 +169,24 @@ interactions:
               - 200
               - 100
             toolset_name: computer
-          - id: toolu_01B33zA8MXACmya8FNzwYmEy
+          - id: toolu_01Wj3YPVtz28p3D9qX1EvXia
             type: tool_use
             name: cursor_position
             input: {}
             toolset_name: computer
         - role: user
           content:
-          - tool_use_id: toolu_01MdPzkm2zeX1yD81bifiQTm
+          - tool_use_id: toolu_01LjczCTatjxuzimYLkxAEYJ
             type: tool_result
             content:
             - text: OK
+              type: text
+            is_error: false
+            toolset_name: computer
+          - tool_use_id: toolu_01Wj3YPVtz28p3D9qX1EvXia
+            type: tool_result
+            content:
+            - text: Ran 2 actions. Screenshot attached (1280x800).
               type: text
             - source:
                 data: >-
@@ -171,13 +194,6 @@ interactions:
                 media_type: image/png
                 type: base64
               type: image
-            is_error: false
-            toolset_name: computer
-          - tool_use_id: toolu_01B33zA8MXACmya8FNzwYmEy
-            type: tool_result
-            content:
-            - text: OK
-              type: text
             - text: The pointer is at (640, 400).
               type: text
             - source:
@@ -226,11 +242,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=103
+      - x-originResponse;dur=122
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1ae22dd611634b2118860442ca1c7902-ccd84cde345b62bf-01
+      - 00-d837e44e932130e969cda0ca595fd666-203e0da93e32941c-01
       transfer-encoding:
       - chunked
       vary:
@@ -239,27 +255,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6SDaVikb28GfHJWRfQq","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1656,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":1656,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011Ch6pyzA3XhK1NPrPiEFrg","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":1756,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":1756,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The pointer is"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The pointer is at (640"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" at (640, 400)."}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", 400)."}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
+        data: {"type":"content_block_stop","index":0            }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":1656,"cache_read_input_tokens":5098,"output_tokens":14,"output_tokens_details":{"thinking_tokens":0}}              }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":1756,"cache_read_input_tokens":5098,"output_tokens":14,"output_tokens_details":{"thinking_tokens":0}}}
 
         event: message_stop
-        data: {"type":"message_stop"        }
+        data: {"type":"message_stop"  }
 
-  recorded_at: 2026-11-16T10:18:01.062812+00:00
+  recorded_at: 2026-11-16T15:16:32.979709+00:00

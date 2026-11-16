@@ -28,7 +28,6 @@ from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
-    BinaryImage,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -318,7 +317,6 @@ try:
         ComputerReplay,
         NativeComputer,
         computer_replay,
-        returns_output,
         splits_batch,
     )
     from ._containers import is_tool_result_only
@@ -4104,11 +4102,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """One result per toolset member call, as the toolset requires.
 
-        The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of them the
-        screenshot, since an error result can hold only text. The failed call gets its error, and the rest Anthropic's
-        not-executed text. When the first call failed, it carries the screenshot, so it states the failure in text
-        rather than as an error. A failed, denied or UI-rebuilt result doesn't say which calls ran, so each call gets
-        its text.
+        The calls that ran get `OK`, and the last of them the whole result, as it is. The failed call gets its error,
+        and the rest Anthropic's not-executed text. When no call ran, the first one carries the whole result. A failed,
+        denied or UI-rebuilt result doesn't say which calls ran, so each call gets its text.
         """
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
@@ -4142,68 +4138,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         map_context: _MapMessagesContext,
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """The results of the calls once the outcome says how many of their actions ran."""
-        blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
+        blocks, error = replay['computer_blocks'], metadata.get('error')
         # The number of actions up to and including each call's: each call may have become several, such as keys.
-        ends = list(itertools.accumulate(counts))
-        performed, error = metadata['performed'], metadata.get('error')
-        ran = [index for index, end in enumerate(ends) if end <= performed]
-        returned = sum(returns_output(blocks, index) for index in ran)
-        outputs, screen, note, extra = _split_computer_content(content, returned)
+        ends = itertools.accumulate(replay['computer_action_counts'])
+        ran = sum(end <= metadata['performed'] for end in ends)
+        whole = [await self._map_tool_result_item(item, map_context) for item in content]
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
-        for index, (block, end, count) in enumerate(zip(blocks, ends, counts)):
-            if end <= performed:
-                output = next(outputs, None) if returns_output(blocks, index) else None
-                is_last_ran = index == ran[-1]
-                results.append(
-                    await self._map_ran_computer_call(block, is_last_ran, screen, note, extra, output, map_context)
-                )
-            elif error is not None and end - count <= performed:
-                # Its first action was reached, so one of its actions is the one that failed.
-                # Only when no call before it ran does it carry the screen.
-                screen_carrier = None if ran else screen
-                results.append(await self._map_failed_computer_call(block, error, screen_carrier, map_context))
+        for index, block in enumerate(blocks):
+            if index < ran - 1:
+                results.append(_computer_result(block, False, BetaTextBlockParam(text='OK', type='text')))
+            elif index == ran - 1:
+                results.append(_computer_result(block, False, *whole))
+            elif index == ran == 0:
+                # An error result can hold only text, so a failed first call states its failure in text.
+                failed = [BetaTextBlockParam(text=f'Failed: {error}', type='text')] if error is not None else []
+                results.append(_computer_result(block, False, *failed, *whole))
+            elif index == ran and error is not None:
+                results.append(_computer_result(block, True, BetaTextBlockParam(text=error, type='text')))
             else:
                 results.append(
                     _computer_result(block, True, BetaTextBlockParam(text=COMPUTER_NOT_EXECUTED, type='text'))
                 )
         return results
-
-    async def _map_ran_computer_call(
-        self,
-        block: ComputerBlock,
-        is_last_ran: bool,
-        screen: BinaryImage | None,
-        note: str,
-        extra: list[str | MultiModalContent],
-        output: str | MultiModalContent | None,
-        map_context: _MapMessagesContext,
-    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """`OK` and what the call's action returned.
-
-        The last call that ran also gets `extra`, the rest of the result, and the screen, or `note` without it.
-        """
-        returned = [await self._map_tool_result_item(output, map_context)] if output is not None else []
-        ok = BetaTextBlockParam(text='OK', type='text')
-        if not is_last_ran:
-            return _computer_result(block, False, ok, *returned)
-        returned += [await self._map_tool_result_item(item, map_context) for item in extra]
-        if screen is None:
-            return _computer_result(block, False, BetaTextBlockParam(text=note, type='text'), *returned)
-        return _computer_result(block, False, ok, *returned, await self._map_tool_result_item(screen, map_context))
-
-    async def _map_failed_computer_call(
-        self,
-        block: ComputerBlock,
-        error: str,
-        screen: BinaryImage | None,
-        map_context: _MapMessagesContext,
-    ) -> beta_tool_result_block_param.BetaToolResultBlockParam:
-        """The error of the call whose action failed, with the screen when no call before it ran to carry it."""
-        if screen is None:
-            return _computer_result(block, True, BetaTextBlockParam(text=error, type='text'))
-        # An error result can't hold an image, so the call states the failure in text.
-        failed = BetaTextBlockParam(text=f'Failed: {error}', type='text')
-        return _computer_result(block, False, failed, await self._map_tool_result_item(screen, map_context))
 
     def _map_tool_definition(
         self,
@@ -4563,27 +4519,6 @@ def _computer_tool_params(
     if native_computer is None or native_computer.name not in tool_defs:
         return []
     return [native_computer.tool_param()]
-
-
-def _split_computer_content(
-    content: list[str | MultiModalContent], returned: int
-) -> tuple[Iterator[str | MultiModalContent], BinaryImage | None, str, list[str | MultiModalContent]]:
-    """A `computer` result's outputs, its screen, the text the last call that ran gets without the screen, and the rest.
-
-    The content is a summary, what the `returned` calls with an output returned, such as a zoom's image, then the
-    screen, unless something such as a history processor dropped it or left a note in its place. Anything else, such as
-    an image a hook added, is the rest, for the last call that ran; without the screen, its text is in the note.
-    """
-    summary = content[0] if content and isinstance(content[0], str) else None
-    start = int(summary is not None)
-    rest = content[start + returned :]
-    last = rest[-1] if rest else None
-    screen = last if isinstance(last, BinaryImage) else None
-    if screen is not None:
-        rest = rest[:-1]
-    note = ' '.join(item for item in (summary, *rest) if isinstance(item, str)) or 'OK'
-    extra: list[str | MultiModalContent] = [item for item in rest if screen is not None or not isinstance(item, str)]
-    return iter(content[start : start + returned]), screen, note, extra
 
 
 def _result_items(part: ToolReturnPart) -> list[str | MultiModalContent]:

@@ -270,7 +270,13 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
     assert all(result['toolset_name'] == 'computer' for result in results)
     assert [call['name'] for call in calls] == snapshot(['screenshot', 'left_click', 'type'])
-    assert _results(last) == snapshot([(False, ['OK', 'image']), (False, ['OK']), (False, ['OK', 'image'])])
+    assert _results(last) == snapshot(
+        [
+            (False, ['OK']),
+            (False, ['OK']),
+            (False, ['Ran 3 actions. Screenshot attached (1280x800).', 'image', 'image']),
+        ]
+    )
 
 
 @needs_anthropic
@@ -305,9 +311,9 @@ async def test_claude_sees_an_image_a_result_holds_beside_its_screenshot(
 
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/v1/messages')[-1]
-    # The last call that ran carries the image, then the screen, which stays the result's last block.
-    *_, (is_error, blocks) = _results(last)
-    assert not is_error and blocks[:2] == ['OK', 'image'] and blocks[-1] == 'image' and blocks.count('image') == 2
+    # The last call that ran carries the whole result as it is: the image, the summary and the screen.
+    *_, last_result = _results(last)
+    assert last_result == (False, ['image', 'Ran 1 action. Screenshot attached (1280x800).', 'image'])
 
 
 @needs_anthropic
@@ -446,9 +452,16 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
         pytest.param(
             'click at x=100 y=200, hold the shift key for 1 second, then type "b"',
             [Click(x=100, y=200)],
-            # The click ran and carries the screen, the hold failed, and the typing never ran.
+            # The click ran and carries the whole result, the hold failed, and the typing never ran.
             [
-                (False, ['OK', 'image']),
+                (
+                    False,
+                    [
+                        "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after"
+                        ' it did not run. Screenshot attached (1280x800).',
+                        'image',
+                    ],
+                ),
                 (True, ["the fake display cannot perform 'hold_key'"]),
                 (True, ['Not executed: an earlier computer action in this turn failed.']),
             ],
@@ -457,9 +470,17 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
         pytest.param(
             'hold the shift key for 1 second, then type "b"',
             [],
-            # Nothing ran before the hold, so it carries the screen, which an error result can't hold.
+            # Nothing ran before the hold, so it carries the whole result, which an error result can't hold.
             [
-                (False, ["Failed: the fake display cannot perform 'hold_key'", 'image']),
+                (
+                    False,
+                    [
+                        "Failed: the fake display cannot perform 'hold_key'",
+                        "Action 1 of 2 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after"
+                        ' it did not run. Screenshot attached (1280x800).',
+                        'image',
+                    ],
+                ),
                 (True, ['Not executed: an earlier computer action in this turn failed.']),
             ],
             id='first-call',
@@ -485,9 +506,10 @@ async def test_claude_toolset_batch_stops_at_the_failed_call(
 
 @needs_anthropic
 @pytest.mark.vcr
-async def test_claude_zoom_and_cursor_position_answer_their_own_calls(
+async def test_claude_reads_a_zoom_and_the_pointer_position_from_the_last_calls_result(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
+    """The last call that ran gets the whole result, the zoom's image and the pointer position included."""
     provider = ScreenProvider()
     model = _claude('claude-haiku-5-5', anthropic_api_key, request_capture)
     task = (
@@ -500,7 +522,13 @@ async def test_claude_zoom_and_cursor_position_answer_their_own_calls(
     last = request_capture.bodies('/v1/messages')[-1]
     assert [call['name'] for call in content_blocks(last, 'tool_use')] == snapshot(['zoom', 'cursor_position'])
     assert _results(last) == snapshot(
-        [(False, ['OK', 'image']), (False, ['OK', 'The pointer is at (640, 400).', 'image'])]
+        [
+            (False, ['OK']),
+            (
+                False,
+                ['Ran 2 actions. Screenshot attached (1280x800).', 'image', 'The pointer is at (640, 400).', 'image'],
+            ),
+        ]
     )
 
 
