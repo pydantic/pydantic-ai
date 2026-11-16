@@ -4,17 +4,15 @@ from __future__ import annotations as _annotations
 
 import math
 import weakref
-from collections import Counter
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import KW_ONLY, asdict, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import anyio
 import anyio.lowlevel
-from pydantic import ConfigDict, Field, TypeAdapter
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic import Field
 
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
@@ -26,17 +24,14 @@ from pydantic_ai.computer_use import (
     ComputerToolAction,
     CursorPosition,
     Drag,
-    HoldKeys,
     MouseButton,
     MouseDown,
     MouseUp,
     MoveMouse,
     Point,
-    PressKeys,
     Region,
     Screenshot,
     Scroll,
-    TypeText,
     Wait,
     Zoom,
 )
@@ -72,6 +67,7 @@ if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.run import AgentRunResult
 
 _INSTRUCTIONS = """\
 You can see and control the screen of the computer you work on with the `computer` tool. Your shell and file \
@@ -105,7 +101,11 @@ turns a whole call at a time, so one's clicks never land between another's. A lo
 loop, so calls on separate loops don't take turns. A lock goes once no call holds or waits for it."""
 
 _RELEASE_TIMEOUT = 5
-"""Maximum time spent releasing each mouse button a failed or cancelled call left pressed."""
+"""Maximum time spent releasing each mouse button a failed or cancelled call, or a run's end, leaves pressed."""
+
+_HELD_BUTTONS: dict[str | None, list[MouseButton]] = {}
+"""The mouse buttons each run pressed with `mouse_down` and hasn't released, by run ID. A button stays pressed across
+calls until a `mouse_up`, so a drag can span them, and the run's end releases the rest."""
 
 
 @dataclass(frozen=True)
@@ -302,55 +302,6 @@ class _CoordinateMapping:
         )
 
 
-def _unbalanced(actions: list[ComputerToolAction]) -> str | None:
-    """Why a call that would leave a mouse button pressed, or release one it didn't press, is refused, if it does."""
-    held: Counter[MouseButton] = Counter()
-    for index, action in enumerate(actions, 1):
-        if isinstance(action, MouseDown):
-            held[action.button] += 1
-        elif isinstance(action, MouseUp):
-            if not held[action.button]:
-                return f'Action {index} (mouse_up) releases the {action.button} button, which this call did not press, so no action ran.'
-            held[action.button] -= 1
-    if pressed := sorted(button for button, count in held.items() if count):
-        return (
-            f'This call presses the {" and ".join(pressed)} mouse button without releasing it, so no action ran. '
-            'Release every button you press with `mouse_up` in the same call.'
-        )
-    return None
-
-
-def _amount(value: float) -> str:
-    """`2,000` for a count, `1.5` for seconds."""
-    return f'{value:,}' if isinstance(value, int) else f'{value:g}'
-
-
-def _over_limit(actions: list[ComputerToolAction], limits: ComputerUseActionLimits) -> str | None:
-    """Why a call that asks one action for more than `limits` allow is refused, if it does."""
-    for index, action in enumerate(actions, 1):
-        match action:
-            case Wait():
-                asked, most, unit, name = action.seconds, limits.max_wait_seconds, 'seconds', 'max_wait_seconds'
-            case HoldKeys():
-                asked, most, unit, name = action.seconds, limits.max_hold_seconds, 'seconds', 'max_hold_seconds'
-            case TypeText():
-                asked, most, unit, name = len(action.text), limits.max_typed_chars, 'characters', 'max_typed_chars'
-            case PressKeys():
-                asked, most, unit, name = action.repeat, limits.max_key_repeat, 'repeats', 'max_key_repeat'
-            case Scroll():
-                asked, most, unit, name = action.amount, limits.max_scroll_amount, 'scroll clicks', 'max_scroll_amount'
-            case Drag():
-                asked, most, unit, name = len(action.path), limits.max_drag_points, 'points', 'max_drag_points'
-            case _:
-                continue
-        if most is not None and asked > most:
-            return (
-                f'Action {index} ({action.type}) asks for {_amount(asked)} {unit}, more than the {_amount(most)} this '
-                f'agent allows (`{name}`), so no action ran.'
-            )
-    return None
-
-
 @dataclass
 class _Steps:
     """Runs one call's actions on `display`, keeping what they return and whether the screen still has to settle."""
@@ -397,39 +348,47 @@ async def _perform(
     actions: list[ComputerToolAction],
     mapping: _CoordinateMapping,
     settle_seconds: float,
+    held: list[MouseButton],
 ) -> tuple[int, str | None, list[str | BinaryImage]]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned.
 
-    After an action, the screen settles for `settle_seconds` before a zoom or a screenshot.
+    `held` is the buttons pressed before the call, and ends as the ones still pressed. A call that fails or is cancelled
+    releases them all. After an action, the screen settles for `settle_seconds` before a zoom or a screenshot.
     """
     steps = _Steps(display, mapping, settle_seconds)
-    performed, error = 0, None
-    held: list[MouseButton] = []
     try:
-        for index, action in enumerate(actions):
-            if isinstance(action, MouseDown):
-                # Counted before it runs, since a press can take effect and still fail.
-                held.append(action.button)
-            try:
-                await steps.run(action, last=index == len(actions) - 1)
-            except WorkspaceUnavailableError:
-                raise
-            except WorkspaceError as e:
-                error = str(e) or type(e).__name__
-                break
-            if isinstance(action, MouseUp):
-                held.remove(action.button)
-            performed += 1
-    finally:
-        # A call releases every button it presses, so one is still pressed only after a failure or cancellation.
+        performed, error = await _run_in_order(steps, actions, held)
+    except BaseException:
         await _release(display, held)
-    if held:
-        raise ToolFailed(
-            f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error}. '
-            f'Releasing the {" and ".join(held)} mouse button failed too, so it may still be held.'
-        )
+        raise
+    if error is not None:
+        await _release(display, held)
+        if held:
+            raise ToolFailed(
+                f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error}. '
+                f'Releasing the {" and ".join(held)} mouse button failed too, so it may still be held.'
+            )
     await steps.settle()
     return performed, error, steps.outputs
+
+
+async def _run_in_order(
+    steps: _Steps, actions: list[ComputerToolAction], held: list[MouseButton]
+) -> tuple[int, str | None]:
+    """Run the actions until one fails, keeping `held` up to date: how many ran, and why the next one failed."""
+    for index, action in enumerate(actions):
+        if isinstance(action, MouseDown) and action.button not in held:
+            # Counted before it runs, since a press can take effect and still fail.
+            held.append(action.button)
+        try:
+            await steps.run(action, last=index == len(actions) - 1)
+        except WorkspaceUnavailableError:
+            raise
+        except WorkspaceError as e:
+            return index, str(e) or type(e).__name__
+        if isinstance(action, MouseUp) and action.button in held:
+            held.remove(action.button)
+    return len(actions), None
 
 
 async def _release(display: Display, held: list[MouseButton]) -> None:
@@ -501,9 +460,7 @@ def _as_computer_call(part: ModelResponsePart, tool_call_id: str | None) -> Comp
 def _display(ctx: RunContext[Any]) -> Display | None:
     """The workspace backend's display, if it has one."""
     backend = ctx.workspace.backend
-    display = backend.display if isinstance(backend, SupportsDisplay) else None
-    # An attribute that only shares the name, such as an X display string, is not a display.
-    return display if isinstance(display, Display) else None
+    return backend.display if isinstance(backend, SupportsDisplay) else None
 
 
 def _required_display(ctx: RunContext[Any]) -> Display:
@@ -546,36 +503,6 @@ def _plural(count: int, noun: str) -> str:
     return f'{count} {noun}' if count == 1 else f'{count} {noun}s'
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=ConfigDict(extra='forbid'))
-class ComputerUseActionLimits:
-    """The most one action in a `computer` call may ask for. Every limit is off by default.
-
-    A call over a limit is refused before any action runs, and the model is told which limit. Under durable execution
-    a call is one activity, so set the activity's timeout for the longest call.
-    """
-
-    max_wait_seconds: Annotated[float, Field(gt=0)] | None = None
-    """Seconds one `wait` may pause for."""
-
-    max_hold_seconds: Annotated[float, Field(gt=0)] | None = None
-    """Seconds one `hold_key` may hold its keys for."""
-
-    max_typed_chars: Annotated[int, Field(gt=0)] | None = None
-    """Characters one `type` may type."""
-
-    max_key_repeat: Annotated[int, Field(gt=0)] | None = None
-    """Times one `keypress` may press its keys."""
-
-    max_scroll_amount: Annotated[int, Field(gt=0)] | None = None
-    """Mouse-wheel clicks one `scroll` may turn."""
-
-    max_drag_points: Annotated[int, Field(gt=0)] | None = None
-    """Points one `drag` may pass through, its start and end included."""
-
-
-_ACTION_LIMITS = TypeAdapter(ComputerUseActionLimits)
-
-
 @dataclass
 class ComputerUse(AbstractCapability[AgentDepsT]):
     """Lets the agent see and control its workspace's display with one `computer` tool.
@@ -590,9 +517,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     settle_seconds: float = 0
     """Pause after acting before the next zoom or screenshot. Set it when screenshots show pages still loading. A
     `wait` the model asks for adds to it."""
-
-    action_limits: ComputerUseActionLimits = ComputerUseActionLimits()
-    """The most one action may ask for, such as a `wait`'s seconds."""
 
     native: bool = True
     """Send the tool as the model's own computer tool where it has one, such as Claude's or OpenAI's.
@@ -610,25 +534,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     )
     """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
 
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """Merge the fields, keeping the smallest value each action limit is given."""
-        merged = super().combine(capabilities)
-        assert isinstance(merged, cls)
-        limits: dict[str, float] = {}
-        for capability in capabilities:
-            assert isinstance(capability, cls)
-            for name, value in asdict(capability.action_limits).items():
-                if value is not None:
-                    limits[name] = min(value, limits.get(name, value))
-        # A copy, since `merged` can be a caller's instance that another agent also uses.
-        return replace(merged, action_limits=_ACTION_LIMITS.validate_python(limits))
-
     def __post_init__(self) -> None:
         if self.settle_seconds < 0:
             raise UserError('`settle_seconds` must not be negative.')
-        # An agent spec passes the limits as a mapping.
-        self.action_limits = _ACTION_LIMITS.validate_python(self.action_limits)
 
     @cached_property
     def _toolset(self) -> FunctionToolset[AgentDepsT]:
@@ -667,8 +575,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
-        if refused := _unbalanced(actions) or _over_limit(actions, self.action_limits):
-            raise ToolFailed(refused)
+        if any(isinstance(action, MouseDown) for action in actions):
+            # Marks the run, so its end releases what it holds. Under durable execution the list fills in the worker.
+            _HELD_BUTTONS.setdefault(ctx.run_id, [])
         made = _the_call(ctx)
         call = made[1] if made else None
         # The grid and screenshot limit of the model that made the call, as the agent recorded them.
@@ -733,12 +642,22 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             if refused := _off_screen(actions, *mapping.space, 'grid' if plan.grid else 'screen'):
                 raise ToolFailed(refused)
             pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
-            return await self._act_and_look(display, pixels, mapping, plan)
+            held = _HELD_BUTTONS.pop(ctx.run_id, [])
+            try:
+                return await self._act_and_look(display, pixels, mapping, plan, held)
+            finally:
+                if held:
+                    _HELD_BUTTONS[ctx.run_id] = held
 
     async def _act_and_look(
-        self, display: Display, actions: list[ComputerToolAction], mapping: _CoordinateMapping, plan: _Plan
+        self,
+        display: Display,
+        actions: list[ComputerToolAction],
+        mapping: _CoordinateMapping,
+        plan: _Plan,
+        held: list[MouseButton],
     ) -> ToolReturn:
-        performed, error, outputs = await _perform(display, actions, mapping, self.settle_seconds)
+        performed, error, outputs = await _perform(display, actions, mapping, self.settle_seconds, held)
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
@@ -747,6 +666,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             summary.append('This call was changed before it ran.')
         if error is None:
             summary.append(f'Ran {_plural(len(actions), "action")}.')
+            if held:
+                buttons = 'button is' if len(held) == 1 else 'buttons are'
+                summary.append(f'The {" and ".join(held)} mouse {buttons} still pressed.')
         else:
             result['error'] = error
             summary.append(
@@ -814,14 +736,31 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             return _NotRun.of(e)
         return width, height
 
-    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Fail the run at its start when its workspace has no display.
+    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        await self._release_held(ctx)
+        return result
 
-        Durable workflow code can't reach the backend, so there the first `computer` call or native tool size read
-        reports it instead.
-        """
-        if not ctx.in_durable_context and _display(ctx) is None:
-            raise UserError(_NO_DISPLAY)
+    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
+        await self._release_held(ctx)
+        raise error
+
+    async def _release_held(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Release the mouse buttons the run still holds, as it ends, fails or is cancelled."""
+        if ctx.run_id not in _HELD_BUTTONS:
+            return
+        with anyio.CancelScope(shield=True):
+            await self._release_on_display(ctx)
+        _HELD_BUTTONS.pop(ctx.run_id, None)
+
+    @durable_operation('release')
+    async def _release_on_display(self, ctx: RunContext[AgentDepsT]) -> None:
+        held = _HELD_BUTTONS.pop(ctx.run_id, [])
+        if held and (display := _display(ctx)) is not None:
+            async with _taking_turns(ctx, display):
+                try:
+                    await _release(display, held)
+                except WorkspaceUnavailableError:
+                    pass  # the environment is gone, and its buttons with it
 
     async def prepare_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
