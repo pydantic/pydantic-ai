@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import anyio
+import anyio.lowlevel
 import pytest
 from inline_snapshot import snapshot
 
@@ -163,7 +165,7 @@ class YieldingPlanStore(InMemoryPlanStore):
 
     async def get_items(self) -> list[PlanItem]:
         items = await super().get_items()
-        await asyncio.sleep(0)
+        await anyio.lowlevel.checkpoint()
         return items
 
 
@@ -185,6 +187,46 @@ async def test_parallel_plan_edits_keep_every_change() -> None:
     await agent.run('Make c wait for a and b.')
 
     assert [item.depends_on for item in await store.get_items() if item.id == 'c'] == [['a', 'b']]
+
+
+_READINESS_WAIT_TIMEOUT = 5.0
+
+
+class GatedPlanStore(InMemoryPlanStore):
+    """Sets `entered` on each read, then waits for `gate` if it has one."""
+
+    def __init__(self, gate: anyio.Event | None = None) -> None:
+        super().__init__()
+        self.entered = anyio.Event()
+        self.gate = gate
+
+    async def get_items(self) -> list[PlanItem]:
+        self.entered.set()
+        if self.gate is not None:
+            await self.gate.wait()
+        return await super().get_items()
+
+
+async def test_concurrent_runs_plan_tools_do_not_wait_for_each_other() -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_plan', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=InMemoryPlanStore,
+        capabilities=[Planning[InMemoryPlanStore](store_resolver=lambda ctx: ctx.deps, inject=False)],
+    )
+    second_store = GatedPlanStore()
+    first_store = GatedPlanStore(gate=second_store.entered)
+
+    # The first run's plan tool waits inside its call until the second run's plan tool reads.
+    with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(partial(agent.run, 'first', deps=first_store))
+            await first_store.entered.wait()
+            tg.start_soon(partial(agent.run, 'second', deps=second_store))
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):
