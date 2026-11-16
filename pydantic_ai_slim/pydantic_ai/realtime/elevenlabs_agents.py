@@ -1129,14 +1129,6 @@ def _pong_frame(ping_frame: dict[str, Any]) -> str:
     return to_json({'type': 'pong', 'event_id': event.ping_event.event_id}).decode()
 
 
-def _parse_error(error: ValueError) -> RealtimeSessionErrorEvent:
-    """The recoverable error a malformed frame makes: it shouldn't tear down the session (mirroring the OpenAI provider).
-
-    `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and a bad base64 audio payload.
-    """
-    return RealtimeSessionErrorEvent(message=f'Failed to parse {_PROVIDER_LABEL} event: {error}', recoverable=True)
-
-
 def _validate_audio_format(wire_format: str | None, *, expected_rate: int, direction: str, model_name: str) -> None:
     """Check a handshake-reported audio format against the profile's PCM sample rate."""
     if wire_format is None:
@@ -1991,6 +1983,14 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             if read is not None:
                 await _utils.cancel_and_drain(read)
 
+    @staticmethod
+    def _parse_error(error: ValueError) -> RealtimeSessionErrorEvent:
+        """The recoverable error a malformed frame makes: the session stays usable, as on the OpenAI provider.
+
+        `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and a bad base64 audio payload.
+        """
+        return RealtimeSessionErrorEvent(message=f'Failed to parse {_PROVIDER_LABEL} event: {error}', recoverable=True)
+
     async def _read_frame(self, raw: str | bytes) -> RealtimeFrame | None:
         """The frame one received message makes, or `None` when it makes none."""
         if not isinstance(raw, str):
@@ -1998,7 +1998,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         try:
             events = await self._map_event(_loads_obj(raw))
         except ValueError as e:
-            return self._lifecycle.frame_for([_parse_error(e)])
+            return self._lifecycle.frame_for([self._parse_error(e)])
         return self._frame(events) if events or self._cuts else None
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
@@ -2103,7 +2103,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                 raise
             # What a frame ends follows from its type alone, so a malformed one still ends it: the response is over
             # by the time its payload fails, and the lifecycle must hear so.
-            return [*ended, _parse_error(e)]
+            return [*ended, self._parse_error(e)]
 
     def _end_calls(self) -> list[RealtimeCodecEvent]:
         """End the response whose tool calls are all in: the agent goes on once their results are."""
@@ -2201,8 +2201,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         return self._map_turn_event(event_type, data)
 
     def _map_audio(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
-        # Parse (and decode) before marking the response open, so the payload of a malformed frame that is
-        # reported as a recoverable error changes nothing (what its type ends still ends, see `_map_event`).
+        # Parse (and decode) before marking the response open, so a malformed payload, reported as a recoverable
+        # error, changes no turn state. (What the frame's type ends still ends: see `_map_event`.)
         payload = _AudioEvent.model_validate(data).audio_event
         # `validate=True` so corrupted base64 raises (a `ValueError` the receive loop reports as
         # a recoverable error) instead of silently decoding to garbage or empty bytes.

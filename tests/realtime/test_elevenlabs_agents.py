@@ -3593,21 +3593,25 @@ async def test_a_dropped_connection_loses_the_response_under_way() -> None:
     )
 
 
-_MALFORMED_VOICED = {'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}}
-"""A `context_usage` frame whose payload fails validation: a recoverable error, which still ends the reply it comes
-with."""
-
-
-async def test_a_malformed_frame_still_ends_the_reply_its_type_ends() -> None:
-    # What a frame ends follows from its type alone, so the reply ends with the malformed frame as with a well-formed
-    # one, and the next reply is a response of its own, after the user's words.
+@pytest.mark.parametrize(
+    'malformed',
+    [
+        {'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}},
+        {'type': 'agent_response', 'agent_response_event': {'event_id': 2}},
+        {'type': 'user_transcript', 'user_transcription_event': {}},
+    ],
+    ids=['context-usage', 'agent-response', 'user-transcript'],
+)
+async def test_a_malformed_frame_still_ends_the_reply_its_type_ends(malformed: dict[str, Any]) -> None:
+    # What a frame ends follows from its type alone, so the reply ends with a malformed frame as with a well-formed
+    # one, which is a recoverable error, and the next reply is a response of its own, after the user's words.
     connection, ws = _connection()
     frames = await _frames(
         connection,
         ws,
         [
             _agent_response('Hi.'),
-            _MALFORMED_VOICED,
+            malformed,
             {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Again.'}},
             {
                 'type': 'agent_response',
@@ -3631,7 +3635,7 @@ async def test_a_malformed_frame_still_ends_the_reply_its_type_ends() -> None:
                 ),
                 RealtimeSessionErrorEvent(
                     message=IsStr(
-                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _ContextUsageEvent\n.*',
+                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _\w+Event\n.*',
                         regex_flags=re.DOTALL,
                     )
                 ),
@@ -3664,7 +3668,7 @@ async def test_a_malformed_frame_still_ends_the_reply_its_type_ends() -> None:
 
     # The reply is over before the connection drops, so it isn't lost with it.
     connection, ws = _connection()
-    assert await _frames(connection, ws, [_agent_response('Hi.'), _MALFORMED_VOICED]) == snapshot(
+    assert await _frames(connection, ws, [_agent_response('Hi.'), malformed]) == snapshot(
         [
             [
                 ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
@@ -3679,7 +3683,7 @@ async def test_a_malformed_frame_still_ends_the_reply_its_type_ends() -> None:
                 ),
                 RealtimeSessionErrorEvent(
                     message=IsStr(
-                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _ContextUsageEvent\n.*',
+                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _\w+Event\n.*',
                         regex_flags=re.DOTALL,
                     )
                 ),
