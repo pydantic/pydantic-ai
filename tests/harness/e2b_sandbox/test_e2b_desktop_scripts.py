@@ -22,10 +22,10 @@ _STUBS = {
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
     # `-x NAME` prints the PIDs the test listed.
     'pgrep': 'cat "$bin/pgrep-$2" 2>/dev/null',
-    # Stays up, as XFCE's session does, for longer than the script waits; `startxfce4-fails` makes it exit with an
-    # error instead.
+    # Shows its window, then stays up past the script's next 0.1 second check, so the start succeeds without leaving a
+    # process behind; `startxfce4-fails` makes it exit with an error instead.
     'startxfce4': '[ -e "$bin/startxfce4-fails" ] && { echo no session bus; exit 17; }; '
-    'touch "$bin/xfce-started"; exec sleep 30',
+    'touch "$bin/xfce-started"; exec sleep 1',
 }
 
 
