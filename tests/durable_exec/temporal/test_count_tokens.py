@@ -22,7 +22,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 
 try:
     from temporalio import activity, workflow
-    from temporalio.client import Client, WorkflowHistory
+    from temporalio.client import Client
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -30,7 +30,7 @@ try:
 
     from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 
-    from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE
+    from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE, scheduled_activity_types
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -77,14 +77,6 @@ class CountTokensWorkflow:
         ]
 
 
-def _scheduled_activities(history: WorkflowHistory) -> list[str]:
-    return [
-        event.activity_task_scheduled_event_attributes.activity_type.name
-        for event in history.events
-        if event.HasField('activity_task_scheduled_event_attributes')
-    ]
-
-
 async def test_count_tokens_runs_in_its_own_activity(client: Client):
     """The count is an activity ahead of the request, and the key it wrote on its deserialized request reaches the run."""
     _counted_in_activity.clear()
@@ -102,7 +94,7 @@ async def test_count_tokens_runs_in_its_own_activity(client: Client):
 
     assert output == ('ok', [{'__pydantic_ai__': {'counted': True}}])
     assert _counted_in_activity == [True]
-    assert _scheduled_activities(await handle.fetch_history()) == [
+    assert scheduled_activity_types(await handle.fetch_history()) == [
         'agent__count_tokens__model_count_tokens',
         'agent__count_tokens__model_request',
     ]
@@ -140,7 +132,7 @@ async def test_count_tokens_replays_history_recorded_with_a_workflow_side_count(
     monkeypatch.undo()
 
     history = await handle.fetch_history()
-    assert _scheduled_activities(history) == ['agent__count_tokens__model_request']
+    assert scheduled_activity_types(history) == ['agent__count_tokens__model_request']
     replay = await Replayer(
         workflows=[CountTokensWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
     ).replay_workflow(history)

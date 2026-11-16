@@ -36,8 +36,9 @@ def blockbuster_excluded_modules() -> tuple[str, ...]:
 
 
 async def test_prefect_count_tokens_runs_in_its_own_task() -> None:
-    """The count runs in a task of its own ahead of the request's task."""
+    """The count runs in a task of its own ahead of the request's task, and a retried flow run loads its result."""
     tasks: list[tuple[str, str | None]] = []
+    attempts = 0
 
     def task_name() -> str | None:
         context = TaskRunContext.get()
@@ -59,12 +60,18 @@ async def test_prefect_count_tokens_runs_in_its_own_task() -> None:
 
     agent = Agent(CountingModel(reply), name='prefect_count_tokens', capabilities=[PrefectDurability()])
 
-    @flow
+    @flow(retries=1)
     async def run_flow() -> str:
+        nonlocal attempts
+        attempts += 1
         limits = UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
-        return (await agent.run('hi', usage_limits=limits)).output
+        output = (await agent.run('hi', usage_limits=limits)).output
+        if attempts == 1:
+            raise RuntimeError('retry')
+        return output
 
     assert await run_flow() == 'ok'
+    assert attempts == 2
     assert tasks == [
         ('count_tokens', 'Count Tokens: function:reply:'),
         ('request', 'Model Request: function:reply:'),

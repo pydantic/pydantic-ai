@@ -1200,6 +1200,23 @@ def test_typed_result_codec_matches_json_codec(value: CallToolResult) -> None:
     assert codec.load(payload) == JSON_CODEC.load(CallToolResult, payload)
 
 
+@pytest.mark.parametrize(
+    'value',
+    [
+        CountTokensResult(
+            usage=RequestUsage(input_tokens=5, cache_read_tokens=2, details={'reasoning': 1}),
+            framework_metadata={'thinking': {'stale': True}},
+        ),
+        CountTokensResult(error=('NotImplementedError', 'Token counting is not supported')),
+        CountTokensResult(error=('UserError', 'The request cannot be counted.')),
+    ],
+)
+def test_count_tokens_result_round_trips_through_the_json_codec(value: CountTokensResult) -> None:
+    """A count's recorded result loads back unchanged, the error tuple included, after JSON encoding turns it into a list."""
+    codec = TypedResultCodec[CountTokensResult](CountTokensResult)
+    assert codec.load(codec.dump(value)) == value
+
+
 def test_typed_result_codec_json_model_and_identity_parity() -> None:
     value = ModelResponse(parts=[TextPart('hello')])
     json_codec = TypedResultCodec[ModelResponse](ModelResponse)
