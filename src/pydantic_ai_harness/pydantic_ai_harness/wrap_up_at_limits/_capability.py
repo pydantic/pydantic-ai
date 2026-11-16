@@ -100,6 +100,7 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
             )
             for call in calls
         ]
+        ctx.tracer.start_span('tool calls not executed', attributes={'wrap_up_at_limits.calls': len(parts)}).end()
         return ModelRequestNode[AgentDepsT, object](ModelRequest(parts=parts))
 
     async def before_model_request(
@@ -121,6 +122,7 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
             limit = 'tool_calls_limit'
         if limit is None:
             return request_context
+        ctx.tracer.start_span('run wrapped up', attributes={'wrap_up_at_limits.limit': limit}).end()
         ctx.enqueue(SystemPromptPart(self.prompt, scope='request', metadata={'origin': _ORIGIN, 'limit': limit}))
         settings = ModelSettings(**(request_context.model_settings or {}))
         settings['tool_choice'] = 'none'
@@ -137,7 +139,7 @@ def _limit_reached(
     """The limit that leaves room for this request but not for a final one after it, if any.
 
     The token use of both is projected from `responses`, the run's responses so far, plus the final
-    request's `prompt_tokens`.
+    request's `prompt_tokens`. Input grows with the history; each response's output is its own.
     """
     reserved = reserved_usage_limits(limits)
     if reserved is not None and reserved.request_limit is not None and usage.requests >= reserved.request_limit:
@@ -155,7 +157,7 @@ def _limit_reached(
             'output_tokens_limit',
             limits.output_tokens_limit,
             usage.output_tokens,
-            _next_two_requests([r.usage.output_tokens for r in responses]),
+            2 * max((r.usage.output_tokens for r in responses), default=0),
         ),
         (
             'total_tokens_limit',

@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
@@ -21,6 +24,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ToolChoice
 from pydantic_ai.tools import ToolDefinition
@@ -181,6 +185,25 @@ class TestWrapUpAtLimits:
             if isinstance(part, ToolReturnPart)
         ]
         assert returns == ['notes on a1', 'notes on b1']
+
+    async def test_records_spans(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = _agent(_Researcher(), [])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+        await agent.run('Research', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        spans = [
+            (span.name, dict(span.attributes or {}))
+            for span in exporter.get_finished_spans()
+            if span.name in ('tool calls not executed', 'run wrapped up')
+        ]
+        assert spans == [
+            ('tool calls not executed', {'wrap_up_at_limits.calls': 2}),
+            ('run wrapped up', {'wrap_up_at_limits.limit': 'tool_calls_limit'}),
+        ]
 
     async def test_exhausted_tool_calls_wrap_up_the_next_request(self) -> None:
         model = _Researcher()

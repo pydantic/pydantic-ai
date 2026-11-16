@@ -850,7 +850,8 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
   `tool_choice`.
 - List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
 - Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
-  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe; no spans.
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Spans: `run wrapped up`
+  (`wrap_up_at_limits.limit`) and `tool calls not executed` (`wrap_up_at_limits.calls`).
 
 ## See also
 
