@@ -237,11 +237,12 @@ def _validate_expire_seconds(value: object) -> None:
 
     `EXPIRE` treats zero or negative as "delete now", the opposite of what a
     caller asking for retention means, and a non-`int` would only fail at the
-    first write. Mirrors `_validate_max_snapshots`.
+    first write. A `bool` is refused too: the script reads `str(True)` as no
+    number and fails after part of the write has landed.
     """
     if value is None:
         return
-    if not isinstance(value, int) or value < 1:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f'expire_seconds must be an int >= 1 or None, got {value!r}')
 
 
@@ -314,6 +315,8 @@ class RedisStepStore:
     ) -> None:
         _validate_prefix(prefix)
         _validate_max_snapshots(max_snapshots_per_run)
+        if isinstance(max_snapshots_per_run, bool):
+            raise ValueError(f'max_snapshots_per_run must be an int >= 1 or None, got {max_snapshots_per_run!r}')
         _validate_expire_seconds(expire_seconds)
         self._client = client
         self._prefix = prefix

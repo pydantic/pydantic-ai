@@ -234,11 +234,12 @@ class TestRedisStepStoreConstruction:
         [stored] = client.hashes[f'{_P}:messages:{{r1}}'].values()
         assert big_text in stored
 
-    def test_rejects_invalid_max_snapshots_per_run(self) -> None:
+    @pytest.mark.parametrize('value', [0, True])
+    def test_rejects_invalid_max_snapshots_per_run(self, value: int) -> None:
         with pytest.raises(ValueError, match='max_snapshots_per_run must be'):
-            RedisStepStore(FakeRedis(), max_snapshots_per_run=0)
+            RedisStepStore(FakeRedis(), max_snapshots_per_run=value)
 
-    @pytest.mark.parametrize('value', [0, -1, 1.5])
+    @pytest.mark.parametrize('value', [0, -1, 1.5, True])
     def test_rejects_invalid_expire_seconds(self, value: object) -> None:
         with pytest.raises(ValueError, match='expire_seconds must be an int >= 1 or None'):
             RedisStepStore(FakeRedis(), expire_seconds=value)  # pyright: ignore[reportArgumentType]
