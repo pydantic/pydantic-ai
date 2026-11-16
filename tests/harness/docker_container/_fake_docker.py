@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -210,6 +211,13 @@ exec "$@"
 """
 """Stands in for `setsid`, which macOS lacks."""
 
+_FAKE_FLOCK = f"""#!{sys.executable}
+import fcntl, sys
+fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX)
+"""
+"""Stands in for `flock FD`, which macOS lacks: locks the file the shell opened on that descriptor until the shell
+closes it."""
+
 
 class FakeDocker:
     def __init__(self, bin_dir: Path) -> None:
@@ -316,6 +324,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
         ('tint2', _FAKE_TINT2),
         ('xprop', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
+        ('flock', _FAKE_FLOCK),
         ('scrot', _FAKE_SCROT),
         ('xwininfo', _FAKE_XWININFO),
     ]:
