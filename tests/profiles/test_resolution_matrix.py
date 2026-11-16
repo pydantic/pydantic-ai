@@ -36,7 +36,6 @@ from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AdvisorTool,
     CodeExecutionTool,
-    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -247,16 +246,7 @@ def test_anthropic_claude_sonnet_4_6():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_max_effort': True,
@@ -299,16 +289,7 @@ def test_anthropic_claude_opus_4_7():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
@@ -361,16 +342,7 @@ def test_anthropic_claude_haiku_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'computer_use_screenshot_max_side': 1568,
             'computer_use_screenshot_max_pixels': 1150000,
@@ -2018,16 +1990,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
             'computer_use_screenshot_max_side': 1568,
@@ -3322,16 +3285,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
             'computer_use_screenshot_max_side': 1568,
@@ -3466,16 +3420,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
             'computer_use_screenshot_max_side': 1568,

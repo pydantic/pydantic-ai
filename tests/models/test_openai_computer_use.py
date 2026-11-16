@@ -509,7 +509,7 @@ def _without_native_tools(profile: ModelProfile) -> ModelProfile:
         pytest.param('gpt-5.2', True, None, id='a-model-without-it'),
         pytest.param('gpt-5.2', True, _without_native_tools, id='a-profile-that-lists-every-native-tool'),
         pytest.param(
-            'gpt-5.5', True, ModelProfile(supported_native_tools=frozenset()), id='a-profile-without-native-tools'
+            'gpt-5.5', True, OpenAIModelProfile(openai_supports_computer_tool=False), id='a-profile-that-turns-it-off'
         ),
         # As `ComputerUse(native=False)` asks, so the model gets the tool's own actions.
         pytest.param('gpt-5.5', False, None, id='a-tool-that-opts-out'),
@@ -529,6 +529,17 @@ async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_fu
     (request,) = get_mock_responses_kwargs(client)
     assert [tool['name'] for tool in request['tools']] == ['computer']
     assert request['tools'][0]['type'] == 'function'
+
+
+async def test_a_profile_that_turns_it_on_gets_the_native_tool(allow_model_requests: None) -> None:
+    """The flag set through `profile=` decides, also on a model whose defaults leave it off."""
+    client = MockOpenAIResponses.create_mock(_done())
+    profile = OpenAIModelProfile(openai_supports_computer_tool=True)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client), profile=profile)
+    await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability()]).run('Go.')
+
+    (request,) = get_mock_responses_kwargs(client)
+    assert request['tools'] == [{'type': 'computer'}]
 
 
 def test_an_azure_client_and_the_gateway_keep_the_function_tool() -> None:

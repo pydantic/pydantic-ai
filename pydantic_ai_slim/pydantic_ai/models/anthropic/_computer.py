@@ -223,15 +223,6 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
     return block['input'].get('action', ''), {key: value for key, value in block['input'].items() if key != 'action'}
 
 
-def returns_output(blocks: list[ComputerBlock], index: int) -> bool:
-    """Whether a call's result has content of its own, before the screen the last call that ran gets.
-
-    A zoom and the pointer position do, and so does a screenshot before the last call, captured where it is.
-    """
-    name = blocks[index]['name']
-    return name in ('zoom', 'cursor_position') or (name == 'screenshot' and index < len(blocks) - 1)
-
-
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
 

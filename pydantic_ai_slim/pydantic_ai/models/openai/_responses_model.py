@@ -714,9 +714,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        # The provider's profile says which models take the native computer tool.
-        if not profile.get('openai_supports_computer_tool', False):
-            supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ComputerTool}
+        # The flag, after every layer including the user's `profile=`, decides whether the native computer tool is sent.
+        listed = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        if profile.get('openai_supports_computer_tool', False):
+            supported = listed | {ComputerTool}
+        else:
+            supported = listed - {ComputerTool}
+        if supported != listed:
             profile = merge_profile(profile, ModelProfile(supported_native_tools=supported))
         if isinstance(self._provider, OAuthCredentialsProvider):
             # These providers authenticate HTTP requests without configuring the SDK socket client.
@@ -725,8 +729,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off Batch API, Responses WebSocket and native computer tool defaults for Azure clients and the gateway.
-
-        Elsewhere, offer the native computer tool to the models whose profile sets `openai_supports_computer_tool`.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -743,10 +745,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 profile,
                 OpenAIModelProfile(openai_responses_supports_websocket=False, openai_supports_computer_tool=False),
             )
-        if profile.get('openai_supports_computer_tool', False):
-            # Added here rather than by the profile, so a user's `profile=` can still leave it out.
-            supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) | {ComputerTool}
-            profile = merge_profile(profile, ModelProfile(supported_native_tools=supported))
         return profile
 
     @classmethod
@@ -1259,7 +1257,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         provider_response_id=response.id,
                         timestamp=timestamp,
                     )
-                    items.append(map_computer_call(item, model_request_parameters, call_id, self.system))
+                    if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
+                        items.append(computer_call)
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass

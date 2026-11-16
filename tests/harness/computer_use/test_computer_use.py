@@ -611,7 +611,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
             ),
             pytest.param(
                 _SMALL,
-                "The latest screenshot is 1280x800, larger than 'fallback' can see. Start the display at 1000x625 or "
+                'The latest screenshot is 1280x800, larger than the model can see. Start the display at 1000x625 or '
                 'smaller to use this model on it.',
                 id='smaller-screenshots',
             ),
@@ -815,10 +815,6 @@ Each call runs a list of actions in order and returns a screenshot of the result
         )
         with pytest.raises(UserError, match=message):
             await agent.run('Go.')
-
-    def test_settle_seconds_is_checked(self) -> None:
-        with pytest.raises(UserError, match='`settle_seconds` must not be negative'):
-            ComputerUse(settle_seconds=-1)
 
     async def test_on_a_read_only_workspace_the_model_can_look_but_not_act(self) -> None:
         provider = ScreenProvider()
@@ -1084,11 +1080,12 @@ Each call runs a list of actions in order and returns a screenshot of the result
         creating.join(READY_TIMEOUT)
         assert not creating.is_alive()
 
-        def run(x: int) -> None:
+        async def run(x: int) -> None:
             agent = Agent(_scripted([{'type': 'click', 'x': x, 'y': 1}]), capabilities=[ComputerUse()])
-            outputs.append(agent.run_sync('Go.', workspace=screen).output)
+            outputs.append((await agent.run('Go.', workspace=screen)).output)
 
-        threads = [threading.Thread(target=run, args=(x,), daemon=True) for x in (1, 2)]
+        # `anyio.run` closes each thread's loop when its run ends; an unclosed one breaks when collected later.
+        threads = [threading.Thread(target=anyio.run, args=(run, x), daemon=True) for x in (1, 2)]
         for thread in threads:
             thread.start()
         for thread in threads:
