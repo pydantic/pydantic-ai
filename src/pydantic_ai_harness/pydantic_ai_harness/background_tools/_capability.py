@@ -39,6 +39,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.framing import neutralize_tags
 from pydantic_ai.messages import (
     ModelRequest,
+    RetryFeedbackCause,
     TextContent,
     ToolCallPart,
     ToolRetryCause,
@@ -203,10 +204,10 @@ def _failed_call_outcome(ctx: RunContext[Any], call: ToolCallPart, error: _Signa
     )
 
 
-def _retry_cause(error: BaseException) -> ToolRetryCause | None:
+def _retry_cause(error: BaseException) -> ToolRetryCause | RetryFeedbackCause | None:
     """Why a `retried` error has the call made again, in the words of core's `RetryInfo.cause`."""
     if isinstance(error, ToolRetryError):
-        retry = error.tool_retry.retry if isinstance(error.tool_retry, ToolReturnPart) else None
+        retry = error.tool_retry.retry
         # `None` only on a legacy part whose cause its content can't tell.
         return retry.cause if retry is not None else None
     return 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
