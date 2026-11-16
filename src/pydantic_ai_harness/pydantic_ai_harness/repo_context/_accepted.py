@@ -1,4 +1,4 @@
-"""Pin the instruction files a user accepted, so a later change to one loads at lower authority."""
+"""Pin the instruction files a user accepted, so a later change to one gets a lower `authority_of`."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from collections.abc import Mapping
 
 from pydantic_ai.messages import Authority
 from pydantic_ai.workspaces import AuthorityWorkspace, Workspace
+
+_LEVELS: tuple[Authority, ...] = ('none', 'user', 'operator')
 
 
 async def file_digest(workspace: Workspace, path: str) -> str:
@@ -24,8 +26,8 @@ async def pin_accepted_files(
 
     `accepted` maps workspace paths, such as `'AGENTS.md'`, `'.agents/skills/review/SKILL.md'` or
     `'.claude/agents/reviewer.md'`, to the [`file_digest`][pydantic_ai_harness.repo_context.file_digest] recorded when
-    the user accepted them. A file that still matches keeps the level the workspace gives it, and a deleted one is
-    skipped. The changed files are wrapped in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]
+    the user accepted them. A file that still matches keeps the level the workspace gives it, a deleted one is
+    skipped, and a changed one never rises above that level. Files not in `accepted` are untouched. The changed files are wrapped in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]
     `path_authority`, so [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] reports the lower level until
     the user accepts the new content and the app records its digest.
 
@@ -38,7 +40,8 @@ async def pin_accepted_files(
         except FileNotFoundError:
             continue
         if current != digest:
-            path_authority[path] = changed
+            level = await workspace.authority_of(path)
+            path_authority[path] = changed if _LEVELS.index(changed) < _LEVELS.index(level) else level
     if not path_authority:
         return workspace
     return AuthorityWorkspace(workspace, authority='operator', path_authority=path_authority)

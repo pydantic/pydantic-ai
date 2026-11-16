@@ -226,22 +226,28 @@ the user accepts the new content and the app records its new digest. Showing the
 user what changed is up to the app, which holds the accepted content.
 
 ```python {test="skip"}
-from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.repo_context import RepoContext, file_digest, pin_accepted_files
+from pydantic_ai_harness.repo_context import file_digest, pin_accepted_files
 
 workspace = Workspace(LocalWorkspaceBackend('./project'))
 accepted = {'AGENTS.md': await file_digest(workspace, 'AGENTS.md')}  # when the user accepts it
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[RepoContext()])
-result = await agent.run('Fix the failing test', workspace=await pin_accepted_files(workspace, accepted))
+# Later, after AGENTS.md changed:
+pinned = await pin_accepted_files(workspace, accepted)
+print(await pinned.authority_of('AGENTS.md'))
+#> none
+# Pass `pinned` as the run's `workspace=`.
 ```
 
-Files are compared when `pin_accepted_files` is called, not when they are read
-later in the run. The lower level reaches the model only through capabilities
-that check `authority_of`; see
-[Files you didn't write](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority)
-for which do.
+A changed file never rises above the level the workspace already gives it, and
+files not in `accepted` keep the workspace's level. Files are compared when
+`pin_accepted_files` is called, not when they are read later in the run.
+
+The lower level changes what reaches the model only in capabilities that check
+`authority_of` (see
+[Files you didn't write](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority)).
+`RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they
+still load a changed file as before.
 
 ## Cache cost
 

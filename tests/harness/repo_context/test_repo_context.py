@@ -1818,6 +1818,17 @@ class TestPinAcceptedFiles:
         assert await pinned.authority_of('AGENTS.md') == 'none'
         assert await pinned.authority_of('shared/AGENTS.md') == 'none'
 
+    async def test_a_changed_file_outside_the_working_directory_stays_at_none(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'shared/AGENTS.md', 'Use tabs.')
+        (tmp_path / 'project').mkdir()
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path / 'project'))
+        path = str(tmp_path / 'shared/AGENTS.md')
+        accepted = {path: await file_digest(workspace, path)}
+        _write(tmp_path / 'shared/AGENTS.md', 'Use spaces.')
+
+        pinned = await pin_accepted_files(workspace, accepted, changed='user')
+        assert await pinned.authority_of(path) == 'none'
+
     async def test_a_deleted_file_is_skipped(self, workspace: Workspace) -> None:
         assert await pin_accepted_files(workspace, {'AGENTS.md': '0' * 64}) is workspace
 
