@@ -21,11 +21,19 @@ from mcp.server.fastmcp import FastMCP
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    LocalWorkspace,
+    RawToolArgs,
+    ToolSearch,
+    Toolset,
+)
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
     Advisor,
@@ -50,6 +58,7 @@ from pydantic_ai_harness import (
     OutputGuardrail,
     Peers,
     PostHog,
+    PruneToolResults,
     Pylon,
     RelevanceCompaction,
     RepoContext,
@@ -168,6 +177,18 @@ def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
 
 def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
+
+
+class _PruneLatestReturn(AbstractCapability[Any]):
+    """Points a scripted `prune_tool_result` call at the previous step's result, whose ID differs by provider."""
+
+    async def before_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        if call.tool_name != 'prune_tool_result':
+            return args
+        [latest] = [part.tool_call_id for part in ctx.messages[-2].parts if isinstance(part, ToolReturnPart)]
+        return {**call.args_as_dict(), 'tool_call_id': latest}
 
 
 def _forecast(city: str) -> str:
@@ -320,6 +341,7 @@ FIXTURES: dict[str, Fixture] = {
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
     'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
+    'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
@@ -494,6 +516,8 @@ SCENARIOS: dict[str, Scenario] = {
             ('write_memory', {'content': 'The user follows sports too.'}),
         )
     ),
+    # The first run's second step prunes the first step's result.
+    'PruneToolResults': Scenario(state_calls=(('prune_tool_result', {'tool_call_id': '', 'summary': 'Quiet.'}),)),
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
     ),
@@ -548,6 +572,10 @@ ALLOWED: dict[str, Allowed] = {
     ),
     'DeduplicateFileReads': Allowed(
         'Clears superseded file reads in place, as documented, when the model reads a file again',
+        (('messages', 'tool-return'),),
+    ),
+    'PruneToolResults': Allowed(
+        'Replaces the tool result the model pruned, once per accepted `prune_tool_result` call',
         (('messages', 'tool-return'),),
     ),
     # With a 20-token trigger every request is over it, so each request with an older step outside the

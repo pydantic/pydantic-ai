@@ -66,7 +66,9 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
     and the replacement persists in the run's message history, as `ClearToolResults` does.
 
     It runs before the automatic compaction capabilities on the same agent, wherever it is listed, so
-    they measure the pruned history.
+    a compaction in the same request works on the pruned history. Their token triggers anchor on the
+    usage of the latest response, which still counts the pruned result, so a prune lowers those
+    estimates from the following request on.
 
     Example:
         ```python
