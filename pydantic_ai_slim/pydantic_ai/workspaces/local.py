@@ -44,7 +44,6 @@ class LocalWorkspaceBackend(
     The directory is the environment: its [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
     exists from construction, and the first operation raises
     [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing.
-    On Windows, use [`WindowsWorkspaceBackend`][pydantic_ai.workspaces.WindowsWorkspaceBackend].
 
     Args:
         working_dir: Where commands start and relative paths resolve; `~` is expanded and a relative
@@ -60,8 +59,7 @@ class LocalWorkspaceBackend(
         if os.name != 'posix':
             raise NotImplementedError(
                 '`LocalWorkspaceBackend` only supports POSIX platforms: its timeout contract kills the whole '
-                'process group. On Windows, use `WindowsWorkspaceBackend`; elsewhere, attach a container- or '
-                'VM-based workspace instead.'
+                'process group. On other platforms, attach a container- or VM-based workspace instead.'
             )
         super().__init__(working_dir, env=env)
 

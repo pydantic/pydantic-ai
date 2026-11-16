@@ -7,8 +7,8 @@ launcher's process group) and returns once the wrapper is running. The wrapper p
 command's output to log files next to it, and publishes the exit code when the command ends.
 Each job's files live in one owner-only directory below `.pydantic-ai-harness/shell` in the
 workspace's working directory, never on the host unless the workspace is the host. Status and output are read, and the process group
-is signalled, through the same workspace. A `'windows'` workspace has none of these tools: `_powershell.py` does the same in
-PowerShell there.
+is signalled, through the same workspace. A backend without these tools implements `JobScripts` to do the same in its
+own shell.
 """
 
 from __future__ import annotations
@@ -19,12 +19,13 @@ import shlex
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Protocol, runtime_checkable
 
 import anyio
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace, WorkspaceCommand, WorkspaceError
-from pydantic_ai_harness.shell import _powershell
+from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness.shell._limits import LIMIT_FUNCTION
 from pydantic_ai_harness.shell._policy import run_model_command
 
@@ -224,6 +225,45 @@ signalled, which does not stop the command.
 """
 
 
+@runtime_checkable
+class JobScripts(Protocol):
+    """A workspace backend without POSIX `sh`, `setsid` and `kill`, that writes `Job`'s scripts in its own shell.
+
+    Each script runs with `shell=True` and follows the `sh` side's contract: the job's files, exit codes and output.
+    """
+
+    def job_launch_script(
+        self,
+        directory: str,
+        cwd: str,
+        command: str,
+        *,
+        exclusive: bool,
+        combined: bool,
+        log_limit: int | None,
+        interval: float,
+    ) -> str:
+        """Launch `command` as a job in `directory`, starting in `cwd`, as `_LAUNCHER` does; it prints `<pid> -`."""
+        ...
+
+    def job_read_script(self, path: str, offset: int, length: int) -> str:
+        """Print up to `length` bytes of `path` from `offset` in base64; exit 66 when it is missing, 67 when unreadable."""
+        ...
+
+    def job_stop_script(self, directory: str) -> str:
+        """Stop the job in `directory` and its process tree, publishing an exit code when its wrapper cannot."""
+        ...
+
+    def job_stop_command(self, directory: str) -> str:
+        """The command a model runs to stop the job in `directory`."""
+        ...
+
+
+def _job_scripts(workspace: Workspace) -> JobScripts | None:
+    backend = innermost_backend(workspace)
+    return backend if isinstance(backend, JobScripts) else None
+
+
 @dataclass(kw_only=True)
 class Job:
     """One detached command and the files that describe it inside the workspace."""
@@ -294,11 +334,11 @@ class Job:
         file_limit: int | None,
         log_limit: int | None,
     ) -> Callable[[str], WorkspaceCommand]:
-        """The launcher invocation for a command: `sh` running `_LAUNCHER`, or on Windows, `_powershell.launch_script`."""
-        if workspace.platform == 'windows':
+        """The launcher invocation for a command: `sh` running `_LAUNCHER`, or the backend's `JobScripts` launcher."""
+        if (scripts := _job_scripts(workspace)) is not None:
             if file_limit is not None:
                 raise WorkspaceError('`max_file_bytes` needs a POSIX workspace.')
-            return lambda cmd: _powershell.launch_script(
+            return lambda cmd: scripts.job_launch_script(
                 directory,
                 cwd,
                 cmd,
@@ -368,8 +408,8 @@ class Job:
     @property
     def stop_command(self) -> str:
         """The command a model runs to stop the whole job."""
-        if self.workspace.platform == 'windows':
-            return f'& {_powershell.literal(self.workspace.paths.join(self.directory, "stop.ps1"))}'
+        if (scripts := _job_scripts(self.workspace)) is not None:
+            return scripts.job_stop_command(self.directory)
         return f'kill -- -{self.pgid}' if self.pgid is not None else f'kill {self.pid}'
 
     async def status_text(self) -> str | None:
@@ -417,8 +457,8 @@ class Job:
         """Up to `length` bytes of `path` from `offset`, read inside the workspace so only they cross the wire."""
         if length <= 0:
             return b''
-        if self.workspace.platform == 'windows':
-            script = _powershell.read_script(path, offset, length)
+        if (scripts := _job_scripts(self.workspace)) is not None:
+            script = scripts.job_read_script(path, offset, length)
         else:
             quoted = shlex.quote(path)
             # A pipeline reports only `base64`'s status, so check the log is readable before it.
@@ -442,8 +482,8 @@ class Job:
 
     async def kill(self) -> None:
         """Stop the job's process group: `SIGTERM`, then `SIGKILL` if it is still running after the grace period."""
-        if self.workspace.platform == 'windows':
-            await self._kill_tree()
+        if (scripts := _job_scripts(self.workspace)) is not None:
+            await self._kill_tree(scripts)
             return
         if not await self._signal('TERM'):
             return
@@ -467,10 +507,10 @@ class Job:
             interval = min(interval * 2, POLL_MAX)
         await self._signal('KILL')
 
-    async def _kill_tree(self) -> None:
-        """End the wrapper's process tree with `taskkill`, publishing the exit code the wrapper no longer can."""
-        result = await self.workspace.run(_powershell.stop_script(self.directory), shell=True, timeout=CONTROL_TIMEOUT)
-        if result.exit_code != 0:  # pragma: no cover - `taskkill` was refused
+    async def _kill_tree(self, scripts: JobScripts) -> None:
+        """End the wrapper's process tree with the backend's stop script."""
+        result = await self.workspace.run(scripts.job_stop_script(self.directory), shell=True, timeout=CONTROL_TIMEOUT)
+        if result.exit_code != 0:  # pragma: no cover - the stop was refused
             raise WorkspaceError(result.stderr.strip() or f'Unable to stop job {self.pid}.')
 
     async def _signal(self, name: str) -> bool:

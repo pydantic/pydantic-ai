@@ -1748,12 +1748,13 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
-  # `WindowsWorkspaceBackend` and the PowerShell side of the harness's file and shell tools run only on
-  # Windows, and every other test job runs on Linux. Their coverage joins the rest in the `coverage` job.
+  # CLAI 2's `WindowsWorkspace` and the harness's file and shell tools on it run only on Windows, and every
+  # other test job runs on Linux. Their coverage joins the rest in the `coverage` job, a `pydantic-clai2`-only
+  # change's too, since the tests live in `tests/clai2`.
   test-windows-workspace:
     name: test Windows workspace
     needs: classify
-    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -1782,7 +1783,7 @@ jobs:
       - run: uv sync --only-dev
 
       - name: run tests
-        run: uv run --package pydantic-clai2 coverage run -m pytest tests/test_windows_workspace.py tests/harness/coder/test_windows.py
+        run: uv run --package pydantic-clai2 coverage run -m pytest tests/clai2/test_windows_workspace.py tests/clai2/test_windows_coder.py
 
       # See the matching step in the `test` job.
       - name: combine coverage files
@@ -2293,7 +2294,7 @@ jobs:
               && needs.classify.outputs.docs_changed != 'true'
               && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-windows-workspace,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
               && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'

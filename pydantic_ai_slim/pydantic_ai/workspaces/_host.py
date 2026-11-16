@@ -1,4 +1,4 @@
-"""What `LocalWorkspaceBackend` and `WindowsWorkspaceBackend` share: subprocesses and files on this machine."""
+"""The base of `LocalWorkspaceBackend` and other host backends: subprocesses and files on this machine."""
 
 from __future__ import annotations as _annotations
 
@@ -138,7 +138,7 @@ class _FileLock:
 
 
 class HostWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
-    """What `LocalWorkspaceBackend` and `WindowsWorkspaceBackend` share: subprocesses and files on this machine.
+    """The base of `LocalWorkspaceBackend` and other host backends: subprocesses and files on this machine.
 
     Subclasses start a command and stop its process tree the platform's way.
     """

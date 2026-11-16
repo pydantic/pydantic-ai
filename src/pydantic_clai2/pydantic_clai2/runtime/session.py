@@ -30,7 +30,6 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
     ModelFallback,
     ResolveModelId,
-    WindowsWorkspace,
     WrapperCapability,
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
@@ -63,6 +62,7 @@ from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkou
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
 from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.task_prompts import TASK_PROMPT, TaskPrompt
+from pydantic_clai2.runtime.windows_workspace import WindowsWorkspace
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')

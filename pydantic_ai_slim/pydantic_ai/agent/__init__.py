@@ -156,7 +156,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces.unavailable import HOST_WORKSPACE, NO_WORKSPACE
+from ..workspaces.unavailable import NO_WORKSPACE
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
@@ -5316,7 +5316,7 @@ def _raise_for_unresolved_workspace(
     if workspace == 'new':
         raise exceptions.UserError(
             "`workspace='new'` needs a capability that can create a workspace, but none returned one. "
-            f"Attach one, such as `capabilities=[{HOST_WORKSPACE}('.')]`."
+            "Attach one, such as `capabilities=[LocalWorkspace('.')]`."
         )
     if isinstance(workspace, WorkspaceRef):
         named = f'`{workspace.provider}:{workspace.id}`'

@@ -1,4 +1,4 @@
-"""The PowerShell side of `Job`, for a `'windows'` workspace, which has no `sh`, `setsid` or `kill`.
+"""The PowerShell side of the harness's background-command `Job`, for `WindowsWorkspaceBackend`, which has no `sh`.
 
 The launcher writes the command to `command.ps1` in the job directory and starts the wrapper as a
 hidden PowerShell of its own. The wrapper publishes `status.json` as the `sh` one does, runs the
@@ -7,8 +7,6 @@ ends. Stopping a job runs `stop.ps1`, which ends the wrapper's process tree with
 """
 
 from __future__ import annotations
-
-from pydantic_ai.workspaces.windows import powershell_script
 
 MISSING_PROCESS = 128
 """`taskkill`'s exit status when no process has the PID."""
@@ -152,9 +150,9 @@ to signal: `Job.kill` ends the wrapper's process tree instead.
 
 
 def launch_script(
-    directory: str, cwd: str, command: str, *, exclusive: bool, combined: bool, log_limit: int | None, interval: float
+    directory: str, cwd: str, script: str, *, exclusive: bool, combined: bool, log_limit: int | None, interval: float
 ) -> str:
-    """The PowerShell that launches `command` as a job in `directory`, starting in `cwd`."""
+    """The PowerShell that launches `script`, a whole PowerShell script, as a job in `directory`, starting in `cwd`."""
     out, err = ('output.log', 'output.log') if combined else ('stdout.log', 'stderr.log')
     wrapper = (
         f'$dir = {literal(directory)}\n$cwd = {literal(cwd)}\n$out = {literal(out)}\n$err = {literal(err)}\n'
@@ -163,7 +161,7 @@ def launch_script(
     logs = ', '.join(literal(log) for log in dict.fromkeys((out, err)))
     return (
         f'$dir = {literal(directory)}\n$exclusive = ${str(exclusive).lower()}\n$logs = @({logs})\n'
-        f'$script = {literal(powershell_script(command))}\n$supervisor = {literal(wrapper)}\n'
+        f'$script = {literal(script)}\n$supervisor = {literal(wrapper)}\n'
         f'$stop = {literal(stop_script(directory))}\n' + _LAUNCHER
     )
 

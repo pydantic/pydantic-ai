@@ -15,18 +15,20 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import WindowsWorkspace
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import (
-    WindowsWorkspaceBackend,
-    Workspace,
-    WorkspaceBackend,
-    WorkspaceRef,
-    WorkspaceTimeoutError,
-)
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_clai2.runtime.windows_workspace import WindowsWorkspace, WindowsWorkspaceBackend
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='`WindowsWorkspaceBackend` runs only on Windows')
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='checks the refusal off Windows')
+def test_windows_workspace_needs_windows(tmp_path: Path) -> None:
+    with pytest.raises(NotImplementedError, match='only runs on Windows'):
+        WindowsWorkspaceBackend(tmp_path)
+    with pytest.raises(NotImplementedError, match='only runs on Windows'):
+        WindowsWorkspace(tmp_path)
 
 
 @windows_only

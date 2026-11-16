@@ -67,7 +67,6 @@ from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
-from .windows_workspace import WindowsWorkspace
 from .wrapper import WrapperCapability
 from .x_search import XSearch
 
@@ -104,7 +103,6 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Toolset,
         WebFetch,
         WebSearch,
-        WindowsWorkspace,
         XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
@@ -174,7 +172,6 @@ __all__ = [
     'UseThreadExecutor',
     'WebFetch',
     'WebSearch',
-    'WindowsWorkspace',
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',

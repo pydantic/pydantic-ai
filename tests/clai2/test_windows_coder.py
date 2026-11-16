@@ -10,12 +10,12 @@ from pathlib import Path
 import anyio
 import pytest
 
-from pydantic_ai.capabilities import WindowsWorkspace
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
+from pydantic_clai2.runtime.windows_workspace import WindowsWorkspace
 
-from .._tool_calls import call_tool, call_tools
+from ..harness._tool_calls import call_tool, call_tools
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='runs PowerShell')
 

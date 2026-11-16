@@ -9,7 +9,7 @@ import pytest
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace, WindowsWorkspace
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import (
     InstructionDeltaPart,
     ModelMessage,
@@ -27,6 +27,7 @@ from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
 from pydantic_clai2.customization import CAPABILITY_ID, customization_guide
 from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime.session import WorkspacelessCapability
+from pydantic_clai2.runtime.windows_workspace import WindowsWorkspace
 
 DOC_TOOLS = {'search_clai_docs', 'read_clai_docs'}
 CATALOG_LINE = f'- {CAPABILITY_ID}: Use when asked to customize CLAI itself'

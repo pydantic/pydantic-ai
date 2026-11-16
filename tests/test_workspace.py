@@ -26,7 +26,6 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     CombinedCapability,
     LocalWorkspace,
-    WindowsWorkspace,
     WrapperCapability,
 )
 from pydantic_ai.exceptions import ApprovalRequired
@@ -57,7 +56,6 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     SupportsFilesystem,
     UnavailableWorkspace,
-    WindowsWorkspaceBackend,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -2219,11 +2217,3 @@ class TestWindowsPaths:
         workspace = Workspace(NoDirectoryBackend())
         with pytest.raises(UserError, match='must implement `SupportsRunInDirectory`'):
             await workspace.run(['rg'], cwd='src')
-
-
-@posix_only
-def test_windows_workspace_needs_windows(tmp_path: Path) -> None:
-    with pytest.raises(NotImplementedError, match='only runs on Windows'):
-        WindowsWorkspaceBackend(tmp_path)
-    with pytest.raises(NotImplementedError, match='only runs on Windows'):
-        WindowsWorkspace(tmp_path)
