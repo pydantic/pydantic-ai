@@ -156,7 +156,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert all(r['toolset_name'] == 'computer' for r in results)
 
 
-async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: None) -> None:
+async def test_a_failed_calls_text_goes_back_once_on_the_last_member(allow_model_requests: None) -> None:
     async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
         raise ToolFailed('Taking the screenshot failed: scrot: not found')
 
@@ -172,10 +172,10 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
     )
 
     _, second = get_mock_chat_completion_kwargs(client)
-    # The call may have acted before it failed, so no member may claim it didn't: each carries the text.
+    # The call may have acted before it failed, so no member may claim it didn't: the last carries the text.
     results = second['messages'][-1]['content']
     assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
-        (True, ['Taking the screenshot failed: scrot: not found']),
+        (True, [ON_LAST]),
         (True, ['Taking the screenshot failed: scrot: not found']),
     ]
 
@@ -198,7 +198,8 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
-    assert all('greater than or equal to 0' in r['content'][0]['text'] for r in results)
+    assert results[0]['content'] == [{'type': 'text', 'text': ON_LAST}]
+    assert 'greater than or equal to 0' in results[1]['content'][0]['text']
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
@@ -771,7 +772,7 @@ async def _sent_results(
     counts: list[int],
     content: list[str | BinaryImage] | str,
     metadata: dict[str, Any] | None,
-    outcome: Literal['success', 'denied'] = 'success',
+    outcome: Literal['success', 'failed', 'denied', 'retried'] = 'success',
 ) -> list[dict[str, Any]]:
     """The results a request sends for a toolset call whose result is `content`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
@@ -824,7 +825,8 @@ _HOOK_IMAGE = BinaryImage(data=b'picture', media_type='image/png')
     ],
 )
 @pytest.mark.parametrize(
-    'outcome', ['all-ran', 'partial', 'failed-first', 'failed-middle', 'denied', 'changed', 'no-metadata']
+    'outcome',
+    ['all-ran', 'partial', 'failed-first', 'failed-middle', 'denied', 'failed', 'retried', 'changed', 'no-metadata'],
 )
 async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole(
     allow_model_requests: None, outcome: str, content: list[str | BinaryImage], members: int
@@ -838,6 +840,8 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
         'failed-first': 0,
         'failed-middle': 2 * (members // 2),
         'denied': 0,
+        'failed': 0,
+        'retried': 0,
         'changed': 1,
         'no-metadata': 0,
     }[outcome]
@@ -846,11 +850,17 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
         'changed': {'performed': performed, 'changed': True},
         'no-metadata': None,
     }.get(outcome, {'performed': performed, 'error': 'no keyboard'})
-    sent = await _sent_results(blocks, counts, content, metadata, 'denied' if outcome == 'denied' else 'success')
+    unsuccessful = outcome in ('denied', 'failed', 'retried')
+    sent = await _sent_results(blocks, counts, content, metadata, outcome if unsuccessful else 'success')
 
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert all(block['type'] == 'text' for r in sent if r['is_error'] for block in r['content'])
-    if outcome != 'denied':
+    if unsuccessful:
+        # The text goes back once, on the last call, and the rest point there.
+        *rest, last = [[block['text'] for block in r['content']] for r in sent]
+        assert rest == [[ON_LAST]] * (members - 1)
+        assert len(last) == 1 and last != [ON_LAST]
+    else:
         # Besides the `OK`s, the failure and `ON_LAST`, the content goes back once, whole and in order.
         carried = [
             _item(block)
@@ -1148,7 +1158,7 @@ async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_
         "computer calls before or after the other tools' calls, not between them."
     )
     assert _split_batch_results(client) == [
-        (True, [{'type': 'text', 'text': refusal}]),
+        (True, [{'type': 'text', 'text': ON_LAST}]),
         (True, [{'type': 'text', 'text': refusal}]),
     ]
 
@@ -1178,7 +1188,7 @@ async def test_a_split_batch_a_hook_let_run_gets_its_real_retry_text(allow_model
     assert computer.actions == [Click(x=5, y=6), TypeText(text='hi')]
     # The calls ran, so the refusal would be false: Claude gets the retry's own text.
     retry_text = [{'type': 'text', 'text': 'Check the window first.'}]
-    assert _split_batch_results(client) == [(True, retry_text), (True, retry_text)]
+    assert _split_batch_results(client) == [(True, [{'type': 'text', 'text': ON_LAST}]), (True, retry_text)]
 
 
 _JSON = st.recursive(
@@ -1282,7 +1292,7 @@ async def test_a_replayed_call_and_its_results_pair_up_when_ids_are_fitted(
 async def test_a_denied_or_interrupted_toolset_call_is_not_a_tool_error(
     allow_model_requests: None, outcome: Literal['denied', 'interrupted']
 ) -> None:
-    """A failed call is a tool error: see `test_a_failed_call_gives_every_member_its_text`."""
+    """A failed call is a tool error: see `test_a_failed_calls_text_goes_back_once_on_the_last_member`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     call = ComputerCallPart(
