@@ -6705,39 +6705,52 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
 
 @pytest.mark.vcr(ignore_hosts=['gateway.example'])
 @pytest.mark.parametrize(
-    'thinking,thinking_field,assistant_message',
+    'thinking,profile,replayed',
     [
         pytest.param(
             _thinking('Paris first.', id='rs_0123abcd'),
             None,
-            snapshot({'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}),
+            snapshot([{'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}]),
             id='summary',
         ),
         pytest.param(
             ThinkingPart(content='', id='rs_0123abcd', signature='<encrypted>', provider_name='openai'),
             None,
-            snapshot({'role': 'assistant', 'content': 'Rain in Paris.'}),
+            snapshot([{'role': 'assistant', 'content': 'Rain in Paris.'}]),
             id='encrypted_only',
         ),
         pytest.param(
             _thinking('Paris first.', id='rs_0123abcd'),
-            'reasoning_text',
-            snapshot({'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}),
+            OpenAIModelProfile(openai_chat_thinking_field='reasoning_text'),
+            snapshot([{'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}]),
             id='configured_field',
+        ),
+        pytest.param(
+            _thinking('Paris first.', id='rs_0123abcd'),
+            OpenAIModelProfile(mimics_assistant_message_formatting=True),
+            snapshot(
+                [
+                    {'role': 'user', 'content': '<assistant_thinking>\nParis first.\n</assistant_thinking>'},
+                    {'role': 'assistant', 'content': 'Rain in Paris.'},
+                ]
+            ),
+            id='user_turn',
         ),
     ],
 )
 async def test_auto_mode_replayed_responses_reasoning(
     allow_model_requests: None,
     thinking: ThinkingPart,
-    thinking_field: str | None,
-    assistant_message: dict[str, JsonValue],
+    profile: OpenAIModelProfile | None,
+    replayed: list[dict[str, JsonValue]],
 ):
     """`'auto'` sends a replayed `OpenAIResponsesModel` reasoning item back as tags, never as a field named by its id.
 
     Responses stores a reasoning item as a `ThinkingPart` whose id is the item id (`rs_...`), and both models share
     the `'openai'` system, but Chat Completions has no such field. A profile that names its own thinking field
-    sends the item as tags too, because the id doesn't match that field. A mock transport stands in for a cassette
+    sends the item as tags too, because the id doesn't match that field, and a profile with
+    `mimics_assistant_message_formatting` sends those tags in a user turn ahead of the assistant message. The assertion
+    leaves out system messages and the two prompts. A mock transport stands in for a cassette
     for the reason `test_auto_mode_thinking_backfill` gives.
     """
     request_bodies: list[bytes] = []
@@ -6758,13 +6771,12 @@ async def test_auto_mode_replayed_responses_reasoning(
         model = OpenAIChatModel(
             'deepseek-v4-flash',
             provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
-            profile=OpenAIModelProfile(openai_chat_thinking_field=thinking_field) if thinking_field else None,
+            profile=profile,
         )
         await Agent(model).run('What about London?', message_history=history)
 
     body = TypeAdapter(dict[str, JsonValue]).validate_json(request_bodies[0])
-    (assistant,) = [msg for msg in json_objects(body['messages']) if msg['role'] == 'assistant']
-    assert assistant == assistant_message
+    assert [msg for msg in json_objects(body['messages']) if msg['role'] != 'system'][1:-1] == replayed
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
