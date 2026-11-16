@@ -888,7 +888,10 @@ class _FinishModelRequestSpan(Protocol):
 
 
 def _prepare_model_request_span_context(
-    settings: InstrumentationSettings, request_context: ModelRequestContext
+    settings: InstrumentationSettings,
+    request_context: ModelRequestContext,
+    *,
+    is_recording: bool = True,
 ) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
     # The model warns about ignored settings when it prepares the request to send it.
     with suppress_unsupported_setting_warnings():
@@ -897,6 +900,8 @@ def _prepare_model_request_span_context(
         )
     prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
     attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    if not is_recording:
+        return prepared, attributes
     json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
         attributes.update(
@@ -1042,14 +1047,18 @@ def open_model_request_span(
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
-                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+                is_recording = span.is_recording()
+                prepared, request_attributes = _prepare_model_request_span_context(
+                    settings, context, is_recording=is_recording
+                )
 
                 # Keep attributes set on the span since it opened, but describe the model this request
                 # is now made to: a hook can move it on to another model for a later attempt (#7018).
                 attributes.update(getattr(span, 'attributes', {}))
                 attributes.update(request_attributes)
-                span.set_attributes(request_attributes)
-                span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
+                if is_recording:
+                    span.set_attributes(request_attributes)
+                    span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
                 prepared_request_context = prepared
                 return prepared
 
