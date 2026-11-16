@@ -810,7 +810,9 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
   or defers, and refused calls, don't. Repeats match tool name plus sorted-key JSON arguments; only a call
   that returned is remembered. Parallel calls can't overshoot.
 - Counts live on the per-run instance from `for_run`, so compaction doesn't reset them; hooks run in
-  workflow code under Temporal, DBOS, and Prefect, so replay reaches the same refusals.
+  workflow code under Temporal, DBOS, and Prefect, so replay reaches the same refusals. Each new run
+  starts at zero, including one resumed after an approval round outside the run, so with approval
+  rounds the budget is per round, not per task.
 - Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
 ## RefineOutput

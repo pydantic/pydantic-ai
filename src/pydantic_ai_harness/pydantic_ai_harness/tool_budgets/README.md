@@ -43,7 +43,7 @@ A refused call doesn't run. Its tool result names the budget and how much of it 
 ```text
 3 of 3 `web_search` calls used; no more are allowed in this run.
 20 of 20 tool calls used; no more are allowed in this run.
-`web_search` already ran with these exact arguments in this run (tool call `call_abc`). Use that result instead of calling it again.
+`web_search` already ran with these exact arguments in this run (tool call `call_abc`); its result, or a summary of it, is earlier in this conversation. Don't call it again with the same arguments.
 ```
 
 The refusal is a [`ToolReturn`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.ToolReturn) whose `metadata`, which the model doesn't see, is `{'tool_budgets': reason}`, with `reason` one of `'per_tool'`, `'total'` or `'repeat'` (`ToolRefusal`). Find refusals in history by that metadata, not by their text.
@@ -54,7 +54,8 @@ The refusal is a [`ToolReturn`](https://pydantic.dev/docs/ai/api/pydantic-ai/mes
 - Repeats are opt-in per tool, because a polling tool repeats its call on purpose. Two calls are the same when the tool name matches and the arguments are equal as JSON with sorted keys. Only a call that returned a result is remembered, so a call that failed can be made again.
 - Parallel calls in one response are counted in the order they start, so they can't overshoot a budget, and an identical parallel call is refused as a repeat.
 - Every [function tool](https://pydantic.dev/docs/ai/tools-toolsets/tools/) call counts, including MCP tools and tools other capabilities add. Calls the provider runs itself ([native tools](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/)) and output tools don't. `per_tool` and `refuse_repeats` use the tool's name as the model sees it, after any prefix.
-- Counts live in the instance `for_run` creates for each run, not in message history, so [compaction](../compaction/) that summarizes earlier calls away doesn't hand a budget back. A run that continues an earlier conversation through `message_history` starts at zero.
+- Counts live in the instance `for_run` creates for each run, not in message history, so [compaction](../compaction/) that summarizes earlier calls away doesn't hand a budget back, and a repeat stays refused after its earlier result has been summarized.
+- A run that continues an earlier conversation through `message_history` starts at zero. So does a run resumed after a [tool approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) or other deferred call resolved outside the run, rather than by a [handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#resolving-deferred-calls-with-a-handler) inside it: with approval rounds, `per_tool={'web_search': 3}` allows three calls per round, not per task.
 
 ## Durable execution
 

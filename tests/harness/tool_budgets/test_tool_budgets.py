@@ -132,8 +132,8 @@ class TestToolBudgets:
         assert _returns(result.all_messages())[1] == snapshot(
             (
                 's2',
-                '`search` already ran with these exact arguments in this run (tool call `s1`). '
-                'Use that result instead of calling it again.',
+                '`search` already ran with these exact arguments in this run (tool call `s1`); its result, or a '
+                "summary of it, is earlier in this conversation. Don't call it again with the same arguments.",
                 {'tool_budgets': 'repeat'},
             )
         )

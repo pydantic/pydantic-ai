@@ -86,17 +86,20 @@ class ToolBudgets(AbstractCapability[AgentDepsT]):
         if name in self.refuse_repeats:
             key = json.dumps([name, call.args_as_dict()], sort_keys=True, default=str)
             if (earlier := self._ran.get(key)) is not None:
-                _refuse(
+                self._refuse(
                     ctx,
                     call,
                     'repeat',
-                    f'`{name}` already ran with these exact arguments in this run (tool call `{earlier}`). '
-                    'Use that result instead of calling it again.',
+                    f'`{name}` already ran with these exact arguments in this run (tool call `{earlier}`); its '
+                    'result, or a summary of it, is earlier in this conversation. '
+                    "Don't call it again with the same arguments.",
                 )
         if (limit := self.per_tool.get(name)) is not None and self._calls[name] >= limit:
-            _refuse(ctx, call, 'per_tool', f'{limit} of {limit} `{name}` calls used; no more are allowed in this run.')
+            self._refuse(
+                ctx, call, 'per_tool', f'{limit} of {limit} `{name}` calls used; no more are allowed in this run.'
+            )
         if self.total is not None and self._calls.total() >= self.total:
-            _refuse(
+            self._refuse(
                 ctx, call, 'total', f'{self.total} of {self.total} tool calls used; no more are allowed in this run.'
             )
 
@@ -118,9 +121,8 @@ class ToolBudgets(AbstractCapability[AgentDepsT]):
         if key is not None:
             del self._ran[key]
 
-
-def _refuse(ctx: RunContext[Any], call: ToolCallPart, reason: ToolRefusal, message: str) -> NoReturn:
-    ctx.tracer.start_span(
-        'tool call refused', attributes={'tool_budgets.reason': reason, 'tool_budgets.tool_name': call.tool_name}
-    ).end()
-    raise SkipToolExecution(ToolReturn(return_value=message, metadata={'tool_budgets': reason}))
+    def _refuse(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, reason: ToolRefusal, message: str) -> NoReturn:
+        ctx.tracer.start_span(
+            'tool call refused', attributes={'tool_budgets.reason': reason, 'tool_budgets.tool_name': call.tool_name}
+        ).end()
+        raise SkipToolExecution(ToolReturn(return_value=message, metadata={'tool_budgets': reason}))
