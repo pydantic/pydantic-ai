@@ -118,7 +118,7 @@ from urllib.parse import urlparse
 import anyio
 import idna
 
-from pydantic_ai._telemetry import RunTelemetry, current_run_telemetry, open_span, set_content_attribute
+from pydantic_ai._telemetry import current_run_telemetry, open_span, set_content_attribute
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
@@ -984,14 +984,6 @@ class BrowserEvent:
         return attributes
 
 
-@dataclass(frozen=True)
-class _Operation:
-    """The span and telemetry for the browser operation currently running."""
-
-    span: Span
-    telemetry: RunTelemetry
-
-
 class _ConsoleMessage(Protocol):
     """The subset of `playwright.async_api.ConsoleMessage` the session reads."""
 
@@ -1091,12 +1083,15 @@ class PlaywrightBrowserSession:
         """
         self.operation_events_mark = 0
         """Value of `events_recorded` when the running operation started."""
-        self.operation: _Operation | None = None
-        """The operation's span and telemetry, set while it runs and cleared when it ends.
+        self.operation_span: Span | None = None
+        """Span of the browser operation currently running, when one is.
 
-        Playwright delivers page events from its own receive task, outside the run's
-        context, so the event handler needs both values here.
+        Playwright delivers page events from its own receive task, so the
+        operation's span cannot be recovered from the OpenTelemetry context there.
+        The toolset publishes it here for the length of an operation instead.
         """
+        self.operation_includes_content = False
+        """Whether the run that opened `operation_span` includes content in traces, published with it."""
 
     def record(self, event: BrowserEvent) -> None:
         """Log a browser event and attach it to the operation that was running.
@@ -1114,10 +1109,9 @@ class PlaywrightBrowserSession:
         )
         self.events.append(event)
         self.events_recorded += 1
-        operation = self.operation
-        if operation is not None and operation.span.is_recording():
-            attributes = event.attributes(include_content=operation.telemetry.include_content)
-            operation.span.add_event(f'browser.{event.kind}', attributes)
+        span = self.operation_span
+        if span is not None and span.is_recording():
+            span.add_event(f'browser.{event.kind}', event.attributes(include_content=self.operation_includes_content))
 
     def failure_since_operation_start(self) -> BrowserEvent | None:
         """The last refused or failed request caused by the running operation, if any.
@@ -1705,9 +1699,9 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         that took its outcome from whether an exception escaped would report every
         one of them as a success.
         """
-        operation = self._session.operation
-        if operation is not None and operation.span.is_recording():
-            operation.span.set_attribute('browser.outcome', 'error')
+        span = self._session.operation_span
+        if span is not None and span.is_recording():
+            span.set_attribute('browser.outcome', 'error')
         return self._truncate_output(message)
 
     def _truncate_output_keeping(self, text: str, note: str) -> str:
@@ -1872,7 +1866,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                 # because a tool failure is a returned string, not an exception.
                 attributes={'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
-                self._session.operation = _Operation(span, telemetry) if telemetry is not None else None
+                self._session.operation_span = span
+                self._session.operation_includes_content = telemetry is not None and telemetry.include_content
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -1897,7 +1892,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     ended_on = self._session.page if self._session.page is not None else page
                     if ended_on is not None:
                         set_content_attribute(telemetry, span, 'url.full', _without_credentials(ended_on.url))
-                    self._session.operation = None
+                    self._session.operation_span = None
 
     async def _refuse(self, action: str, timeout_ms: int | None, message: str) -> str:
         """Return a bounded refusal without acquiring a page.
@@ -1918,11 +1913,12 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             with open_span(
                 telemetry, f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
             ) as span:
-                self._session.operation = _Operation(span, telemetry) if telemetry is not None else None
+                self._session.operation_span = span
+                self._session.operation_includes_content = telemetry is not None and telemetry.include_content
                 try:
                     return self._error(message)
                 finally:
-                    self._session.operation = None
+                    self._session.operation_span = None
 
     async def _settle(self, page: _Page, action: str, deadlines: _Deadlines) -> str | None:
         """Let the navigation finish, then re-check where it landed.
