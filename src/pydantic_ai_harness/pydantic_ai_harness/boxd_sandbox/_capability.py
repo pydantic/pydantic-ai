@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -89,6 +89,13 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached machine; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    secrets: Sequence[str] | None = None
+    """Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in
+    its machine spec. A secret bound to domains is set in the machine's environment as a placeholder that
+    boxd's proxy, outside the machine, replaces with the real value on requests to those domains, so the
+    agent's commands can send it without it being in their environment; a secret without domains is set
+    as its real value. An attached machine keeps the ones it was created with."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
@@ -98,7 +105,43 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
         if self.snapshot is not None and self.vcpu is not None:
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
+        if isinstance(self.secrets, str):
+            raise UserError(f'`secrets` takes a list of secret names, such as [{self.secrets!r}], not a string.')
         check_env(self.env)
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        org: str | None = None,
+        snapshot: str | None = None,
+        vcpu: Literal[1, 2, 4, 8] | None = None,
+        auto_suspend_timeout: int | None = None,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+        secrets: Sequence[str] | None = None,
+    ) -> BoxdSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back to the
+        variadic base `from_spec`, because `client`'s `AsyncBoxd` hint is a `TYPE_CHECKING` import, and
+        publishes only the bare `'BoxdSandbox'`.
+        """
+        return cls(
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            org=org,
+            snapshot=snapshot,
+            vcpu=vcpu,
+            auto_suspend_timeout=auto_suspend_timeout,
+            working_dir=working_dir,
+            env=env,
+            secrets=secrets,
+        )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
         """Construct a lazy backend for an existing machine."""
@@ -141,6 +184,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=self.auto_suspend_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            secrets=self.secrets,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
@@ -39,7 +40,7 @@ class NebiusProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.studio.nebius.com/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -59,10 +60,11 @@ class NebiusProvider(_OpenAISDKProvider):
         }
 
         profile = None
+        route_profile = special_token_route_profile('nebius', model_name)
 
         model_name = model_name.lower()
         if '/' not in model_name:
-            return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+            return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), route_profile)
 
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
@@ -70,16 +72,18 @@ class NebiusProvider(_OpenAISDKProvider):
 
         # As NebiusProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile, route_profile
+        )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -88,6 +92,7 @@ class NebiusProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -98,6 +103,8 @@ class NebiusProvider(_OpenAISDKProvider):
                 '`NebiusProvider(api_key=...)` to use the Nebius AI Studio provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.studio.nebius.com/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

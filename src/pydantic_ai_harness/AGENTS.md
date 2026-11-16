@@ -96,7 +96,7 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 A capability that writes a tag into prompt text, such as `<memory>`, `<judge_feedback>` or
 `<task_output>`, registers it once at module level with `pydantic_ai.framing.register_tag()` and
 renders it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
-`<tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
+`<pyai:tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
 `neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
 escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge
 structure. Tag names are lowercase snake_case. See
@@ -165,6 +165,9 @@ definitions the Harness durable engines (`absurd`, `aws_lambda`, `azure_durable_
 harness-only PRs run `tests/durable_exec/test_durable_exec_contract_manifest.py`, which fails when
 an engine change leaves it stale: see
 [Core changes that engines depend on](../../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md#core-changes-that-engines-depend-on).
+`.github/CODEOWNERS` gives each of these engine directories to the durable runtime owners, so a new
+Harness durable engine's directory needs an entry there too. `Protect .github` accepts that edit
+only from an author with write access; any other author asks a maintainer to add the entry.
 
 ### Workspace and Python versions
 

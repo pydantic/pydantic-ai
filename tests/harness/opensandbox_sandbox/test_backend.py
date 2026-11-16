@@ -33,6 +33,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ...conftest import no_leaked_tasks
 from . import fake_opensandbox
@@ -55,7 +56,7 @@ def fast_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _wait_for(path: Path) -> None:
     """Wait for a command to create `path`: the signal it reached the point a test acts on."""
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         while not path.exists():
             await anyio.sleep(0.01)
 
@@ -95,16 +96,10 @@ class TestCommands:
         await wait_until_gone(*map(int, pids.read_text(encoding='utf-8').split()))
 
     async def test_a_background_child_writing_continuously_does_not_hold_up_the_result(
-        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
+        self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
         """execd reports the leader's exit even when a background child keeps writing."""
-        ticks = itertools.count()
-        monkeypatch.setattr(
-            fake_opensandbox,
-            'time',
-            types.SimpleNamespace(monotonic=lambda: float(next(ticks)), time_ns=fake_opensandbox.time.time_ns),
-        )
-        with no_leaked_tasks(), anyio.fail_after(5):
+        with no_leaked_tasks(), anyio.fail_after(READINESS_WAIT_TIMEOUT):
             result = await _create(server, working_dir).run(['sh', '-c', '(while :; do printf x; done) &'])
         assert result.exit_code == 0
 
@@ -135,7 +130,10 @@ class TestCommands:
         with pytest.raises(WorkspaceError, match='could not run the command'):
             await _create(server, working_dir).run(['sh', '-c', 'kill -KILL $PPID'])
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores directory permissions')
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='root ignores directory permissions, and Windows does not enforce POSIX file modes',
+    )
     async def test_a_wrapper_that_cannot_record_its_pid_says_why(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
@@ -429,14 +427,16 @@ class TestServerErrors:
             server.break_streams(backend.ref.id)
 
     async def test_a_broken_stream_from_an_unreachable_server_propagates_at_once(
-        self, server: FakeOpenSandbox, working_dir: str
+        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Waiting for a killed sandbox to settle would now outlast the limit, which no stall reaches.
+        monkeypatch.setattr(f'{_MODULE}._GONE_SETTLE', 3600.0)
         backend = _create(server, working_dir)
         started = Path(working_dir, 'started')
 
         async def run_until_broken() -> None:
-            with anyio.fail_after(1), pytest.raises(SandboxConnectionException):
-                await backend.run(['sh', '-c', f'touch {started}; exec sleep 300'])
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(SandboxConnectionException):
+                await backend.run(['sh', '-c', f'touch {started}; exec sleep 3000'])
 
         async with anyio.create_task_group() as group:
             group.start_soon(run_until_broken)

@@ -626,40 +626,14 @@ def Choices(
     #> replace
     ```
     """
-    if isinstance(choices, str):
-        raise exceptions.UserError('`Choices` takes a sequence or mapping of choices, not a single string.')
-
-    resolved: dict[str, Choice[Any]] = (
-        {key: Choice(choice) if isinstance(choice, str) else choice for key, choice in choices.items()}
-        if isinstance(choices, Mapping)
-        else {key: Choice() for key in choices}
-    )
-    if not resolved:
-        raise exceptions.UserError('`Choices` requires at least one choice.')
-
+    resolved = _resolve_choices(choices)
     choice_values: dict[str, Any] = {
         key: choice.value if _utils.is_set(choice.value) else key for key, choice in resolved.items()
     }
     # The values are only worth resolving when at least one of them isn't the key itself.
     resolves_values = any(value is not key for key, value in choice_values.items())
     has_actions = any(callable(value) for value in choice_values.values())
-
-    descriptions = {key: choice.description for key, choice in resolved.items() if choice.description}
-    if descriptions:
-        # The same `anyOf`-of-`const`s shape `GenerateToolJsonSchema.enum_schema` emits for an enum whose
-        # members carry docstrings, so that "pick one of these, and here is what each means" has one shape on
-        # the wire however it was authored.
-        options: list[JsonSchemaValue] = []
-        for key in choice_values:
-            option: JsonSchemaValue = {'const': key}
-            if choice_description := descriptions.get(key):
-                option['description'] = choice_description
-            options.append(option)
-        json_schema: JsonSchemaValue = {'type': 'string', 'anyOf': options}
-    else:
-        json_schema = {'type': 'string', 'enum': list(choice_values)}
-    if description:
-        json_schema['description'] = description
+    json_schema = _choices_json_schema(resolved, description)
 
     class _Choices:
         @classmethod
@@ -700,6 +674,42 @@ def Choices(
 
     _ChoicesWithActions.__name__ = _ChoicesWithActions.__qualname__ = name or 'Choices'
     return _ChoicesWithActions
+
+
+def _resolve_choices(choices: Sequence[str] | Mapping[str, str | Choice[Any]]) -> dict[str, Choice[Any]]:
+    """Each of `choices` as a `Choice`, keyed by its key."""
+    if isinstance(choices, str):
+        raise exceptions.UserError('`Choices` takes a sequence or mapping of choices, not a single string.')
+
+    resolved: dict[str, Choice[Any]] = (
+        {key: Choice(choice) if isinstance(choice, str) else choice for key, choice in choices.items()}
+        if isinstance(choices, Mapping)
+        else {key: Choice() for key in choices}
+    )
+    if not resolved:
+        raise exceptions.UserError('`Choices` requires at least one choice.')
+    return resolved
+
+
+def _choices_json_schema(choices: dict[str, Choice[Any]], description: str | None) -> JsonSchemaValue:
+    """The JSON schema of a string that is one of `choices`' keys, with what each key means where it says."""
+    descriptions = {key: choice.description for key, choice in choices.items() if choice.description}
+    if descriptions:
+        # The same `anyOf`-of-`const`s shape `GenerateToolJsonSchema.enum_schema` emits for an enum whose
+        # members carry docstrings, so that "pick one of these, and here is what each means" has one shape on
+        # the wire however it was authored.
+        options: list[JsonSchemaValue] = []
+        for key in choices:
+            option: JsonSchemaValue = {'const': key}
+            if choice_description := descriptions.get(key):
+                option['description'] = choice_description
+            options.append(option)
+        json_schema: JsonSchemaValue = {'type': 'string', 'anyOf': options}
+    else:
+        json_schema = {'type': 'string', 'enum': list(choices)}
+    if description:
+        json_schema['description'] = description
+    return json_schema
 
 
 @dataclass(frozen=True, kw_only=True)

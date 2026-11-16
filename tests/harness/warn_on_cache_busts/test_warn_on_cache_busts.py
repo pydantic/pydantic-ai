@@ -17,6 +17,8 @@ from __future__ import annotations
 import copy
 import pickle
 import warnings
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -793,6 +795,19 @@ def test_config_boundaries() -> None:
     WarnOnCacheBusts[None](min_missed_ratio=0.0)
 
 
+@contextmanager
+def _record_deprecation_and_busts() -> Generator[list[warnings.WarningMessage]]:
+    """Record `CacheBustWarning`s and `HarnessDeprecationWarning`s, leaving every other warning to the suite's filters.
+
+    `pytest.warns` records every warning and turns off the suite's filters, so a `ResourceWarning` the suite ignores,
+    raised when the garbage collector frees another test's socket during the run, would land in the record.
+    """
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always', CacheBustWarning)
+        warnings.simplefilter('always', HarnessDeprecationWarning)
+        yield record
+
+
 async def test_collapse_ratio_is_deprecated_and_converted() -> None:
     """`collapse_ratio` still works, as its `min_missed_ratio` inverse, and warns once at construction.
 
@@ -804,7 +819,7 @@ async def test_collapse_ratio_is_deprecated_and_converted() -> None:
         monitor = WarnOnCacheBusts[None](collapse_ratio=0.5)
     assert monitor.min_missed_ratio == 0.5
     agent = _agent([_usage(read=0, write=8000), _usage(read=5000), _usage(read=3000)], monitor)
-    with pytest.warns(CacheBustWarning) as record:
+    with _record_deprecation_and_busts() as record:
         await agent.run('hi')
     assert [type(w.message) for w in record] == [CacheBustWarning]
     assert 'request 3' in str(record[0].message)
@@ -835,7 +850,7 @@ async def test_cache_ttl_seconds_is_deprecated_and_ignored() -> None:
     with pytest.warns(HarnessDeprecationWarning, match=r'`WarnOnCacheBusts\(cache_ttl_seconds=...\)` is deprecated'):
         monitor = WarnOnCacheBusts[None](cache_ttl_seconds=1.0)
     agent = _agent([_usage(read=0, write=8000), _usage(read=100)], monitor)
-    with pytest.warns(CacheBustWarning) as record:
+    with _record_deprecation_and_busts() as record:
         await agent.run('hi')
     assert [type(w.message) for w in record] == [CacheBustWarning]
 

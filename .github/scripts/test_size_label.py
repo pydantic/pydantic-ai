@@ -212,12 +212,12 @@ def test_label_updates(tmp_path: Path, script: str, initial_sizes: list[str], wr
                 ('tests/README.md', 4, 0),
                 ('uv.lock', 9999, 9999),
                 ('tests/cassettes/provider/response.yaml', 9999, 9999),
-                ('src/cassettes/response.json', 9999, 9999),
-                ('docs/cassettes/README.md', 9999, 9999),
             ],
             97,  # 80 code + floor(25 docs / 2) + floor(11 tests / 2).
             'size: S',
         ),
+        # Only a `.yaml` cassette is generated, so code under a `cassettes/` directory still counts.
+        ([('pydantic_ai_slim/pydantic_ai/cassettes/model.py', 900, 0)], 900, 'size: L'),
         ([('tests/README.md', 200, 0)], 100, 'size: S'),
     ],
 )

@@ -2,17 +2,31 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness.smart_search._chunks import Chunk
+from pydantic_ai_harness.smart_search._judge import judge
+from pydantic_ai_harness.smart_search._search import Judge
 from pydantic_ai_harness.smart_search._toolset import (
     DEFAULT_CONCURRENCY,
     DEFAULT_THRESHOLD,
     SmartSearchToolset,
     validate_settings,
 )
+
+
+class _OperationToolset(SmartSearchToolset[AgentDepsT]):
+    """Judges through `operation`, `SmartSearch`'s durable `judge` operation."""
+
+    operation: Judge
+
+    async def _judge(self, ctx: RunContext[AgentDepsT], query: str, chunks: list[Chunk]) -> list[float | None]:
+        return await self.operation(ctx, query, chunks)
 
 
 @dataclass
@@ -88,10 +102,18 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
     instructions at all.
     """
 
+    id: str | None = 'smart_search'
+    """Stable identity for durable execution, which records each search's judgments under it."""
+
     _toolset: SmartSearchToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         validate_settings(self.threshold, self.concurrency)
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one search stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> SmartSearchToolset[AgentDepsT]:
         """Provide the stable `smart_search` toolset, shared with every per-run copy.
@@ -100,7 +122,7 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
         `capabilities`) asks for the toolset again; a new one would start with an empty `cache_index`.
         """
         if self._toolset is None:
-            self._toolset = SmartSearchToolset[AgentDepsT](
+            toolset = _OperationToolset[AgentDepsT](
                 model=self.model,
                 threshold=self.threshold,
                 concurrency=self.concurrency,
@@ -108,4 +130,10 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
                 guidance=self.guidance,
                 id=self.id or 'smart_search',
             )
+            toolset.operation = self._judge
+            self._toolset = toolset
         return self._toolset
+
+    @durable_operation('judge')
+    async def _judge(self, ctx: RunContext[AgentDepsT], query: str, chunks: list[Chunk]) -> list[float | None]:
+        return await judge(ctx, self.model, query, chunks, concurrency=self.concurrency)

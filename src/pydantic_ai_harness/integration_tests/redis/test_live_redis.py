@@ -73,7 +73,7 @@ from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
 from redis.exceptions import RedisClusterException, RedisError, ResponseError
 
-from pydantic_ai_harness.spend import RedisSpendStore, SpendEntry, Spent
+from pydantic_ai_harness.spend_limits import RedisSpendStore, SpendEntry, Spent
 
 _NANOS = Decimal(10) ** 9
 """Billionths of a dollar to the dollar, which is how the store keeps money."""

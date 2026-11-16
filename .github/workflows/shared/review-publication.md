@@ -24,6 +24,7 @@ import-schema:
 jobs:
   flag_failed_review:
     # Labels the PR when this run posted no review; a later run that does clears it.
+    detection-gate: status-only
     needs: ${{ github.aw.import-inputs.dependencies }}
     if: ${{ github.aw.import-inputs.condition }}
     runs-on: ubuntu-slim

@@ -287,6 +287,16 @@ def _batch_span(
         otel_context.detach(token)
 
 
+def _submitted_trace_context(span: Span | None, batch: Batch) -> dict[str, str] | None:
+    """Record a submitted batch on its span, and return the span's trace context for the requests it holds."""
+    if span is None:
+        return None
+    span.set_attributes({BATCH_ID_ATTRIBUTE: batch.id, BATCH_STATUS_ATTRIBUTE: batch.status})
+    carrier: dict[str, str] = {}
+    _TRACE_CONTEXT.inject(carrier)
+    return carrier or None
+
+
 class BatchPool:
     """Queues, submissions and checks shared by every model a [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] wraps."""
 
@@ -473,12 +483,7 @@ class BatchPool:
                 if span is not None:
                     span.set_attribute(BATCH_REQUEST_COUNT_ATTRIBUTE, len(requests))
                 batch = await queue.model.batch_create([queued.request for queued in requests])
-                trace_context: dict[str, str] | None = None
-                if span is not None:
-                    span.set_attributes({BATCH_ID_ATTRIBUTE: batch.id, BATCH_STATUS_ATTRIBUTE: batch.status})
-                    carrier: dict[str, str] = {}
-                    _TRACE_CONTEXT.inject(carrier)
-                    trace_context = carrier or None
+                trace_context = _submitted_trace_context(span, batch)
         except Exception as error:
             for queued in requests:
                 queued.future.set_exception(error)
@@ -813,10 +818,7 @@ class BatchedModel(WrapperModel):
             checked['polls'] += 1
             checked.pop('failed_checks', None)
             return _checked_again(pending, checked)
-        if (result := results.get(ticket['custom_id'])) is None and (
-            unlisted := self.wrapped._batch_unlisted_status(batch)
-        ) is not None:
-            result = BatchResult(custom_id=ticket['custom_id'], status=unlisted)
+        result = self._batch_result(batch, results, ticket['custom_id'])
         self.pool.collected(self.wrapped, batch, ticket['custom_id'])
         try:
             if result is None:
@@ -831,9 +833,7 @@ class BatchedModel(WrapperModel):
                 ),
             )
         except ModelAPIError as error:
-            # A request the batch didn't run, or that failed in a way a live request is retried on, is submitted again,
-            # as a provider SDK retries a live request: re-reading the same result would fail the same way every time.
-            if (result is None or resubmittable(result, error)) and self.pool.may_resubmit(ticket):
+            if self._resubmits_unread_result(ticket, result, error):
                 return await self._resubmit(
                     ticket, pending, history, model_settings, model_request_parameters, requester
                 )
@@ -844,6 +844,22 @@ class BatchedModel(WrapperModel):
             details['resubmissions'] = resubmissions
         response.provider_details = {**(response.provider_details or {}), _TICKET_KEY: details}
         return response
+
+    def _batch_result(self, batch: Batch, results: dict[str, BatchResult], custom_id: str) -> BatchResult | None:
+        """A request's result in its ended batch, or one with the status the provider gives a request it doesn't list."""
+        if (result := results.get(custom_id)) is None and (
+            unlisted := self.wrapped._batch_unlisted_status(batch)
+        ) is not None:
+            result = BatchResult(custom_id=custom_id, status=unlisted)
+        return result
+
+    def _resubmits_unread_result(self, ticket: _Ticket, result: BatchResult | None, error: ModelAPIError) -> bool:
+        """Whether a request whose result couldn't be read is submitted again.
+
+        A request the batch didn't run, or that failed in a way a live request is retried on, is submitted again,
+        as a provider SDK retries a live request: re-reading the same result would fail the same way every time.
+        """
+        return (result is None or resubmittable(result, error)) and self.pool.may_resubmit(ticket)
 
     async def _resubmit(
         self,

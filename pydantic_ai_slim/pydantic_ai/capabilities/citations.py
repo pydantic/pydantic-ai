@@ -14,7 +14,7 @@ class Citations(AbstractCapability[Any]):
 
     Sets the [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting. Providers that always cite,
     such as OpenAI and Google for web search, don't need it. Anthropic returns web fetch results without citations
-    unless it's set. On the Anthropic API, on models with the `20260209` web tools, it also has the model call web
+    unless it's set. On the Anthropic API, on models with the `20260209` or `20260318` web tools, it also has the model call web
     search and web fetch directly, so their results are cited, unless the request needs code execution; see
     [Web Tool Callers](../models/anthropic.md#web-tool-callers). The setting is only used when the output is text.
     """

@@ -26,7 +26,27 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
     capability runs its own browser, so a session opened by one is not visible
     to the other.
 
-![The model drives a real Chromium browser itself, one tool call per action, using the eighteen tools PlaywrightBrowser adds, such as navigate, snapshot, click and type_text. Chromium starts on the first browser call and closes when the run ends. Every request passes an egress guard that enforces allowed_domains and refuses private addresses. Each tool returns the page text, trimmed to a token budget, or a screenshot as image content.](../img/harness/playwright.svg)
+```mermaid
+flowchart TB
+    accTitle: Playwright Browser: the model drives a real browser
+    accDescr: The model calls PlaywrightBrowser tools (navigate, snapshot, click and 15 more), one call per action, for page text or screenshot. They run Chromium from the first call to run end. An egress guard passes every request to allowed sites, except navigation and data requests to other domains (allowed_domains) and loopback, private and metadata addresses (block_private_addresses).
+    model(["model"])
+    browser["PlaywrightBrowser()<br/>navigate, snapshot, click<br/>and 15 more tools"]:::capability
+    chromium["Chromium<br/>starts on the first call,<br/>closes at run end"]:::external
+    guard["egress guard"]:::capability
+    web["allowed sites<br/>on the web"]:::external
+    offlist["navigation and<br/>data requests<br/>to other domains"]:::blocked
+    private["loopback, private<br/>and metadata<br/>addresses"]:::blocked
+    model <-->|"one tool call per action,<br/>page text or screenshot"| browser
+    browser <--> chromium
+    chromium -->|"every request"| guard
+    guard --> web
+    guard -.-x|"allowed_domains"| offlist
+    guard -.-x|"block_private_addresses"| private
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Installation
 
@@ -431,7 +451,9 @@ classifies it, so a name pointing at an internal address (`169.254.169.254.nip.i
 and similar wildcard DNS services) is refused rather than followed. That lookup runs
 for every kind, matching the literal check, so a spelling does not decide the
 verdict; answers are cached, which makes it a lookup per distinct host rather than
-per request. `resolved_kinds` sets which kinds are looked up.
+per request. `resolved_kinds` sets which kinds are looked up. A host that
+`allowed_domains` or `blocked_domains` already refuses by name is refused with
+that reason and not looked up.
 
 A lookup that does not answer within two seconds is a refusal, not an allow:
 whoever controls a name controls whether its lookup answers, so a stall would
@@ -491,6 +513,12 @@ that string as the reason, which the model can read through `network_requests`.
 An override that narrows what `refuse` allows should override `describe` too:
 `describe` is what the model is told about its reach, and it reads only the
 fields.
+
+The built-in policy does not look up a host its domain lists refuse, but an
+override of `refuse` may permit such a host, so a policy that overrides `refuse`
+has every host looked up as before. If your override refuses some hosts by name,
+also override `needs_resolution` to return `False` for them, so they are not
+looked up.
 
 Neither policy is a general security boundary. Microsoft's own playwright-mcp
 disclaims its origin filter the same way. A page can still signal outward through

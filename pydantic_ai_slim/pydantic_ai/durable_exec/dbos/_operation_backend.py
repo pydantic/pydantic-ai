@@ -39,8 +39,7 @@ from ._operation_names import DBOSOperationNamer
 from ._utils import StepConfig
 
 if TYPE_CHECKING:
-    from dbos import StepOptions
-    from dbos._context import DBOSContext
+    from dbos import StepOptions, StepReservation
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -93,16 +92,9 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         return await self._dispatch(self.step, params)
 
-    async def call_reserved(self, step_ctx: DBOSContext, params: ParamsT) -> ResultT:
-        # TODO: Replace the private reservation/dispatch calls with the public DBOS API:
-        # https://github.com/dbos-inc/dbos-transact-py/issues/915
-        from dbos._core import run_step_async
-        from dbos._dbos import _get_dbos_instance  # pyright: ignore[reportPrivateUsage]
-
+    async def call_reserved(self, reservation: StepReservation, params: ParamsT) -> ResultT:
         async def reserved_step(*args: object, **kwargs: object) -> object:
-            return await run_step_async(
-                _get_dbos_instance(), step_ctx, self._step_function, self._step_options, args, kwargs
-            )
+            return await reservation.run_async(self._step_options, self._step_function, *args, **kwargs)
 
         return await self._dispatch(reserved_step, params)
 

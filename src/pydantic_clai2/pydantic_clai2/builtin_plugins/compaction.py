@@ -24,7 +24,7 @@ from pydantic_ai import ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
 from pydantic_ai_harness.compaction import (
-    ContextUsageEvent,
+    ContextUsageMeasuredEvent,
     FallbackCompaction,
     ReportContextUsage,
     SlidingWindowCompaction,
@@ -191,8 +191,8 @@ class _ContextGauge(AbstractCapability[None]):
     status: Status
     threshold: float
 
-    @on_event(ContextUsageEvent)
-    async def _gauge(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
+    @on_event(ContextUsageMeasuredEvent)
+    async def _gauge(self, ctx: RunContext[None], event: ContextUsageMeasuredEvent) -> None:
         self.status.context_tokens = event.used_tokens
         # Without a response's reported usage, the reading counts characters and leaves out most tool
         # definitions, so a session's first request reads well under what the provider then reports.

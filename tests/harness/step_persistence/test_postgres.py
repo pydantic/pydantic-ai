@@ -35,7 +35,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
-from pydantic_ai_harness.media import DiskMediaStore, PostgresMediaStore, media_uri_for
+from pydantic_ai_harness.media import FileMediaStore, PostgresMediaStore, media_uri_for
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     PostgresConnection,
@@ -90,7 +90,7 @@ class TestPostgresStepStoreConstruction:
         assert store._media_store is None  # pyright: ignore[reportPrivateUsage]
 
     def test_custom_media_store_is_kept(self, tmp_path: Path) -> None:
-        media_store = DiskMediaStore(tmp_path / 'media')
+        media_store = FileMediaStore(tmp_path / 'media')
         store = PostgresStepStore(_UnusedPool(), media_store=media_store)
         assert store._media_store is media_store  # pyright: ignore[reportPrivateUsage]
 
