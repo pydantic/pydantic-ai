@@ -79,6 +79,7 @@ pytestmark = [
 ]
 
 NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
+ON_LAST = 'The result is on the last call of this turn.'
 
 
 def _agent(model: AnthropicModel, computer: FakeComputer) -> Agent[None, str]:
@@ -629,8 +630,8 @@ async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow
 def _cut_off(blocks: list[BetaContentBlock], partial_json: str) -> list[BetaRawMessageStreamEvent]:
     """The events Anthropic streams when `max_tokens` cuts off the last block, a computer call, mid-input.
 
-    As recorded live for `computer_20251124` and `computer_20250124`: the call's input stops part way, no block stop
-    follows, and the message stops for `max_tokens`. The toolset sends no member it cut off, so its case is a guard.
+    For `computer_20251124` and `computer_20250124`, the call's input stops part way, no block stop follows, and the
+    message stops for `max_tokens`. The toolset sends no member it cut off, so its case is a guard.
     """
     events = _stream(*blocks)
     last = len(blocks) - 1
@@ -816,7 +817,9 @@ _HOOK_IMAGE = BinaryImage(data=b'picture', media_type='image/png')
         pytest.param(['Ran the actions.', 'A note a hook added.', _PNG], id='extra-text'),
     ],
 )
-@pytest.mark.parametrize('outcome', ['all-ran', 'partial', 'failed-first', 'failed-middle', 'denied'])
+@pytest.mark.parametrize(
+    'outcome', ['all-ran', 'partial', 'failed-first', 'failed-middle', 'denied', 'changed', 'no-metadata']
+)
 async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole(
     allow_model_requests: None, outcome: str, content: list[Any], members: int
 ) -> None:
@@ -829,20 +832,26 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
         'failed-first': 0,
         'failed-middle': 2 * (members // 2),
         'denied': 0,
+        'changed': 1,
+        'no-metadata': 0,
     }[outcome]
-    metadata = {'performed': performed} if outcome == 'all-ran' else {'performed': performed, 'error': 'no keyboard'}
+    metadata = {
+        'all-ran': {'performed': performed},
+        'changed': {'performed': performed, 'changed': True},
+        'no-metadata': None,
+    }.get(outcome, {'performed': performed, 'error': 'no keyboard'})
     sent = await _sent_results(blocks, counts, content, metadata, 'denied' if outcome == 'denied' else 'success')
 
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert all(block['type'] == 'text' for r in sent if r['is_error'] for block in r['content'])
     if outcome != 'denied':
-        # Besides the `OK`s and the failure, the content goes back once, whole and in order.
+        # Besides the `OK`s, the failure and `ON_LAST`, the content goes back once, whole and in order.
         carried = [
             _item(block)
             for r in sent
             if not r['is_error']
             for block in r['content']
-            if block['type'] != 'text' or not (block['text'] == 'OK' or block['text'].startswith('Failed: '))
+            if block['type'] != 'text' or not (block['text'] in ('OK', ON_LAST) or block['text'].startswith('Failed: '))
         ]
         expected = [item if isinstance(item, str) else base64.b64encode(item.data).decode() for item in content]
         assert carried == expected
@@ -851,13 +860,13 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
 @pytest.mark.parametrize(
     'blocks,counts,content,metadata,results',
     [
-        # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
+        # Not these calls' outcome: `OK` would say a call ran, so the last call carries it and the rest point there.
         pytest.param(
             _MEMBERS[:2],
             [1, 1],
             [_CHANGED, _PNG],
             {'performed': 1, 'changed': True},
-            [(False, [_CHANGED]), (False, [_CHANGED, 'image'])],
+            [(False, [ON_LAST]), (False, [_CHANGED, 'image'])],
             id='changed-before-it-ran',
         ),
         # As a UI rebuilds it, or a guardrail answers: nothing says which calls ran, so no call is said to have run.
@@ -866,7 +875,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [1, 1],
             [_FAILED, _PNG],
             None,
-            [(False, [_FAILED]), (False, [_FAILED, 'image'])],
+            [(False, [ON_LAST]), (False, [_FAILED, 'image'])],
             id='no-metadata',
         ),
         # Content stored as a JSON string reads as the list it encodes, screenshot and all.
