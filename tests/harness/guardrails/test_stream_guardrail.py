@@ -41,6 +41,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, StreamGuardrail
 from pydantic_ai_harness.guardrails import StreamGuardrailPart
+from tests.harness._recording_durability import RecordingDurability
 
 
 async def _stream(
@@ -361,6 +362,34 @@ class TestStreamGuardrail:
                 "PartEndEvent 0 text '[redacted]'",
             ]
         )
+
+    async def test_refuses_durable_execution(self):
+        agent = Agent(
+            TestModel(custom_output_text='hi'),
+            name='streamed',
+            capabilities=[StreamGuardrail(guard=lambda part: True), RecordingDurability()],
+        )
+        with pytest.raises(UserError, match='StreamGuardrail cannot run under durable execution'):
+            await agent.run('hello')
+
+    async def test_a_blocked_tool_call_span_names_the_tool(self):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), tracer=provider.get_tracer('test'))
+        call = ToolCallPart(tool_name='weather', args='{"city": "Paris"}')
+
+        async def events() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=0, part=call)
+            yield PartEndEvent(index=0, part=call)
+
+        with pytest.raises(OutputBlocked):
+            async for _ in StreamGuardrail(guard=lambda part: False).wrap_run_event_stream(ctx, stream=events()):
+                pass  # pragma: no cover
+
+        assert [dict(span.attributes or {}) for span in exporter.get_finished_spans()] == [
+            {'guardrail.direction': 'stream', 'guardrail.action': 'block', 'guardrail.tool': 'weather'}
+        ]
 
     async def test_other_parts_pass_through_unscreened(self):
         async def events() -> AsyncIterator[AgentStreamEvent]:

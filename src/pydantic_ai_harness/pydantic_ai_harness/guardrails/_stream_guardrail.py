@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import GuardOutcome, as_guards, evaluate_all, trace_block, trace_redaction
 
@@ -205,11 +206,16 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
     The guard screens the run's event stream: `run_stream_events()`, the `event_stream_handler`
     argument to a run, `node.stream()` under `iter()`, and UI adapters. A `ProcessEventStream`
     capability and an `on_event` hook see each event before the guard, so they are not screened.
-    Under `run_stream()` the guard still runs, so a `block` raises, but `stream_text()`,
-    `stream_output()` and `stream_response()` read the accumulated response, which a `replace`
-    does not reach. A replacement changes only what the event stream carries, not the message
-    history or the run's output: pair it with `OutputGuardrail` and `ToolGuardrail` for those. The
-    guard runs on the live stream, so it is not a durable operation.
+    `run_stream()` is not screened: its `stream_text()`, `stream_output()` and `stream_response()`
+    read the accumulated response, which never carries a replacement and can hold the start of a
+    part before the guard decides on it, though a `block` still raises. A replacement changes only
+    what the event stream carries, not the message history or the run's output: pair it with
+    `OutputGuardrail` and `ToolGuardrail` for those.
+
+    Adding it makes `run()` and `run_sync()` stream every model request, so the guard runs even when
+    nothing reads the events, and a model that cannot stream fails. It raises `UserError` under
+    durable execution, where the model request streams its events to the durability's own handler
+    before any capability wraps them.
     """
 
     guard: StreamGuardrailFunc[AgentDepsT] | Sequence[StreamGuardrailFunc[AgentDepsT]]
@@ -234,6 +240,12 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         """Hold each screened part's events until the guard has decided on the complete part."""
+        if in_durable_context(ctx):
+            raise UserError(
+                'StreamGuardrail cannot run under durable execution: the durable model request streams its events '
+                "to the durability's event stream handler before any capability wraps them, so they would not be "
+                'screened.'
+            )
         hold = _Hold(partial(self._screen, ctx))
         async for event in stream:
             for released in await hold.feed(event):
@@ -257,7 +269,8 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
                 return _replace_part(held, index, verdict.replacement)
             case 'block':
                 message = verdict.message or _DEFAULT_BLOCK_MESSAGE
-                trace_block(ctx, direction='stream', message=message)
+                tool_name = part.tool_name if isinstance(part, ToolCallPart) else None
+                trace_block(ctx, direction='stream', message=message, tool_name=tool_name)
                 raise OutputBlocked(message)
             case 'retry' | 'approve':
                 raise UserError(
