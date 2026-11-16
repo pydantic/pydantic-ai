@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import re
 import warnings
 from collections.abc import Mapping
@@ -35,7 +36,7 @@ from pydantic_ai_harness import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning import ArtifactFinding, ArtifactScanResult
 from pydantic_ai_harness.skills import Skills, SkippedSkill
 from tests.harness.conftest import IsStr
-from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
+from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend, RunOnlyWorkspaceBackend
 
 
 def _write_skill(
@@ -1188,6 +1189,37 @@ class TestSkillFiles:
             IsStr(regex=r".*Skill 'guide' has no file 'references'.*"),
             IsStr(regex=r".*'image.png' in skill 'guide' is not a UTF-8 text file.*"),
         ]
+
+    async def test_a_symlink_past_the_shell_resolution_limit_is_refused(self, tmp_path: Path) -> None:
+        _write_guide(tmp_path / 'skills')
+        (tmp_path / 'private').mkdir()
+        (tmp_path / 'private' / 'secret.txt').write_text('secret', encoding='utf-8')
+        (tmp_path / 'skills' / 'guide' / 'again').symlink_to('.')
+        (tmp_path / 'skills' / 'guide' / 'out').symlink_to(tmp_path / 'private')
+        # Without native `realpath`, resolution runs in the shell, which stops following links after 40.
+        backend = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
+
+        results = await _read(
+            Skills(str(tmp_path / 'skills'), workspace=backend, read_files=True),
+            None,
+            [('guide', 'again/' * 40 + 'out/secret.txt')],
+        )
+
+        assert results == [IsStr(regex=r".*is outside the directory of skill 'guide'.*")]
+
+    @pytest.mark.skipif(os.name != 'posix' or os.geteuid() == 0, reason='needs file permissions that apply')
+    async def test_an_unreadable_file_fails_the_call(self, tmp_path: Path) -> None:
+        _write_guide(tmp_path / 'skills')
+        locked = tmp_path / 'skills' / 'guide' / 'locked.md'
+        locked.write_text('locked', encoding='utf-8')
+        locked.chmod(0)
+
+        try:
+            results = await _read(Skills('skills', read_files=True), tmp_path, [('guide', 'locked.md')])
+        finally:
+            locked.chmod(0o600)
+
+        assert results == [IsStr(regex=r".*'locked.md' in skill 'guide' cannot be read: permission denied.*")]
 
     async def test_a_workspace_that_cannot_resolve_symlinks_is_refused(self) -> None:
         backend = FilesystemOnlyWorkspaceBackend(

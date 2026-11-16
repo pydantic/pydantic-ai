@@ -372,15 +372,15 @@ class Skills(AbstractCapability[AgentDepsT]):
         workspace, directory = entry.workspace, entry.skill.directory
         if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
             raise ToolFailed(f'The workspace of skill {skill!r} cannot resolve symlinks, so its files are not read.')
-        root = await workspace.realpath(directory)
-        # Joined, not normalized: `link/..` climbs from the link's target, as it would in a shell.
-        target = await workspace.realpath(workspace.paths.join(directory, path))
-        if not target.startswith(root + workspace.paths.sep):
-            raise ModelRetry(f'{path!r} is outside the directory of skill {skill!r}.')
         try:
+            target = await _contained(workspace, directory, path)
+            if target is None:
+                raise ModelRetry(f'{path!r} is outside the directory of skill {skill!r}.')
             text = await workspace.read_text(target)
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             raise ModelRetry(f'Skill {skill!r} has no file {path!r}.') from None
+        except PermissionError:
+            raise ToolFailed(f'{path!r} in skill {skill!r} cannot be read: permission denied.') from None
         except UnicodeDecodeError:
             raise ModelRetry(f'{path!r} in skill {skill!r} is not a UTF-8 text file.') from None
         scanner = entry.source.scanner
@@ -515,6 +515,17 @@ def _catalog_description(skill: SkillDefinition) -> str:
         return skill.description
     # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
     return f'{skill.description} {skill.when_to_use}'
+
+
+async def _contained(workspace: Workspace, directory: str, path: str) -> str | None:
+    """Where `path`, relative to `directory`, leads with every symlink followed, or `None` when that is outside it."""
+    root = await workspace.realpath(directory)
+    # Joined, not normalized: `link/..` climbs from the link's target, as it would in a shell.
+    target = await workspace.realpath(workspace.paths.join(directory, path))
+    # A resolution that stopped at its symlink limit still holds a link, so resolving it again moves it.
+    if not target.startswith(root + workspace.paths.sep) or await workspace.realpath(target) != target:
+        return None
+    return target
 
 
 def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> SkippedSkill | None:
