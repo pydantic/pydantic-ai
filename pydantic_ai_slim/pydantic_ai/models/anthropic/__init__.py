@@ -715,9 +715,10 @@ class AnthropicModelSettings(ModelSettings, total=False):
     the thread keeps. The thread state lives in the message history: a response records a fingerprint of the
     fields a thread keeps fixed under `'thread_fingerprint'` in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and a request
-    continues from it only when its own fingerprint matches, so changing the instructions, tools or another fixed
-    field starts a new thread. So does a response from another model, a refusal, or an expired thread, which
-    Anthropic reports when the continue request fails, and the full conversation is then sent again. The
+    continues from it only when its own fingerprint matches, so changing the instructions, tools, betas or another
+    fixed field starts a new thread, as does a new message that needs a beta the thread was created without, like
+    the Files API's for an `UploadedFile`. So does a response from another model, a refusal, or an expired thread,
+    which Anthropic reports when the continue request fails, and the full conversation is then sent again. The
     response also records its [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], covering
     its ID, its fingerprint, its parts and the history it was created from, so a history processor that trims or
     redacts either starts a new thread instead of continuing from the unchanged copy Anthropic holds. A request

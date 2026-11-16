@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
 
 # The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
-# The `skills` in `container`, and whether `fallbacks` is sent, are fixed too: see `thread_fingerprint`.
+# The `skills` in `container`, whether `fallbacks` is sent, and the betas are fixed too: see `thread_fingerprint`.
 _THREAD_FIXED_PARAMS = (
     'system',
     'tools',

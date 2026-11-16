@@ -30,6 +30,7 @@ from pydantic_ai import (
     TextContent,
     TextPart,
     ToolReturn,
+    UploadedFile,
     UserContent,
     UserPromptPart,
 )
@@ -388,6 +389,19 @@ async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
         await agent.run('Again', message_history=first.all_messages(), model_settings=skills('xlsx'))
 
     assert api.bodies[1]['thread'] == {'type': 'create'}
+
+
+async def test_new_beta_starts_a_new_thread(allow_model_requests: None):
+    """A thread's betas are fixed, so a follow-up that needs a new one, like the Files API's, creates a new thread."""
+    api = _Api()
+    file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf')
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await agent.run('Hi')
+        await agent.run(['Summarize this.', file], message_history=first.all_messages())
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert 'files-api-2025-04-14' in api.betas[1]
 
 
 @pytest.mark.parametrize('in_extra_body', [False, True])
