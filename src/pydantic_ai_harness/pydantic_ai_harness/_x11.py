@@ -196,6 +196,10 @@ def _move(x: int | None, y: int | None) -> list[str]:
 
 _ENV = {'DISPLAY': DISPLAY}
 
+_START_TIMEOUT = 70
+"""Seconds a start script may take: up to three 10-second waits of its own, after up to as long behind `START_LOCK`
+for another start, plus 10 seconds for its commands."""
+
 
 def x11_display(
     backend: SupportsCommands,
@@ -211,7 +215,7 @@ def x11_display(
     async def start() -> None:
         width, height = size
         # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
-        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=30)
+        result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '

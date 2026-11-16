@@ -201,7 +201,11 @@ async def main():
 
 Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. An existing container whose screen is already running keeps its size. The agent also gets the container's shell and files, so `Coder` and `ComputerUse` can share it.
 
-That image is tagged `pydantic-ai-desktop:` plus the first 12 hex digits of the Dockerfile's SHA-256 (`docker images pydantic-ai-desktop` lists it), and runs keep reusing it. To pick up security updates, rebuild it under that tag with the `docker build` command below plus `--pull --no-cache`: after only `docker rmi <tag>`, the rebuild reuses Docker's cached layers.
+That image is tagged `pydantic-ai-desktop:` plus the first 12 hex digits of the Dockerfile's SHA-256 (`docker images pydantic-ai-desktop` lists it), and runs keep reusing it. To pick up security updates, rebuild it under that tag, with those 12 digits for `<hash>`. Keep `--no-cache`: after only `docker rmi`, a rebuild reuses Docker's cached layers.
+
+```bash
+python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag pydantic-ai-desktop:<hash> -
+```
 
 A custom `image` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `fluxbox` and `xprop` for a window manager. Start from `DESKTOP_DOCKERFILE`.
 
