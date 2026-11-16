@@ -1156,10 +1156,10 @@ class TestConcurrentChanges:
             pytest.param(
                 {},
                 [
-                    ToolCallPart('create_directory', {'path': 'pkg'}),
-                    ToolCallPart('write_file', {'path': 'pkg/a.py', 'content': 'import old\n'}),
+                    ToolCallPart('create_directory', {'path': 'pkg/sub'}),
+                    ToolCallPart('write_file', {'path': 'pkg/sub/a.py', 'content': 'import old\n'}),
                 ],
-                {'pkg/a.py': 'import old\n'},
+                {'pkg/sub/a.py': 'import old\n'},
                 id='write-into-new-directory',
             ),
             pytest.param(
@@ -1172,12 +1172,12 @@ class TestConcurrentChanges:
                 id='edit-new-file',
             ),
             pytest.param(
-                {'a.py': 'import old\n'},
+                {'pkg/sub/a.py': 'import old\n'},
                 [
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old', 'new_text': 'new'}),
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'new', 'new_text': 'newer'}),
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'old', 'new_text': 'new'}),
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'new', 'new_text': 'newer'}),
                 ],
-                {'a.py': 'import newer\n'},
+                {'pkg/sub/a.py': 'import newer\n'},
                 id='edit-edited-text',
             ),
         ],
@@ -1185,8 +1185,13 @@ class TestConcurrentChanges:
     async def test_changes_in_one_response_run_in_order(
         self, tmp_path: Path, files: dict[str, str], calls: list[ToolCallPart], expected: dict[str, str]
     ) -> None:
-        """Each change depends on the one sent before it in the same response."""
+        """Each change depends on the one sent before it in the same response.
+
+        Without `sequential`, the first case always fails and the edit cases fail when the race goes the wrong way,
+        which it did more often with `content_hashes=False` than with hashes on.
+        """
         for path, content in files.items():
+            (tmp_path / path).parent.mkdir(parents=True)
             (tmp_path / path).write_text(content)
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1196,7 +1201,7 @@ class TestConcurrentChanges:
 
         agent = Agent(
             FunctionModel(respond),
-            capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem[object](content_hashes=False)],
         )
         messages = (await agent.run('change the file')).all_messages()
 
