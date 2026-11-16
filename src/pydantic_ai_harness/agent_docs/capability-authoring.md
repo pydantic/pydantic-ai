@@ -355,14 +355,18 @@ Content:
 
 - Content is anything that could quote user content, a prompt, tool arguments, a path, or a tenant or
   user id. It goes only through `content=` or `set_content_attribute`, which record it only when the
-  run captures content. A trace has a wider audience than the application that produced it. Some older
-  code still checks `ctx.trace_include_content` itself; new code doesn't.
+  run captures content. A trace has a wider audience than the application that produced it.
 - Never put content in a span's name or in `logfire.msg`. Logfire does not scrub `logfire.msg`.
 - `open_span` records an uncaught error by its type only, unless the run captures content, because an
   exception message can quote content. Pass `not_errors=` for an exception that is an expected answer,
   such as a `FileNotFoundError` from an existence check.
-- `content=` and `attributes=` are built even when nothing is recorded, so pass cheap values. Build an
-  expensive one, such as a serialized message, under `if span.is_recording()` instead.
+- `content=` and `attributes=` are built even when nothing is recorded, so pass plain values. When
+  building a content value costs something or can raise, such as `str()` of an object a guard returned
+  or a serialized message, build it only `if ctx.trace_include_content` (`telemetry.include_content`
+  when you hold a `RunTelemetry` instead of a `ctx`) and pass `None` otherwise:
+  `content={'guardrail.replacement': str(replacement)} if ctx.trace_include_content else None`. Don't
+  test `span.is_recording()` for this: `record_decision` gives you no span, and a span records when the
+  run is traced without content too.
 
 Names:
 
@@ -377,6 +381,16 @@ Names:
   `artifact_scanning`). A capability adding an attribute to core's `execute_tool` span still uses its
   own prefix; `pydantic_ai.*` is for attributes core sets. Reuse an OpenTelemetry semantic-convention attribute where
   one fits (`gen_ai.conversation.compacted`, `process.exit.code`) instead of coining a new name.
+
+Outcome words mirror the capability's own public types. An attribute value or span name that says
+what happened uses the words the capability's API already uses for it, such as the
+`GuardrailResult` actions (`block`, `replace`, `approve`) or `SubAgents`' `DelegationOutcome`, so an
+operator reading a trace and a developer reading the code name the same outcome the same way.
+
+Some older code still opens spans on the raw tracer and checks `ctx.trace_include_content` itself:
+`_judge.py`, `smart_search/_toolset.py`, `memory/_toolset.py`, `memory/_capability.py`, `compaction`,
+`repair_tool_arguments` and `playwright`. A follow-up PR moves them onto these functions; don't copy
+them.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.
