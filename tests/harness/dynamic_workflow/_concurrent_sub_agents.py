@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic_ai import Agent, Tool
@@ -14,6 +14,28 @@ from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 
 SCRIPT = "import asyncio\nawait asyncio.gather(summarize(task='alpha'), summarize(task='beta'))"
 EXPECTED = "done: ['summary of alpha', 'summary of beta']"
+
+
+class DeferredStarts:
+    """A `WorkflowCallScheduler` that registers every call before the script's wait, then starts them together."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self._gates: list[asyncio.Future[None]] = []
+
+    async def run(self, start: Callable[[], Awaitable[object]]) -> object:
+        gate = asyncio.get_running_loop().create_future()
+        self._gates.append(gate)
+        self.events.append('register')
+        await gate
+        self.events.append('start')
+        return await start()
+
+    async def flush(self) -> None:
+        self.events.append('flush')
+        for gate in self._gates:
+            gate.set_result(None)
+        self._gates.clear()
 
 
 def summarize_model(

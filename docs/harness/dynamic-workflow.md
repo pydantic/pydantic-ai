@@ -262,11 +262,53 @@ sub-agent's model requests and tool calls keep their own checkpoints. A branch's
 with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
 branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
 
-Under other engines, sub-agents run concurrently. To schedule them differently, for example to
-register every call of a batch with an engine before any of them starts, subclass
-`DynamicWorkflowToolset` and override `create_executor`, which builds the executor each
-`run_workflow` call runs its script with. Its `dispatch` argument runs one sub-agent call, and the
-executor awaits its `flush` callback before it waits on the calls the script has made so far.
+Under other engines, sub-agents run concurrently.
+
+### Scheduling sub-agent calls
+
+`call_scheduler` decides when the script's sub-agent calls start. It is called with the run
+context once per `run_workflow` call, and returns a `WorkflowCallScheduler`: each call goes through
+its `run`, which starts the sub-agent by awaiting `start()`, and its `flush` is awaited each time
+the script waits on its calls, once every call made before the wait has reached `run`. A durable
+engine integration can use this to register every call of a batch, in the order the script made
+them, before any of them starts:
+
+```python
+import asyncio
+from collections.abc import Awaitable, Callable
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+
+
+class StartTogether:
+    def __init__(self) -> None:
+        self._held: list[asyncio.Future[None]] = []
+
+    async def run(self, start: Callable[[], Awaitable[object]]) -> object:
+        held = asyncio.get_running_loop().create_future()
+        self._held.append(held)  # register the call with the engine here
+        await held
+        return await start()
+
+    async def flush(self) -> None:
+        for held in self._held:
+            held.set_result(None)
+        self._held.clear()
+
+
+def start_together(ctx: RunContext[None]) -> StartTogether:
+    return StartTogether()
+
+
+reviewer = Agent('{{ openai:medium }}', name='reviewer', description='Reviews code for bugs.')
+workflow = DynamicWorkflow(agents=[reviewer], call_scheduler=start_together)
+```
+
+A call only completes after `run` awaits its `start()`, so a scheduler that holds calls back has to
+release them in `flush`. The engine's own batching, such as the `AWSLambdaDurability` `parallel`
+operation, runs after `flush`, so the calls it releases join it. Under `DBOSDurability` the calls
+already start one at a time in dispatch order, and `call_scheduler` is not used.
 
 ## Observability
 
@@ -285,6 +327,7 @@ DynamicWorkflow(                  # all parameters are keyword-only
     sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
     resource_limits=None,         # None -> backstop (256 MB, no time cap);
                                   # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
+    call_scheduler=None,          # (RunContext) -> WorkflowCallScheduler; None starts each call when made
     id=None,                      # required when defer_loading=True
     description=None,             # one-line catalog entry shown while deferred
     defer_loading=False,
@@ -299,7 +342,7 @@ WorkflowAgent(
 )
 ```
 
-`DynamicWorkflowToolset` and `WorkflowResourceLimits` are also exported from the module for advanced use.
+`DynamicWorkflowToolset`, `WorkflowCallScheduler` and `WorkflowResourceLimits` are also exported from the module for advanced use.
 
 Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/).
 

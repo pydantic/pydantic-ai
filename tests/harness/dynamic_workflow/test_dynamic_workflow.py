@@ -5,11 +5,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
-from collections.abc import Awaitable, Callable, Container
 from typing import Any
 
 import pytest
-from anyio.from_thread import BlockingPortal
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
@@ -51,6 +49,7 @@ from pydantic_ai_harness.dynamic_workflow import (
 )
 
 from .._deferred_tools import deferring_agent, pending_agent
+from ._concurrent_sub_agents import DeferredStarts
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -1515,61 +1514,25 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
                 await task
 
 
-async def test_create_executor_override_defers_sibling_starts() -> None:
+async def test_call_scheduler_registers_calls_before_starting_them() -> None:
     events: list[str] = []
+    contexts: list[RunContext[object]] = []
 
-    class DeferredStartToolset(DynamicWorkflowToolset[object]):
-        def create_executor(
-            self,
-            ctx: RunContext[object],
-            *,
-            dispatch: Callable[[str, dict[str, object]], Awaitable[object]],
-            valid_names: Container[str],
-            flush: Callable[[], Awaitable[None]] | None,
-            global_sequential: bool,
-            portal: BlockingPortal | None,
-            max_sleep_seconds: float | None,
-        ) -> MontyExecutor:
-            known = [name for name in ('alpha', 'beta', 'gamma') if name in valid_names]
-            events.append(f'executor {known} {flush} {global_sequential} {portal} {max_sleep_seconds}')
-            gates: list[asyncio.Future[None]] = []
+    def scheduler(ctx: RunContext[object]) -> DeferredStarts:
+        contexts.append(ctx)
+        return DeferredStarts(events)
 
-            async def deferred(name: str, call_kwargs: dict[str, object]) -> object:
-                events.append(f'register {name}')
-                gate = asyncio.get_running_loop().create_future()
-                gates.append(gate)
-                await gate
-                events.append(f'start {name}')
-                return await dispatch(name, call_kwargs)
-
-            async def release() -> None:
-                await asyncio.sleep(0)
-                for gate in gates:
-                    gate.set_result(None)
-                gates.clear()
-
-            return super().create_executor(
-                ctx,
-                dispatch=deferred,
-                valid_names=valid_names,
-                flush=release,
-                global_sequential=global_sequential,
-                portal=portal,
-                max_sleep_seconds=max_sleep_seconds,
-            )
-
-    ts = DeferredStartToolset(agents=[_wf_agent('A', 'alpha'), _wf_agent('B', 'beta')])
-    out = await _run_script(ts, "import asyncio\nawait asyncio.gather(alpha(task='a'), beta(task='b'))")
-    assert out == snapshot(['A', 'B'])
-    assert events == snapshot(
-        [
-            "executor ['alpha', 'beta'] None False None None",
-            'register alpha',
-            'register beta',
-            'start alpha',
-            'start beta',
-        ]
+    workflow = DynamicWorkflow[object](
+        agents=[_sub_agent('A', 'alpha'), _sub_agent('B', 'beta')], call_scheduler=scheduler
     )
+    ctx = _ctx()
+    code = (
+        "import asyncio\nfirst = await asyncio.gather(alpha(task='a'), beta(task='b'))\n[*first, await alpha(task='c')]"
+    )
+    out = await _run_script(workflow.get_toolset(), code, ctx)
+    assert out == snapshot(['A', 'B', 'A'])
+    assert events == snapshot(['register', 'register', 'flush', 'start', 'start', 'register', 'flush', 'start'])
+    assert contexts == [ctx]
 
 
 # --- Runtime reveal --------------------------------------------------------
