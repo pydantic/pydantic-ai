@@ -272,6 +272,22 @@ async def test_a_key_daytona_did_not_confirm_holding_is_let_go(fake_daytona: Fak
     assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keyup a', 'keyup ctrl']
 
 
+async def test_a_key_whose_hold_answer_cannot_be_read_is_let_go(fake_daytona: FakeDaytona) -> None:
+    """An answer the SDK can't decode comes without an HTTP status, so the key may be down and is released."""
+    backend, sandbox = await _started(fake_daytona)
+    down = sandbox.computer_use.keyboard.down
+
+    async def down_unreadable(key: str, request_timeout: float | None = None) -> None:
+        await down(key, request_timeout)
+        raise DaytonaError('Failed to press key down: Expecting property name enclosed in double quotes')
+
+    sandbox.computer_use.keyboard.down = down_unreadable
+    with pytest.raises(WorkspaceError, match='Expecting property name'):
+        await screen(backend).act(HoldKeys(keys=('ctrl',), seconds=1))
+
+    assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
+
+
 HOLDING_CTRL = MoveMouse(x=1, y=1, modifiers=('ctrl',))
 
 
