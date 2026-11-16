@@ -25,7 +25,7 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import anyio
 import anyio.lowlevel
@@ -59,6 +59,8 @@ from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionErr
 
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse
+
+_T = TypeVar('_T')
 
 DISPLAY = ':0'
 """The X display of every Daytona sandbox's desktop."""
@@ -129,7 +131,7 @@ def _button(button: str) -> str:
     return button
 
 
-async def _send_input(request: Callable[[], Awaitable[object]]) -> object:
+async def _send_input(request: Callable[[], Awaitable[_T]]) -> _T:
     """Send one input request to Daytona, which carries out a request it accepted even if we stop waiting.
 
     So a cancel stops before the request is sent, or waits for it to finish: the next action, perhaps another run's,
@@ -149,7 +151,8 @@ async def _send_input(request: Callable[[], Awaitable[object]]) -> object:
 async def _let_go(error: BaseException, held: list[str], release: Callable[[str], Awaitable[object]]) -> None:
     """After `error`, let go of each of `held`, last first; a failure that leaves any held says which.
 
-    A cancel or an earlier deadline doesn't stop the releases, and still propagates after them.
+    A cancel or an earlier deadline doesn't stop the releases, and propagates after them, unless a release goes
+    unconfirmed: its `WorkspaceUnavailableError` then replaces the cancel, and the run ends either way.
     """
     with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
         for name in reversed(list(held)):

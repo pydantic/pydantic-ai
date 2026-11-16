@@ -305,10 +305,10 @@ class X11Computer:
     def __init__(self, backend: SupportsCommands):
         self._backend = backend
 
-    async def _run(self, command: list[str] | str, *, pauses: float = 0) -> CommandResult:
+    async def _run(self, command: list[str], *, pauses: float = 0) -> CommandResult:
         """Run `command`, allowing `pauses`, the seconds it asks to pause for, on top of the usual time limit."""
         timeout = _COMMAND_TIMEOUT + pauses
-        result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=timeout)
+        result = await self._backend.run(command, env=_ENV, timeout=timeout)
         if result.exit_code == 127:
             raise WorkspaceUnavailableError(
                 f'A display command is missing on display {DISPLAY}: {(result.stderr or result.stdout).strip()}'
