@@ -840,7 +840,8 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
   that would go over it), and input/output/total token limits (projected from the run's responses).
   `cost_limit` is not projected.
 - A batch over `tool_calls_limit` runs none of its calls; each gets `NOT_EXECUTED` under its
-  `tool_call_id` and `outcome='denied'`. With no request left, for a batch the caller streamed with
+  `tool_call_id` and `outcome='denied'`, outside core's tool pipeline: no tool call/result events or tool
+  hooks for them. With no request left, for a batch the caller streamed with
   `node.stream()`, for calls after streamed text that ends a `run_stream()`, or on a run resumed with
   deferred tool results, core raises as before.
 - Find the final prompt by `metadata['origin'] == 'pydantic-ai-harness.wrap_up_at_limits.v1'`;

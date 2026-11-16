@@ -9,7 +9,16 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -129,6 +138,23 @@ class TestWrapUpAtLimits:
             ('b1', 'notes on b1'),
             ('a2', NOT_EXECUTED),
             ('b2', NOT_EXECUTED),
+        ]
+
+    async def test_answered_batch_emits_no_tool_events(self) -> None:
+        agent = _agent(_Researcher(), [])
+
+        results: list[str] = []
+        async with agent.run_stream_events('Research', usage_limits=UsageLimits(tool_calls_limit=3)) as events:
+            async for event in events:
+                if isinstance(event, FunctionToolCallEvent | FunctionToolResultEvent):
+                    results.append(f'{event.event_kind}:{event.tool_call_id}')
+
+        # The calls answered with `NOT_EXECUTED` never reach core's tool pipeline, so no call or result event is emitted.
+        assert results == [
+            'function_tool_call:a1',
+            'function_tool_call:b1',
+            'function_tool_result:a1',
+            'function_tool_result:b1',
         ]
 
     async def test_batch_the_caller_streamed_keeps_its_results(self) -> None:
@@ -274,6 +300,7 @@ class TestWrapUpAtLimits:
         assert deleted == []
 
     async def test_resumed_provider_turn_is_left_alone(self) -> None:
+        """Calls the hook directly: no `FunctionModel` leaves a suspended response for a run to resume."""
         ctx = RunContext[None](
             deps=None, model=TestModel(), usage=RunUsage(), usage_limits=UsageLimits(request_limit=1)
         )

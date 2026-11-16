@@ -50,7 +50,7 @@ When the run's `UsageLimits` leave room for one more model request but not for a
 | `tool_calls_limit` | The request after the tool-call budget is used up, or after a batch of tool calls that would go over it |
 | `input_tokens_limit`, `output_tokens_limit`, `total_tokens_limit` | The first request after which a final request is projected to go over the limit |
 
-- A batch of tool calls that would go over `tool_calls_limit` is all or none, as without the capability: none of its calls run. Each is answered with `NOT_EXECUTED` under its original `tool_call_id`, so the model sees which calls didn't happen.
+- A batch of tool calls that would go over `tool_calls_limit` is all or none, as without the capability: none of its calls run. Each is answered with `NOT_EXECUTED` under its original `tool_call_id`, so the model sees which calls didn't happen. These answers don't go through core's tool pipeline: no `FunctionToolCallEvent` or `FunctionToolResultEvent` is emitted for them and tool hooks don't see them, so a UI that waits for a call's result event shows them as pending. Both the calls and their answers are in the message history.
 - Token use is projected from this run's responses: each further request is assumed to grow by as much as the last response grew over the one before, plus the final prompt. A final request that uses more than projected still raises `UsageLimitExceeded`.
 - `cost_limit` isn't projected, and raises as before.
 - A model that still calls tools on the final request has them answered with `NOT_EXECUTED` when the tool-call budget is used up, and run as usual otherwise. The next request is made the last again, or raises `UsageLimitExceeded` when no request is left.
