@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -65,7 +66,7 @@ def _agent(guardrail: StreamGuardrail[object]) -> Agent[object, str]:
 def _describe(event: AgentStreamEvent | AgentRunResultEvent[str]) -> str:
     if isinstance(event, PartStartEvent | PartEndEvent):
         part = event.part
-        content = part.args if isinstance(part, ToolCallPart) else getattr(part, 'content')
+        content = part.args if isinstance(part, ToolCallPart) else getattr(part, 'content', None)
         return f'{type(event).__name__} {event.index} {part.part_kind} {content!r}'
     if isinstance(event, PartDeltaEvent):
         return f'PartDeltaEvent {event.index}'
@@ -232,6 +233,16 @@ class TestStreamGuardrail:
 
         assert seen == []
         assert screened == ['{"city": "SSN 123"}']
+
+    async def test_other_parts_pass_through_unscreened(self):
+        async def events() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=0, part=NativeToolCallPart(tool_name='web_search'))
+
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        guardrail = StreamGuardrail(guard=lambda part: False)
+        released = [event async for event in guardrail.wrap_run_event_stream(ctx, stream=events())]
+
+        assert [_describe(event) for event in released] == ['PartStartEvent 0 builtin-tool-call None']
 
     async def test_tool_call_replace_is_refused(self):
         def guard(part: StreamGuardrailPart) -> GuardrailResult:
