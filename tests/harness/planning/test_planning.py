@@ -161,11 +161,16 @@ async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
 
 
 class YieldingPlanStore(InMemoryPlanStore):
-    """Yields to the event loop on each read, as a store doing real I/O does."""
+    """Yields to the event loop after each read, as a store doing real I/O does.
+
+    The yields leave a concurrent call, including one from another run that is a few steps behind, time to read the
+    same plan before this read's caller writes.
+    """
 
     async def get_items(self) -> list[PlanItem]:
         items = await super().get_items()
-        await anyio.lowlevel.checkpoint()
+        for _ in range(50):
+            await anyio.lowlevel.checkpoint()
         return items
 
 
@@ -187,6 +192,28 @@ async def test_parallel_plan_edits_keep_every_change() -> None:
     await agent.run('Make c wait for a and b.')
 
     assert [item.depends_on for item in await store.get_items() if item.id == 'c'] == [['a', 'b']]
+
+
+async def test_concurrent_runs_on_one_store_keep_every_change() -> None:
+    def model_depending_on(depends_on_id: str) -> FunctionModel:
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart('set_dependency', {'task_id': 'c', 'depends_on_id': depends_on_id})]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        return FunctionModel(model)
+
+    store = YieldingPlanStore()
+    await store.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
+    agent = Agent(capabilities=[Planning(store=store, enable_subtasks=True)])
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(partial(agent.run, 'wait for a', model=model_depending_on('a')))
+        tg.start_soon(partial(agent.run, 'wait for b', model=model_depending_on('b')))
+
+    assert [sorted(item.depends_on) for item in await store.get_items() if item.id == 'c'] == [['a', 'b']]
 
 
 _READINESS_WAIT_TIMEOUT = 5.0
