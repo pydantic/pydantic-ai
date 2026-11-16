@@ -530,17 +530,21 @@ judged snippet counts as one request against the run's request limit.\
         assert searched == expected
 
     @pytest.mark.usefixtures('instrument_all_agents')
-    async def test_search_span_leaves_failures_to_the_tool_span(self, capfire: CaptureLogfire, tmp_path: Path) -> None:
-        """A failure's message can carry the arguments, so only the content-aware tool span records it."""
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_search_span_records_a_failures_message_only_with_content(
+        self, capfire: CaptureLogfire, tmp_path: Path, include_content: bool
+    ) -> None:
+        """A failure's message can carry the arguments, so the span keeps only its type unless the run captures content."""
         agent = Agent(
             calls_smart_search({'directory': '..'}),
             capabilities=[LocalWorkspace(tmp_path), SmartSearch(model=FakeJev('x'))],
         )
-        agent.instrument = InstrumentationSettings(include_content=False)
+        agent.instrument = InstrumentationSettings(include_content=include_content)
         await agent.run('find it')
         [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'smart search']
-        assert 'events' not in span
-        assert 'outside the working directory' not in str(span)
+        [event] = span['events']
+        assert event['attributes']['exception.type'] == 'pydantic_ai.exceptions.ModelRetry'
+        assert ('outside the working directory' in str(span)) is include_content
 
     def test_capability_loads_from_an_agent_spec(self) -> None:
         spec = AgentSpec.model_validate(

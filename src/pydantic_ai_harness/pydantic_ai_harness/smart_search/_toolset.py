@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from pydantic_ai._telemetry import open_span
 from pydantic_ai.exceptions import ModelAPIError, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -131,16 +132,14 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
                 judged snippet counts as one request against the run's request limit.
         """
         model = self._model
-        attributes: dict[str, str] = {
-            'smart_search.judge_model': model if isinstance(model, str) else f'{model.system}:{model.model_name}'
-        }
-        if ctx.trace_include_content:
-            attributes['smart_search.query'] = query
         # The judge runs are not instrumented (their prompts carry source), so this span is what a trace shows.
-        # Failures are left to the enclosing tool span, which redacts them by `include_content`: an exception
-        # message here can carry the arguments or a judge's error body.
-        with ctx.tracer.start_as_current_span(
-            'smart search', attributes=attributes, record_exception=False, set_status_on_exception=False
+        with open_span(
+            ctx,
+            'smart search',
+            attributes={
+                'smart_search.judge_model': model if isinstance(model, str) else f'{model.system}:{model.model_name}'
+            },
+            content={'smart_search.query': query},
         ) as span:
             try:
                 result = await search_code(

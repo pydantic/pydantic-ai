@@ -7,6 +7,7 @@ import copy
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from pydantic_ai._telemetry import open_span
 from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel
@@ -71,7 +72,8 @@ class BackgroundCompaction:
 async def _compact_traced(
     strategy: CompactionStrategy[AgentDepsT], messages: list[ModelMessage], ctx: RunContext[AgentDepsT]
 ) -> list[ModelMessage]:
-    with ctx.tracer.start_as_current_span(
+    with open_span(
+        ctx,
         _SPAN_NAME,
         attributes={'compaction.strategy': type(strategy).__name__, 'compaction.messages_before': len(messages)},
     ):

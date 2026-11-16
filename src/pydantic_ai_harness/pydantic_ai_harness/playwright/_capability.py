@@ -335,11 +335,8 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         """Hold the run's browser session open, and release it however the run ends.
 
         Chromium starts on the first browser-tool call, not here, so a run that
-        never browses never launches one. The run's tracer is adopted here so
-        browser spans follow the agent's instrumentation settings rather than a
-        tracer of this module's choosing.
+        never browses never launches one.
         """
-        self._session.tracer = ctx.tracer
         async with self._session:
             return await handler()
 

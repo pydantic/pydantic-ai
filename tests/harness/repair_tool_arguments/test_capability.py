@@ -178,6 +178,34 @@ class TestRepairToolArguments:
         assert len(spans) == int(isinstance(arguments, str) and arguments.endswith(',}'))
         assert 'secret' not in str(spans)
 
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_a_failed_repair_keeps_its_message_only_with_content(
+        self, include_content: bool, capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A repair error can quote the malformed arguments, so its message follows the run's content setting."""
+
+        def failing_repair(args: str, **kwargs: object) -> str:
+            raise TypeError(f'cannot repair {args}')
+
+        monkeypatch.setattr(json_repair, 'repair_json', failing_repair)
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('echo', '{"value": "secret",}')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+        agent.instrument = InstrumentationSettings(include_content=include_content)
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value  # pragma: no cover
+
+        with pytest.raises(TypeError, match='cannot repair'):
+            await agent.run('Echo')
+        [span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
+        [event] = span['events']
+        assert event['attributes']['exception.type'] == 'TypeError'
+        assert ('secret' in str(span)) is include_content
+
     @pytest.mark.parametrize(
         ('stream', 'item_id'),
         [(False, 'fc_1'), (False, None), (True, None)],

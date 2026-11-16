@@ -12,8 +12,8 @@ import asyncio
 import inspect
 import socket
 import sys
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 from typing import Protocol, get_args
 
@@ -22,12 +22,12 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import Tracer
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import Error as PlaywrightError, StorageState, TimeoutError as PlaywrightTimeoutError
 
 import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai._telemetry import run_telemetry_scope
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
@@ -2901,11 +2901,14 @@ class TestInteractionTools:
 # --- Browser events and tracing ---------------------------------------------
 
 
-def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
+@contextmanager
+def _recording_spans(*, include_content: bool = True) -> Generator[InMemorySpanExporter]:
+    """Record the spans of browser operations called in the block, as if a run with these settings called them."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return provider.get_tracer('test'), exporter
+    with run_telemetry_scope(provider.get_tracer('test'), include_content=include_content):
+        yield exporter
 
 
 class TestBrowserEvents:
@@ -3001,65 +3004,62 @@ class TestBrowserEvents:
     async def test_operation_span_carries_the_action_and_page_events(self) -> None:
         page = _FakePage()
         session = self._session(page)
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        toolset = _toolset(page, session=session)
+        with _recording_spans() as exporter:
+            toolset = _toolset(page, session=session)
 
-        class _EmittingPage(_FakePage):
-            async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
-                session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
-                return await super().inner_text(selector, timeout=timeout)
+            class _EmittingPage(_FakePage):
+                async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
+                    session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
+                    return await super().inner_text(selector, timeout=timeout)
 
-        session.page = _EmittingPage()
-        await toolset.get_text()
-        (span,) = exporter.get_finished_spans()
-        assert span.name == 'browser get_text'
-        assert span.attributes is not None
-        assert span.attributes['browser.action'] == 'get_text'
-        assert span.attributes['browser.timeout_ms'] == DEFAULT_ACTION_TIMEOUT_MS
-        assert span.attributes['browser.outcome'] == 'ok'
-        assert span.attributes['url.full'] == 'https://example.com/'
-        (event,) = span.events
-        assert event.name == 'browser.console'
-        assert event.attributes is not None
-        assert event.attributes['browser.event.message'] == 'error: boom'
+            session.page = _EmittingPage()
+            await toolset.get_text()
+            (span,) = exporter.get_finished_spans()
+            assert span.name == 'browser get_text'
+            assert span.attributes is not None
+            assert span.attributes['browser.action'] == 'get_text'
+            assert span.attributes['browser.timeout_ms'] == DEFAULT_ACTION_TIMEOUT_MS
+            assert span.attributes['browser.outcome'] == 'ok'
+            assert span.attributes['url.full'] == 'https://example.com/'
+            (event,) = span.events
+            assert event.name == 'browser.console'
+            assert event.attributes is not None
+            assert event.attributes['browser.event.message'] == 'error: boom'
 
     async def test_network_event_attributes_follow_otel_conventions(self) -> None:
         page = _FakePage()
         session = self._session(page)
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        toolset = _toolset(page, session=session)
+        with _recording_spans() as exporter:
+            toolset = _toolset(page, session=session)
 
-        class _RequestingPage(_FakePage):
-            async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
-                session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
-                return await super().inner_text(selector, timeout=timeout)
+            class _RequestingPage(_FakePage):
+                async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
+                    session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
+                    return await super().inner_text(selector, timeout=timeout)
 
-        session.page = _RequestingPage()
-        await toolset.get_text()
-        (span,) = exporter.get_finished_spans()
-        (event,) = span.events
-        assert event.name == 'browser.response'
-        assert event.attributes is not None
-        assert event.attributes['url.full'] == 'https://example.com/api'
-        assert event.attributes['http.request.method'] == 'POST'
-        assert event.attributes['http.response.status_code'] == 503
-        # A response carries no message, so no empty attribute is emitted for one.
-        assert 'browser.event.message' not in event.attributes
+            session.page = _RequestingPage()
+            await toolset.get_text()
+            (span,) = exporter.get_finished_spans()
+            (event,) = span.events
+            assert event.name == 'browser.response'
+            assert event.attributes is not None
+            assert event.attributes['url.full'] == 'https://example.com/api'
+            assert event.attributes['http.request.method'] == 'POST'
+            assert event.attributes['http.response.status_code'] == 503
+            # A response carries no message, so no empty attribute is emitted for one.
+            assert 'browser.event.message' not in event.attributes
 
     async def test_failed_operation_is_marked_on_the_span(self) -> None:
         page = _FakePage(click_error=PlaywrightTimeoutError('Timeout 5000ms exceeded.'))
         session = self._session(page)
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        await _toolset(page, session=session).click('button#go')
-        (span,) = exporter.get_finished_spans()
-        assert span.attributes is not None
-        assert span.attributes['browser.outcome'] == 'error'
-        # Recorded on the failure path too: which page the click failed on is what
-        # makes the span diagnosable.
-        assert span.attributes['url.full'] == 'https://example.com/'
+        with _recording_spans() as exporter:
+            await _toolset(page, session=session).click('button#go')
+            (span,) = exporter.get_finished_spans()
+            assert span.attributes is not None
+            assert span.attributes['browser.outcome'] == 'error'
+            # Recorded on the failure path too: which page the click failed on is what
+            # makes the span diagnosable.
+            assert span.attributes['url.full'] == 'https://example.com/'
 
     async def test_events_outside_an_operation_are_still_logged(self) -> None:
         page = _FakePage()
@@ -3169,12 +3169,11 @@ class TestCredentialsStayOutOfTelemetry:
         page = _FakePage(url='https://user:secret@example.com/dashboard')
         session = PlaywrightBrowserSession()
         session.page = page
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        await _toolset(page, session=session, block_private_addresses=False).get_text()
-        (span,) = exporter.get_finished_spans()
-        assert span.attributes is not None
-        assert span.attributes['url.full'] == 'https://example.com/dashboard'
+        with _recording_spans() as exporter:
+            await _toolset(page, session=session, block_private_addresses=False).get_text()
+            (span,) = exporter.get_finished_spans()
+            assert span.attributes is not None
+            assert span.attributes['url.full'] == 'https://example.com/dashboard'
 
     async def test_credential_parameters_are_redacted_by_name(self) -> None:
         page = _FakePage()
@@ -3651,25 +3650,35 @@ class TestSpanOutcome:
         session = PlaywrightBrowserSession()
         session.page = page
         session.pages = [page]
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        result = await _toolset(page, session=session).get_text('#missing')
-        assert result.startswith('Error getting text')
-        (span,) = exporter.get_finished_spans()
-        assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
+        with _recording_spans() as exporter:
+            result = await _toolset(page, session=session).get_text('#missing')
+            assert result.startswith('Error getting text')
+            (span,) = exporter.get_finished_spans()
+            assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
 
     async def test_an_escaping_exception_marks_the_span_failed(self) -> None:
         # A capability that was never started is a wiring bug: it still ends the run,
         # unlike a browser that could not be launched.
         session = PlaywrightBrowserSession()
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        toolset = PlaywrightBrowserToolset[None](session=session)
-        with pytest.raises(RuntimeError, match='PlaywrightBrowser is not running'):
-            await toolset.snapshot()
+        with _recording_spans() as exporter:
+            toolset = PlaywrightBrowserToolset[None](session=session)
+            with pytest.raises(RuntimeError, match='PlaywrightBrowser is not running'):
+                await toolset.snapshot()
+            (span,) = exporter.get_finished_spans()
+            assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
+            assert 'url.full' not in span.attributes
+
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_an_escaping_exception_keeps_its_message_only_with_content(self, include_content: bool) -> None:
+        # An exception message can quote what the model passed, so it follows the run's content setting.
+        with _recording_spans(include_content=include_content) as exporter:
+            with pytest.raises(RuntimeError, match='PlaywrightBrowser is not running'):
+                await PlaywrightBrowserToolset[None](session=PlaywrightBrowserSession()).snapshot()
         (span,) = exporter.get_finished_spans()
-        assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
-        assert 'url.full' not in span.attributes
+        (event,) = span.events
+        assert event.attributes is not None and event.attributes['exception.type'] == 'RuntimeError'
+        assert ('exception.message' in event.attributes) is include_content
+        assert ('not running' in (span.status.description or '')) is include_content
 
     async def test_a_refusal_opens_its_own_span(self) -> None:
         # A call the egress policy turns away never reaches a page, and a trace that
@@ -3678,14 +3687,13 @@ class TestSpanOutcome:
         session = PlaywrightBrowserSession(policy=toolset_module.EgressPolicy(allowed_domains=['example.com']))
         session.page = page
         session.pages = [page]
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        result = await _toolset(page, session=session).navigate('https://evil.example/')
-        assert result == 'Error: domain not in allowed_domains: https://evil.example/'
-        (span,) = exporter.get_finished_spans()
-        assert span.name == 'browser navigate'
-        assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
-        assert 'url.full' not in span.attributes
+        with _recording_spans() as exporter:
+            result = await _toolset(page, session=session).navigate('https://evil.example/')
+            assert result == 'Error: domain not in allowed_domains: https://evil.example/'
+            (span,) = exporter.get_finished_spans()
+            assert span.name == 'browser navigate'
+            assert span.attributes is not None and span.attributes['browser.outcome'] == 'error'
+            assert 'url.full' not in span.attributes
 
     async def test_the_span_names_the_tab_the_operation_ended_on(self) -> None:
         page = _FakePage()
@@ -3693,28 +3701,26 @@ class TestSpanOutcome:
         session = PlaywrightBrowserSession()
         session.page = page
         session.pages = [page, popup]
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        await _toolset(page, session=session).tabs('select', 1)
-        (span,) = exporter.get_finished_spans()
-        assert span.attributes is not None and span.attributes['url.full'] == 'https://example.com/popup'
+        with _recording_spans() as exporter:
+            await _toolset(page, session=session).tabs('select', 1)
+            (span,) = exporter.get_finished_spans()
+            assert span.attributes is not None and span.attributes['url.full'] == 'https://example.com/popup'
 
     async def test_the_log_tools_open_their_own_span(self) -> None:
         page = _FakePage()
         session = PlaywrightBrowserSession()
         session.page = page
         session.pages = [page]
-        tracer, exporter = _recording_tracer()
-        session.tracer = tracer
-        toolset = _toolset(page, session=session)
-        await toolset.console_messages()
-        await toolset.network_requests()
-        await toolset.handle_next_dialog(accept=True)
-        assert [span.name for span in exporter.get_finished_spans()] == [
-            'browser console_messages',
-            'browser network_requests',
-            'browser handle_next_dialog',
-        ]
+        with _recording_spans() as exporter:
+            toolset = _toolset(page, session=session)
+            await toolset.console_messages()
+            await toolset.network_requests()
+            await toolset.handle_next_dialog(accept=True)
+            assert [span.name for span in exporter.get_finished_spans()] == [
+                'browser console_messages',
+                'browser network_requests',
+                'browser handle_next_dialog',
+            ]
 
 
 class TestEventLogBounds:

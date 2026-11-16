@@ -117,8 +117,8 @@ from urllib.parse import urlparse
 
 import anyio
 import idna
-from opentelemetry import trace
 
+from pydantic_ai._telemetry import current_run_telemetry, open_span
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
@@ -143,7 +143,7 @@ except ImportError as _import_error:
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
 
-    from opentelemetry.trace import Span, Tracer
+    from opentelemetry.trace import Span
     from playwright.async_api import (
         Browser as PlaywrightBrowserHandle,
         BrowserContext as PlaywrightBrowserContext,
@@ -891,13 +891,6 @@ async def _auto_install_chromium() -> str | None:
     return stdout.decode(errors='replace')
 
 
-_FALLBACK_TRACER = trace.get_tracer('pydantic-ai-harness.playwright')
-"""Tracer used when the session is driven outside an agent run.
-
-Inside a run the session takes the run's own tracer, so browser spans land
-wherever the agent's instrumentation settings send its tool calls.
-"""
-
 _ABORTED_FAILURE = 'net::ERR_FAILED'
 """Failure text Chromium reports for a request the route guard aborted.
 
@@ -1079,8 +1072,6 @@ class PlaywrightBrowserSession:
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
         self._launch_lock = anyio.Lock(fast_acquire=True)
-        self.tracer: Tracer = _FALLBACK_TRACER
-        """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
         """What the browser did outside the tool calls, newest last."""
         self.events_recorded = 0
@@ -1863,7 +1854,9 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             # The configured budget, not what is left of it: the error copy tells the
             # model how long the call was allowed, which a countdown would understate.
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
-            with self._session.tracer.start_as_current_span(
+            # The session can outlive a run, so the tracer is the calling run's, read now.
+            with open_span(
+                current_run_telemetry(),
                 f'browser {action}',
                 # The outcome starts at `ok` and every failure path overwrites it,
                 # because a tool failure is a returned string, not an exception.
@@ -1911,8 +1904,10 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         async with self._operation_lock:
             if (error := self._timeout_error(timeout_ms)) is not None:
                 return error
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
+            with open_span(
+                current_run_telemetry(),
+                f'browser {action}',
+                attributes={'browser.action': action, 'browser.outcome': 'ok'},
             ) as span:
                 self._session.operation_span = span
                 try:
@@ -2614,8 +2609,10 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         is producing or about to consume.
         """
         async with self._operation_lock:
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
+            with open_span(
+                current_run_telemetry(),
+                f'browser {action}',
+                attributes={'browser.action': action, 'browser.outcome': 'ok'},
             ):
                 return body()
 
