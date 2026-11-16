@@ -288,7 +288,10 @@ async def test_a_screenshot_before_other_calls_is_refused(allow_model_requests: 
     }
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
-    assert [r['is_error'] for r in results] == [True, True, True]
+    # Claude is told why in a sentence, not the validation error.
+    assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
+        (True, ['A screenshot must be the last call in a batch: the screen is captured after the batch runs.'])
+    ] * 3
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:

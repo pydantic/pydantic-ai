@@ -166,7 +166,7 @@ class NativeComputer:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
         if name == 'screenshot' and not last:
             # The `computer` tool captures the screen once, after the batch, but each screenshot call needs its image.
-            return [{'type': 'screenshot', 'not_the_last_call': True}]
+            return [{'type': 'screenshot', SCREENSHOT_NOT_LAST_FIELD: True}]
         return map_computer_member(name, args)
 
 
@@ -240,6 +240,12 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
 
 RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
 """The calls whose result has content of its own, before the screenshot every result ends with; each is one action."""
+
+SCREENSHOT_NOT_LAST_FIELD = 'not_the_last_call'
+"""The field that makes the `computer` tool refuse a screenshot call before a batch's last call."""
+
+SCREENSHOT_NOT_LAST = 'A screenshot must be the last call in a batch: the screen is captured after the batch runs.'
+"""What Claude is told for that refusal."""
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""

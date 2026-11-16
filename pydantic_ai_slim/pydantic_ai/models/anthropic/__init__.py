@@ -313,6 +313,8 @@ try:
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
         RETURNS_OUTPUT,
+        SCREENSHOT_NOT_LAST,
+        SCREENSHOT_NOT_LAST_FIELD,
         ComputerBatch,
         ComputerBlock,
         ComputerReplay,
@@ -2715,8 +2717,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
         code_execution_may_call = _code_execution_may_call_web_tools(supports_dynamic_filtering, model_settings)
+        native_tools = model_request_parameters.native_tools
+        if self._forces_the_computer(model_settings, model_request_parameters):
+            # Requiring a tool would let Claude call a native one instead, such as web search, and never the computer.
+            native_tools = []
 
-        for tool in model_request_parameters.native_tools:
+        for tool in native_tools:
             match tool:
                 case WebSearchTool():
                     tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, code_execution_may_call))
@@ -4082,6 +4088,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         declared = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
         return native_computer if native_computer.name in declared else None
 
+    def _forces_the_computer(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether `tool_choice` requires the Anthropic computer use tool and nothing else."""
+        native_computer = self._native_computer(model_request_parameters)
+        match resolve_tool_choice(model_settings, model_request_parameters):
+            case ('required', tool_names):
+                return native_computer is not None and tool_names == {native_computer.name}
+            case _:
+                return False
+
     async def _map_computer_results(
         self, part: ToolReturnPart, replay: ComputerReplay, map_context: _MapMessagesContext
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
@@ -4096,7 +4113,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
-            text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
+            response = part.model_response_str(wrap_if_error=False)
+            if part.outcome == 'retried' and f'"{SCREENSHOT_NOT_LAST_FIELD}"' in response:
+                response = SCREENSHOT_NOT_LAST  # in place of a validation error Claude can't read
+            text = BetaTextBlockParam(text=response, type='text')
             return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
         # A summary, what each action returned, then the screen, unless something such as a history processor dropped
         # it or left a note in its place. Read as validated, so content stored as a JSON string still reads as a list.
