@@ -44,6 +44,7 @@ import shlex
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Literal, TypeVar
 
 import anyio
@@ -441,14 +442,18 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._vcpu = vcpu
         self._auto_suspend_timeout = auto_suspend_timeout
         self._env = dict(env or {})
-        self._desktop_size = desktop_size(desktop)
-        if self._desktop_size:
+        size = desktop_size(desktop)
+        if size:
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **self._env}
         self._display = (
             None
-            if self._desktop_size is None
-            else LazyDisplay(BoxdDesktop(self._attached_computer), self._start_display, scope=self._display_scope)
+            if size is None
+            else LazyDisplay(
+                BoxdDesktop(self._attached_computer),
+                partial(self._start_display, size),
+                scope=self._display_scope,
+            )
         )
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
@@ -498,12 +503,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         assert self._client is not None and self._ref is not None
         return self._client.machines.computer, self._ref.id
 
-    async def _start_display(self) -> None:
-        """Start the desktop unless it runs, and hold it at the size asked for."""
+    async def _start_display(self, size: tuple[int, int]) -> None:
+        """Start the desktop unless it runs, and hold it at `size`."""
         computer, machine_id = self._attached_computer()
-        assert self._desktop_size is not None
         # Held, so boxd's console, which anyone in the organization can open, scales the screen instead of resizing it.
-        await computer.set_screen_size(machine_id, *self._desktop_size)
+        await computer.set_screen_size(machine_id, *size)
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
