@@ -355,7 +355,8 @@ class TestOutputGuardrailTracing:
 
 
 class _Unprintable:
-    def __str__(self) -> str:
+    # Never called: without content, the replacement is not turned into text.
+    def __str__(self) -> str:  # pragma: no cover
         raise RuntimeError('a replacement that cannot be turned into text')
 
 
