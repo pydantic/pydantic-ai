@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -1533,6 +1534,31 @@ async def test_call_scheduler_registers_calls_before_starting_them() -> None:
     assert out == snapshot(['A', 'B', 'A'])
     assert events == snapshot(['register', 'register', 'flush', 'start', 'start', 'register', 'flush', 'start'])
     assert contexts == [ctx]
+
+
+class _FailingScheduler:
+    async def run(self, start: Callable[[], Awaitable[object]]) -> object:
+        raise ValueError('host detail')
+
+    async def flush(self) -> None:
+        pass
+
+
+async def test_call_scheduler_errors_reach_the_script_without_host_details() -> None:
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('kaboom')
+
+    code = "try:\n    await {name}(task='x')\nexcept RuntimeError as e:\n    result = str(e)\nresult"
+    failing = DynamicWorkflow[object](agents=[_sub_agent()], call_scheduler=lambda ctx: _FailingScheduler())
+    assert await _run_script(failing.get_toolset(), code.format(name='sub')) == snapshot(
+        'call scheduler raised ValueError'
+    )
+    passing = DynamicWorkflow[object](
+        agents=[Agent(FunctionModel(boom), name='bad')], call_scheduler=lambda ctx: DeferredStarts([])
+    )
+    assert await _run_script(passing.get_toolset(), code.format(name='bad')) == snapshot(
+        "sub-agent 'bad' raised ValueError"
+    )
 
 
 # --- Runtime reveal --------------------------------------------------------

@@ -233,7 +233,10 @@ class WorkflowCallScheduler(Protocol):
         """Called each time the script waits on its calls, once every call it made before the wait has reached `run`.
 
         A call the script is waiting on only completes once `run` awaits its `start()`, so a
-        scheduler that holds calls back must release them here.
+        scheduler that holds calls back must release them here. A durable engine that batches the
+        calls, like `AWSLambdaDurability`, takes its batch right after this returns, so under one a
+        released call has to await `start()` without suspending first, or it misses the batch
+        and the script waits on it indefinitely.
         """
         ...
 
@@ -244,7 +247,22 @@ def _apply_scheduler(
     """Route each dispatch through `scheduler`, and run its `flush` before the engine's own."""
 
     async def scheduled(agent_name: str, kwargs: dict[str, Any]) -> object:
-        return await scheduler.run(partial(dispatch, agent_name, kwargs))
+        dispatch_errors: list[Exception] = []
+
+        async def start() -> object:
+            try:
+                return await dispatch(agent_name, kwargs)
+            except Exception as exc:
+                dispatch_errors.append(exc)
+                raise
+
+        try:
+            return await scheduler.run(start)
+        except Exception as exc:
+            if exc in dispatch_errors:
+                raise
+            # Like a sub-agent failure, a scheduler's own error reaches the script without host details.
+            raise RuntimeError(f'call scheduler raised {type(exc).__name__}') from exc
 
     async def flush_scheduler() -> None:
         # Let a call dispatched in the last loop iteration reach `scheduler.run`.

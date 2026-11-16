@@ -545,9 +545,12 @@ workflow = DynamicWorkflow(agents=[reviewer], call_scheduler=start_together)
 ```
 
 A call only completes after `run` awaits its `start()`, so a scheduler that holds calls back has to
-release them in `flush`. The engine's own batching, such as the `AWSLambdaDurability` `parallel`
-operation, runs after `flush`, so the calls it releases join it. Under `DBOSDurability` the calls
-already start one at a time in dispatch order, and `call_scheduler` is not used.
+release them in `flush`. Under `AWSLambdaDurability`, the calls that have started when `flush`
+returns run as one `parallel` operation, so a released call has to await `start()` without
+suspending first: one that waits on something else first, such as a concurrency limit, misses the
+operation and the script waits on it indefinitely. An exception that `run` raises itself reaches
+the script as a `RuntimeError` naming only its type. Under `DBOSDurability` the calls already
+start one at a time in dispatch order, and `call_scheduler` is not used.
 
 ## API
 
