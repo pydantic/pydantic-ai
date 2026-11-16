@@ -216,10 +216,6 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
   [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every
   model in it does.
 
-## API reference
-
-::: pydantic_ai_harness.computer_use.ComputerUse
-
 ## Giving a workspace a screen
 
 `ComputerUse` drives the display of the run's workspace backend. A backend with a screen implements
@@ -256,3 +252,23 @@ class MyDisplay:
 
 assert isinstance(MyDisplay(), Display)
 ```
+
+## API reference
+
+::: pydantic_ai_harness.computer_use.ComputerUse
+
+::: pydantic_ai_harness.computer_use.ComputerUseActionLimits
+
+::: pydantic_ai_harness.computer_use.ActionsPerformedEvent
+
+::: pydantic_ai_harness.computer_use.Display
+
+::: pydantic_ai_harness.computer_use.SupportsDisplay
+
+::: pydantic_ai_harness.computer_use.SupportsZoom
+
+::: pydantic_ai_harness.computer_use.SupportsCursorPosition
+
+::: pydantic_ai_harness.computer_use.DisplayAction
+
+::: pydantic_ai_harness.computer_use.UnsupportedActionError

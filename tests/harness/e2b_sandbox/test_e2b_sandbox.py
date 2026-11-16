@@ -166,6 +166,11 @@ async def test_foreign_reference_is_rejected(fake_e2b: FakeE2B) -> None:
     assert not fake_e2b.sandboxes
 
 
+def test_invalid_desktop_size_fails_at_construction() -> None:
+    with pytest.raises(ValueError, match='`desktop` must be a positive width and height'):
+        E2BSandbox(desktop=(0, 800))
+
+
 @pytest.mark.parametrize('env', [{'PORT': 3000}, {1: 'one'}, {'TOKEN': None}])
 def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None:
     with pytest.raises(TypeError, match='env keys and values must be strings'):
