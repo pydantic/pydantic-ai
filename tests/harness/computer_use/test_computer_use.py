@@ -285,6 +285,20 @@ class TestComputerUse:
 
         assert provider.actions == [Click(x=640, y=400)]
 
+    async def test_a_grid_model_call_after_text_in_its_response_still_points_on_its_grid(self) -> None:
+        provider = ScreenProvider()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                call = ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 500, 'y': 500}]})
+                return ModelResponse(parts=[TextPart('Clicking the middle.'), call])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond, profile=_GRID), capabilities=[provider.capability(), ComputerUse()])
+        await agent.run('Go.')
+
+        assert provider.actions == [Click(x=640, y=400)]
+
     async def test_a_grid_model_is_told_its_grid_in_the_tool_description(self) -> None:
         seen: list[AgentInfo] = []
 
@@ -314,6 +328,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
             'grid over the latest screenshot: (0, 0) is the top left, (999, 999) the bottom right.',
         ]
 
+    @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
     async def test_a_deferred_computer_is_described_until_the_model_loads_it(self) -> None:
         seen: list[tuple[list[ModelMessage], AgentInfo]] = []
 
