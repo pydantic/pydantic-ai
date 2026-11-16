@@ -3248,8 +3248,9 @@ async def test_a_nested_setting_a_hook_removed_in_place_stays_removed_for_every_
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            assert request_context.model_settings is not None
-            request_context.model_settings['extra_headers'].pop('X-Internal-Token')
+            headers = (request_context.model_settings or {}).get('extra_headers')
+            assert headers is not None
+            headers.pop('X-Internal-Token')
             return request_context
 
     headers: list[tuple[str, dict[str, str] | None]] = []
