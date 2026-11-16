@@ -289,11 +289,22 @@ isn't black. It fails if the panel exits first, and goes on without it after 10 
 """
 
 
-def _on_host_network(docker_args: Sequence[str]) -> bool:
-    """Whether `docker_args` put the container on the host's network, as `--network host` or `--net host`."""
-    if any(arg in ('--network=host', '--net=host') for arg in docker_args):
-        return True
-    return any(flag in ('--network', '--net') and value == 'host' for flag, value in zip(docker_args, docker_args[1:]))
+def _check_docker_args(docker_args: Sequence[str], *, desktop: bool) -> None:
+    """Refuse `docker_args` given as one string, and a desktop on the host's network (`--network host`, `--net host`).
+
+    On the host's network, the desktop's X clients could reach an X server on the host through Linux's shared
+    abstract socket, and drive the host's screen.
+    """
+    if isinstance(docker_args, str):
+        raise TypeError('docker_args must be a sequence of arguments, not a string')
+    on_host_network = any(arg in ('--network=host', '--net=host') for arg in docker_args) or any(
+        flag in ('--network', '--net') and value == 'host' for flag, value in zip(docker_args, docker_args[1:])
+    )
+    if desktop and on_host_network:
+        raise UserError(
+            "a desktop can't use the host's network: its X clients could reach an X server on the host through "
+            "Linux's shared abstract socket, and drive the host's screen"
+        )
 
 
 async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:
@@ -373,13 +384,7 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             raise ValueError(f'image must be an image reference, got {image!r}')
         if working_dir is not None and not posixpath.isabs(working_dir):
             raise ValueError(f'working_dir must be an absolute path in the container, got {working_dir!r}')
-        if isinstance(docker_args, str):
-            raise TypeError('docker_args must be a sequence of arguments, not a string')
-        if desktop and _on_host_network(docker_args):
-            raise UserError(
-                "a desktop can't use the host's network: its X clients could reach an X server on the host through "
-                "Linux's shared abstract socket, and drive the host's screen"
-            )
+        _check_docker_args(docker_args, desktop=bool(desktop))
         self._image = image
         self._ref = ref
         self._desktop_size = desktop_size(desktop)
