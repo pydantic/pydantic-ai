@@ -3274,8 +3274,18 @@ async def test_a_nested_setting_a_hook_removed_in_place_stays_removed_for_every_
     assert headers == snapshot([('primary', {'X-Model': 'primary'}), ('backup', {'X-Model': 'primary'})])
 
 
-async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_was_sent():
-    """The thinking effort history records is the one resolved for the model that answered."""
+@pytest.mark.parametrize(
+    ('backup_effort', 'recorded'),
+    [
+        ('high', [_messages.ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True)]),
+        # The backup's effort is the one already in effect, none, so nothing is recorded or emitted.
+        (None, []),
+    ],
+)
+async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_was_sent(
+    backup_effort: str | None, recorded: list[_messages.ModelSettingsDeltaPart]
+):
+    """The thinking effort history records, and the events announce, are the ones of the model that answered."""
 
     def respond(name: str, fail: bool) -> FunctionModel:
         def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3283,10 +3293,23 @@ async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_
                 raise ModelAPIError(model_name=name, message='down')
             return ModelResponse(parts=[TextPart(name)])
 
-        return FunctionModel(fn, model_name=name, profile=ModelProfile(supports_thinking=True))
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            yield name
+
+        return FunctionModel(fn, stream_function=stream, model_name=name, profile=ModelProfile(supports_thinking=True))
 
     def settings(ctx: RunContext[Any]) -> ModelSettings:
-        return {'thinking': 'high' if ctx.model.model_name == 'backup' else 'low'}
+        effort = backup_effort if ctx.model.model_name == 'backup' else 'low'
+        return cast(ModelSettings, {'thinking': effort} if effort is not None else {})
+
+    events: list[_messages.ModelSettingsDeltaEvent] = []
+
+    async def handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, _messages.ModelSettingsDeltaEvent):
+                events.append(event)
 
     agent = Agent(
         respond('primary', True), model_settings=settings, capabilities=[ModelFallback(respond('backup', False))]
@@ -3298,7 +3321,11 @@ async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_
         for message in result.all_messages()
         for part in message.parts
         if isinstance(part, _messages.ModelSettingsDeltaPart)
-    ] == snapshot([_messages.ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True)])
+    ] == recorded
+
+    result = await agent.run('x', event_stream_handler=handler)
+    assert result.output == 'backup'
+    assert [event.part for event in events] == recorded
 
 
 async def test_hooks_resolved_again_see_the_model_id_of_the_model_fallen_back_to():

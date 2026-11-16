@@ -698,9 +698,24 @@ class _StepRecording:
         for target, tail in zip(self.targets, tails):
             target.parts = [*target.parts, *tail]
         if record_settings:
+            self._withdraw_settings_events(ctx)
             ends = [len(target.parts) for target in self.targets]
             self.effort = _record_model_settings_changes(ctx, model, model_settings, self.messages, self.targets)
             self.settings_records = [target.parts[end:] for target, end in zip(self.targets, ends)]
+
+    def _withdraw_settings_events(self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+        """Take the events for the settings changes about to be replaced out of the run's event buffer.
+
+        Each `ModelSettingsDeltaEvent` carries a part history records, so one whose part is replaced must not reach a
+        consumer that rebuilds history from the events. Attempts are made before the step's events are streamed, so
+        they're still buffered.
+        """
+        replaced = [part for records in self.settings_records for part in records]
+        buffer = ctx.state.event_stream_buffer
+        for index in reversed(range(len(buffer))):
+            event = buffer[index]
+            if isinstance(event, _messages.ModelSettingsDeltaEvent) and any(event.part is part for part in replaced):
+                del buffer[index]
 
     def _take_records(self, replaced: list[list[_messages.ModelRequestPart]]) -> list[list[_messages.ModelRequestPart]]:
         """Cut each target back to where the instruction changes start, returning what followed without `replaced`."""
