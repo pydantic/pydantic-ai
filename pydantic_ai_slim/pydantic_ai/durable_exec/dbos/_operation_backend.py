@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
+from typing_extensions import TypedDict
 
 from pydantic_ai import ToolsetTool, messages as _messages
 from pydantic_ai.durable_exec._capability_operation import CapabilityOperationParams
@@ -52,6 +53,14 @@ _MODEL_OPERATION_IDS = (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspe
 
 _RETRY_AFTER_KEY = 'pydantic_ai_retry_after'
 """Marks what a model step returns instead of failing when a model error asked to wait before its next attempt."""
+
+
+class _RetryAfterWait(TypedDict):
+    """What a model step returns instead of failing when its error asked for a wait: a plain dict once recorded."""
+
+    pydantic_ai_retry_after: float
+    attempts: int
+
 
 _MINIMUM_RETRY_AFTER_CAP = 60.0
 """The shortest cap on a model error's `retry_after`, when the step's own backoff for the attempt is shorter."""
@@ -106,7 +115,7 @@ def _returning_retry_after(
             delay = model_error_retry_after(error, maximum=max(backoff, _MINIMUM_RETRY_AFTER_CAP))
             if delay is None:
                 raise
-            return {_RETRY_AFTER_KEY: delay, 'attempts': status.current_attempt + 1}
+            return _RetryAfterWait(pydantic_ai_retry_after=delay, attempts=status.current_attempt + 1)
         finally:
             _retry_after_attempts_before.reset(token)
 
@@ -117,32 +126,8 @@ def _retry_after_wait(payload: object) -> tuple[float, int] | None:
     """The wait and attempt count a model step returned instead of failing, if it did."""
     if not isinstance(payload, dict) or _RETRY_AFTER_KEY not in payload:
         return None
-    wait = cast(dict[str, Any], payload)
-    return wait[_RETRY_AFTER_KEY], wait['attempts']
-
-
-class SnapshotStepReservation:
-    """`dbos.StepReservation` for dbos before 3.4.0, which lacks `DBOS.reserve_step`.
-
-    Built on the private DBOS calls that `DBOS.reserve_step` and `StepReservation.run_async` wrap.
-    """
-
-    # TODO(v3): Require `dbos>=3.4.0` and use `DBOS.reserve_step` alone.
-
-    def __init__(self) -> None:
-        from dbos._context import snapshot_step_context
-
-        step_ctx = snapshot_step_context()
-        assert step_ctx is not None
-        self._step_ctx = step_ctx
-
-    async def run_async(
-        self, dbos_step_options: StepOptions, func: Callable[..., object], *args: object, **kwargs: object
-    ) -> object:
-        from dbos._core import run_step_async
-        from dbos._dbos import _get_dbos_instance  # pyright: ignore[reportPrivateUsage]
-
-        return await run_step_async(_get_dbos_instance(), self._step_ctx, func, dbos_step_options, args, kwargs)
+    wait = cast(_RetryAfterWait, payload)
+    return wait['pydantic_ai_retry_after'], wait['attempts']
 
 
 class DBOSOperationConfig(DurableOperationConfig[StepConfig]):
@@ -225,7 +210,7 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
             }
             step = functools.partial(DBOS.run_step_async, options, self._step_function)
 
-    async def call_reserved(self, reservation: StepReservation | SnapshotStepReservation, params: ParamsT) -> ResultT:
+    async def call_reserved(self, reservation: StepReservation, params: ParamsT) -> ResultT:
         async def reserved_step(*args: object, **kwargs: object) -> object:
             return await reservation.run_async(self._step_options, self._step_function, *args, **kwargs)
 

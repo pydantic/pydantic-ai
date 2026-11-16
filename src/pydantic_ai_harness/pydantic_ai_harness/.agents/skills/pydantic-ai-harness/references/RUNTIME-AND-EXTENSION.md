@@ -531,7 +531,10 @@ or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted o
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
 `PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
 `SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
-`answerer` callable, so in practice it is passed in code too. Pass those instances with the
+`answerer` callable, so in practice it is passed in code too. `CompactOnRequest`, `DeduplicateFileReads`,
+`FallbackCompaction` and `TieredCompaction` have spec names too, but each requires strategies or a
+`file_key` callable that JSON cannot express, so the spec schema leaves them out and they are
+Python-only. Pass those instances with the
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 

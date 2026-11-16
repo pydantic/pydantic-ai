@@ -30,7 +30,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
-| Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
+| Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 
 ## RepairToolArguments
@@ -764,8 +764,31 @@ except LoopDetectedError as error:
   `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
   DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
 - Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
+- Also checks each response on its own, as it streams: `stream_detector` (default
+  `RepetitionDetector()`: a passage of `min_period=20` to `max_period=2000` chars with
+  `min_distinct_chars=8`, repeated `min_repeats=8` times covering `min_chars=2000`, so grids, table
+  rules and a few dozen identical rows don't count) runs every `stream_check_every=256` chars and at
+  each part's end over `stream_channels=('thinking', 'text', 'tool_args')`, giving
+  `repeated_thinking`, `repeated_stream_text`, `repeated_tool_args`; `repeated_parallel_call` is the
+  same call `repeated_parallel_call_threshold=5` times in one response, reported before any runs. A
+  response that isn't streamed gets the same checks on arrival; `DetectLoops` never makes a run
+  stream.
+- Within a response, `'nudge'` also stops the stream and retries via `ModelRetry`, with the nudge
+  request-scoped (counts against output retries; a stopped stream is dropped from history and its
+  tokens aren't in run usage). A handler that returns lets the response continue; it can raise `ModelRetry` to retry. Under
+  `run_stream()`, a loop found once output (text or an output tool call) has started streaming
+  can't be retried and ends the run with `UnexpectedModelBehavior`. `UsageLimits` don't see
+  stopped streams.
+- `LoopJudge(model=...)` asks a small, fast "System 1" model (not a reasoning model) on heuristic
+  suspicion, plus every `every` chars if set; failure or `timeout=5.0` falls back to the heuristic.
+  It's never asked in durable workflow code (Temporal, DBOS, Prefect), where only the heuristic runs
+  on the whole response. A custom `LoopDetector` runs in workflow code too, so keep it deterministic
+  and free of I/O. Subclass `LoopDetector` (`async detect(ctx, sample: StreamSample) ->
+  Repetition | None`) for your own methodology.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
-  `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
+  `.tool_names`; `.fingerprints` and `.passage` only with `trace_include_content`); no
+  arguments or results otherwise. A failed judge emits `loop judge failed`
+  (`error.type`). A `model=` judge isn't instrumented; its usage is added to the run's.
 
 ## RefineOutput
 

@@ -116,6 +116,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
 | `{name}__model.request_stream` | a streamed model request |
 | `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after`, `{name}__model.compact_messages.retry_after`, `{name}__model.cancel_suspended_response.retry_after` | the wait a model error's `retry_after` asked for, before that model operation runs again |
 | `{name}__model.compact_messages` | a request asking the model to shorten the message history |
+| `{name}__model.count_tokens` | a token count ahead of a model request, with `count_tokens_before_request` |
 | `{name}__model.cancel_suspended_response` | cancelling a response the model provider is still working on in the background |
 | `{name}__capability__{capability_id}.{operation}` | work added by another capability |
 | `{name}__function_toolset__{id}.validate_args` | checking a tool's arguments with its `args_validator` |

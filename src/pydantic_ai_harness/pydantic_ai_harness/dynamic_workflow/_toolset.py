@@ -13,11 +13,12 @@ import copy
 import json
 import sys
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Container, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, cast
 
+from anyio.from_thread import BlockingPortal
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
@@ -49,6 +50,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from pydantic_ai_harness._monty_exec import (
+    DispatchFn,
     MontyExecutor,
     MontyRunState,
     PrintCapture,
@@ -899,6 +901,32 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         names = list(self._by_name)
         return {known: self._by_name[known] for known in names[: names.index(name) + 1]}
 
+    def create_executor(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        dispatch: DispatchFn,
+        valid_names: Container[str],
+        flush: Callable[[], Awaitable[None]] | None,
+        global_sequential: bool,
+        portal: BlockingPortal | None,
+        max_sleep_seconds: float | None,
+    ) -> MontyExecutor:
+        """Build the single-use executor that runs one workflow script.
+
+        Override to change how the script's sub-agent calls are scheduled, for example to register
+        every call of a batch before any of them starts. The arguments are what the default
+        executor is built from; `dispatch` runs one sub-agent call and charges it to the budget.
+        """
+        return MontyExecutor(
+            dispatch=dispatch,
+            valid_names=valid_names,
+            flush=flush,
+            global_sequential=global_sequential,
+            portal=portal,
+            max_sleep_seconds=max_sleep_seconds,
+        )
+
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
@@ -933,7 +961,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
             # the whole script.
-            completed = await MontyExecutor(
+            completed = await self.create_executor(
+                ctx,
                 dispatch=dispatch,
                 valid_names=self._by_name,
                 # Exclusive: under `global_sequential`, calls start only after `flush`.

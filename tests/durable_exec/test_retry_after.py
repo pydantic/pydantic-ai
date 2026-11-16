@@ -1,3 +1,5 @@
+"""Unit tests for `model_error_retry_after`, not VCR tests: it walks an exception chain in memory and makes no request, so there is nothing for a cassette to record."""
+
 from __future__ import annotations
 
 import pytest

@@ -569,6 +569,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
+                    safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
                     web_search_options=web_search_options or OMIT,
                     # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
                     service_tier=cast(Any, resolve_openai_service_tier(model_settings)),
@@ -1126,7 +1127,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
             text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and item.content:
                 self.texts.append(text)
             elif item.content:
                 # An empty wrapper in the user turn would tell the model the assistant thought nothing.

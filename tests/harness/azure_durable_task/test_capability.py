@@ -41,9 +41,12 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
@@ -463,6 +466,7 @@ class TestAzureDurableTaskDurability:
             'compat__model.request',
             'compat__model.request_stream',
             'compat__model.compact_messages',
+            'compat__model.count_tokens',
             'compat__model.cancel_suspended_response',
             'compat__capability__compat.operation',
             'compat__capability__workspace.call',
@@ -520,6 +524,7 @@ class TestAzureDurableTaskDurability:
                 '8b6d0ca92d02859d',
                 '688888820165bdcf',
                 '4a56fe7a73fcb1b6',
+                'd579555674f2835a',
             ]
         }
         assert all(len(name) == 100 for name in names)
@@ -949,6 +954,39 @@ class TestAzureDurableTaskDurability:
             'capability__capability__recorder.record',
             'capability__model.request',
         ]
+
+    def test_count_tokens_is_an_activity(self, durable_worker: InMemoryWorker) -> None:
+        """The count ahead of a request is an activity, and the key it wrote on its decoded request reaches the run."""
+
+        class CountingModel(FunctionModel):
+            async def count_tokens(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> RequestUsage:
+                request = next(message for message in reversed(messages) if isinstance(message, ModelRequest))
+                request.metadata = {'__pydantic_ai__': {'counted': True}}
+                return RequestUsage(input_tokens=5)
+
+        agent = Agent(
+            CountingModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])),
+            name='count',
+            capabilities=[AzureDurableTaskDurability()],
+        )
+        limits = UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, list[dict[str, object] | None]]:
+            result = yield from run_durable(context, lambda: agent.run('Hi', usage_limits=limits))
+            return [message.metadata for message in result.all_messages() if isinstance(message, ModelRequest)]
+
+        durable_worker.add_orchestrator(orchestrator)
+        with registered_agent(durable_worker, agent):
+            metadata = completed(durable_worker, durable_worker.schedule(orchestrator))
+        assert metadata == [{'__pydantic_ai__': {'counted': True}}]
+        assert durable_worker.activity_calls == ['count__model.count_tokens', 'count__model.request']
 
     def test_streamed_model_and_event_handler(self, durable_worker: InMemoryWorker) -> None:
         observed: list[AgentStreamEvent] = []
