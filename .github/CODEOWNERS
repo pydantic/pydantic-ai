@@ -26,8 +26,8 @@ uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 
 # Harness code that crosses durable boundaries: the shared helper and durable delegation
 /src/pydantic_ai_harness/pydantic_ai_harness/_durable.py               @DouweM @adtyavrdhn
-/src/pydantic_ai_harness/pydantic_ai_harness/subagents/_capability.py  @DouweM @adtyavrdhn
-/src/pydantic_ai_harness/pydantic_ai_harness/subagents/_toolset.py     @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_capability.py  @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_toolset.py     @DouweM @adtyavrdhn
 
 # This file, after `/.github/` because the last matching pattern wins.
 # The durable owners review it too, so no PR drops them from a path unseen.

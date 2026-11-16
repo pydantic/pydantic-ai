@@ -60,6 +60,12 @@ async def test_hidden_answer_is_counted_and_pastes_join_into_one_line(key_pipe: 
     assert [line for line in terminal.lines() if line][-1] == '[28 characters]'
 
 
+async def test_ctrl_enter_confirms(key_pipe: PipeInput) -> None:
+    _, console = live_console(SurfaceTerminal(width=80, height=24))
+    key_pipe.send_text('typed\x1b[13;5u')
+    assert await read_line(PROMPT, console=console) == 'typed'
+
+
 @pytest.mark.parametrize('key', ['\x1b', '\x03'])
 async def test_escape_and_ctrl_c_cancel(key_pipe: PipeInput, key: str) -> None:
     _, console = live_console(SurfaceTerminal(width=80, height=24))

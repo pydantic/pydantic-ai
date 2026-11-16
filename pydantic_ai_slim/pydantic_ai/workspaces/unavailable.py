@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from typing import Never
 
@@ -35,9 +36,12 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands):
         raise WorkspaceUnavailableError(self.reason)
 
 
+HOST_WORKSPACE = 'WindowsWorkspace' if sys.platform == 'win32' else 'LocalWorkspace'
+"""The capability that gives a run this machine: `LocalWorkspace` needs POSIX."""
+
 NO_WORKSPACE = UnavailableWorkspace(
-    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('.')]` to the agent, or pass "
-    "`workspace=LocalWorkspaceBackend('.')` to the run method, to use the local machine (unsafe: commands and "
+    f"No workspace is attached to this run. Attach `capabilities=[{HOST_WORKSPACE}('.')]` to the agent, or pass "
+    f"`workspace={HOST_WORKSPACE}Backend('.')` to the run method, to use the local machine (unsafe: commands and "
     'file operations run with the full permissions of this process); attach another capability that supplies a '
     'workspace through its `get_workspace` hook; or, with a capability that can reconnect to an existing '
     'environment, pass its `WorkspaceRef`. '

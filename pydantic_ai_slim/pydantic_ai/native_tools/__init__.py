@@ -5,6 +5,7 @@ from abc import ABC
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from types import MemberDescriptorType
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -207,7 +208,16 @@ class AbstractNativeTool(ABC):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        NATIVE_TOOL_TYPES[cls.kind] = cls
+        NATIVE_TOOL_TYPES[cls._declared_kind()] = cls
+
+    @classmethod
+    def _declared_kind(cls) -> str:
+        kind = cls.kind
+        if isinstance(kind, MemberDescriptorType):
+            # `@dataclass(slots=True)` recreates the class, re-running `__init_subclass__` with `kind` turned into a
+            # slot, so the kind is the field's default.
+            return cls.__dataclass_fields__['kind'].default
+        return kind
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -216,11 +226,27 @@ class AbstractNativeTool(ABC):
         if cls is not AbstractNativeTool:
             return core_schema.no_info_wrap_validator_function(_validate_without_provider_field_warnings, handler(cls))
 
-        tools = NATIVE_TOOL_TYPES.values()
+        # A snapshot: a type registering on another thread would change the registry mid-iteration.
+        tools = tuple(NATIVE_TOOL_TYPES.values())
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
-            tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
+            # The discriminator is a function, so the union's JSON schema is a `oneOf` with no mapping, and each
+            # tool's `kind` is a plain string with a default. Pinning `kind` keeps `{'kind': 'code_execution'}` from
+            # matching several members; it's required because a document without one loads as no built-in tool.
+            # `kind=tool._declared_kind()` binds each member's own kind: a closure would see only the last one.
+            tools_annotated = [
+                Annotated[
+                    tool,
+                    pydantic.Tag(tool._declared_kind()),
+                    pydantic.GetPydanticSchema(
+                        get_pydantic_json_schema=lambda schema, handler, kind=tool._declared_kind(): {
+                            'allOf': [handler(schema), {'properties': {'kind': {'const': kind}}, 'required': ['kind']}]
+                        }
+                    ),
+                ]
+                for tool in tools
+            ]
             tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007
 
         return handler(tools_type)

@@ -316,7 +316,7 @@ then a `shape:` line for JSON and a head/tail excerpt; the model pages it with t
 substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`:
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
-With `FileSystem` on the agent and the default `WorkspaceStore()` (no `workspace=` of its own),
+With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
 `read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
 `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
 (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
@@ -365,11 +365,11 @@ Key parameters: `bands` (largest matching `over` wins; below the smallest passes
 `then` runs when the action cannot (store error, binary payload, failed summary call).
 
 Stores:
-- Default `WorkspaceStore()` writes under `.pydantic-ai-harness/tool-output/` in the run's
+- Default `WorkspaceOverflowStore()` writes under `.pydantic-ai-harness/tool-output/` in the run's
   workspace. If any band can spill and the run has no workspace, the run fails at start with
-  `UserError`. `WorkspaceStore(workspace=LocalWorkspaceBackend(...))` takes a backend, not the
+  `UserError`. `WorkspaceOverflowStore(workspace=LocalWorkspaceBackend(...))` takes a backend, not the
   `LocalWorkspace` capability. A read-only workspace falls back to `then`.
-- `LocalFileStore(base_dir=None, cleanup_after=None)` from `pydantic_ai_harness.tool_output_limits`, for runs without a workspace (host temp dir).
+- `LocalFileOverflowStore(base_dir=None, cleanup_after=None)` from `pydantic_ai_harness.tool_output_limits`, for runs without a workspace (host temp dir).
 - Anything implementing `OverflowStore` (`async write(key, data) -> handle`, `async read(handle)`).
 
 Gotchas: both `ToolReturn.return_value` and text `content` are reduced (a return value holding
@@ -413,7 +413,7 @@ it can't tell a moved prefix from an expired cache.
 
 ## Media externalization (not a capability)
 
-`pydantic_ai_harness.media` holds content-addressed stores (`DiskMediaStore`, `SqliteMediaStore`,
+`pydantic_ai_harness.media` holds content-addressed stores (`FileMediaStore`, `SqliteMediaStore`,
 `S3MediaStore`, `MongoMediaStore` with the `mongodb` extra, `PostgresMediaStore` over a
 caller-owned `asyncpg` pool) and the `externalize_media` /
 `restore_media` walkers. `StepPersistence` stores use them automatically (`media_store='auto'`,
