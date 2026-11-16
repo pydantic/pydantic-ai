@@ -1240,7 +1240,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
                 case responses.ResponseComputerToolCall():
-                    call_id = self._stored_tool_call_id(item.call_id, response.id, timestamp)
+                    call_id = stored_tool_call_id(
+                        item.call_id,
+                        response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+                        provider_response_id=response.id,
+                        timestamp=timestamp,
+                    )
                     if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
                         items.append(computer_call)
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
@@ -1302,18 +1307,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return ToolCallPart(
             item.name,
             item.arguments,
-            tool_call_id=self._stored_tool_call_id(item.call_id, response_id, timestamp),
+            tool_call_id=stored_tool_call_id(
+                item.call_id,
+                response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+                provider_response_id=response_id,
+                timestamp=timestamp,
+            ),
             id=item.id,
             provider_name=self.system,
             provider_details=fn_provider_details,
-        )
-
-    def _stored_tool_call_id(self, call_id: str, response_id: str, timestamp: datetime) -> str:
-        return stored_tool_call_id(
-            call_id,
-            response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
-            provider_response_id=response_id,
-            timestamp=timestamp,
         )
 
     def _map_code_interpreter_call(
