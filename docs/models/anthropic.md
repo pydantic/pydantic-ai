@@ -678,6 +678,28 @@ Responses that ran in fast mode carry `provider_details['speed'] == 'fast'`, so 
 !!! note "Bedrock, Vertex, and Foundry"
     Fast mode is only available on the direct Anthropic API. Bedrock, Vertex, and Foundry clients do not support the `speed` parameter, so `anthropic_speed='fast'` is ignored with a `UserWarning` on those clients.
 
+## Data residency
+
+To control where model inference runs, set [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]: `'us'` keeps inference on US-based infrastructure, and `'global'` lets it run in any available geography. When it's unset, the workspace's default inference geo applies. US-only inference is priced at 1.1x the standard rate, which [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], `usage.cost` and [usage limits](../agent.md#usage-limits) don't include yet. The setting is sent on the Claude API, Claude Platform on AWS and Claude on Google Cloud (Anthropic managed), including in [Message Batches](#batch-api). See the [Anthropic data residency docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for supported models, pricing and workspace-level restrictions.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    model_settings=AnthropicModelSettings(anthropic_inference_geo='us'),
+)
+...
+```
+
+When the setting is used, where the request ran is reported in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
+
+Models that don't support data residency (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 and older) reject the setting with a 400 error, which Pydantic AI raises rather than dropping the setting.
+
+!!! note "Bedrock, Vertex AI, and Foundry"
+    On Bedrock and Vertex AI, the endpoint or inference profile decides the inference region, and on Foundry the deployment type does, so `anthropic_inference_geo` is ignored with a `UserWarning` on those clients.
+
 ## Forced tool choice
 
 Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled. [Adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) accepts forcing, but Claude answers a forced tool choice without thinking. Anthropic documents **Claude Fable 5.1** and **5.2**, **Claude Mythos 5.1** and **5.2**, **Claude Opus 5.5**, and **Claude Sonnet 5.5** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those with [`supports_forced_tool_choice=False`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice].
