@@ -26,7 +26,7 @@ A call that asks raises [`ApprovalRequired`](https://pydantic.dev/docs/ai/tools-
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,
@@ -53,7 +53,7 @@ agent = Agent(
 )
 ```
 
-`ask_permissions` asks about each held call in turn. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory is the `remembered` set, which you can pass in to own: share it, clear it, or drop it with the conversation. It lives in this process, so inside a durable execution workflow it is neither read nor written, and every call asks.
+`ask_permissions` asks about each held call in turn. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory is the `remembered` set, which you can pass in to own: share it, clear it, or drop it with the conversation. It lives in this process, so inside a durable execution workflow the approval is kept in the message history instead, in the metadata of the approved call's `ToolReturnPart`: it holds when the workflow replays, and in a later run given that history. Since a marker in the history skips asking, only pass in history you trust; compaction that drops the part makes the call ask again.
 
 Approvals that other capabilities ask for, such as a tool registered with `requires_approval=True`, are left for the next handler.
 

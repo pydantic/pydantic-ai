@@ -379,7 +379,7 @@ _REPLAY_PROGRESS_GRACE = 2.0
 # Outbound frames a session sends once it has stopped reading, to end the provider session: GPT-Live's
 # `session.close`. Whatever the provider sent before it is read afterwards, by the same code that waits
 # for the provider to confirm the close, so on replay the close overtakes those frames instead of
-# waiting for a reader that only starts once the send returns.
+# waiting for a reader that only starts once the send returns. It never waits for a stopped pump either.
 _SESSION_END_TYPES = frozenset({'session.close'})
 
 
@@ -414,6 +414,9 @@ class ReplayWebSocket:
         # which the application also streams audio can't tell its frames from the pump's, so replay only
         # supports the pump in sessions that send no audio of their own.
         self.pumps_audio = False
+        # Set once the pump has stopped, which the connection does before it ends the session: the recorded frames
+        # of idle audio still ahead of the session-ending send will never go out.
+        self.pump_stopped = False
         self._closed = False
         self._now = 0.0
         # When each inbound frame handed out and not yet taken up by `begin_handling_frame()` was recorded.
@@ -615,13 +618,40 @@ class ReplayWebSocket:
             self._now = max(self._now, at)
 
     def _take_next_send_ahead_of_unread_frames(self) -> None:
-        """Move the next recorded send in front of the inbound frames recorded before it. Call with the condition held."""
-        for index in range(self._position, len(self._interactions)):
+        """Move the next recorded send in front of the inbound frames recorded before it. Call with the condition held.
+
+        Recorded frames of idle audio a stopped pump left on the way are dropped (see `pump_stopped`): they went out
+        live only because the recording held the session open longer than replay does.
+        """
+        index = self._position
+        while index < len(self._interactions):
             interaction = self._interactions[index]
-            if not (isinstance(interaction, CassetteMessage) and interaction.direction == 'received'):
+            if isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
+                index += 1
+            elif self.pump_stopped and isinstance(interaction, CassetteMessage) and _is_audio_send(interaction.data):
+                del self._interactions[index]
+            else:
                 if isinstance(interaction, CassetteMessage):
                     self._interactions.insert(self._position, self._interactions.pop(index))
                 return
+
+    def unsent(self, *, excuse_final_heartbeat: bool = False) -> list[dict[str, Any]]:
+        """The recorded sends replay has reached that the run hasn't made, up to the next recorded inbound frame.
+
+        A send recorded after an inbound frame the run hasn't read is one it hasn't reached: a session can close
+        sooner in replay than it did live. `excuse_final_heartbeat` leaves out the last of them when it is an
+        ElevenLabs `pong` answer or a frame of the idle pump's audio (see `pumps_audio`).
+        """
+        unsent: list[dict[str, Any]] = []
+        for interaction in self._interactions[self._position :]:
+            if not isinstance(interaction, CassetteMessage) or interaction.direction == 'received':
+                break
+            unsent.append(interaction.data)
+        if excuse_final_heartbeat and unsent:
+            last = unsent[-1]
+            if last.get('type') == 'pong' or (self.pumps_audio and _is_audio_send(last)):
+                unsent.pop()
+        return unsent
 
     def _advance(self) -> None:
         """Consume the next interaction. Call with the condition held."""
@@ -726,9 +756,18 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
 
 @contextmanager
 def patched_ws_connect(
-    provider: ProviderName, cassette: RealtimeCassette, plan: CassettePlan, *, hold_open: bool = False
+    provider: ProviderName,
+    cassette: RealtimeCassette,
+    plan: CassettePlan,
+    *,
+    hold_open: bool = False,
+    unsent_heartbeat: bool = False,
 ) -> Generator[None]:
-    """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`."""
+    """Patch the provider's WebSocket `connect` to replay from (or record into) `cassette`.
+
+    Replay fails if the run never made a recorded send it reached; `unsent_heartbeat` excuses the last of them when it
+    is a heartbeat.
+    """
     target, attr = _connect_target(provider)
     real_connect = getattr(target, attr)
     replay = ReplayWebSocket(cassette, hold_open=hold_open) if plan == 'replay' else None
@@ -759,6 +798,9 @@ def patched_ws_connect(
         _patched_idle_audio(provider, replay),
     ):
         yield
+    # A recorded send the run never made after the last inbound frame it read has no read waiting on it to fail.
+    if replay is not None and (unsent := replay.unsent(excuse_final_heartbeat=unsent_heartbeat)):
+        raise AssertionError(f'The run never made these recorded sends: {unsent!r}')
 
 
 @contextmanager
@@ -767,7 +809,8 @@ def _patched_idle_audio(provider: ProviderName, replay: ReplayWebSocket | None) 
 
     The pump sends a frame of silence every 100 ms of wall-clock time, and replay runs far faster than the
     recording did, so on the real clock it would send a different number of frames in different places.
-    Instead each frame waits for the recording's next idle-audio frame to come up.
+    Instead each frame waits for the recording's next idle-audio frame to come up. Once the pump stops, the replay
+    knows that the recorded frames it hasn't sent never will be (see `ReplayWebSocket.pump_stopped`).
     """
     if replay is None or provider != 'openai_live':
         yield
@@ -776,16 +819,24 @@ def _patched_idle_audio(provider: ProviderName, replay: ReplayWebSocket | None) 
 
     connection = rt_openai_live.OpenAILiveConnection
     start_idle_audio = connection._start_idle_audio  # pyright: ignore[reportPrivateUsage]
+    pump_idle_audio = connection._pump_idle_audio  # pyright: ignore[reportPrivateUsage]
 
     def start_pumping(self: rt_openai_live.OpenAILiveConnection) -> None:
         replay.pumps_audio = True
         start_idle_audio(self)
+
+    async def pump_until_stopped(self: rt_openai_live.OpenAILiveConnection) -> None:
+        try:
+            await pump_idle_audio(self)
+        finally:
+            replay.pump_stopped = True
 
     async def wait_for_recorded_frame(self: rt_openai_live.OpenAILiveConnection) -> None:
         await replay.wait_for_pumped_audio_turn()
 
     with (
         mock.patch.object(connection, '_start_idle_audio', start_pumping),
+        mock.patch.object(connection, '_pump_idle_audio', pump_until_stopped),
         mock.patch.object(connection, '_wait_for_idle_frame', wait_for_recorded_frame),
     ):
         yield

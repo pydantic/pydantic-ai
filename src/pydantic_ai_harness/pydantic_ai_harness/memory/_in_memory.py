@@ -41,7 +41,7 @@ def _check_operation(
     return _replayed(mutation)
 
 
-class InMemoryStore:
+class InMemoryMemoryStore:
     """Process-lifetime versioned memory store, with write metadata."""
 
     def __init__(self, files: Mapping[str, str] | None = None) -> None:
@@ -70,7 +70,7 @@ class InMemoryStore:
         return self._generation
 
     def _keep_receipt(self, operation: MemoryOperation, mutation: MemoryMutation) -> None:
-        """Record a receipt, keeping only the most recent ones, as `FileStore` does."""
+        """Record a receipt, keeping only the most recent ones, as `FileMemoryStore` does."""
         self._receipts[operation.id] = (operation.fingerprint, mutation)
         if len(self._receipts) > MAX_RECEIPTS:
             del self._receipts[next(iter(self._receipts))]

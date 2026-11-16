@@ -86,6 +86,13 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   directly before its first `##` heading, linking the
   [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
   don't improvise variants.
+- **Diagrams**: draw a page's diagram as a `mermaid` fence, byte-identical on the docs page and in the README
+  (`tests/harness/test_docs_parity.py` compares them). The docs site and GitHub both render it in light and dark
+  themes, so set no fill or text colors. Start with `accTitle:` and `accDescr:`, the text a screen reader gets:
+  `accDescr` describes the diagram as drawn, in plain text with no angle brackets.
+  Style nodes only with the three shared classes, copying their `classDef` lines from an existing page:
+  `capability` (what the capability adds), `external` (a system outside the agent), and `blocked` (rejected or
+  dropped, reached by a `-.-x` edge). Break labels with `<br/>` and keep the diagram narrower than the text column.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
   text. On `docs/harness/` pages, name models with the aliases from
   `docs/model_aliases/aliases.json` (`{{ anthropic:large }}`), never model IDs; see the "Model names"
