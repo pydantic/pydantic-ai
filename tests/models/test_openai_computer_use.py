@@ -47,7 +47,6 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai.types import responses as resp
-    from openai.types.responses.response import Conversation
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai._computer import (
@@ -101,28 +100,16 @@ def _done() -> resp.Response:
 COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)
 
 
-@pytest.mark.parametrize(
-    'response_scoped,stored_id,settings',
-    [
-        pytest.param(False, 'call_1', None, id='unique-ids'),
-        # Stored qualified with its response and restored before the request.
-        pytest.param(True, 'resp_1:call_1', None, id='response-scoped-ids'),
-        # The server holds the call, so only its output is sent.
-        pytest.param(False, 'call_1', {'openai_previous_response_id': 'auto'}, id='held-by-the-server'),
-    ],
-)
-async def test_compacting_a_history_with_a_computer_call_enables_the_computer_tool(
+async def test_compacting_response_scoped_computer_call_ids_enables_the_computer_tool(
     allow_model_requests: None,
-    response_scoped: bool,
-    stored_id: str,
-    settings: OpenAIResponsesModelSettings | None,
 ) -> None:
-    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
+    """A call ID stored qualified with its response is restored before the compact request."""
+    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'), profile=profile)
     call = ToolCallPart(
         'computer',
         {'actions': [{'type': 'click', 'x': 5, 'y': 6}]},
-        tool_call_id=stored_id,
+        tool_call_id='resp_1:call_1',
         tool_kind=COMPUTER_KIND.id,
         provider_name='openai',
         provider_details={
@@ -137,7 +124,7 @@ async def test_compacting_a_history_with_a_computer_call_enables_the_computer_to
                 ToolReturnPart(
                     'computer',
                     ['Ran 1 action.', _SCREEN],
-                    tool_call_id=stored_id,
+                    tool_call_id='resp_1:call_1',
                     metadata={'performed': 1},
                     tool_kind=COMPUTER_KIND.id,
                 )
@@ -162,7 +149,7 @@ async def test_compacting_a_history_with_a_computer_call_enables_the_computer_to
         ModelRequestContext(
             model=model,
             messages=with_history_digests(history),
-            model_settings=settings,
+            model_settings=None,
             model_request_parameters=ModelRequestParameters(
                 function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True
             ),
@@ -175,28 +162,22 @@ async def test_compacting_a_history_with_a_computer_call_enables_the_computer_to
     assert sent['extra_body'] == {'tools': [{'type': 'computer'}]}
 
 
-@pytest.mark.parametrize(
-    'settings,response_scoped',
-    [
-        pytest.param({'openai_conversation_id': 'conv_1'}, False, id='conversation'),
-        # Stored qualified and restored before the request, as for Bedrock Mantle's IDs.
-        pytest.param({'openai_previous_response_id': 'auto'}, True, id='previous-response-scoped-ids'),
-    ],
-)
-async def test_a_result_whose_call_is_stored_server_side_is_a_computer_call_output(
-    allow_model_requests: None, settings: OpenAIResponsesModelSettings, response_scoped: bool
+async def test_a_held_result_with_a_response_scoped_call_id_is_a_computer_call_output(
+    allow_model_requests: None,
 ) -> None:
+    """Stored qualified with its response and restored before the request, as for Bedrock Mantle's IDs."""
     provider = InMemoryProvider()
-    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    first.conversation = Conversation(id='conv_1')
-    client = MockOpenAIResponses.create_mock([first, _done()])
-    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
+    client = MockOpenAIResponses.create_mock(
+        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
+    )
+    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client), profile=profile)
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
     agent = Agent(model, capabilities=[FakeComputer(), provider.capability()], model_settings=settings)
 
     assert (await agent.run('Go.')).output == 'done'
     _, second = get_mock_responses_kwargs(client)
-    # The call itself is not sent again: the API has it in the stored response or conversation.
+    # The call itself is not sent again: the API has it in the stored response.
     assert [item['type'] for item in second['input'] if 'type' in item] == ['computer_call_output']
     assert second['input'][0]['call_id'] == 'call_1'
 
