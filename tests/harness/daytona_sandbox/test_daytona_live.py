@@ -358,7 +358,9 @@ class TestLiveDaytonaDesktop:
         await display.act(Scroll(x=200, y=150, direction='down', amount=1, modifiers=('ctrl',)))
         await display.act(Click(x=200, y=150, modifiers=('super',)))
 
-        logged = (await backend.run('sleep 1; cat events.txt', shell=True)).stdout.splitlines()
+        # Up to 10 seconds for the window to log all four presses.
+        wait = 'i=0; until [ "$(grep -c ^button events.txt)" -ge 4 ] || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
+        logged = (await backend.run(f'{wait}; cat events.txt', shell=True)).stdout.splitlines()
         # X's state bits: 1 is shift, 4 is control, 64 is Mod4, which Super_L is on.
         assert [line for line in logged if line.startswith('button')] == [
             'button 1 state 0',

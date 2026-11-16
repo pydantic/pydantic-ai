@@ -215,15 +215,33 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     assert 'Fatal server error' in str(error.value)
 
 
-@pytest.mark.parametrize(
-    'network', [['--network', 'host'], ['--network=host'], ['--net', 'host'], ['--net=host']], ids=' '.join
-)
-def test_a_desktop_refuses_the_host_network(network: list[str]) -> None:
+async def test_a_desktop_refuses_the_host_network(docker: FakeDocker, container_dir: Path) -> None:
     """Its X clients could reach an X server on the host through Linux's shared abstract socket."""
+    created = screen(
+        DockerContainerBackend(
+            image='my-desktop', working_dir=str(container_dir), desktop=True, docker_args=['--network', 'host']
+        )
+    )
     with pytest.raises(UserError, match="a desktop can't use the host's network"):
-        DockerContainerBackend(desktop=True, docker_args=['--memory', '2g', *network])
+        await created.screenshot()
     # Without a desktop, nothing in the container talks to an X server.
-    DockerContainerBackend(image='python:3.12', docker_args=network)
+    await DockerContainerBackend(
+        image='python:3.12', working_dir=str(container_dir), docker_args=['--network', 'host']
+    ).working_dir()
+
+    # However the container got there: attached, or sharing a host-network container's network.
+    docker.add_container('on-host', container_dir, network='host')
+    docker.add_container('joined', container_dir, network='container:on-host')
+    for name in ['on-host', 'joined']:
+        attached = screen(DockerContainerBackend(ref=WorkspaceRef(provider='docker', id=name), desktop=True))
+        with pytest.raises(UserError, match="a desktop can't use the host's network"):
+            await attached.screenshot()
+    assert docker.xdotool_calls == []
+
+    docker.add_container('orphan', container_dir, network='container:gone')
+    orphan = screen(DockerContainerBackend(ref=WorkspaceRef(provider='docker', id='orphan'), desktop=True))
+    with pytest.raises(WorkspaceUnavailableError, match='could not inspect container gone'):
+        await orphan.screenshot()
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:

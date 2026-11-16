@@ -105,6 +105,10 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         pytest.param(
             TypeText(text='a' * 4_001), [f'type {"a" * 2_000}', f'type {"a" * 2_000}', 'type a'], id='type-in-parts'
         ),
+        # Daytona types `\r\n` as one Enter only within one request.
+        pytest.param(
+            TypeText(text='a' * 1_999 + '\r\n' + 'b'), [f'type {"a" * 1_999}\n', 'type b'], id='type-crlf-in-parts'
+        ),
         pytest.param(
             PressKeys(keys=('ctrl+s',), repeat=2),
             ["press s modifiers=['ctrl']", "press s modifiers=['ctrl']"],
