@@ -44,6 +44,7 @@ from pydantic_clai2.runtime.session import (
     resolve_model_name,
 )
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_clai2.runtime.temporary_directory import temporary_directory
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -142,7 +143,7 @@ async def open_stock_agent(
             try:
                 for declaration in declarations:
                     await loader.load(declaration.id)
-                bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
+                bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities, NON_STRICT_SCHEMAS]
                 if (local := local_workspace(bound, root)) is not None:
                     bound.append(local)
                 agent = template.with_plugins(
