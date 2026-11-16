@@ -642,9 +642,8 @@ agent = Agent(
 - `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None, scope='request')`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
-  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
-  default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
-  system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
+  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. `tag` defaults to `None` (it used to be
+  `'system-reminder'`): a reminder needs no tag, since it's already sent as a system prompt; `tag='name'` wraps the text in `<name>`. `scope='conversation'` records each firing
   as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
   with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
@@ -658,8 +657,8 @@ agent = Agent(
   A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
   text are escaped.
 - `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
-  requests (10th, 20th, ...). Each firing adds a note and the generated text to history for good, so a run of R requests
-  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  requests (10th, 20th, ...). Each firing adds a note and the generated text to history for good, so
+  a run of R requests gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
