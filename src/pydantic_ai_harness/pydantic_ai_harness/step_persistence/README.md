@@ -883,35 +883,52 @@ from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 
 
-async def save_once(conversations: ConversationStore, conversation: Conversation) -> None:
+async def save_once(conversations: ConversationStore, conversation: Conversation, scope: str | None) -> None:
     try:
-        await conversations.save(conversation)
+        await conversations.save(conversation, scope=scope)
     except ConversationConflict:
         pass  # moved by an earlier pass
 
 
-async def move_conversation(steps: StepStore, conversations: ConversationStore, conversation_id: str) -> None:
-    for run in reversed(await steps.list_runs(conversation_id=conversation_id)):
-        if snapshot := await steps.latest_snapshot(run_id=run.run_id):
-            await save_once(conversations, Conversation(messages=snapshot.messages, conversation_id=conversation_id))
-            return
+async def move_conversation(
+    steps: StepStore, conversations: ConversationStore, conversation_id: str, *, scope: str | None = None
+) -> None:
+    runs = await steps.list_runs(conversation_id=conversation_id)
+    if not runs:
+        return
+    snapshot = await steps.latest_snapshot(run_id=runs[-1].run_id)
+    events = await steps.list_events(run_id=runs[-1].run_id)
+    responses = [event.timestamp for event in events if event.kind == 'model_request_completed']
+    if snapshot is None or (responses and snapshot.timestamp < max(responses)):
+        raise ValueError(f'{conversation_id!r} has a turn no complete snapshot holds: settle its tool calls first')
+    conversation = Conversation(messages=snapshot.messages, conversation_id=conversation_id)
+    await save_once(conversations, conversation, scope)
 
 
-async def move_heads(heads: SqliteConversationStore, conversations: ConversationStore) -> None:
+async def move_heads(
+    heads: SqliteConversationStore, conversations: ConversationStore, *, scope: str | None = None
+) -> None:
     offset = 0
     while page := await heads.listing(offset=offset):
         for summary in page:
             saved = await heads.get(conversation_id=summary.id)
-            await save_once(conversations, Conversation(messages=saved.messages, conversation_id=summary.id))
+            await save_once(conversations, Conversation(messages=saved.messages, conversation_id=summary.id), scope)
         offset += len(page)
 ```
 
 - The moved conversation starts with empty `usage` and no
   `deferred_tool_requests`, since neither source records them.
+- `move_conversation` raises for a session whose newest run got a model
+  response after its latest `complete` snapshot, such as a run waiting on an
+  approval or a deferred result, or one stopped mid-tool. No `complete` snapshot
+  holds that turn, so settle the calls first by continuing the run, then move
+  the session.
 - `save_once` skips a conversation the store already has, so a pass that stops
   partway can be run again to move the rest, and leaves conversations already
-  moved, or saved since, unchanged. Pass `scope=` to `save` to record whose
-  conversation it is.
+  moved, or saved since, unchanged. Pass `scope=` to record whose conversation
+  it is.
+- `move_heads` moves archived heads too, and saves each head as a conversation
+  of its own, so the `forked_from` link a head records isn't kept.
 - Keep `StepPersistence` on the agent if you still need the step-event trail,
   the tool-effect ledger, or
   [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/),
