@@ -3053,9 +3053,9 @@ class TestAfterToolValidateOnDeferral:
     async def test_deferral_carries_the_hooks_args(self):
         """A deferred call carries `after_tool_validate`'s output — what a non-deferred call would use.
 
-        `ValidatedToolCall.validated_args` has no public observable on the deferral path (the request
-        holds the model's original `ToolCallPart`, and resuming re-validates from it), so the
-        contract is pinned directly on the tool manager.
+        Pinned on the tool manager for a deferral the `args_validator` raises. A run makes it observable as
+        `DeferredToolRequests.validated_args`, which `tests/test_deferred_validated_args.py` covers for calls
+        deferred by their tool's kind and by their toolset.
         """
         toolset = FunctionToolset[None]()
 
