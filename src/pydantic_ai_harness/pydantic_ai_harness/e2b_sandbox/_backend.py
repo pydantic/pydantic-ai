@@ -133,25 +133,19 @@ _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
 _XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
 
-_XFCE_ON_DISPLAY = (
-    '(for p in $(pgrep -x xfce4-session); do '
-    f'tr "\\0" "\\n" </proc/$p/environ 2>/dev/null | grep -qx "DISPLAY={DISPLAY}" && exit 0; done; exit 1)'
-)
-"""Exits 0 when an XFCE session runs on `DISPLAY`. One on another display, such as a template's own on `:0`, doesn't
-count."""
+_XFCE_SHOWS = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
+"""Exits 0 when XFCE's desktop window shows on `DISPLAY`."""
 
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
-    f'if command -v startxfce4 >/dev/null && ! {_XFCE_ON_DISPLAY}; then '
+    f'if command -v startxfce4 >/dev/null && ! {_XFCE_SHOWS}; then '
     f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
-    + wait_until_ready(
-        'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1', '$!', 'the XFCE desktop', _XFCE_LOG
-    )
+    + wait_until_ready(_XFCE_SHOWS, '$!', 'the XFCE desktop', _XFCE_LOG)
     + 'fi'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, and the XFCE desktop.
 
-XFCE starts unless its session runs on the display, which recovers one that died. The script then waits up to 10
-seconds for the desktop window, so the first screenshot isn't black, and fails if XFCE exits first or the window never
+XFCE starts unless its desktop window shows on the display, which recovers one that died. The script then waits up to
+10 seconds for that window, so the first screenshot isn't black, and fails if XFCE exits first or the window never
 shows. A template without XFCE gets a display with no window manager. Output goes to files, since E2B keeps a command
 open while a background child holds its output.
 """

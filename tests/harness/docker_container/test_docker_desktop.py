@@ -98,8 +98,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     assert docker.xvfb_starts == 1
     # First letting go of modifiers an earlier action may have left down.
     assert docker.xdotool_calls[-1] == (
-        ':1 keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R ISO_Level3_Shift '
-        'mousemove 3 4 click --repeat 1 1'
+        ':1 keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R mousemove 3 4 click --repeat 1 1'
     )
 
 
@@ -191,40 +190,17 @@ async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_d
     assert docker.x_lock_exists(backend.ref.id)
 
 
-async def _panel(docker: FakeDocker, backend: DockerContainerBackend) -> Path:
-    """Where the start records the panel of a display it started: empty until the panel runs, then its process ID."""
-    await backend.working_dir()
-    assert backend.ref is not None
-    return docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'panel'
+async def test_the_start_opens_the_panel_unless_it_shows(docker: FakeDocker, container_dir: Path) -> None:
+    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
+    assert docker.panel_starts == 1
 
+    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
+    assert docker.panel_starts == 1
 
-async def test_a_display_we_start_gets_its_panel(docker: FakeDocker, container_dir: Path) -> None:
-    backend = _desktop(container_dir, image='my-desktop')
-    panel = await _panel(docker, backend)
-    docker.remove_display()
-
-    await _screen(backend).display_size()
-    assert panel.read_text().strip().isdigit()
-
-
-async def test_a_start_cancelled_before_the_panel_leaves_it_to_the_next(
-    docker: FakeDocker, container_dir: Path
-) -> None:
-    backend = _desktop(container_dir, image='my-desktop')
-    panel = await _panel(docker, backend)
-    # As a cancelled start leaves it: the X server runs, and the panel was never started.
-    panel.touch()
-
-    await _screen(backend).display_size()
-    assert panel.read_text().strip().isdigit()
-
-
-async def test_an_images_own_display_gets_no_panel(docker: FakeDocker, container_dir: Path) -> None:
-    backend = _desktop(container_dir, image='my-desktop')
-    panel = await _panel(docker, backend)
-
-    await _screen(backend).display_size()
-    assert not panel.exists()
+    # As a panel that died, or a start cancelled before it, leaves the display.
+    docker.close_panel()
+    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
+    assert docker.panel_starts == 2
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:

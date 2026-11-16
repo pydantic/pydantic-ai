@@ -20,12 +20,10 @@ from .fake_e2b import FakeE2B
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
-    # `-x NAME` prints the PIDs the test listed.
-    'pgrep': 'cat "$bin/pgrep-$2" 2>/dev/null',
     # Shows its window, then stays up past the script's next 0.1 second check, so the start succeeds without leaving a
     # process behind; `startxfce4-fails` makes it exit with an error instead.
     'startxfce4': '[ -e "$bin/startxfce4-fails" ] && { echo no session bus; exit 17; }; '
-    'touch "$bin/xfce-started"; exec sleep 1',
+    'echo started >>"$bin/xfce-starts"; touch "$bin/xfce-started"; exec sleep 1',
 }
 
 
@@ -66,19 +64,14 @@ def _run(script: str, stubs: Path, *args: str) -> subprocess.CompletedProcess[st
     return subprocess.run(['/bin/sh', '-c', script, 'sh', *args], env=env, capture_output=True, text=True, timeout=30)
 
 
-@pytest.mark.parametrize(('session_display', 'starts'), [(':1', False), (':0', True)])
-async def test_xfce_starts_unless_its_session_runs_on_the_display(
-    fake_e2b: FakeE2B, tmp_path: Path, stubs: Path, session_display: str, starts: bool
-) -> None:
+async def test_xfce_starts_unless_its_desktop_shows(fake_e2b: FakeE2B, stubs: Path) -> None:
     start = await _start_script(fake_e2b)
-    (tmp_path / 'proc' / '42').mkdir(parents=True)
-    (tmp_path / 'proc' / '42' / 'environ').write_bytes(f'HOME=/root\0DISPLAY={session_display}\0'.encode())
-    (stubs / 'pgrep-xfce4-session').write_text('42\n')
 
-    result = _run(start, stubs, '1280x800')
+    for _ in range(2):
+        result = _run(start, stubs, '1280x800')
+        assert result.returncode == 0, result.stderr
 
-    assert result.returncode == 0, result.stderr
-    assert (stubs / 'xfce-started').exists() == starts
+    assert (stubs / 'xfce-starts').read_text() == 'started\n'
 
 
 async def test_xfce_exiting_fails_the_start_with_its_output(fake_e2b: FakeE2B, stubs: Path) -> None:
