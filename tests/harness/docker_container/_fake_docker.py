@@ -150,9 +150,18 @@ printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
 [ ! -e "$bin/no-display" ] || { echo "Can't open display: $DISPLAY" >&2; exit 1; }
 [ "$1" != getdisplaygeometry ] || echo '1280 800'
 [ "$1" != getmouselocation ] || printf 'X=640\\nY=400\\nSCREEN=0\\nWINDOW=1\\n'
+[ "$1" != search ] || [ -e "$bin/panel-shows" ]
 """
 """Stands in for `xdotool` in a container: reports a 1280x800 display and the pointer at its middle unless
-`no-display` exists, and logs each call."""
+`no-display` exists, finds a window once the panel shows, and logs each call."""
+
+_FAKE_TINT2 = """#!/bin/sh
+bin=$(dirname "$0")
+echo started >> "$bin/panel-starts"
+touch "$bin/panel-shows"
+exec sleep 1
+"""
+"""Stands in for the panel: shows at once and stays running a while."""
 
 _FAKE_XWININFO = """#!/bin/sh
 bin=$(dirname "$0")
@@ -186,7 +195,7 @@ Also keeps a host's real Xvfb from starting.
 
 _FAKE_FLUXBOX = """#!/bin/sh
 """
-"""Stands in for the window manager, the panel and `xprop`, so a host's real ones never run."""
+"""Stands in for the window manager and `xprop`, so a host's real ones never run."""
 
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
@@ -258,6 +267,14 @@ class FakeDocker:
         return (self.bin_dir / 'containers' / f'{name}.tmp' / '.X1-lock').exists()
 
     @property
+    def panel_starts(self) -> int:
+        path = self.bin_dir / 'panel-starts'
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def close_panel(self) -> None:
+        (self.bin_dir / 'panel-shows').unlink()
+
+    @property
     def xvfb_starts(self) -> int:
         path = self.bin_dir / 'xvfb-starts'
         return len(path.read_text().splitlines()) if path.exists() else 0
@@ -281,7 +298,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     for name, script in [
         ('Xvfb', _FAKE_XVFB),
         ('fluxbox', _FAKE_FLUXBOX),
-        ('tint2', _FAKE_FLUXBOX),
+        ('tint2', _FAKE_TINT2),
         ('xprop', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
         ('scrot', _FAKE_SCROT),

@@ -139,13 +139,7 @@ parameters."""
 _ARGUMENT_BYTES = 6
 """What a transport adds to each argument, such as the `&cmd=` Sprites' exec URL puts before each."""
 
-_LEVEL_SHIFTS = ('Shift_L', 'ISO_Level3_Shift')
-"""The modifiers `xdotool` presses to reach a character on a key's other levels, released after a failed typing."""
-
-_RELEASE_MODIFIERS = (
-    'keyup',
-    *('Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R', 'ISO_Level3_Shift'),
-)
+_RELEASE_MODIFIERS = ('keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R')
 """Starts every `xdotool` chain that acts: lets go of modifiers an earlier action left down, such as one cancelled
 mid-press, since a stuck Shift types `a` as `A`.
 
@@ -155,9 +149,8 @@ turned on."""
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks; `xdotool`'s default is 100."""
 
-_SCROLL_TICK_SECONDS = (int(_SCROLL_TICK_DELAY_MS) + 12) / 1000
-"""Time per wheel click: the delay between clicks plus the 12 ms `xdotool click` pauses between press and release
-(xdotool(1): "a short delay between the two (currently 12ms)")."""
+_SCROLL_TICK_SECONDS = int(_SCROLL_TICK_DELAY_MS) / 1000
+"""Time per wheel click, as measured: 20 ms each."""
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
@@ -166,13 +159,9 @@ _DISPLAY_SIZE = ['xwininfo', '-root']
 """Prints the root window's size, which spans every monitor as a screenshot does. `xdotool getdisplaygeometry` gives
 only the first monitor's, which would scale a click on a second monitor onto the first."""
 
-_CAPTURES = '/tmp/pydantic-ai-captures'
-"""Where screenshots are written before they are printed. Each capture removes files there older than five minutes,
-such as one a cancel left behind."""
-
 _CAPTURE = (
-    f'd={_CAPTURES}; mkdir -p "$d" && find "$d" -type f -mmin +5 -exec rm -f {{}} + 2>/dev/null; f="$d/$$.png"; '
-    'scrot --overwrite "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; exit $status'
+    'f=/tmp/pydantic-ai-capture-$$.png; scrot --overwrite "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; '
+    'exit $status'
 )
 """Captures to a file of its own (scrot picks the format from the `.png` name) and prints it as base64; arguments
 go to scrot, such as `-a x,y,width,height` for a region. `--overwrite` replaces a file a cancel left at a reused
@@ -400,9 +389,10 @@ class X11Computer:
             case TypeText(text=text):
                 for part in _commands([[_character(character)] for character in text]):
                     # A cancel can land between a key's press and release, and X then repeats the key without end.
+                    # `xdotool` holds Shift_L for a shifted character such as `!`.
                     await self._xdotool(
                         ['key', '--delay', _TYPING_DELAY_MS, '--', *part],
-                        release=('keyup', *_LEVEL_SHIFTS, *dict.fromkeys(part)),
+                        release=('keyup', 'Shift_L', *dict.fromkeys(part)),
                         pauses=len(part) * _KEY_SECONDS,
                     )
             case PressKeys(keys=keys, repeat=repeat):

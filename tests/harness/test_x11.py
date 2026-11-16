@@ -56,10 +56,7 @@ def recovery(argvs: list[WorkspaceCommand]) -> list[WorkspaceCommand]:
     ]
 
 
-RELEASE_MODIFIERS = [
-    *['keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R'],
-    'ISO_Level3_Shift',
-]
+RELEASE_MODIFIERS = ['keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R']
 """What every acting `xdotool` chain starts with: letting go of modifiers an earlier action may have left down."""
 
 PNG_OUTPUT = CommandResult(exit_code=0, stdout=base64.encodebytes(FAKE_SCREENSHOT).decode(), stderr='')
@@ -219,7 +216,7 @@ async def test_x11_computer_lets_go_when_a_later_command_of_a_long_drag_fails() 
     'action, timeout',
     [
         (HoldKeys(keys=('shift',), seconds=200), 350),
-        (Scroll(direction='down', amount=1_000), 182),
+        (Scroll(direction='down', amount=1_000), 170),
         (PressKeys(keys=('a',), repeat=1_000), 162),
         (PressKeys(keys=('ctrl', 'shift', 'a'), repeat=1_000), 186),
         (TypeText(text='a' * 1_000), 162),
@@ -287,7 +284,7 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands() -
         # Typing can stop between a key's press and release; X would then repeat the key without end.
         pytest.param(
             TypeText(text='Yay'),
-            stops_then(['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0059', 'U0061', 'U0079']),
+            stops_then(['xdotool', 'keyup', 'Shift_L', 'U0059', 'U0061', 'U0079']),
             id='type',
         ),
         # A click can stop between pressing and releasing its button.
@@ -347,7 +344,7 @@ async def test_x11_computer_raises_a_lost_environment_while_releasing() -> None:
     [
         (HoldKeys(keys=('shift',), seconds=5), ['xdotool', 'keyup', 'shift']),
         # Each typed key is let go once, however often it was typed.
-        (TypeText(text='aa!'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0061', 'U0021']),
+        (TypeText(text='aa!'), ['xdotool', 'keyup', 'Shift_L', 'U0061', 'U0021']),
         # A scroll, like a click, can stop between pressing and releasing its wheel button.
         (Scroll(direction='down', amount=3), ['xdotool', 'mouseup', '5']),
     ],
