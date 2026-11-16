@@ -1400,13 +1400,17 @@ async def test_registered_backend_binds_model_operations_during_agent_assembly()
     model_operation_ids = [
         operation.operation_id
         for operation in backend.operations
-        if isinstance(operation.operation_id, (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId))
+        if isinstance(
+            operation.operation_id,
+            (ModelRequestId, ModelCompactMessagesId, ModelCountTokensId, ModelCancelSuspendedResponseId),
+        )
     ]
     assert model_operation_ids == [
         ModelRequestId(None, streaming=False, model_name='default'),
         ModelRequestId(None, streaming=True, model_name='default'),
         ModelCompactMessagesId(None, model_name='default'),
         ModelCancelSuspendedResponseId(None, model_name='default'),
+        ModelCountTokensId(None, model_name='default'),
     ]
 
     async def handler(params: int) -> int:

@@ -18,8 +18,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import detach_dbos_logging, without_admin_server
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -40,13 +38,12 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'enable_otlp': False,
     }
-    dbos = DBOS(config=without_admin_server(dbos_config))
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 async def test_dbos_count_tokens_is_a_recorded_step_that_replays(dbos: DBOS) -> None:
