@@ -9,7 +9,6 @@ Temporal server shows.
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any
 
 import pytest
 
@@ -69,7 +68,7 @@ _counting_agent = Agent(
 @workflow.defn
 class CountTokensWorkflow:
     @workflow.run
-    async def run(self, input_tokens_limit: int) -> tuple[str, list[dict[str, Any] | None]]:
+    async def run(self, input_tokens_limit: int) -> tuple[str, list[dict[str, object] | None]]:
         limits = UsageLimits(input_tokens_limit=input_tokens_limit, count_tokens_before_request=True)
         result = await _counting_agent.run('hi', usage_limits=limits)
         return result.output, [

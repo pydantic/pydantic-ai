@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any
 
 import pytest
 
@@ -73,7 +72,7 @@ async def test_dbos_count_tokens_is_a_recorded_step_that_replays(dbos: DBOS) -> 
     agent = Agent(CountingModel(reply), name='dbos_count_tokens', capabilities=[DBOSDurability[object]()])
 
     @DBOS.workflow()
-    async def run_workflow() -> list[dict[str, Any] | None]:
+    async def run_workflow() -> list[dict[str, object] | None]:
         limits = UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
         result = await agent.run('hi', usage_limits=limits)
         return [message.metadata for message in result.all_messages() if isinstance(message, ModelRequest)]
