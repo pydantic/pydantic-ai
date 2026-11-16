@@ -261,8 +261,8 @@ _START_DESKTOP = (
     f"echo 'the panel did not start:' >&2; tail -n 5 {_PID_DIR}/panel.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then a window manager, then the
-panel unless it shows. A second start waits for the first, then finds its X server.
+"""Starts an X display of the size `$1` names unless this container's X lock names a running X server, then a
+window manager, then the panel unless it shows. A second start waits for the first, then finds its X server.
 
 A second `fluxbox` exits when one runs, so starting it every time recovers one that died. It then waits up to 10
 seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it lands on, and
