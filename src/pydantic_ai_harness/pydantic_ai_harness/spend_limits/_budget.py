@@ -89,9 +89,10 @@ class Budget(Generic[AgentDepsT]):
     ```
 
     A callable ceiling is resolved from the run alongside `scope` whenever the budget is read, so
-    each partition can carry its own allowance. `None` means no ceiling on that partition, and zero
-    or less means nothing is allowed. Under durable execution it must return the same value when replayed with the same run
-    context: it is read in orchestration, so a changed value can flip a replayed refusal.
+    each partition can carry its own allowance. `None` means no ceiling on that partition, and
+    zero or less means nothing is allowed. Under durable execution it must return the same value
+    when replayed with the same run context: it is read in orchestration, so a changed value can
+    flip a replayed refusal.
     """
 
     usd: Decimal | Callable[[RunContext[AgentDepsT]], Decimal | None] | None = None
