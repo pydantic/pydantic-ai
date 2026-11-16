@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, AgentRunResultEvent
-from pydantic_ai.capabilities import CapabilityOrdering, Instrumentation
+from pydantic_ai.capabilities import CapabilityOrdering, Instrumentation, ProcessEventStream
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -161,6 +161,24 @@ class TestStreamGuardrail:
         assert texts == ['[redacted]']
         assert result.output == 'leaks SSN here'
 
+    async def test_process_event_stream_sees_events_before_the_guard(self):
+        texts: list[str] = []
+
+        async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in events:
+                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    texts.append(event.part.content)
+                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                    texts.append(event.delta.content_delta)
+
+        agent = Agent(
+            TestModel(custom_output_text='leaks SSN here'),
+            capabilities=[ProcessEventStream(handler), StreamGuardrail(guard=_redact_ssn)],
+        )
+        await agent.run('hello')
+
+        assert ''.join(texts) == 'leaks SSN here'
+
     async def test_block_raises_before_the_part_is_released(self):
         seen: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
 
@@ -241,9 +259,10 @@ class TestStreamGuardrail:
             return GuardrailResult.block('no SSNs')
 
         async def events() -> AsyncIterator[AgentStreamEvent]:
-            for index, content in enumerate(['secret', 'SSN']):
-                yield PartStartEvent(index=index, part=TextPart(content=content))
-                yield PartEndEvent(index=index, part=TextPart(content=content))
+            yield PartStartEvent(index=0, part=TextPart(content='secret'))
+            yield PartEndEvent(index=0, part=TextPart(content='secret'))
+            yield PartStartEvent(index=1, part=TextPart(content='SSN'))
+            yield PartEndEvent(index=1, part=TextPart(content='SSN'))
 
         with pytest.raises(OutputBlocked):
             async for _ in StreamGuardrail(guard=guard).wrap_run_event_stream(ctx, stream=events()):

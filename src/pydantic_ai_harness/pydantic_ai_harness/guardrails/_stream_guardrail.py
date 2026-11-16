@@ -195,12 +195,13 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
     response ends, as a provider can still stream its arguments after another part started, and
     a delta for a part already released is dropped.
 
-    The guard screens the run's event stream: `run_stream_events()`, an `event_stream_handler`,
-    `node.stream()` under `iter()`, and UI adapters. `run_stream()` reads the accumulated response,
-    so its `stream_text()`, `stream_output()` and `stream_response()` are not screened. A
-    replacement changes only what the event stream carries, not the message history or the run's
-    output: pair it with `OutputGuardrail` and `ToolGuardrail` for those. The guard runs on the
-    live stream, so it is not a durable operation.
+    The guard screens the run's event stream: `run_stream_events()`, the `event_stream_handler`
+    argument to a run, `node.stream()` under `iter()`, and UI adapters. A `ProcessEventStream`
+    capability and an `on_event` hook see each event before the guard, so they are not screened.
+    `run_stream()` reads the accumulated response, so its `stream_text()`, `stream_output()` and
+    `stream_response()` are not screened either. A replacement changes only what the event stream
+    carries, not the message history or the run's output: pair it with `OutputGuardrail` and
+    `ToolGuardrail` for those. The guard runs on the live stream, so it is not a durable operation.
     """
 
     guard: StreamGuardrailFunc[AgentDepsT] | Sequence[StreamGuardrailFunc[AgentDepsT]]
@@ -259,5 +260,5 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
                     f'A StreamGuardrail guard cannot return GuardrailResult.{verdict.action}(); guard at position '
                     f'{position} did. A streamed part can only be allowed, blocked or replaced.'
                 )
-            case _:  # pragma: no cover - assert_never exhaustiveness guard
+            case _:  # pragma: no cover
                 assert_never(verdict.action)

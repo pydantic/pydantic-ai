@@ -177,8 +177,9 @@ Key parameters:
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
 - `StreamGuardrail(guard)`: holds each streamed `TextPart`, `ThinkingPart` or `ToolCallPart` until it
   is complete and passes the whole part to the guard before its events reach `run_stream_events()`,
-  an `event_stream_handler` or a UI adapter. Adds the part's generation time to its first chunk; a
-  tool call is held until the model response ends.
+  a run's `event_stream_handler` argument or a UI adapter; `ProcessEventStream` and `on_event`
+  see raw events. Adds the part's generation time to its first chunk; a tool call is held until
+  the model response ends.
   `run_stream()`'s `stream_text()`/`stream_output()` and the run's history and output are not
   changed; pair with `OutputGuardrail`/`ToolGuardrail` for those.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
