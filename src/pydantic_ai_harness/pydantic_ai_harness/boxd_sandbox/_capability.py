@@ -102,8 +102,6 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
         if self.snapshot is not None and self.vcpu is not None:
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
-        if isinstance(self.desktop, tuple) and min(self.desktop) < 1:  # boxd reads a 0 as releasing the screen
-            raise UserError(f'desktop must be True or a width and height of at least 1, got {self.desktop!r}.')
         check_env(self.env)
 
     @classmethod

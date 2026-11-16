@@ -66,8 +66,6 @@ def test_root_package_exports_the_capability_and_backend() -> None:
         ({'vcpu': True}, r'^vcpu must be 1, 2, 4, 8 or None, got True\.$'),
         ({'vcpu': '2'}, r"^vcpu must be 1, 2, 4, 8 or None, got '2'\.$"),
         ({'snapshot': 'golden', 'vcpu': 2}, r'^`snapshot` keeps the size it was saved at, so it cannot be combined'),
-        ({'desktop': (0, 0)}, r'^desktop must be True or a width and height of at least 1, got \(0, 0\)\.$'),
-        ({'desktop': (800, 0)}, r'^desktop must be True or a width and height of at least 1, got \(800, 0\)\.$'),
         ({'defer_loading': True, 'id': 'machine'}, 'does not support `defer_loading=True`'),
     ],
 )
