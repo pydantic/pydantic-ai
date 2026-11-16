@@ -52,7 +52,8 @@ def sub_agents_attributes(span: ReadableSpan) -> dict[str, AttributeValue]:
 
 async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     await anyio.sleep_forever()
-    return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
+    # Cancelled by the timeout.
+    return ModelResponse(parts=[TextPart('late')])  # pragma: no cover
 
 
 def unexpected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -123,6 +124,22 @@ class TestSubAgentsTelemetry:
 
         [span] = delegation_spans(exporter)
         assert sub_agents_attributes(span)['sub_agents.model'] == 'test:test'
+
+    async def test_a_run_that_ends_unanswered_names_the_menu_model_it_ran_on(self, instrumented: Instrumented):
+        worker = SubAgent(Agent(name='worker'), timeout_seconds=0.01)
+        sub_agents = SubAgents[object](agents=[worker], models={'slow': FunctionModel(slow)})
+        delegate = ('delegate_task', {'agent_name': 'worker', 'task': 'do it', 'model': 'slow'})
+        instrumentation, exporter = instrumented(False)
+        await Agent(calling(delegate), capabilities=[sub_agents, instrumentation]).run('go')
+
+        [span] = delegation_spans(exporter)
+        assert sub_agents_attributes(span) == snapshot(
+            {
+                'sub_agents.agent_name': 'worker',
+                'sub_agents.outcome': 'timeout',
+                'sub_agents.model': 'function:function:slow:',
+            }
+        )
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_created_agents_name_is_content(self, include_content: bool, instrumented: Instrumented):

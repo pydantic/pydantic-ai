@@ -1802,7 +1802,7 @@ class TestTaskControlTelemetry:
         }
         assert ('sub_agents task refused', refused) in decisions(exporter)
 
-    def waiting_parent(self, gate: Gate) -> Agent[Any, str]:
+    def waiting_parent(self, gate: Gate) -> Agent[None, str]:
         """A parent that backgrounds a task the gate holds, so its run waits for it."""
         slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
         return Agent(
@@ -1956,9 +1956,9 @@ class TestTaskControlTelemetry:
             yield 'A poem.'
 
         @dataclass
-        class Policy(AbstractCapability[Any]):
+        class Policy(AbstractCapability[object]):
             @on_event(TaskMessageEvent)
-            async def message(self, ctx: RunContext[Any], event: TaskMessageEvent) -> None:
+            async def message(self, ctx: RunContext[object], event: TaskMessageEvent) -> None:
                 event.veto()
 
         owner = DelegationTasks()
