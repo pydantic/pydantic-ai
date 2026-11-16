@@ -143,6 +143,34 @@ class TestPayloadHelpers:
     def test_strip_ansi(self):
         assert strip_ansi('\x1b[31mred\x1b[0m') == 'red'
 
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            ('\x1b]0;title\x07body', 'body'),
+            ('a\x1b]8;;https://x\x07link\x1b]8;;\x07b', 'alinkb'),
+            ('\x1b]0;a\x1b]0;b\x07c', 'c'),
+            ('\x1b]unterminated \x1b[1mbold', '\x1b]unterminated bold'),
+            ('\x1b]split\nline\x07end', '\x1b]split\nline\x07end'),
+            ('\x1b]x\x1b\nnext', '\x1b]xnext'),
+            ('\x1bMreverse \x1b(B', 'reverse \x1b(B'),
+        ],
+    )
+    def test_strip_ansi_osc(self, text: str, expected: str):
+        assert strip_ansi(text) == expected
+
+    def test_strip_ansi_is_linear_on_unterminated_osc(self):
+        """A run of unterminated OSC openers is scanned once, not once per opener.
+
+        A time bound, like `test_a_run_of_header_lines_is_scanned_in_linear_time`'s: `re` reports no step count to
+        assert on. On this input, a pattern that rescans to the end for each opener takes far longer.
+        """
+        text = '\x1b]' * 50_000
+        start = time.perf_counter()
+        result = strip_ansi(text + '\x1b[1m')
+
+        assert time.perf_counter() - start < 1
+        assert result == text
+
     def test_is_binary(self):
         assert is_binary(b'x') is True
         assert is_binary(bytearray(b'x')) is True
