@@ -987,6 +987,10 @@ class AgentRunResult(Generic[OutputDataT]):
         # means nothing in another process; its ref stays in the messages' `workspace_ref`.
         state = self.__dict__.copy()
         state.pop('_workspace', None)
+        # `last_model_request_parameters` can hold tool definitions whose metadata contains lambdas,
+        # and `mcp_tool_defs_cache` likewise references live MCP toolset state. Neither is needed
+        # after the run completes, and both can make the result unpicklable.
+        state['_state'] = dataclasses.replace(self._state, last_model_request_parameters=None, mcp_tool_defs_cache={})
         return state
 
     @classmethod
