@@ -9,7 +9,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
@@ -68,6 +68,20 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
+
+
+async def test_a_display_that_does_not_start_names_the_sandbox_and_what_it_needs(fake_e2b: FakeE2B) -> None:
+    def responder(command: str, timeout: float | None) -> tuple[str, str, int]:
+        return ('', 'Xvfb: not found', 1) if 'Xvfb' in command else ('', '', 0)
+
+    fake_e2b.responder = responder
+
+    with pytest.raises(
+        WorkspaceUnavailableError,
+        match=r'^Could not start the display in E2B sandbox sbx-1: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
+        r'\(Xvfb: not found\)$',
+    ):
+        await screen(E2BSandboxBackend(desktop=True)).display_size()
 
 
 async def test_a_desktop_sandbox_reattaches_with_its_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
