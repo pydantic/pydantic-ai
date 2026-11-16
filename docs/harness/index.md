@@ -62,7 +62,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, WebSearch
 from pydantic_ai_harness import Coder, Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     '{{ openai:medium }}',
@@ -70,7 +70,7 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         WebSearch(),  # look up docs and error messages on the web
-        Memory(FileStore('.agent-memory')),  # remembers across sessions
+        Memory(FileMemoryStore('.agent-memory')),  # remembers across sessions
     ],
 )
 ```
@@ -89,16 +89,16 @@ A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where th
 
 [Coder](coder.md), [FileSystem](filesystem.md), [Shell](shell.md), [Repo Context](repo-context.md), and [Macroscope](macroscope.md) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](coder.md#sharing-a-workspace).
 
-Skills, SubAgents, ToolOutputLimits, and Memory's `FileStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
+Skills, SubAgents, ToolOutputLimits, and Memory's `FileMemoryStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory, ToolOutputLimits
-from pydantic_ai_harness.memory import FileStore
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.memory import FileMemoryStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
-memory = Memory(FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
-limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's temp directory
+memory = Memory(FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')))  # notes on this machine
+limits = ToolOutputLimits(store=LocalFileOverflowStore())  # spills in this machine's temp directory
 ```
 
 By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored. When the workspace user cannot write to the working directory, Shell keeps its job files in a directory private to that user under the workspace's temp directory (`$TMPDIR` in its environment, or `/tmp`) instead.
@@ -108,6 +108,19 @@ Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and C
 `FileSystem`'s `root_dir` limits only the file tools, not `Shell` commands.
 
 Upgrading from an earlier release? The [Coder page](coder.md#upgrading) lists what changed.
+
+## From problem to capability
+
+Look up a capability by the problem it solves. The Capabilities section below lists all of them by what they give your agent.
+
+| If your problem is... | Capability | How it works |
+|---|---|---|
+| The model's output must pass a check, and bad output should be retried or blocked | [`OutputGuardrail`](guardrails.md) | Its `guard` returns `GuardrailResult.retry(...)` to send the output back to the model, or `False` to raise `OutputBlocked`. `retry` needs `run()`: under `run_stream()` it raises `UnexpectedModelBehavior`. |
+| One tool result is flooding the context window | [`ToolOutputLimits`](tool-output-limits.md) | By default, a result of 10,000 characters or more spills to a file in the run's workspace, and the model gets a preview plus a handle to read the rest. If the write fails, the result is truncated to 4,000 characters. Without a workspace, pass `store=LocalFileOverflowStore()`. |
+| The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](../workspace.md), or a sandbox | Set the directory on the workspace: `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox. Every capability that works in the workspace starts there; `Shell(cwd=)` and `FileSystem(cwd=)` warn and are ignored. In your own tool, `ctx.workspace.run(..., cwd='subdir')` starts one command elsewhere. |
+| A run, a day, or a tenant needs a spend ceiling | Core [`UsageLimits`](../agent.md#usage-limits), or [`SpendLimits`](spend.md) | For one run, pass `usage_limits=UsageLimits(cost_limit=Decimal('5'))`: the run raises `UsageLimitExceeded` after the response that crosses the limit. For a day or month, per tenant, or across worker processes, `SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])` refuses the next request once a window is spent. |
+| The model repeats the same tool call without making progress | [`DetectLoops`](detect-loops.md) | The default `action='nudge'` adds a system prompt asking the model to change approach; `action='error'` stops the run with `LoopDetectedError`. |
+| The model sends malformed JSON in a tool call | [`RepairToolArguments`](repair-tool-arguments.md) | Runs `json-repair` on the arguments before validation, fixing trailing commas, single-quoted keys and truncated JSON; valid arguments pass through unchanged. Import it from `pydantic_ai_harness.repair_tool_arguments` and install the `repair-tool-arguments` extra. `Coder` includes `RepairToolArguments`, so its `coder` extra installs `json-repair` too. |
 
 ## Capabilities
 
@@ -133,6 +146,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Kubernetes Sandbox](kubernetes-sandbox.md) | Harness | Commands and files in a sandbox pod from a Kubernetes [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool |
 | [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](daytona-sandbox.md) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |

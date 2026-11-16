@@ -33,15 +33,13 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ...conftest import no_leaked_tasks
 from . import fake_opensandbox
 from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
 
 _MODULE = 'pydantic_ai_harness.opensandbox_sandbox._backend'
-
-READINESS_WAIT_TIMEOUT = 300
-"""Longer than any stall seen on a CI runner, so that only a hang waits this long."""
 
 
 def _create(server: FakeOpenSandbox, working_dir: str, **kwargs: Any) -> OpenSandboxBackend:
@@ -132,7 +130,10 @@ class TestCommands:
         with pytest.raises(WorkspaceError, match='could not run the command'):
             await _create(server, working_dir).run(['sh', '-c', 'kill -KILL $PPID'])
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason='root ignores directory permissions')
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='root ignores directory permissions, and Windows does not enforce POSIX file modes',
+    )
     async def test_a_wrapper_that_cannot_record_its_pid_says_why(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:

@@ -9,7 +9,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Self, TypeAlias, get_args
 
 from pydantic import ValidationError
-from typing_extensions import deprecated
+from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import _utils
 from pydantic_ai._instructions import (
@@ -25,8 +25,10 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     Authority,
     CapabilityInstructionSource,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
+    UserContent,
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.tools import (
@@ -59,6 +61,19 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+
+class _RunIdInputs(TypedDict):
+    prompt: str | Sequence[UserContent] | None
+    messages: list[ModelMessage]
+    message_history_ids: list[tuple[str | None, str | None]]
+    conversation_id: str | None
+    deps: object
+    metadata: dict[str, object] | None
+
+
+_RunIdInputsFactory: TypeAlias = Callable[[], _RunIdInputs]
+
 
 # --- Handler type aliases for use in hook method signatures ---
 # These make it easier to write correct type annotations when subclassing AbstractCapability.
@@ -754,6 +769,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         `run_id` it had the first time. When several capabilities return one, the one listed last wins.
         """
         return None
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        """Resolve a bootstrap identity without changing the public no-argument extension point."""
+        return self.get_default_run_id()
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.

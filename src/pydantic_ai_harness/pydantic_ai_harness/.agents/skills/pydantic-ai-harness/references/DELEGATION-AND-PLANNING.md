@@ -148,7 +148,7 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
 - `workspace_resolver=None`: an async `(ctx, request: DelegationWorkspaceRequest) -> Workspace`
   callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
-  `pydantic_ai_harness.subagents`. Validate permitted delegates and paths in the callback.
+  `pydantic_ai_harness.sub_agents`. Validate permitted delegates and paths in the callback.
   Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
   still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
   directory changes on resume. Remote and durable delegations reject this argument.
@@ -156,7 +156,7 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   capabilities). `max_depth=3` caps nesting, counting the top-level run.
 - `tool_retries=2`, `contain_errors=False`, `event_stream_handler=None`, `tool_name='delegate_task'`.
 - Disk agents: `agent_overrides={'name': AgentOverride(model=..., effort='high')}` and
-  `tool_resolver` (maps frontmatter `tools` names to toolsets); from `pydantic_ai_harness.subagents`.
+  `tool_resolver` (maps frontmatter `tools` names to toolsets); from `pydantic_ai_harness.sub_agents`.
 
 Gotchas:
 
@@ -189,7 +189,7 @@ Gotchas:
 ```python
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.subagents import SubAgent, SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents, TaskControl
 
 researcher = Agent('test', name='researcher', description='Researches a topic.')
 orchestrator = Agent(
@@ -234,7 +234,7 @@ orchestrator = Agent(
 ## DelegationReports
 
 Delivers finished background-task reports from a `DelegationTasks` owner into a parent run. Each
-report is a `TaskOutputPart` (a `DataCapabilityPart` from `pydantic_ai_harness.subagents`): the child's
+report is a `TaskOutputPart` (a `DataCapabilityPart` from `pydantic_ai_harness.sub_agents`): the child's
 output as `<task_output task_id=... agent_name=...>` data, with `outcome=...` only when the task didn't
 succeed, and a note naming the sub-agent as its author. A question is a `TaskQuestionPart`
 (`<task_question>`). The output goes out as written; text in it that looks like the frame's tag or an
@@ -243,7 +243,7 @@ also matches the metadata-marked user text an earlier version delivered, so host
 user-prompt listings. The Vercel AI and AG-UI message conversions leave capability parts out.
 
 ```python
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 
 tasks = DelegationTasks()
 reports = DelegationReports(tasks, conversation_id='conversation-1')
@@ -406,6 +406,8 @@ Gotchas:
   `mode='native'`, `mode='native'` without an `anthropic:`/`openrouter:` string, OpenRouter native
   with `max_uses`. `mode='native'` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
+- `max_uses` can be a callable `(ctx) -> int`, resolved per executor request, for a budget across runs
+  kept in `deps`. Below 1, the native tool is omitted and the local tool returns its limit message.
 - Local path: the advisor sees only the consultation prompt (plus completed history, including
   `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward

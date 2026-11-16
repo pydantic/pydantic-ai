@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import inspect
 import math
 import re
@@ -12,7 +11,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
@@ -391,7 +390,7 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     }
 
 
-class _RunCodeArguments(RunCodeArgs):
+class _RunCodeArgs(RunCodeArgs):
     # Keeps the schema title the model has always been sent; the fields come from `RunCodeArgs`.
     pass
 
@@ -448,7 +447,7 @@ def _split_by_placement(
     return sandboxed, native
 
 
-_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
+_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArgs)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 # Used to serialize tool return values before sending into Monty (dump_python)
@@ -896,11 +895,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     To keep a Tool Search corpus native even after discovery (e.g. for prompt-cache
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
     """
-
-    # Monty resolves builtins before host names, so a tool with one of these names would never run.
-    # All of CPython's builtins, not just Monty's current set, so a builtin Monty adds later can't
-    # take over a tool that works today.
-    _BUILTIN_NAMES: ClassVar[frozenset[str]] = frozenset(dir(builtins))
 
     tool_selector: ToolSelector[AgentDepsT] = 'all'
     """Which wrapped tools to sandbox inside `run_code`. Non-matching tools
@@ -1564,12 +1558,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         missing_return_schema: list[str] = []
         for safe_name, td in callable_defs.items():
             name = sanitized_to_original.get(safe_name, safe_name)
-            if safe_name in self._BUILTIN_NAMES:
-                raise UserError(
-                    f'Tool name {name!r} is a Python builtin, so code in `run_code` would call the builtin '
-                    'instead of the tool. Rename the tool, for example with `toolset.prefixed(...)` or '
-                    '`toolset.renamed(...)`.'
-                )
             if td.return_schema is None and name not in self._warned_missing_return_schema:
                 missing_return_schema.append(name)
         _warn_missing_return_schemas(missing_return_schema)

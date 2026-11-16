@@ -79,7 +79,7 @@ from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.peers import InMemoryPeerNetwork
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.sub_agents import AgentOverride
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
@@ -334,6 +334,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'KubernetesSandbox': Anonymous(
+        'two coexist; the first supplies the run workspace, as core picks the first supplier'
+    ),
     'RenderSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
@@ -597,7 +600,7 @@ def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch:
 
     # Any module the walk visits will do; the class it defines is re-exported elsewhere, so what
     # is under test is that the *import failure* is recorded as skipped rather than propagated.
-    a_capability_module = 'pydantic_ai_harness.subagents._capability'
+    a_capability_module = 'pydantic_ai_harness.sub_agents._capability'
 
     def wrapped_in_user_error() -> Exception:
         """What a capability raises when it builds something needing a missing extra at import.

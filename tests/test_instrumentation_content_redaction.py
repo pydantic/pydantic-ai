@@ -48,6 +48,7 @@ from pydantic_ai._instrumentation import (
     include_content_ctx,
     model_request_parameters_attributes,
     open_request_policy,
+    serialize_any,
     span_include_content,
 )
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
@@ -70,7 +71,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, FileSearchTool, MCPServerTool
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import Tool, ToolDefinition
 
@@ -240,6 +241,31 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
     assert expected['function_tools'][0]['metadata'] == {'x': 1}
     assert expected['native_tools'][0]['files'][0]['file_id'] == 'file-123'
     assert expected['native_tools'][1]['provider_settings']['xai']['instructions'] == 'search only these files'
+
+
+@pytest.mark.usefixtures('restore_native_tool_types')
+def test_request_telemetry_serializes_a_native_tool_type_defined_after_the_first_request() -> None:
+    """A native tool type defined after the first request serializes through the parameters' schema."""
+    model_request_parameters_attributes(ModelRequestParameters(native_tools=[CodeExecutionTool()]))
+
+    @dataclass(kw_only=True)
+    class WidgetTool(AbstractNativeTool):
+        kind: str = 'widget'
+        size: int = 0
+
+    parameters = ModelRequestParameters(native_tools=[WidgetTool(size=3)])
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized) == TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
+
+
+@pytest.mark.usefixtures('native_tool_type_without_schema')
+def test_request_telemetry_serializes_by_inference_beside_a_native_tool_type_without_a_schema() -> None:
+    """A registered native tool type pydantic can't build a schema for leaves the parameters serializing by inference."""
+    parameters = ModelRequestParameters(native_tools=[CodeExecutionTool()])
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized) == serialize_any(parameters)
 
 
 def test_native_mcp_redaction_survives_serializer_fallback() -> None:

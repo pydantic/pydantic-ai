@@ -39,7 +39,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     DelegationStartedEvent,
     DelegationTask,
@@ -674,7 +674,7 @@ async def test_background_completion_continues_parent_without_user_input(
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    from pydantic_ai_harness.subagents import DelegationTaskEvent
+    from pydantic_ai_harness.sub_agents import DelegationTaskEvent
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime.session_runtime import create_shell

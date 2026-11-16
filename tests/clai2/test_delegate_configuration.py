@@ -21,7 +21,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
-from pydantic_ai_harness.subagents import DelegationTasks, DelegationWorkspaceRequest
+from pydantic_ai_harness.sub_agents import DelegationTasks, DelegationWorkspaceRequest
 from pydantic_clai2 import open_stock_agent
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.config import Settings

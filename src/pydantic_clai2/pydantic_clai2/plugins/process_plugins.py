@@ -46,9 +46,9 @@ from pydantic_clai2.plugins import (
     SessionEndReason,
     TaskCatalog,
 )
-from pydantic_clai2.plugins._user_waits import UserWaits
 from pydantic_clai2.plugins.factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.plugins.user_waits import UserWaits
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
@@ -64,6 +64,7 @@ _LOGGER = logging.getLogger(__name__)
 MOVED_FACTORIES = {
     'pydantic_ai_harness.coder:Coder': 'pydantic_clai2.builtin_plugins.coder',
     'pydantic_ai_harness:Coder': 'pydantic_clai2.builtin_plugins.coder',
+    'pydantic_ai_harness.subagents:SubAgents': 'pydantic_ai_harness.sub_agents:SubAgents',
     'pydantic_clai2.sessions': 'pydantic_clai2.runtime.sessions',
     'pydantic_clai2.ask_user_menu:activate': 'pydantic_clai2.builtin_plugins.ask_user_menu',
     'pydantic_clai2.builtin_plugins.ask_user_menu:activate': 'pydantic_clai2.builtin_plugins.ask_user_menu',

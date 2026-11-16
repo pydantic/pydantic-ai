@@ -169,6 +169,9 @@ EXEMPT: dict[str, Exempt] = {
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),
+    'WindowsWorkspace': Exempt(
+        "Builds only on Windows; it's `LocalWorkspace` with another backend, which adds nothing to the conversation."
+    ),
 }
 
 _NO_LOCAL_FALLBACK = 'The provider has no native {}, and the default has no local fallback.'
