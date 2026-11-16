@@ -250,6 +250,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         '$defs': {'S': STRING},
     },
     'required_null': {'type': 'object', 'required': None},
+    'required_string_in_definitions': {
+        'type': 'object',
+        'properties': {},
+        'required': [],
+        'definitions': {'N': {'type': 'object', 'required': 'x'}},
+    },
     'required_subset': {'type': 'object', 'properties': {'a': STRING, 'b': STRING}, 'required': ['a']},
     'discriminator_and_schema': {
         '$schema': 'https://json-schema.org/draft/2020-12/schema',

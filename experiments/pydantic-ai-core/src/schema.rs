@@ -1,7 +1,7 @@
 //! Port of `pydantic_ai._json_schema.JsonSchemaTransformer` and the transformers `openai_model_profile` selects.
 //!
 //! The control flow follows the Python closely enough that every fixture matches byte for byte.
-//! The `shortcut:` comments mark the inputs where it would not.
+//! The `shortcut:` comments mark known inputs where it would not; the README lists what is not covered.
 
 use std::collections::HashMap;
 
@@ -572,7 +572,7 @@ impl Walker {
                     Some(Value::Array(required))
                         if property_names.iter().all(|name| required.contains(name)) => {}
                     // Python only reads `required` when there is a property to look up in it.
-                    Some(Value::Null) if property_names.is_empty() => {}
+                    Some(_) if property_names.is_empty() => {}
                     _ => self.is_strict_compatible = false,
                 }
             }

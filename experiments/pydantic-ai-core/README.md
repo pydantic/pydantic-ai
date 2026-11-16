@@ -48,7 +48,7 @@ The profile holds ids where Python holds classes: `json_schema_transformer` is o
 `fixtures/generate.py` runs the real `pydantic-ai` and writes `fixtures/golden.json`:
 
 - 170 model names, each with its profile.
-- 47 schemas, each through 3 transformers and 3 `strict` values: 423 cases, 118 of which expect a `UserError`.
+- 48 schemas, each through 3 transformers and 3 `strict` values: 432 cases, 118 of which expect a `UserError`.
 
 Both test runners compare serialized JSON, so key order has to match. Error messages have to match exactly.
 

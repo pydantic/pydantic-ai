@@ -23545,6 +23545,290 @@
    }
   },
   {
+   "name": "required_string_in_definitions",
+   "transformer": "inline_defs",
+   "strict": null,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": "x"
+      }
+     }
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "inline_defs",
+   "strict": true,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": "x"
+      }
+     }
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "inline_defs",
+   "strict": false,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": "x"
+      }
+     }
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "openai",
+   "strict": null,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": "x",
+       "properties": {},
+       "additionalProperties": false
+      }
+     },
+     "additionalProperties": false
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "openai",
+   "strict": true,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": [],
+       "properties": {},
+       "additionalProperties": false
+      }
+     },
+     "additionalProperties": false
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "openai",
+   "strict": false,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": "x",
+       "properties": {}
+      }
+     }
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "gpt_oss",
+   "strict": null,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": "x",
+       "properties": {},
+       "additionalProperties": false
+      }
+     },
+     "additionalProperties": false
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "gpt_oss",
+   "strict": true,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": [],
+       "properties": {},
+       "additionalProperties": false
+      }
+     },
+     "additionalProperties": false
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
+   "name": "required_string_in_definitions",
+   "transformer": "gpt_oss",
+   "strict": false,
+   "schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "definitions": {
+     "N": {
+      "type": "object",
+      "required": "x"
+     }
+    }
+   },
+   "expected": {
+    "schema": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "definitions": {
+      "N": {
+       "type": "object",
+       "required": "x",
+       "properties": {}
+      }
+     }
+    },
+    "is_strict_compatible": true
+   }
+  },
+  {
    "name": "required_subset",
    "transformer": "inline_defs",
    "strict": null,
