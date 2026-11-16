@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.computer_use import Click, Point
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
@@ -213,6 +213,17 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
         await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
+
+
+@pytest.mark.parametrize(
+    'network', [['--network', 'host'], ['--network=host'], ['--net', 'host'], ['--net=host']], ids=' '.join
+)
+def test_a_desktop_refuses_the_host_network(network: list[str]) -> None:
+    """Its X clients could reach an X server on the host through Linux's shared abstract socket."""
+    with pytest.raises(UserError, match="a desktop can't use the host's network"):
+        DockerContainerBackend(desktop=True, docker_args=['--memory', '2g', *network])
+    # Without a desktop, nothing in the container talks to an X server.
+    DockerContainerBackend(image='python:3.12', docker_args=network)
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:
