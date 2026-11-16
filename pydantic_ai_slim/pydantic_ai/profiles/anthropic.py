@@ -701,11 +701,16 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
     # The earlier tools scale a larger screenshot down, and Claude answers in the smaller image's pixels, so the
-    # profile caps it; both numbers matter, as 1568x882 is scaled down too. The toolset refuses an image too large
-    # with an error of its own, so it gets no cap. Opus 4.7 takes the larger size on `computer_20251124`.
+    # profile caps it; both numbers matter, as 1568x882 is scaled down too. Opus 4.7 takes the larger size on
+    # `computer_20251124`. The toolset refuses more than 2576 pixels or 4784 image tokens of 28x28 pixels, but the
+    # function tool these models get on Vertex AI or Foundry takes a larger image and scales it: probed live, Haiku
+    # 5.5 and Opus 4.8 pointed about 5% short on 2560x1600, and exactly on 2576x1456 (4784 tokens) and 2549x1457.
     if model_name.startswith('claude-opus-4-7'):
         profile['computer_use_screenshot_max_side'] = 2576
         profile['computer_use_screenshot_max_pixels'] = 3_600_000
+    elif computer_tool_version == 'computer_toolset_20260801':
+        profile['computer_use_screenshot_max_side'] = 2576
+        profile['computer_use_screenshot_max_pixels'] = 2576 * 1456
     elif computer_tool_version in ('computer_20251124', 'computer_20250124'):
         profile['computer_use_screenshot_max_side'] = 1568
         profile['computer_use_screenshot_max_pixels'] = 1_150_000
