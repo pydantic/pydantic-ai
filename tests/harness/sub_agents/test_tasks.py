@@ -122,6 +122,38 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
         assert await saved_history(restored, saved.id) == await saved_history(owner, record.id)
 
 
+async def test_resumed_task_keeps_partial_output_of_its_own_run_only(tmp_path: Path) -> None:
+    """A resumed run stopped before it wrote text doesn't pass on the earlier run's answer as partial output."""
+    calls = 0
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            await asyncio.sleep(WAIT)
+        yield 'old answer'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    capability = SubAgents(agents=[SubAgent(child, timeout_seconds=0.05, keep_partial_output=True)], agent_folders=None)
+    owner = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                await Agent(parent_model(), capabilities=[capability]).run('go', conversation_id='parent')
+                (record,) = owner.records.values()
+                result = await Agent(parent_model(resume=record.id), capabilities=[capability]).run(
+                    'continue', conversation_id='parent'
+                )
+    (output,) = [
+        part.content
+        for message in result.new_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+    ]
+    assert "Sub-agent 'worker' exceeded its 0.05s time budget." in str(output)
+    assert '<partial_output>' not in str(output)
+
+
 async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
     """An owner holds no settled task's history in memory, and closing it rewrites no task it didn't change."""
     child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')

@@ -1476,7 +1476,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """The child run, dropping token counting inherited from the parent if the child's model can't count.
 
         Token counting the delegate asks for in its own `usage_limits` is kept, as on a top-level run.
-        `messages` receives the messages of the run that counts, also when it raises or is cancelled.
+        `messages` receives the messages the run that counts added, also when it raises or is cancelled.
         """
         # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
         # the resumed run adds a new prompt, so close them out as interrupted first.
@@ -1511,7 +1511,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                         run_id=record.run_id if record is not None else None,
                     )
                 finally:
-                    messages[:] = captured
+                    messages[:] = captured if record is None else [m for m in captured if m.run_id == record.run_id]
                     if record is not None and captured:
                         record.messages = captured
 
