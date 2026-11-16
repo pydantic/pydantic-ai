@@ -1,6 +1,6 @@
 """Pydantic AI's workspace backend conformance suite, run against `OpenSandboxBackend`.
 
-`TestFakeOpenSandboxBackend` runs everywhere, over the fake server, where commands run in a temporary host
+`TestFakeOpenSandboxBackend` runs on POSIX hosts, over the fake server, where commands run in a temporary host
 directory. `TestLiveOpenSandboxBackend` runs the same rules against a real server and is gated like
 `test_opensandbox_live.py`.
 """

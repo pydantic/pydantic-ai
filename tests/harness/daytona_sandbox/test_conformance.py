@@ -1,6 +1,6 @@
 """Pydantic AI's workspace backend conformance suite, run against `DaytonaSandboxBackend`.
 
-`TestFakeDaytonaSandboxBackend` runs everywhere, over the fake Daytona SDK in host mode, where
+`TestFakeDaytonaSandboxBackend` runs on POSIX hosts, over the fake Daytona SDK in host mode, where
 commands and file operations act on a temporary host directory. `TestLiveDaytonaSandboxBackend`
 runs the same rules against a real sandbox and is gated like `test_daytona_live.py`.
 """

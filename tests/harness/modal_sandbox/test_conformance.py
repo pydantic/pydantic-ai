@@ -1,6 +1,6 @@
 """Pydantic AI's workspace backend conformance suite, run against `ModalSandboxBackend`.
 
-`TestFakeModalSandboxBackend` runs everywhere, over the fake Modal SDK in host mode, where
+`TestFakeModalSandboxBackend` runs on POSIX hosts, over the fake Modal SDK in host mode, where
 commands and file operations act on a temporary host directory. `TestLiveModalSandboxBackend`
 runs the same rules against a real sandbox and is gated like `test_modal_live.py` (see `conftest.py`).
 """

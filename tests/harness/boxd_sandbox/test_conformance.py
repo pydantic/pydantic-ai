@@ -1,6 +1,6 @@
 """Pydantic AI's workspace backend conformance suite, run against `BoxdSandboxBackend`.
 
-`TestFakeBoxdSandboxBackend` runs everywhere, over the fake boxd SDK, where commands act on a
+`TestFakeBoxdSandboxBackend` runs on POSIX hosts, over the fake boxd SDK, where commands act on a
 temporary host directory. `TestLiveBoxdSandboxBackend` runs the same rules against a real machine
 and is gated like `test_boxd_live.py`.
 """

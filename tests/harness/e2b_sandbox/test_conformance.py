@@ -1,6 +1,6 @@
 """Pydantic AI's workspace backend conformance suite, run against `E2BSandboxBackend`.
 
-`TestFakeE2BSandboxBackend` runs everywhere, over the fake E2B SDK in host mode, where
+`TestFakeE2BSandboxBackend` runs on POSIX hosts, over the fake E2B SDK in host mode, where
 commands and file operations act on a temporary host directory. `TestLiveE2BSandboxBackend`
 runs the same rules against a real sandbox and is gated like `test_e2b_live.py`.
 """
