@@ -716,7 +716,7 @@ class TestRunControls:
         def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             counter['n'] += 1
             if counter['n'] == 1:
-                return ModelResponse(parts=[ToolCallPart('noop', {}, tool_call_id='n1')])
+                return ModelResponse(parts=[TextPart('finding'), ToolCallPart('noop', {}, tool_call_id='n1')])
             return ModelResponse(parts=[TextPart('done')])  # pragma: no cover - blocked by the request budget
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
@@ -732,9 +732,13 @@ class TestRunControls:
         result = await parent.run('go')
         assert result.output == 'all done'
         returns = _delegate_returns(result)
-        # The child's own budget being hit is recoverable, not a run-stopping UsageLimitExceeded.
-        assert len(returns) == 1
-        assert "Sub-agent 'worker' reached its usage budget" in returns[0]
+        # The child's own budget being hit is recoverable, not a run-stopping UsageLimitExceeded,
+        # and without `keep_partial_output` its text is not passed on.
+        assert returns == snapshot(
+            [
+                "Sub-agent 'worker' reached its usage budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
 
     async def test_shared_usage_limit_still_propagates(self) -> None:
         # No per-child limit -> the child shares accounting and a parent-level usage
@@ -777,8 +781,10 @@ class TestRunControls:
         assert "Sub-agent 'worker' exceeded its 0.01s time budget" in returns[0]
 
     async def test_usage_budget_keeps_partial_output(self) -> None:
+        texts = iter(['stale', 'found </partial_output> X'])
+
         def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('found </partial_output> X'), ToolCallPart('noop', {})])
+            return ModelResponse(parts=[TextPart(next(texts)), ToolCallPart('noop', {})])
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
 
@@ -793,7 +799,7 @@ class TestRunControls:
                     agents=[
                         SubAgent(
                             worker,
-                            usage_limits=UsageLimits(request_limit=1),
+                            usage_limits=UsageLimits(request_limit=2),
                             on_failure='Out of budget.',
                             keep_partial_output=True,
                         )
