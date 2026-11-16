@@ -1,4 +1,4 @@
-"""Every regular expression `pydantic_ai_harness` ships scans text in linear time, whatever the text.
+"""Every regular expression `pydantic_ai_harness` ships scans repeated adversarial input in linear time.
 
 `re` backtracks, so a pattern whose match attempts re-read the same input, from each offset of a run or once per
 way of splitting it, takes quadratic or exponential time on input built to provoke it. A harness pattern often runs
@@ -7,12 +7,13 @@ on text the model or a tool produced, and it runs on the event loop.
 The patterns are found in the package source, so a new one is checked without being listed here: every call to a
 `re` function is read, and its pattern is worked out from the literals, f-strings, `'|'.join(...)` calls and
 names bound to them in its module or function. `re.escape(...)` of runtime text stands in as `x`: escaped text
-matches only itself, so the pattern around it is what can backtrack. A call whose pattern only exists at runtime
-must say where it comes from: `SHIPPED_TABLES` checks the tables the package compiles, and `CALLER_PATTERNS` names
-the patterns a caller supplies, which this test cannot check.
+matches only itself, so the pattern around it is what can backtrack. Each call whose pattern only exists at
+runtime says where its pattern comes from in `RUNTIME_PATTERNS`, and the built-in tables those calls compile are
+checked through `PATTERN_TABLES`.
 
 Each pattern is then scanned by `tests/harness/_regex_steps.py`, which counts the steps `re`'s backtracking takes
-on repeated adversarial input rather than timing it; `linearity_failure` says what it asserts. A failure names the
+rather than timing it. `linearity_failure` says what it asserts, on inputs built from each pattern's own literals and
+repeats: a pass shows those inputs scan in linear time, not that every input does. A failure names the
 repeated unit and the step counts. The usual fix keeps a failed attempt from restarting inside the run it already
 read, with a lookbehind such as `(?<![\\w-])` before the repeat, or bounds what the repeat can cross.
 """
@@ -20,6 +21,7 @@ read, with a lookbehind such as `(?<![\\w-])` before the repeat, or bounds what 
 from __future__ import annotations
 
 import ast
+import itertools
 import re
 from collections import Counter
 from collections.abc import Iterator
@@ -51,24 +53,29 @@ _FLAGS_ARGUMENT = {
 _ESCAPED = 'x'
 """What `re.escape(...)` of runtime text stands in as."""
 
-SHIPPED_TABLES: dict[str, dict[str, tuple[str, int]]] = {
-    'guardrails/detectors.py::_compile': {
-        **{f'DEFAULT_SECRET_PATTERNS[{name!r}]': (pattern, 0) for name, pattern in DEFAULT_SECRET_PATTERNS.items()},
-        **{f'DEFAULT_PII_PATTERNS[{name!r}]': (pattern, 0) for name, pattern in DEFAULT_PII_PATTERNS.items()},
-    },
-    'artifact_scanning/_scanner.py::ArtifactScanner.__post_init__': {
-        f'DEFAULT_ARTIFACT_PATTERNS[{name!r}]': (pattern, re.IGNORECASE)
-        for name, (_, pattern) in DEFAULT_ARTIFACT_PATTERNS.items()
+PATTERN_TABLES: dict[str, dict[str, tuple[str, int]]] = {
+    'DEFAULT_SECRET_PATTERNS': {name: (pattern, 0) for name, pattern in DEFAULT_SECRET_PATTERNS.items()},
+    'DEFAULT_PII_PATTERNS': {name: (pattern, 0) for name, pattern in DEFAULT_PII_PATTERNS.items()},
+    'DEFAULT_ARTIFACT_PATTERNS': {
+        name: (pattern, re.IGNORECASE) for name, (_, pattern) in DEFAULT_ARTIFACT_PATTERNS.items()
     },
 }
-"""Call sites that compile a table of built-in patterns, keyed by `<file>::<function>`, with the patterns they compile."""
+"""Every `DEFAULT_*_PATTERNS` table the package defines, with the flags the package compiles it with."""
 
-CALLER_PATTERNS: dict[str, str] = {
-    'browser_use/_toolset.py::BrowserUseToolset.__init__': 'an alternation of escaped secret placeholders',
-    'file_system/_toolset.py::FileSystemToolset._search_files': "the model's search pattern",
-    'permissions/_capability.py::Permissions.__post_init__': "the user's `ask_commands`",
+RUNTIME_PATTERNS: dict[str, tuple[str, ...]] = {
+    'artifact_scanning/_scanner.py::ArtifactScanner.__post_init__': (
+        'a `DEFAULT_ARTIFACT_PATTERNS` entry',
+        "the user's `extra_patterns`",
+    ),
+    'browser_use/_toolset.py::BrowserUseToolset.__init__': ('an alternation of escaped secret placeholders',),
+    'file_system/_toolset.py::FileSystemToolset._search_files': ("the model's search pattern",),
+    'guardrails/detectors.py::_compile': (
+        "a `DEFAULT_SECRET_PATTERNS` or `DEFAULT_PII_PATTERNS` entry, or the user's `extra`",
+    ),
+    'permissions/_capability.py::Permissions.__post_init__': ("the user's `ask_commands`",),
 }
-"""Call sites whose pattern comes from the caller, keyed by `<file>::<function>`, with what the pattern is."""
+"""Calls whose pattern only exists at runtime, keyed by `<file>::<function>`: where each call's pattern comes from, in
+source order. A built-in table they compile is checked through `PATTERN_TABLES`; a caller's own pattern can't be."""
 
 
 @dataclass(frozen=True)
@@ -169,8 +176,11 @@ def _subscript(node: ast.Subscript, scopes: list[dict[str, _Binding]]) -> ast.ex
         entries = {index: element for index, element in enumerate(container.elts)}
     else:
         raise _Unresolved(ast.unparse(node))
-    [key] = _fold(node.slice, scopes)
-    return entries[key]
+    try:
+        [key] = _fold(node.slice, scopes)
+        return entries[key]
+    except (ValueError, KeyError) as error:
+        raise _Unresolved(ast.unparse(node)) from error
 
 
 def _strings(values: list[str | int]) -> list[str]:
@@ -217,8 +227,9 @@ def _fold(node: ast.expr, scopes: list[dict[str, _Binding]]) -> list[str | int]:
         case ast.Call(func=ast.Attribute(value=ast.Name(id='re'), attr='escape')):
             return [_ESCAPED]
         case ast.Call(func=ast.Attribute(value=separator, attr='join'), args=[sequence]):
-            pieces = [_strings(_fold(element, scopes)) for element in _elements(sequence, scopes)]
-            return [joiner.join(piece[0] for piece in pieces) for joiner in _strings(_fold(separator, scopes))]
+            choices = [_strings(_fold(element, scopes)) for element in _elements(sequence, scopes)]
+            joiners = _strings(_fold(separator, scopes))
+            return [joiner.join(parts) for joiner in joiners for parts in itertools.product(*choices)]
         case ast.IfExp(body=body, orelse=orelse):
             return [*_fold(body, scopes), *_fold(orelse, scopes)]
         case _:
@@ -279,8 +290,10 @@ def _call_sites_in(relative: str, tree: ast.Module) -> Iterator[CallSite]:
     yield from visit(tree, '', [_bindings(tree)])
 
 
-def _re_imports_in(tree: ast.Module) -> list[str]:
-    """Imports that would hide a `re` call from `_call_sites_in`: names imported from `re`, or `re` renamed."""
+def _hidden_re_uses(tree: ast.Module) -> list[str]:
+    """Uses of `re` that `_call_sites_in` can't see: imported names, a renamed or rebound `re`, a function passed on."""
+    attribute_values = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    called = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
     hidden: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in ('re', 'regex'):
@@ -288,14 +301,25 @@ def _re_imports_in(tree: ast.Module) -> list[str]:
         elif isinstance(node, ast.Import):
             hidden += [f'import {a.name} as {a.asname}' for a in node.names if a.name == 're' and a.asname]
             hidden += ['import regex' for a in node.names if a.name == 'regex']
+        elif isinstance(node, ast.Name) and node.id == 're' and id(node) not in attribute_values:
+            hidden.append(f'`re` itself, at line {node.lineno}')
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == 're'
+            and node.attr in _FLAGS_ARGUMENT
+            and id(node) not in called
+        ):
+            hidden.append(f'`re.{node.attr}` uncalled, at line {node.lineno}')
     return hidden
 
 
+_SOURCES = {
+    path.relative_to(_PACKAGE).as_posix(): path.read_text(encoding='utf-8') for path in sorted(_PACKAGE.rglob('*.py'))
+}
 # Parsed at collection, once: a module that never names `re` or `regex` can't call either, so it isn't parsed.
 _MODULES = [
-    (path.relative_to(_PACKAGE).as_posix(), ast.parse(source))
-    for path in sorted(_PACKAGE.rglob('*.py'))
-    if re.search(r'\b(?:re|regex)\b', source := path.read_text(encoding='utf-8'))
+    (relative, ast.parse(source)) for relative, source in _SOURCES.items() if re.search(r'\b(?:re|regex)\b', source)
 ]
 _CALL_SITES = [site for relative, tree in _MODULES for site in _call_sites_in(relative, tree)]
 
@@ -307,8 +331,8 @@ def _checked_patterns() -> dict[str, tuple[str, int]]:
         for pattern in site.patterns or ():
             seen[site.location] += 1
             checked[f'{site.location}#{seen[site.location]}' if seen[site.location] > 1 else site.location] = pattern
-    for location, table in SHIPPED_TABLES.items():
-        checked.update({f'{location}:{name}': pattern for name, pattern in table.items()})
+    for table_name, table in PATTERN_TABLES.items():
+        checked.update({f'{table_name}[{name!r}]': pattern for name, pattern in table.items()})
     unique: dict[tuple[str, int], str] = {}
     for label, pattern in checked.items():
         unique.setdefault(pattern, label)
@@ -320,21 +344,29 @@ def test_scanning_is_linear(pattern: str, flags: int):
     assert linearity_failure(pattern, flags) is None
 
 
-def test_every_call_site_without_a_literal_pattern_is_accounted_for():
-    """A pattern built at runtime is listed with where it comes from, and a listed call site still exists."""
-    unresolved = {site.location for site in _CALL_SITES if site.patterns is None}
+def test_every_runtime_pattern_says_where_it_comes_from():
+    """Each call whose pattern only exists at runtime has an entry, and each entry still has its call."""
+    unresolved = Counter(site.location for site in _CALL_SITES if site.patterns is None)
 
-    assert sorted(unresolved) == sorted({*SHIPPED_TABLES, *CALLER_PATTERNS})
+    assert dict(unresolved) == {location: len(sources) for location, sources in RUNTIME_PATTERNS.items()}
 
 
-def test_re_is_only_imported_as_re():
-    """A `from re import compile` or a renamed `re` would hide its calls from the scan above."""
-    assert [(relative, hidden) for relative, tree in _MODULES for hidden in _re_imports_in(tree)] == []
+def test_every_pattern_table_is_checked():
+    """A new table reaches `re` through a call `RUNTIME_PATTERNS` already lists, so it has to be listed by name."""
+    tables = {name for source in _SOURCES.values() for name in re.findall(r'^(DEFAULT_\w+_PATTERNS)\b', source, re.M)}
+
+    assert sorted(tables) == sorted(PATTERN_TABLES)
+
+
+def test_re_functions_are_only_called_directly():
+    """A `from re import compile`, a renamed `re` or `re.compile` passed on would hide calls from the scan above."""
+    assert [(relative, hidden) for relative, tree in _MODULES for hidden in _hidden_re_uses(tree)] == []
 
 
 _UNRESOLVED_SOURCE = """\
 import re
 from elsewhere import IMPORTED
+T = {'a': 'x'}
 
 def f(pattern, table, names):
     re.compile(pattern)
@@ -345,6 +377,8 @@ def f(pattern, table, names):
     re.compile(f'{pattern!r}')
     re.compile(table()[0])
     re.compile(str(pattern))
+    re.compile(T['missing'])
+    re.compile(T['a' if pattern else 'b'])
 """
 
 
@@ -376,17 +410,25 @@ def f(pattern, table, names):
             [CallSite('m.py::C.f', [('\\bx', re.I | re.M), ('x', re.I | re.M)])],
             id='escaped-runtime-text',
         ),
-        pytest.param(_UNRESOLVED_SOURCE, [CallSite('m.py::f', None)] * 8, id='runtime-patterns'),
+        pytest.param(_UNRESOLVED_SOURCE, [CallSite('m.py::f', None)] * 10, id='runtime-patterns'),
     ],
 )
 def test_the_call_site_scan(source: str, sites: list[CallSite]):
     assert list(_call_sites_in('m.py', ast.parse(source))) == sites
 
 
-def test_the_import_scan():
-    source = 'import re\nimport re as regexp\nfrom re import compile\nimport regex\n'
+def test_the_hidden_use_scan():
+    source = 'import re\nimport re as regexp\nfrom re import compile\nimport regex\n_re = re\nmap(re.compile, [])\nre.compile("a")\n'
 
-    assert _re_imports_in(ast.parse(source)) == ['import re as regexp', 'from re import ...', 'import regex']
+    assert sorted(_hidden_re_uses(ast.parse(source))) == snapshot(
+        [
+            '`re.compile` uncalled, at line 6',
+            '`re` itself, at line 5',
+            'from re import ...',
+            'import re as regexp',
+            'import regex',
+        ]
+    )
 
 
 @pytest.mark.parametrize(
@@ -426,6 +468,7 @@ def test_a_super_linear_pattern_fails(pattern: str, failure: str):
         pytest.param(r'(?:ab){1,2}+', 0, 'ababab', id='possessive-group-at-its-bound'),
         pytest.param(r'x*', 0, 'axxb', id='empty-matches'),
         pytest.param(r'(?:a?){2,3}b', 0, 'b ab', id='empty-iterations'),
+        pytest.param(r'(?:a?){2}+|(?:b?){0,3}+c', 0, 'x bbc', id='empty-possessive-iterations'),
     ],
 )
 def test_the_step_counter_matches_like_re(pattern: str, flags: int, text: str):

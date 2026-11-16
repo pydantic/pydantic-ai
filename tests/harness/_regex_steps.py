@@ -321,7 +321,7 @@ class StepCounter:
             count = 0
             while count < high:
                 end = self._first_end(body, position)
-                if end is None or end == position:
+                if end is None or (end == position and count >= low):
                     break
                 position, count = end, count + 1
             return count >= low and then(position)
@@ -343,7 +343,7 @@ class StepCounter:
         return lambda position, then: iterate(position, then, 0)
 
 
-_SAMPLE = 'aA0 _-./:=@"\'<>\\\n\t!#\x1b\x00​'
+_SAMPLE = 'aA0 _-./:=@"\'<>\\\n\t!#\x1b\x00\u200b'
 """Characters to try in a set or wildcard, besides the ones a pattern names."""
 _GROWTH_LIMIT = 3
 """Doubling the input doubles a linear scan's added steps and quadruples a quadratic one's; this sits between."""
@@ -403,7 +403,7 @@ def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int,
             reach += body_reach * (max(low, 1) if high == _UNBOUNDED else high)
             prefix = prefix if low == 0 else ''
         elif test is not None:
-            prefix += _representatives(node, test)[0]
+            prefix += ''.join(_representatives(node, test)[:1])
             reach += 1
         elif node.name == 'BRANCH':
             _, alternatives = _pair(node.argument)
