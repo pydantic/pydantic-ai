@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, TypeGuard
+from typing import Annotated, Any, NotRequired, TypeGuard
 
 from anthropic.types.beta import (
     BetaComputerToolset20260801Param,
@@ -44,6 +44,8 @@ class ComputerReplay(TypedDict):
     computer_tool: AnthropicComputerToolVersion
     computer_action_counts: list[Annotated[int, Field(ge=1)]]
     """How many actions each call became, so results are matched to calls without mapping them again."""
+    computer_refusal: NotRequired[str]
+    """Why none of the calls ran, sent to Claude in place of the retry's validation errors."""
 
 
 _REPLAY = TypeAdapter(ComputerReplay)
@@ -143,6 +145,11 @@ class NativeComputer:
             computer_tool=self.version,
             computer_action_counts=[len(member) for member in member_actions],
         )
+        if between := [f'`{name}`' for names in split.values() for name in names]:
+            replay['computer_refusal'] = (
+                f'No computer action ran: they run together as one batch, and a call of {" and ".join(between)} came '
+                "between them. Make the computer calls before or after the other tools' calls, not between them."
+            )
         return ComputerCallPart(
             self.name,
             # A field Claude left out takes the `computer` tool's default.
@@ -305,6 +312,10 @@ class _Zoom(_Strict):
     region: Annotated[list[int], Field(min_length=4, max_length=4)]
 
 
+class _Press(_Strict):
+    coordinate: _Coordinate | None = None
+
+
 class _NoInput(_Strict):
     pass
 
@@ -313,8 +324,8 @@ _MEMBERS: dict[str, type[_Strict]] = {
     **dict.fromkeys(_COMPUTER_CLICKS, _Click),
     'mouse_move': _Move,
     'left_click_drag': _Drag,
-    'left_mouse_down': _NoInput,
-    'left_mouse_up': _NoInput,
+    'left_mouse_down': _Press,
+    'left_mouse_up': _Press,
     'scroll': _Scroll,
     'type': _Type,
     'key': _Key,
@@ -400,8 +411,12 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
             return [{'type': 'hold_key', 'keys': [member.text], 'seconds': member.duration}]
         case _Wait():
             return [{'type': 'wait', 'seconds': member.duration}]
+        case _Press():
+            # Claude's earlier tools press or release at a point: the pointer moves there first.
+            move = [{'type': 'move', **_point(member.coordinate)}] if member.coordinate else []
+            return [*move, {'type': kind}]
         case _Zoom():
             left, top, right, bottom = member.region
             return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]
-        case _:  # `left_mouse_down`, `left_mouse_up`, `screenshot` and `cursor_position` take no input
+        case _:  # `screenshot` and `cursor_position` take no input
             return [{'type': kind}]

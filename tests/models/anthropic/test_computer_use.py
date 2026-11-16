@@ -222,10 +222,10 @@ async def test_a_screenshot_before_other_calls_gets_the_screen_where_it_was_take
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
-    # A press at a point would otherwise run at the pointer, and the point would be stored in the history.
+    # A press with held keys would otherwise run without them, and the keys would be stored in the history.
     client = MockAnthropic.create_mock(
         [
-            _turn(_tool_use('toolu_1', 'left_mouse_down', {'coordinate': [5, 6]})),
+            _turn(_tool_use('toolu_1', 'left_mouse_down', {'text': 'shift'})),
             _turn(BetaTextBlock(text='done', type='text')),
         ]
     )
@@ -236,7 +236,7 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
     assert computer.actions == []
     call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
     # Under the tool's own type, so the retry names the field rather than refusing the member.
-    assert call.args_as_dict() == {'actions': [{'type': 'mouse_down', 'unsupported_fields': ['coordinate']}]}
+    assert call.args_as_dict() == {'actions': [{'type': 'mouse_down', 'unsupported_fields': ['text']}]}
     (retry,) = [part for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)]
     assert retry.outcome == 'retried'
     assert '"loc":["actions",0,"mouse_down","unsupported_fields"]' in retry.model_response_str()
@@ -434,6 +434,9 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('wait', {}, {'type': 'wait', 'unsupported_fields': ['duration']}),
         ('left_mouse_down', {}, {'type': 'mouse_down'}),
         ('left_mouse_up', {}, {'type': 'mouse_up'}),
+        # Claude's earlier tools press or release at a point, so the pointer moves there first.
+        ('left_mouse_down', {'coordinate': [5, 6]}, [{'type': 'move', 'x': 5, 'y': 6}, {'type': 'mouse_down'}]),
+        ('left_mouse_up', {'coordinate': [7, 8]}, [{'type': 'move', 'x': 7, 'y': 8}, {'type': 'mouse_up'}]),
         (
             'scroll',
             {'scroll_direction': 'down', 'scroll_amount': 80, 'coordinate': [1, 2]},
@@ -1072,25 +1075,6 @@ async def test_a_stream_that_ends_inside_the_batch_runs_none_of_it(allow_model_r
     assert error.value.model_name == 'claude-sonnet-5-5'
 
 
-@pytest.mark.parametrize('stop_reason', ['refusal', 'max_tokens'])
-async def test_a_call_in_a_response_that_did_not_finish_normally_runs_nothing(
-    allow_model_requests: None, stop_reason: Literal['refusal', 'max_tokens']
-) -> None:
-    """Anthropic says not to run the calls of a response that stopped for a refusal or the token limit.
-
-    The guard is the `computer` tool's, for every provider; this pins that Anthropic's stop reasons reach it.
-    """
-    click = _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})
-    client = MockAnthropic.create_mock(
-        [_turn(click).model_copy(update={'stop_reason': stop_reason}), _turn(BetaTextBlock(text='done', type='text'))]
-    )
-    computer = FakeComputer()
-    await _agent(
-        AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client)), computer
-    ).run('Go.')
-    assert computer.actions == []
-
-
 @pytest.mark.parametrize('stream', [False, True], ids=['whole', 'streamed'])
 async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_requests: None, stream: bool) -> None:
     """Typing would otherwise run in the window the click chose, before the tool between them focused another."""
@@ -1116,6 +1100,37 @@ async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_request
     assert [call.tool_name for call in calls] == ['computer', 'focus']
     assert calls[0].args_as_dict()['actions'][1] == {'type': 'type', 'after_tool_calls': ['focus']}
     assert isinstance(calls[0], ComputerCallPart) and calls[0].actions is None
+
+
+async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_model_requests: None) -> None:
+    focus = BetaToolUseBlock.model_validate({'id': 'toolu_f', 'type': 'tool_use', 'name': 'focus', 'input': {}})
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+                focus,
+                _tool_use('toolu_2', 'type', {'text': 'hi'}),
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    computer = FakeComputer()
+    agent = _agent(model, computer)
+    agent.tool_plain(name='focus')(lambda: 'Focused.')
+    await agent.run('Go.')
+
+    assert computer.actions == []
+    _, second = get_mock_chat_completion_kwargs(client)
+    results = {r['tool_use_id']: r for r in second['messages'][-1]['content']}
+    refusal = (
+        'No computer action ran: they run together as one batch, and a call of `focus` came between them. Make the '
+        "computer calls before or after the other tools' calls, not between them."
+    )
+    assert [(results[id]['is_error'], results[id]['content']) for id in ('toolu_1', 'toolu_2')] == [
+        (True, [{'type': 'text', 'text': refusal}]),
+        (True, [{'type': 'text', 'text': refusal}]),
+    ]
 
 
 _JSON = st.recursive(

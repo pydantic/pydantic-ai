@@ -438,13 +438,10 @@ class AnthropicStreamedResponse(StreamedResponse):
         try:
             computer_args = pydantic_core.from_json(computer_input_json)
         except ValueError:
-            # Cut off mid-input, as at `max_tokens`: what parsed is kept to send back, but none of it runs, as a
-            # missing field such as a held key would change what the rest does.
+            # Cut off mid-input, as at `max_tokens`: none of it runs, as a missing field such as a held key would
+            # change what the rest does.
             self._computer_batch.incomplete.add(current_block.id)
-            try:
-                computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
-            except ValueError:  # not even the start of a value, such as `n` of `null`
-                computer_args = {}
+            computer_args = {}
         block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
         batch = self._computer_batch
         if native_computer.is_toolset:

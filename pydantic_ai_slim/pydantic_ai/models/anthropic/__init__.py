@@ -3386,11 +3386,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # The first call goes back under the part's ID as fitted for the request, as its result does.
             part_id = _guard_tool_call_id(t=part)
             first, *rest = replay['computer_blocks']
-            replay = ComputerReplay(
-                computer_blocks=[ComputerBlock(id=part_id, name=first['name'], input=first['input']), *rest],
-                computer_tool=replay['computer_tool'],
-                computer_action_counts=replay['computer_action_counts'],
-            )
+            replay['computer_blocks'] = [ComputerBlock(id=part_id, name=first['name'], input=first['input']), *rest]
             if sent_computer.is_toolset:
                 map_context.computer_calls[part_id] = replay
             for block in replay['computer_blocks']:
@@ -4104,7 +4100,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
-            text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
+            refusal = replay.get('computer_refusal') if part.outcome == 'retried' else None
+            text = BetaTextBlockParam(text=refusal or part.model_response_str(wrap_if_error=False), type='text')
             return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
         content = _result_items(part)
         if not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):

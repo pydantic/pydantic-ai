@@ -33,6 +33,8 @@ from pydantic_ai.computer_use import (
     Click,
     ComputerCallPart,
     Drag,
+    MouseDown,
+    MouseUp,
     MoveMouse,
     Point,
     PressKeys,
@@ -357,6 +359,37 @@ async def test_claude_shift_clicks_through_computer_20251124(
     assert provider.actions == [Click(x=100, y=200, modifiers=('shift',))]
     calls = content_blocks(request_capture.bodies('/v1/messages')[-1], 'tool_use')
     assert {'action': 'left_click', 'coordinate': [100, 200], 'text': 'shift'} in [call['input'] for call in calls]
+
+
+@needs_anthropic
+@pytest.mark.vcr
+async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _claude('claude-sonnet-4-6', anthropic_api_key, request_capture)
+    task = (
+        'Take a screenshot. Then, one action per step: press and hold the left mouse button at x=100 y=200 with '
+        '`left_mouse_down`, move the pointer to x=300 y=400 with `mouse_move`, release it there with `left_mouse_up`, '
+        'and reply "done". Do nothing else.'
+    )
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(task)
+
+    # Claude presses and releases at a point, in calls of their own: the button stays pressed between them.
+    assert provider.actions == [
+        MoveMouse(x=100, y=200),
+        MouseDown(),
+        MoveMouse(x=300, y=400),
+        MoveMouse(x=300, y=400),
+        MouseUp(),
+    ]
+    bodies = request_capture.bodies('/v1/messages')
+    assert [call['input'] for call in content_blocks(bodies[-1], 'tool_use')][1:] == [
+        {'action': 'left_mouse_down', 'coordinate': [100, 200]},
+        {'action': 'mouse_move', 'coordinate': [300, 400]},
+        {'action': 'left_mouse_up', 'coordinate': [300, 400]},
+    ]
+    assert [is_error for body in bodies[1:] for is_error, _ in _results(body)[-1:]] == [False] * 4
 
 
 @needs_anthropic
