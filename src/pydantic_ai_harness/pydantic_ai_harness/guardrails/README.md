@@ -162,8 +162,7 @@ OutputGuardrail(guard=for_text(redact_secrets, on_other='allow'))  # skips it de
 
 A tool result guard receives `ToolResultInfo`, not just a value. Use
 `for_tool_result_text` to adapt a detector for a bare string result, a list of strings
-and images (such as a screenshot tool returns), or the text channels of a `ToolReturn`.
-Images are kept:
+and images (such as a screenshot tool returns), or the text channels of a `ToolReturn`:
 
 ```python
 from pydantic_ai_harness import ToolGuardrail
@@ -178,8 +177,8 @@ secret split across two parts is still caught. A `CachePoint` between two text p
 does not separate them; an image or document does. If sanitizing the joined text gives
 a different result from sanitizing each part, the span becomes one part carrying the
 first part's metadata, and a `CachePoint` between merged parts moves ahead of it;
-otherwise each part keeps its own metadata. `ToolReturn` metadata, kind, and non-text
-parts are kept.
+otherwise each part keeps its own metadata. Images and other non-text parts are kept,
+in `return_value` and `content` alike, as are `ToolReturn` metadata and kind.
 
 As with `for_text`, a non-text result raises by default. `on_other='allow'`
 skips the whole result, including the `content` of a `ToolReturn` whose
