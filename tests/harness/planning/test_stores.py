@@ -6,7 +6,6 @@ import sqlite3
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -239,8 +238,8 @@ class TestSqliteSpecifics:
         opened: list[sqlite3.Connection] = []
         connect = sqlite3.connect
 
-        def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
-            connection = connect(*args, **{**kwargs, 'timeout': 0, 'check_same_thread': False})
+        def connect_without_waiting(database: str) -> sqlite3.Connection:
+            connection = connect(database, timeout=0, check_same_thread=False)
             opened.append(connection)
             return connection
 
