@@ -1900,7 +1900,10 @@ class TestTaskControlTelemetry:
             ]
             assert not [text_ for text_ in recorded if 'poet' in text_ or 'private text' in text_]
 
-    async def test_a_created_agents_name_stays_content_when_its_task_settles_after_the_run(self) -> None:
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_created_agents_name_stays_content_when_its_task_settles_after_the_run(
+        self, include_content: bool
+    ) -> None:
         """A bound owner lets the run return before its task settles, after the run dropped its created agents."""
         gate = Gate()
 
@@ -1908,7 +1911,7 @@ class TestTaskControlTelemetry:
             await gate.opened.wait()
             yield 'A poem.'
 
-        settings, exporter = traced(False)
+        settings, exporter = traced(include_content)
         parent = Agent(
             scripted(
                 call('create_agent', name='poet', description='Poems.', instructions='Write.'),
@@ -1932,15 +1935,19 @@ class TestTaskControlTelemetry:
                 gate.opened.set()
                 await owner.wait_children(None)
 
+        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
         assert decisions(exporter) == [
-            ('sub_agents task backgrounded', {'sub_agents.reason': 'requested'}),
+            ('sub_agents task backgrounded', {**name, 'sub_agents.reason': 'requested'}),
             (
                 'sub_agents task settled',
-                {'sub_agents.outcome': 'ok', 'sub_agents.model': 'function:function::streamed'},
+                {**name, 'sub_agents.outcome': 'ok', 'sub_agents.model': 'function:function::streamed'},
             ),
         ]
 
-    async def test_a_created_agents_name_stays_content_in_a_later_run_of_the_conversation(self) -> None:
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_created_agents_name_stays_content_in_a_later_run_of_the_conversation(
+        self, include_content: bool
+    ) -> None:
         """A later run can steer a task whose agent an earlier run created, and dropped when it returned."""
         gate = Gate()
 
@@ -1960,7 +1967,7 @@ class TestTaskControlTelemetry:
             (record,) = owner.records.values()
             return call('message_task', task_id=record.id, message='Shorter.')
 
-        settings, exporter = traced(False)
+        settings, exporter = traced(include_content)
         parent = Agent(
             scripted(
                 call('create_agent', name='poet', description='Poems.', instructions='Write.'),
@@ -1987,8 +1994,27 @@ class TestTaskControlTelemetry:
                 gate.opened.set()
                 await owner.wait_children(None)
 
-        assert ('sub_agents vetoed', {'sub_agents.event': 'sub_agents.task_message'}) in decisions(exporter)
-        assert not [attributes for _, attributes in decisions(exporter) if 'sub_agents.agent_name' in attributes]
+        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
+        assert ('sub_agents vetoed', {**name, 'sub_agents.event': 'sub_agents.task_message'}) in decisions(exporter)
+        if not include_content:
+            assert not [attributes for _, attributes in decisions(exporter) if 'sub_agents.agent_name' in attributes]
+
+    async def test_an_agent_on_the_bound_owners_roster_is_named_plainly(self) -> None:
+        # The application configured it on the owner, not on `SubAgents`, and the model did not choose its name.
+        settings, exporter = traced(False)
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='alpha', task='Find x.'), echo_last_return),
+            capabilities=[controlled()],
+        )
+        parent.instrument = settings
+        owner = DelegationTasks(agents={'alpha': researcher()})
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
+        assert (span.attributes or {}).get('sub_agents.agent_name') == 'alpha'
 
     async def test_a_remote_task_nobody_picks_up_is_a_span(self) -> None:
         parent, _ = remote_parent(

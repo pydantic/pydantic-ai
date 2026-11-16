@@ -1040,6 +1040,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
         # Decided by name, not by this run's created agents: a task outlives the run that created its agent.
         configured = {*self._agents, *self._remote, *([SELF_AGENT_NAME] if self._include_self else [])}
+        if (owner := DelegationTasks.current()) is not None:
+            # The application gave a bound owner its agents, which resolve before this toolset's.
+            configured.update(owner.agents)
         return TaskTelemetry(ctx=ctx, configured_names=frozenset(configured))
 
     def _owner(self) -> DelegationTasks:
@@ -1526,11 +1529,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 def _served_model_label(
     serving_model: ServingModelRecorder, run_model: Model | KnownModelName | str | None, sub_agent: SubAgent[Any]
 ) -> str | None:
-    """The model that served the delegation's last request, else the one it was configured to run on.
+    """The model that answered the delegation's last request, else the one it was configured to run on.
 
     `None` when there's no model to name: no request was answered, and the sub-agent has no model of its own.
     """
-    model = serving_model.model or run_model or sub_agent.agent.model
+    if serving_model.answered_by is not None:
+        return serving_model.answered_by
+    model = run_model or sub_agent.agent.model
     return None if model is None else model_label(model)
 
 

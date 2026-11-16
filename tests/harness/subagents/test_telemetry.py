@@ -17,6 +17,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -112,6 +113,14 @@ class TestSubAgentsTelemetry:
     async def test_the_model_is_the_one_that_served_the_run(self):
         # Configured as the string `'test'`; the model that answered names itself `test:test`.
         worker = SubAgent(Agent('test', name='worker'))
+        instrumentation, exporter = instrumented()
+        await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
+
+        [span] = delegation_spans(exporter)
+        assert sub_agents_attributes(span)['sub_agents.model'] == 'test:test'
+
+    async def test_under_a_fallback_model_the_model_is_the_one_that_answered(self):
+        worker = SubAgent(Agent(FallbackModel(FunctionModel(crash), TestModel()), name='worker'))
         instrumentation, exporter = instrumented()
         await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
 
