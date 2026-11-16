@@ -171,4 +171,10 @@ class SettingsMenu:
     Read as this menu opens, so a row an action adds meanwhile opens its menu once this one opens again.
     """
     searchable: bool = True
-    """Whether typing filters the terminal list. A short menu may prefer single-key shortcuts instead."""
+    """Whether the terminal list can be filtered.
+
+    Lists offering Space cycling use `/` to start search; printable keys then edit the query.
+    Cycling requires multiple declared choices and no action/submenu mapping.
+    Lists without eligible rows filter as you type and keep uppercase `R` for reset.
+    Nonsearchable lists have no search and use lowercase `r` for reset.
+    """

@@ -79,12 +79,7 @@ async def _scan_skills(workspace: Workspace, skills_root: str, root_dir: str) ->
         if real in seen:
             continue
         seen.add(real)
-        # Defensive race: the directory may disappear after `_stat`.
-        try:
-            entries = await workspace.list_dir(directory)
-        except FileNotFoundError:  # pragma: no cover
-            continue
-        for entry in entries:
+        for entry in await _list_dir(workspace, directory):
             if entry.is_dir:
                 if depth < _MAX_SKILL_DEPTH:
                     pending.append((entry.path, depth + 1))
@@ -97,11 +92,7 @@ async def _scan_agents(workspace: Workspace, agents_root: str, root_dir: str) ->
     root = await _stat(workspace, agents_root)
     if root is None or not root.is_dir:
         return []
-    # Defensive race: the directory may disappear after `_stat`.
-    try:
-        entries = await workspace.list_dir(agents_root)
-    except FileNotFoundError:  # pragma: no cover
-        return []
+    entries = await _list_dir(workspace, agents_root)
     return [_relative(entry.path, root_dir) for entry in entries if not entry.is_dir and entry.name.endswith('.md')]
 
 
@@ -110,6 +101,14 @@ async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
         return await workspace.stat(path)
     except FileNotFoundError:
         return None
+
+
+async def _list_dir(workspace: Workspace, directory: str) -> Sequence[FileEntry]:
+    # Defensive race: the directory may disappear after `_stat`.
+    try:
+        return await workspace.list_dir(directory)
+    except FileNotFoundError:  # pragma: no cover
+        return []
 
 
 def _relative(path: str, workspace: str) -> str:

@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "139"
+      - "143"
       content-type:
       - application/json
       host:
@@ -25,14 +25,17 @@ interactions:
         - role: user
           content: "Reply with exactly: OK"
         reasoning:
-          effort: low
+          effort: minimal
   response:
     status: 200
     headers:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -48,9 +51,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793032232-bJi6GFkUjutTuooRg81z
+        id: gen-1794001745-Uprh5LtklwV0ro4BVap7
         object: chat.completion
-        created: 1793032232
+        created: 1794001745
         model: x-ai/grok-build-0.1
         provider: xAI
         system_fingerprint: null
@@ -72,15 +75,15 @@ interactions:
               index: 0
             - type: reasoning.encrypted
               data: >-
-                fTFKszGhwkezb9hK1Mh+t7iZ1KOrB7N+E+NxOREYVhbEXij3BlCtMwQCBNbwL6ml89iCVN99++iLEFnmMr0kqLm4HkWJXSgfzrvklItE1qtdKJXa3U6kuploR6rN5TxawpJt3y3nJOSvwmSZWj/x6Llgv4G5QmS9OY8YafbnfgQkVoTA3+KKXc02s3D98O6dpFuOM3vRKl8mh35Za/4jSy4eCQ2xD/GYN3Z90XXFDzfSIOTEcwb8J0d61mPenZHt4dfMizKLdcdfbJPjCMePQgLcZgydycufKAlKZlLv6zD6K4yz1U0ocatbimy8W5s9rjIAmZ1Gf4NacB7ILSbFzUEXGS/Ki58fuM644FXM0f4KAUNeNp2OqnL1WQRj7a4TraXMyKuExLLGB0h4GNxajkOcVgilc+7H8HUs4mfXpoHsEDsBnHRZtKL573mC5umLoeK6YN+CNz08bCEWjUFpCHAugpcA/P4ZjULWiL2a+0k7kXBMhTOsxsVSuHM75BDO2OjwSYhUkKxMQYVgH4ryrZNlpChHYscLmZsi4ys5EoKs9TAKVDsVdWI8r5ke0uI8A5DKaHl9Lv8BMeQHOsyB9G/Qqgi5YDeSP5Ne2GRL0HctZcP9C74YHmm1Gvq52jq9PcNaEsHy37pRFgDPbxoXvmYix4NqpcJa5VrFJavThip8xXZLRDDgOy7joZDPqXxcYiCp2N0B8sgGHBLr8eKe/auZuBGnK2TMfyElha46MIjwdnzF28SpbXrhAtcPh4l5GaTGtovBlMU3iLQM9Sbmmp7eAZ6yLtOfUQ4BWR5dGIweLObCL8VMfayB5x60sxp9RNSArCQ3OrWWUD83Dxlu6xaEG1SXjd5xM1O1kRcvsV4VrAPPFwR8BX9t6vXKvei7kBxNl6MOWvxXAqpnAT2pX78y1FVAF8HQBr/0P+JnetB42/h62GR9PG9E/gNMHQA8hzFFIHzh/gsu/WLZURcUVI0AiP5C/i2qgFRLYjcd4MWB55b3RG/amrJZNWamKMMKSu7LqNGcjDarsPeiqNGBYbArTHWyhF/CMfqaYfBR.eyJlbmRwb2ludF9zbHVnIjoieC1haS9ncm9rLWJ1aWxkLTAuMS0yMDI2MDUyMHx4YWkifQ
+                c9WzzTj5XScpHJ3pqBGPwJR5+isWgG+KOS+9A8Ew0K7Nb3vQRN3LyY5u3Kcw8x/nXouh7UElXTgT/E84qynD96AQ+H49X/Cc82OsliMuIneema6LFAutcIBxSdLkUs/h2MwWYe8NPxFSEpvBQWR7aOr1I25loZYZbks/0yfE70QeC+MZE9SAGsEqeC73vssH/bmYM0w4fxHCOYCtViFxs18TkHBtLwhUoQAsE30a5Va3OlGanD5mS4UNdHMFV4qe3N5q4lpauALVYrTt8WEpQ++fxmTdm02GcJGs5gDvykxfH56ULmHACavMMB8eS13VdsbvKQRSBhUS+t6e1zMwtghQygWrwIr2CduG6FGwCiMNOKYddkdmhFs7yt0uy4ul1T/DV+Fx8/X99/DXhi6M1NhiegCkq31EzsrlIcer+0q7JLhq88Q0YuRlwxErTFoQZhwihMO3lxIwNh0qsTYQGC/bL4z/svFsgkpS6wz3FkNa/OnO1xuU7GVGCMiLS3hp/tGbXOc0R2v07RS1z5c9YRVH2L85kMSKtGADcw.eyJlbmRwb2ludF9zbHVnIjoieC1haS9ncm9rLWJ1aWxkLTAuMS0yMDI2MDUyMHx4YWkifQ
               format: xai-responses-v1
-              id: rs_1e09a4ab-76ca-906d-81ce-801163e2ceb5
+              id: rs_cab17b2a-439b-9d13-95ed-ea1ae3d166ed
               index: 1
         usage:
           prompt_tokens: 191
-          completion_tokens: 167
-          total_tokens: 358
-          cost: 0.0004226
+          completion_tokens: 163
+          total_tokens: 354
+          cost: 0.0004146
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 128
@@ -88,11 +91,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0004226
+            upstream_inference_cost: 0.0004146
             upstream_inference_prompt_cost: 0.0000886
-            upstream_inference_completions_cost: 0.000334
+            upstream_inference_completions_cost: 0.000326
           completion_tokens_details:
-            reasoning_tokens: 166
+            reasoning_tokens: 162
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T16:30:33.522771+00:00
+  recorded_at: 2026-11-06T21:49:07.326182+00:00

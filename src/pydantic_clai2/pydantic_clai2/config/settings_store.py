@@ -79,6 +79,11 @@ def file_sha256(path: Path) -> str:
         return ''
 
 
+def setting_json(value: JsonValue) -> str:
+    """A setting value as the JSON text the store keeps, so two values compare by their exact JSON."""
+    return _JSON.dump_json(value).decode()
+
+
 def config_dir() -> Path:
     """The user's CLAI folder, honouring `XDG_CONFIG_HOME`."""
     return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
@@ -108,6 +113,10 @@ class SettingsStore:
                 'CREATE TABLE IF NOT EXISTS model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)'
             )
             connection.execute('CREATE TABLE IF NOT EXISTS models (name TEXT PRIMARY KEY)')
+            # Older builds never read cleanup preferences, so this table needs no schema version bump.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS kept_worktrees (path TEXT PRIMARY KEY, checkout TEXT NOT NULL)'
+            )
             # Requirement tags sit beside `plugins`, never inside a declaration: older builds validate
             # declarations strictly and never look at this table. It needs no schema version bump,
             # which those builds would refuse.
@@ -118,6 +127,12 @@ class SettingsStore:
             # `plugins` for the same reason: builds that do not check contents never read them.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS approved_files (path TEXT PRIMARY KEY, sha256 TEXT NOT NULL)'
+            )
+            # The project-file values `/project approve` approved, by the absolute folder holding `.clai` and
+            # `/set` key, sit beside the rest for the same reason: builds that do not ask never read them.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS approved_project_settings (root TEXT NOT NULL, key TEXT NOT NULL, '
+                'value_json TEXT NOT NULL, PRIMARY KEY (root, key))'
             )
             # Fallback chains are their own table for the same reason: builds without chains never read it.
             connection.execute(
@@ -152,6 +167,20 @@ class SettingsStore:
     def load(self) -> Settings:
         """Resolve persisted overrides against built-in defaults."""
         return resolve_settings(self.overrides())
+
+    def kept_worktree(self, path: Path) -> str | None:
+        """The checkout identity whose exit cleanup was declined permanently, if saved."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT checkout FROM kept_worktrees WHERE path = ?', (str(path),)).fetchone()
+        return row[0] if row else None
+
+    def keep_worktree(self, path: Path, *, checkout: str) -> None:
+        """Suppress exit cleanup for this checkout, replacing any earlier checkout at the same path."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO kept_worktrees VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET checkout = excluded.checkout',
+                (str(path), checkout),
+            )
 
     def worktree_remove_commands(self) -> dict[str, list[str]]:
         """Read only cleanup configuration on exit; `ValueError` if it is invalid or cannot be read."""
@@ -403,6 +432,32 @@ class SettingsStore:
             connection.executemany(
                 'INSERT INTO approved_files VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET sha256 = excluded.sha256',
                 [(str(path), digest) for path, digest in digests.items()],
+            )
+
+    def approved_project_settings(self, root: Path) -> dict[str, str]:
+        """The project-file values `/project approve` approved for `root`, as `setting_json` text by `/set` key."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                'SELECT key, value_json FROM approved_project_settings WHERE root = ? ORDER BY key',
+                (str(root.resolve()),),
+            ).fetchall()
+        return dict(rows)
+
+    def approve_project_settings(self, root: Path, values: Mapping[str, JsonValue]) -> None:
+        """Approve each project-file value for `root`, replacing a value approved before."""
+        with self._connect() as connection:
+            connection.executemany(
+                'INSERT INTO approved_project_settings VALUES (?, ?, ?) '
+                'ON CONFLICT(root, key) DO UPDATE SET value_json = excluded.value_json',
+                [(str(root.resolve()), key, setting_json(value)) for key, value in values.items()],
+            )
+
+    def revoke_project_settings(self, root: Path, keys: Iterable[str]) -> None:
+        """Forget the approvals of `keys` for `root`."""
+        with self._connect() as connection:
+            connection.executemany(
+                'DELETE FROM approved_project_settings WHERE root = ? AND key = ?',
+                [(str(root.resolve()), key) for key in keys],
             )
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:

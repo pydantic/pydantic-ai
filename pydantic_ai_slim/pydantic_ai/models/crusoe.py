@@ -22,21 +22,15 @@ except ImportError as _import_error:
 __all__ = ('CrusoeModel', 'CrusoeModelName')
 
 LatestCrusoeModelNames = Literal[
-    'Qwen/Qwen3-235B-A22B-Instruct-2507',
-    'deepseek-ai/DeepSeek-V3-0324',
-    'deepseek-ai/DeepSeek-V4-Pro',
-    'deepseek-ai/Deepseek-V4-Flash',
+    'deepseek-ai/DeepSeek-V4.1-Flash',
     'google/gemma-4-31b-it',
-    'meta-llama/Llama-3.3-70B-Instruct',
-    'moonshotai/Kimi-K2.6',
-    'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B',
-    'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B',
     'nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B',
-    'nvidia/Nemotron-3.5-Lightning-30B-A3B',
+    'nvidia/nemotron-3.5-lightning-30b-a3b',
+    'nvidia/nemotron-3.5-super-vl-120b-a12b',
     'openai/gpt-oss-120b',
-    'yutori/n1.5',
-    'zai/GLM-5.1',
-    'zai/GLM-5.2',
+    'qwen/Qwen3.8-27B',
+    'zai-org/GLM-5.3',
+    'zai-org/GLM-5.3-Flash',
 ]
 
 CrusoeModelName = str | LatestCrusoeModelNames

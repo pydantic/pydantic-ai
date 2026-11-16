@@ -5,13 +5,14 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 import warnings
 from collections import Counter, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -82,6 +83,7 @@ from pydantic_ai.exceptions import (
     RunTimedOut,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -110,26 +112,28 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
-from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
+from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
 
-try:
-    from dbos import DBOS, DBOSConfig, SetWorkflowID
-    from dbos._error import DBOSAwaitedWorkflowCancelledError
-    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
+# Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
+pytest.importorskip('dbos')
 
-    from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
-    from pydantic_ai.durable_exec.dbos import (
-        DBOSAgent,  # pyright: ignore[reportDeprecated]
-        DBOSDurability,
-        DBOSModel,
-        StepConfig,
-    )
-    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
-    from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from dbos import DBOS, DBOSConfig, SetWorkflowID
+from dbos._error import DBOSAwaitedWorkflowCancelledError, DBOSPatchNondeterminismError
 
-except ImportError:  # pragma: lax no cover
-    pytest.skip('DBOS is not installed', allow_module_level=True)
+from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
+from pydantic_ai.durable_exec.dbos import (
+    DBOSAgent,  # pyright: ignore[reportDeprecated]
+    DBOSDurability,
+    DBOSModel,
+    StepConfig,
+)
+from pydantic_ai.durable_exec.dbos._function_toolset import (
+    _tool_instance_defaults_patched,  # pyright: ignore[reportPrivateUsage]
+    workflow_context,
+)
+from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 try:
     import logfire
@@ -165,6 +169,14 @@ from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .preamble_text import (
+    RunAndStreamResult,
+    StructuredOutput,
+    plain_run_and_stream,
+    preamble_text_agents,
+    preamble_text_before_output_tool,
+    run_and_stream,
+)
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -214,7 +226,6 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
     dbos_config: DBOSConfig = {
         'name': 'pydantic_dbos_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
-        'run_admin_server': False,
         'enable_otlp': True,
     }
     dbos = DBOS(config=dbos_config)
@@ -223,7 +234,6 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 model = OpenAIChatModel(
@@ -577,22 +587,22 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -652,7 +662,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -673,7 +683,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -706,7 +716,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -832,7 +842,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -2385,10 +2395,10 @@ async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
     """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
     assert result.output == snapshot("""\
-<context id="toolset:mcp">
+<pyai:context id="toolset:mcp">
 Be a helpful assistant.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
 
 
@@ -2934,7 +2944,8 @@ async def cancel_own_workflow() -> str:
     workflow_id = DBOS.workflow_id
     assert workflow_id is not None
     await DBOS.cancel_workflow_async(workflow_id)
-    return 'workflow cancelled'
+    # On `dbos` 3.x a workflow cancelling itself doesn't return from `cancel_workflow_async`; older versions do.
+    return 'workflow cancelled'  # pragma: lax no cover
 
 
 async def test_dbos_durability_workflow_cancellation_carries_run_state(dbos: DBOS) -> None:
@@ -4328,6 +4339,51 @@ async def test_dbos_durability_context_manages_resolved_models(dbos: DBOS) -> No
         'stream-exit',
         'model-exit:none',
     ]
+
+
+async def test_dbos_durability_structured_output_after_preamble_text_in_workflow(dbos: DBOS) -> None:
+    """Text streamed before a tool call isn't the final result when the output type is structured.
+
+    The workflow replays the step's stream against the parameters the step's model prepared, in which `'auto'` has
+    resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
+    replayed events; one set on the capability runs in the step and would see the live stream.
+    """
+    agents = preamble_text_agents(DBOSDurability)
+
+    @DBOS.workflow()
+    async def structured_output_after_preamble_text_workflow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await structured_output_after_preamble_text_workflow() == await plain_run_and_stream()
+
+
+async def test_dbos_durability_run_stream_warns_once_about_an_ignored_setting(dbos: DBOS) -> None:
+    """A setting the model ignores is warned about once per request, by the step's model that sends it."""
+
+    class NoStopSequencesFunctionModel(FunctionModel):
+        unsupported_settings = frozenset({'stop_sequences'})
+
+    agent = Agent(
+        NoStopSequencesFunctionModel(stream_function=preamble_text_before_output_tool),
+        name='durability_warns_once_about_an_ignored_setting',
+        output_type=StructuredOutput,
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def ignored_setting_workflow() -> str:
+        async with agent.run_stream('hello') as result:
+            return (await result.get_output()).response
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.warns(UnsupportedSettingWarning) as record:
+        assert await ignored_setting_workflow() == 'Paris'
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "The `stop_sequences` setting is not supported by model 'function:function::preamble_text_before_output_tool' and will be ignored."
+        ]
+    )
 
 
 async def test_dbos_durability_runtime_registered_model(dbos: DBOS) -> None:
@@ -6790,9 +6846,319 @@ def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError
     DBOS records a step's error by pickling it and raises the unpickled copy when a recovered workflow replays the
     step, so the run treats it as a stream that failed after it started, as the run that recorded it did.
     """
+    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
+
     partial = ModelResponse(parts=[TextPart('partial')], usage=RequestUsage(input_tokens=5, output_tokens=1))
     mark_streamed_before_failing(error, partial)
     recorded, serialization = serialize_exception(error, None, DBOSDefaultSerializer)
     replayed = deserialize_exception(recorded, serialization, DBOSDefaultSerializer)
     assert type(replayed) is type(error)
     assert streamed_before_failing(replayed) == partial
+
+
+# --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
+
+tool_instances_crash_armed = threading.Event()
+
+
+def _call_both_tools_then_crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(
+            parts=[ToolCallPart('first', {}, tool_call_id='1'), ToolCallPart('second', {}, tool_call_id='2')]
+        )
+    if tool_instances_crash_armed.is_set():
+        tool_instances_crash_armed.clear()
+        raise _ProcessCrash
+    return ModelResponse(parts=[TextPart('done')])
+
+
+@DBOS.step()
+async def first_step_one() -> str:
+    return 'first one'
+
+
+@DBOS.step()
+async def first_step_two() -> str:
+    return 'first two'
+
+
+@DBOS.step()
+async def second_step() -> str:
+    return 'second'
+
+
+async def first() -> str:
+    one = await first_step_one()
+    # When both tools run in parallel, `second` starts its step here, between `first`'s two steps.
+    await asyncio.sleep(0)
+    return f'{one}, {await first_step_two()}'
+
+
+async def second() -> str:
+    return await second_step()
+
+
+def _tool_instances_agent(name: str, toolset: FunctionToolset[None]) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_call_both_tools_then_crash),
+        name=name,
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[DBOSDurability()],
+    )
+
+
+async def _force_sequential(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, sequential=True)
+
+
+_shared_first = Tool(first)
+# Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
+_sequential_toolset = FunctionToolset([_shared_first], sequential=True)
+
+_tool_instances_agents = {
+    'sequential': _tool_instances_agent(
+        'sequential_tool_instances', FunctionToolset([Tool(first), Tool(second)], sequential=True)
+    ),
+    'defer_loading': _tool_instances_agent(
+        'deferred_tool_instances', FunctionToolset([Tool(first), Tool(second)], defer_loading=True)
+    ),
+    'shared_sequential': _tool_instances_agent(
+        'shared_sequential_tool_instance', FunctionToolset([_shared_first, Tool(second)])
+    ),
+    'prepare_sequential': _tool_instances_agent(
+        'prepare_sequential_tool_instances',
+        FunctionToolset(
+            [Tool(first, prepare=_force_sequential), Tool(second, prepare=_force_sequential)], sequential=True
+        ),
+    ),
+}
+_tool_instances_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        FunctionModel(_call_both_tools_then_crash),
+        name='dbos_agent_tool_instances',
+        toolsets=[FunctionToolset([Tool(first), Tool(second)], sequential=True)],
+    )
+)
+
+
+@DBOS.workflow()
+async def tool_instances_workflow(flag: str) -> str:
+    return (await _tool_instances_agents[flag].run('Call both tools.')).output
+
+
+async def _start_tool_instances_workflow(flag: str) -> None:
+    if flag == 'dbos_agent':
+        await _tool_instances_dbos_agent.run('Call both tools.')
+    else:
+        await tool_instances_workflow(flag)
+
+
+_in_parallel = ['__model.request', 'first_step_one', 'second_step', 'first_step_two', '__model.request']
+_one_at_a_time = ['__model.request', 'first_step_one', 'first_step_two', 'second_step', '__model.request']
+
+
+@pytest.mark.parametrize(
+    ('flag', 'unpatched_steps', 'patched_steps'),
+    [
+        ('sequential', _in_parallel, _one_at_a_time),
+        ('defer_loading', _in_parallel, ['__model.request', '__model.request']),
+        ('shared_sequential', _in_parallel, _one_at_a_time),
+        ('prepare_sequential', _one_at_a_time, _one_at_a_time),
+        ('dbos_agent', _in_parallel, _one_at_a_time),
+    ],
+)
+async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch, flag: str, unpatched_steps: list[str], patched_steps: list[str]
+) -> None:
+    """A workflow started before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances recovers.
+
+    Without the patch marker, the workflow lists the tools the way it did before: both calls start at once
+    and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose
+    own `prepare` makes it sequential stays sequential. A new workflow gets the toolset's value. Faking
+    `DBOS.patch_async` stands in for the code before the upgrade, which never called it.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+
+    async def unpatched(patch_name: str) -> bool:
+        return False
+
+    async def start_and_crash() -> str:
+        workflow_id = f'tool-instances-{flag}-{uuid.uuid4()}'
+        tool_instances_crash_armed.set()
+        with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+            await _start_tool_instances_workflow(flag)
+        return workflow_id
+
+    async def recorded_steps(workflow_id: str) -> list[str]:
+        steps = await dbos.list_workflow_steps_async(workflow_id)
+        return [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps]
+
+    monkeypatch.setattr(DBOS, 'patch_async', unpatched)
+    unpatched_id = await start_and_crash()
+    monkeypatch.undo()
+    patched_id = await start_and_crash()
+
+    assert await recorded_steps(unpatched_id) == unpatched_steps[:-1]
+    assert await recorded_steps(patched_id) == [
+        'DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances',
+        *patched_steps[:-1],
+    ]
+
+    await asyncio.sleep(0.01)
+    for workflow_id in (unpatched_id, patched_id):
+        handle = await DBOS.resume_workflow_async(workflow_id)
+        result = await handle.get_result()
+        assert (result if isinstance(result, str) else result.output) == 'done'
+    assert await recorded_steps(unpatched_id) == unpatched_steps
+    assert (await recorded_steps(patched_id))[1:] == patched_steps
+
+
+_per_run_toolset_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_call_both_tools_then_crash), name='dbos_agent_per_run_tool_instances')
+)
+
+
+async def test_dbos_agent_per_run_toolset_recovers_with_recorded_tools(dbos: DBOS) -> None:
+    """`DBOSAgent` recovers a per-run `FunctionToolset` from the workflow's recorded inputs, so it needs no patch gate.
+
+    A workflow started before the upgrade recovers with the `Tool` values it started with. Turning on
+    `sequential` on the caller's `Tool` instances after the crash stands in for the new `FunctionToolset`
+    applying it: recovery still runs both calls at once, as recorded.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+    tools = [Tool(first), Tool(second)]
+    workflow_id = f'tool-instances-per-run-{uuid.uuid4()}'
+    tool_instances_crash_armed.set()
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await _per_run_toolset_dbos_agent.run('Call both tools.', toolsets=[FunctionToolset(tools)])
+    for tool in tools:
+        tool.sequential = True
+
+    await asyncio.sleep(0.01)
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert (await handle.get_result()).output == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps] == _in_parallel
+
+
+async def test_dbos_tool_instance_defaults_patch_interrupted(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run whose patch probe another run's step interrupts lists the tools as before the patch, and recovers that way.
+
+    `DBOS.patch_async` raises `DBOSPatchNondeterminismError` when another step in the workflow starts during its
+    probe, before it records anything. The run then lists the tools without the toolset's `sequential`, and
+    recovery, whose probe finds the run's first model request at that position, takes the same branch.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+    workflow_id = f'tool-instances-interrupted-{uuid.uuid4()}'
+
+    async def interrupted(patch_name: str) -> bool:
+        raise DBOSPatchNondeterminismError(workflow_id, patch_name, 'another step started during the probe')
+
+    async def recorded_steps() -> list[str]:
+        steps = await dbos.list_workflow_steps_async(workflow_id)
+        return [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps]
+
+    monkeypatch.setattr(DBOS, 'patch_async', interrupted)
+    tool_instances_crash_armed.set()
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await tool_instances_workflow('sequential')
+    monkeypatch.undo()
+    assert await recorded_steps() == _in_parallel[:-1]
+
+    await asyncio.sleep(0.01)
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == 'done'
+    assert await recorded_steps() == _in_parallel
+
+
+@DBOS.workflow()
+async def concurrent_tool_instances_workflow() -> list[str]:
+    agent = _tool_instances_agents['sequential']
+    results = await asyncio.gather(agent.run('Call both tools.'), agent.run('Call both tools.'))
+    return [result.output for result in results]
+
+
+async def test_dbos_tool_instance_defaults_patch_shared_by_concurrent_runs(dbos: DBOS) -> None:
+    """Concurrent runs in one workflow share its one patch marker, and a run outside a workflow records none.
+
+    Not a VCR test: it pins the steps DBOS records; the model is a `FunctionModel`.
+    """
+    workflow_id = f'tool-instances-concurrent-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id):
+        assert await concurrent_tool_instances_workflow() == ['done', 'done']
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
+    assert steps.count('DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances') == 1
+
+    assert (await _tool_instances_agents['sequential'].run('Call both tools.')).output == 'done'
+
+
+@DBOS.workflow()
+async def sequential_tool_instances_runs_workflow() -> list[str]:
+    agent = _tool_instances_agents['sequential']
+    outputs = [(await agent.run('Call both tools.')).output for _ in range(2)]
+    assert _tool_instance_defaults_patched[workflow_context()] is True
+    return outputs
+
+
+async def test_dbos_tool_instance_defaults_patch_cache_holds_its_result(dbos: DBOS) -> None:
+    """Runs one after another in a workflow reuse its patch result, which the gate caches as a bool, not the probe task.
+
+    The task keeps the workflow's DBOS context, the cache's weak key, alive, so a cached task would keep the entry
+    for good; a bool lets the entry go with the workflow. The test checks the value rather than the cache's
+    length after the workflow: the `asyncio.to_thread` worker of DBOS's last database call can still hold a
+    copy of that context for a moment after the workflow returns.
+
+    Not a VCR test: the model is a `FunctionModel`. It reads the gate's private cache because a workflow that
+    outlives its cache entry is only visible as memory that a long-lived worker never gets back.
+    """
+    workflow_id = f'tool-instances-sequential-runs-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id):
+        assert await sequential_tool_instances_runs_workflow() == ['done', 'done']
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
+    assert steps.count('DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances') == 1
+
+
+_cancelled_probe_events: dict[str, asyncio.Event] = {}
+
+
+@DBOS.workflow()
+async def cancelled_tool_instances_run_workflow() -> None:
+    run = asyncio.ensure_future(_tool_instances_agents['sequential'].run('Call both tools.'))
+    await _cancelled_probe_events['probing'].wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    probe = _tool_instance_defaults_patched[workflow_context()]
+    assert isinstance(probe, asyncio.Task)
+    _cancelled_probe_events['release'].set()
+    await probe
+    assert _tool_instance_defaults_patched[workflow_context()] is True
+
+
+async def test_dbos_tool_instance_defaults_patch_cache_holds_its_result_after_cancelled_run(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run cancelled while it waits on the patch probe doesn't leave the probe task in the workflow's cache entry.
+
+    No run is left to replace the task with its result, so the probe replaces it itself.
+
+    Not a VCR test: the run is cancelled before its first model request. It reads the gate's private cache for
+    the reasons `test_dbos_tool_instance_defaults_patch_cache_holds_its_result` gives.
+    """
+    probing, release = asyncio.Event(), asyncio.Event()
+    real_patch_async = DBOS.patch_async
+
+    async def slow_patch_async(patch_name: str) -> bool:
+        probing.set()
+        await release.wait()
+        return await real_patch_async(patch_name)
+
+    monkeypatch.setattr(DBOS, 'patch_async', slow_patch_async)
+    monkeypatch.setitem(_cancelled_probe_events, 'probing', probing)
+    monkeypatch.setitem(_cancelled_probe_events, 'release', release)
+    with SetWorkflowID(f'tool-instances-cancelled-run-{uuid.uuid4()}'):
+        await cancelled_tool_instances_run_workflow()
