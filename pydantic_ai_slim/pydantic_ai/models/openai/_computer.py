@@ -219,9 +219,7 @@ def map_computer_call(
         # runs. OpenAI says not to run a partially generated action.
         args = '{"actions": ['
     else:
-        # A call with no actions only asks to look.
-        actions = [action for action, _ in _map_actions(dumped)]
-        args = {'actions': actions or [{'type': 'screenshot'}]}
+        args = {'actions': [action for action, _ in _map_actions(dumped)]}
     return ComputerCallPart(
         tool_name,
         args,
@@ -245,18 +243,16 @@ def _map_actions(dumped: dict[str, Any]) -> list[tuple[dict[str, Any], str | Non
 def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCallPart]:
     """The `computer_call`s this API made, by tool call ID, so their outputs can read them.
 
-    A provider can reuse an ID in a later response, so only the latest call with each ID counts. A call is found by
-    the item it came as, not by valid arguments: a call whose actions didn't map was still a `computer_call`, and its
-    output must be a `computer_call_output`.
+    A call is found by the item it came as, not by valid arguments: a call whose actions didn't map was still a
+    `computer_call`, and its output must be a `computer_call_output`.
     """
-    latest = {
+    return {
         part.tool_call_id: part
         for message in messages
         if isinstance(message, ModelResponse)
         for part in message.parts
-        if isinstance(part, ToolCallPart)
+        if isinstance(part, ToolCallPart) and 'computer_call' in (part.provider_details or {})
     }
-    return {call_id: part for call_id, part in latest.items() if 'computer_call' in (part.provider_details or {})}
 
 
 def _scroll_notes(call: ToolCallPart, result: ComputerResult | None) -> list[str]:
