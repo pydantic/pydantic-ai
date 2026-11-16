@@ -309,6 +309,7 @@ try:
         without_unanswered_tool_calls,
     )
     from ._computer import (
+        COMPUTER_FAILED,
         COMPUTER_NOT_EXECUTED,
         COMPUTER_RESULT_ON_LAST,
         COMPUTER_TOOL_BETAS,
@@ -4172,7 +4173,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """One result per toolset member call, as the toolset requires.
 
-        The calls that ran get `OK`, and the last of them the whole result, as it is. The failed call gets its error,
+        The calls that ran get `OK`, and the last of them the whole result, as it is. The failed call gets `Failed.`,
         and the rest Anthropic's not-executed text. When no call ran, the first one carries the whole result. A failed,
         denied, UI-rebuilt or changed result doesn't say which calls ran, so the last call carries it whole and the
         rest say so.
@@ -4211,7 +4212,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         map_context: _MapMessagesContext,
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """The results of the calls once the outcome says how many of their actions ran."""
-        blocks, error = replay['computer_blocks'], metadata.get('error')
+        blocks, failure = replay['computer_blocks'], metadata.get('error') is not None
         # The number of actions up to and including each call's: each call may have become several, such as keys.
         ends = itertools.accumulate(replay['computer_action_counts'])
         ran = sum(end <= metadata['performed'] for end in ends)
@@ -4223,11 +4224,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif index == ran - 1:
                 results.append(_computer_result(block, False, *whole))
             elif index == ran == 0:
-                # An error result can hold only text, so a failed first call states its failure in text.
-                failed = [BetaTextBlockParam(text=f'Failed: {error}', type='text')] if error is not None else []
+                # An error result can hold only text, so a failed first call carries the result as a success, saying
+                # it failed.
+                failed = [BetaTextBlockParam(text=COMPUTER_FAILED, type='text')] if failure else []
                 results.append(_computer_result(block, False, *failed, *whole))
-            elif index == ran and error is not None:
-                results.append(_computer_result(block, True, BetaTextBlockParam(text=error, type='text')))
+            elif index == ran and failure:
+                # The error itself is only in the content, which a hook may have redacted.
+                results.append(_computer_result(block, True, BetaTextBlockParam(text=COMPUTER_FAILED, type='text')))
             else:
                 results.append(
                     _computer_result(block, True, BetaTextBlockParam(text=COMPUTER_NOT_EXECUTED, type='text'))

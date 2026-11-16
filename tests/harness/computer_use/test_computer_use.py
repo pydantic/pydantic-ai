@@ -1332,6 +1332,19 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert tool_return.outcome == 'failed'
         assert provider.actions == []
 
+    async def test_a_press_on_a_screen_the_model_cant_see_is_never_released(
+        self, durability: list[AbstractCapability[object]]
+    ) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], profile=ModelProfile(computer_use_screenshot_max_side=1000)),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), *durability],
+        )
+        with pytest.raises(UserError, match='The screen is 1280x800, larger than the model can see'):
+            await agent.run('Go.')
+        assert provider.actions == []
+
     async def test_an_environment_gone_at_the_end_of_a_run_leaves_its_result(self) -> None:
         class LostOnRelease(ScreenBackend):
             async def act(self, action: DisplayAction) -> None:
