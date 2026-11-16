@@ -375,7 +375,8 @@ async def test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gav
         provider=AnthropicProvider(api_key='test', base_url='http://localhost', http_client=retrying_client(handler)),
     )
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is 2+2?')]
-    settings: AnthropicModelSettings = {'max_retries': 0}
+    # Without `max_tokens`, the model's default is too large for the SDK to send `request` unstreamed.
+    settings: AnthropicModelSettings = {'max_retries': 0, 'max_tokens': 1024}
 
     with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
         if call == 'request':
