@@ -22,6 +22,7 @@ from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2
 
 if TYPE_CHECKING:
     import e2b
+    from e2b import SandboxNetworkOpts
 
 
 @dataclass(kw_only=True)
@@ -67,6 +68,13 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached workspace; nothing is read from the host.
 
     The agent's commands can read them, and a new sandbox keeps them for every process it runs.
+    """
+
+    network: SandboxNetworkOpts | None = field(default=None, repr=False)
+    """E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged; a spec cannot set them.
+
+    Their `rules` have E2B add headers, such as a token, to requests as they leave the sandbox, so
+    commands can use the token without it ever being inside the sandbox.
     """
 
     def __post_init__(self) -> None:
@@ -136,4 +144,5 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            network=self.network,
         )

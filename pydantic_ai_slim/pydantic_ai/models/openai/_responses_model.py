@@ -3081,7 +3081,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             self._map_thinking_to_reasoning_item(item, item.id, signature, raw_content, response_context, context)
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and item.content:
                 context.openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=thinking_text))
             elif item.content:
                 # An empty wrapper in the user turn would tell the model the assistant thought nothing.
