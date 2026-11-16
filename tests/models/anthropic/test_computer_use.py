@@ -40,14 +40,7 @@ from ...workspace_fakes import InMemoryProvider
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from anthropic import (
-        AsyncAnthropic,
-        AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,
-        AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,
-        Omit,
-    )
+    from anthropic import Omit
     from anthropic.types.beta import (
         BetaContentBlock,
         BetaInputJSONDelta,
@@ -221,8 +214,7 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
             'id': 'toolu_1',
             'type': 'tool_use',
             'name': 'computer',
-            # The earlier tools name a click's modifier keys `key`, not `text`.
-            'input': {'action': 'left_click', 'coordinate': [5, 6], 'key': 'shift'},
+            'input': {'action': 'left_click', 'coordinate': [5, 6], 'text': 'shift'},
         }
     )
     client = MockAnthropic.create_mock([_turn(computer_call), _turn(BetaTextBlock(text='done', type='text'))])
@@ -240,7 +232,7 @@ async def test_an_earlier_model_gets_its_tool_with_the_display_size(
     (call,) = second['messages'][-2]['content']
     assert (call['name'], call['input'], 'toolset_name' in call) == (
         'computer',
-        {'action': 'left_click', 'coordinate': [5, 6], 'key': 'shift'},
+        {'action': 'left_click', 'coordinate': [5, 6], 'text': 'shift'},
         False,
     )
     (result,) = second['messages'][-1]['content']
@@ -326,11 +318,6 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
         # The SDK takes any JSON as the input, so a malformed `action` gets a retry rather than ending the run.
         # As for a call without an `action`, the retry shows the fields that didn't map.
         ({'action': ['left_click'], 'coordinate': [5, 6]}, '"unsupported_fields":["action","coordinate"]'),
-        # The earlier tools' clicks take modifier keys as `key` only, so `text` is refused rather than either winning.
-        (
-            {'action': 'left_click', 'coordinate': [5, 6], 'key': 'ctrl', 'text': 'shift'},
-            '"loc":["actions",0,"click","unsupported_fields"],"msg":"Unexpected keyword argument","input":["text"]',
-        ),
     ],
 )
 async def test_an_earlier_tool_call_with_input_that_does_not_map_runs_nothing(
@@ -449,27 +436,6 @@ async def test_a_required_computer_tool_on_a_model_without_one_is_refused(allow_
         await agent.run('Go.')
 
 
-def test_bedrock_gets_the_earlier_beta_tool() -> None:
-    pytest.importorskip('botocore')
-    native: dict[str, Any] = {}
-    for name, client in (
-        ('direct', AsyncAnthropic(api_key='x')),
-        ('vertex', AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')),
-        ('bedrock', AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')),
-        ('mantle', AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y')),
-        ('foundry', AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
-    ):
-        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-        native[name] = model.profile.get('anthropic_computer_tool_version')
-    assert native == {
-        'direct': 'computer_toolset_20260801',
-        'vertex': 'computer_toolset_20260801',
-        'bedrock': 'computer_20251124',
-        'mantle': 'computer_20251124',
-        'foundry': 'computer_toolset_20260801',
-    }
-
-
 async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
@@ -519,8 +485,8 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('double_click', {}, {'type': 'click', 'button': 'left', 'count': 2, 'modifiers': []}),
         (
             'mouse_move',
-            {'coordinate': [3, 4], 'text': 'shift'},
-            {'type': 'move', 'x': 3, 'y': 4, 'modifiers': ['shift']},
+            {'coordinate': [3, 4]},
+            {'type': 'move', 'x': 3, 'y': 4},
         ),
         (
             'left_click_drag',
@@ -574,7 +540,7 @@ def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, 
     assert map_computer_member(name, input) == (action if isinstance(action, list) else [action])
 
 
-@pytest.mark.parametrize('model_name', ['claude-haiku-5-5', 'claude-opus-4-8', 'claude-mythos-preview'])
+@pytest.mark.parametrize('model_name', ['claude-haiku-5-5', 'claude-opus-4-8'])
 def test_the_newest_models_get_the_computer_toolset(model_name: str) -> None:
     """The earlier tools, and models without one, are pinned by `tests/profiles/test_resolution_matrix.py`."""
     profile = anthropic_model_profile(model_name)
@@ -749,16 +715,6 @@ async def test_a_streamed_member_cut_off_mid_input_runs_nothing(
     # The tool refuses the call instead of running part of it.
     (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
     assert call.args_as_dict() == {'actions': [{'type': action_type, 'incomplete_input': True}]}
-
-
-async def test_a_streamed_member_that_takes_no_input_runs(allow_model_requests: None) -> None:
-    # Anthropic streams no input for it, as for any tool without arguments.
-    events = _stream(_tool_use('toolu_1', 'screenshot', {}))
-    (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
-    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='')
-
-    (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {'actions': [{'type': 'screenshot'}]}
 
 
 @pytest.mark.parametrize('received', [None, [], 'hello'])

@@ -50,7 +50,7 @@ from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCall
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
-from ._computer import ComputerBatch, NativeComputer, takes_no_input
+from ._computer import ComputerBatch, NativeComputer
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -430,8 +430,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     def _map_computer_block_stop(
         self, native_computer: NativeComputer, current_block: BetaToolUseBlock
     ) -> Iterator[ModelResponseStreamEvent]:
-        # A member that takes input and streamed none was cut off before it.
-        computer_input_json = ''.join(self._computer_input) or ('{}' if takes_no_input(current_block.name) else '')
+        # Every member streams its input, `{}` when it takes none, so one that streamed nothing was cut off before it.
+        computer_input_json = ''.join(self._computer_input)
         computer_args: Any
         try:
             computer_args = pydantic_core.from_json(computer_input_json)

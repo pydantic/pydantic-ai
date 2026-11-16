@@ -193,8 +193,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_computer_tool_version: AnthropicComputerToolVersion | None
     """The computer use tool a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind is sent as.
 
-    Default: `None`, meaning a function tool. On Bedrock, `AnthropicModel` sends `computer_20251124` for the
-    toolset.
+    Default: `None`, meaning a function tool.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -655,16 +654,14 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
     # Each model's computer use tool, from Anthropic's compatibility table. Claude 5.5 and later take only the
-    # toolset on the Claude API.
+    # toolset on the Claude API. Retired or retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get a function tool.
     # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
     computer_tool_version: AnthropicComputerToolVersion | None = None
-    if model_name.startswith((*_COMPUTER_TOOLSET_MODELS, 'claude-mythos-preview')):
-        # Mythos Preview is left out of the larger screenshots below: Anthropic's vision page gives them to "Claude 4.7
-        # and later", which may not include it, and the toolset refuses an image larger than the model takes.
+    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
         computer_tool_version = 'computer_toolset_20260801'
     elif model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
         computer_tool_version = 'computer_20251124'
-    elif model_name.startswith(('claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-opus-4', 'claude-sonnet-4')):
+    elif model_name.startswith('claude-haiku-4-5'):
         computer_tool_version = 'computer_20250124'
 
     profile = AnthropicModelProfile(

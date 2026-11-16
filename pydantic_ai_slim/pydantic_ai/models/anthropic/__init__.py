@@ -421,10 +421,6 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
-# Bedrock gets the earlier beta tool, which Anthropic documents its toolset models also accept there. The other
-# platforms serve the toolset like the Claude API.
-# https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
-_COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1185,12 +1181,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             supported_native_tools = supported_native_tools - {AdvisorTool}
         if isinstance(client, _CODE_EXECUTION_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {CodeExecutionTool}
-        computer_tool_version = _profile.get('anthropic_computer_tool_version')
-        if computer_tool_version == 'computer_toolset_20260801' and isinstance(
-            client, _COMPUTER_BETA_TOOLS_ONLY_CLIENTS
-        ):
-            computer_tool_version = 'computer_20251124'  # Bedrock gets the earlier beta tool
-        if computer_tool_version is None:
+        if _profile.get('anthropic_computer_tool_version') is None:
             supported_native_tools = supported_native_tools - {ComputerTool}
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
@@ -1222,7 +1213,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                anthropic_computer_tool_version=computer_tool_version,
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
                 and not isinstance(client, _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS),
             ),

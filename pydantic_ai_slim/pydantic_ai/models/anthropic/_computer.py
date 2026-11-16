@@ -167,9 +167,6 @@ class NativeComputer:
         if name == 'screenshot' and not last:
             # The `computer` tool captures the screen once, after the batch, but each screenshot call needs its image.
             return [{'type': 'screenshot', 'not_the_last_call': True}]
-        if not self.is_toolset and name in _COMPUTER_CLICKS and 'text' in block['input']:
-            # The earlier tools' clicks take modifier keys only as `key`, so `text` there is refused, not merged into it.
-            return [{'type': 'click', 'unsupported_fields': ['text']}]
         return map_computer_member(name, args)
 
 
@@ -238,13 +235,7 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
     action = block['input'].get('action', '')
     if not isinstance(action, str):
         return '', dict(block['input'])  # names the `action` among the fields that don't map
-    # The earlier tools name a click's held modifier keys `key`, where the toolset and other actions use `text`.
-    args = {
-        'text' if key == 'key' and action in _COMPUTER_CLICKS else key: value
-        for key, value in block['input'].items()
-        if key != 'action'
-    }
-    return action, args
+    return action, {key: value for key, value in block['input'].items() if key != 'action'}
 
 
 RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
@@ -277,7 +268,6 @@ class _Click(_Strict):
 
 class _Move(_Strict):
     coordinate: _Coordinate
-    text: str | None = None
 
 
 class _Drag(_Strict):
@@ -337,11 +327,6 @@ _MEMBERS: dict[str, type[_Strict]] = {
 """The input each computer use member takes that maps onto the `computer` tool."""
 
 
-def takes_no_input(name: str) -> bool:
-    """Whether the computer use member takes no input, so it streams none."""
-    return _MEMBERS.get(name) is _NoInput
-
-
 _COMPUTER_MEMBER_TYPES: dict[str, str] = {
     **dict.fromkeys(_COMPUTER_CLICKS, 'click'),
     'mouse_move': 'move',
@@ -391,7 +376,7 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
                 }
             ]
         case _Move():
-            return [{'type': 'move', **_point(member.coordinate), 'modifiers': _modifiers(member.text)}]
+            return [{'type': 'move', **_point(member.coordinate)}]
         case _Drag():
             path = [_point(member.start_coordinate), _point(member.coordinate)]
             return [{'type': 'drag', 'path': path, 'modifiers': _modifiers(member.text)}]
