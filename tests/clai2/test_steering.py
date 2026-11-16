@@ -1042,3 +1042,32 @@ async def test_a_draft_a_search_hides_keeps_its_images() -> None:
         # Ctrl-G cancels the search, bringing back the draft it hid.
         live.feed('ctrl-g')
         assert live.images.resolve(live.buffer.text) == ('look', [image])
+
+
+@pytest.mark.parametrize(
+    ('draft', 'edit'), [('printf injected', '!'), ('please explain', '!git status'), ('more', '/help')]
+)
+async def test_an_edit_into_a_command_never_takes_the_draft_up_set_aside_with_it(draft: str, edit: str) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.buffer.replace(draft)
+        live.feed('up')
+        live.feed('ctrl-u')
+        live.buffer.insert(edit)
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        # Joined, the draft would run as part of the command: the edit stays alone and Up finds the draft.
+        assert (live.buffer.text, live.buffer.history[-1]) == (edit, draft)
+
+
+async def test_a_cleared_edit_left_once_idle_brings_back_a_command_draft() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.buffer.replace('!ls')
+        live.feed('up')
+        live.feed('ctrl-u')
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert live.buffer.text == '!ls'

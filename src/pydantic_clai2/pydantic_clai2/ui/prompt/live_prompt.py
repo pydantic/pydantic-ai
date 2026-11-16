@@ -209,13 +209,20 @@ class LivePrompt:
     def _keep_edit_as_draft(self) -> None:
         """Leave the prompt being edited in the draft only, followed by the draft Up set aside.
 
-        While the recall walk lasts, Down still restores that draft, so it is not added twice.
+        While the recall walk lasts, Down still restores that draft, so it is not added twice. After an edit
+        into a `/command` or `!` line the set-aside draft would become part of the command, so it goes to
+        history instead, where Up finds it.
         """
         if self._editing is None:
             return
-        if self.buffer.history_index is None and self._shelved_draft:
-            self.buffer.replace('\n'.join(filter(None, [self.buffer.text, self._shelved_draft])))
-            self.refresh_completions()
+        if self.buffer.history_index is None and (shelved := self._shelved_draft):
+            joined = '\n'.join(filter(None, [self.buffer.text.strip(), shelved]))
+            if joined == shelved or input_kind(expand_bare_command(joined)) == 'prompt':
+                self.buffer.replace(joined)
+                self.refresh_completions()
+            else:
+                self.history.append_string(shelved)
+                self.buffer.history.append(shelved)
         self._drop_editing()
 
     def take_queued(self) -> list[QueuedPrompt]:
