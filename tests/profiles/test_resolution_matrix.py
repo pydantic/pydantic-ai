@@ -2630,6 +2630,23 @@ def test_vllm_qwen_hf_namespace():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_compaction_on_demand_is_off_where_responses_compact_is_not_served():
+    """`OpenAIProvider` sets `supports_compaction_on_demand`, but neither Chat Completions nor the gateway serves it.
+
+    So `NativeCompaction` declines for them, instead of calling `compact_messages`.
+    """
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key='test')
+    assert OpenAIResponsesModel('gpt-5.4', provider=provider).profile.get('supports_compaction_on_demand') is True
+    assert OpenAIChatModel('gpt-5.4', provider=provider).profile.get('supports_compaction_on_demand') is False
+    gateway = gateway_provider('openai', api_key='paig_test', base_url='https://gateway.example')
+    assert OpenAIResponsesModel('gpt-5.4', provider=gateway).profile.get('supports_compaction_on_demand') is False
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_vllm_gemma_video_is_up_to_the_model_class():
     """Gemma reads video, but neither OpenAI API has a video part, so the model class turns the flag off.
 
