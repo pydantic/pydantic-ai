@@ -499,7 +499,8 @@ store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, 
 
 - Readings: `await limits.status(ctx_or_none, scope='acme')` returns `BudgetStatus` list (`spent`,
   `remaining_usd`, `warning`, `exhausted`); `await limits.exhausted(scope=...)` for an admission
-  decision (raises if scoped budgets cannot be resolved; `status` leaves them out of its list).
+  decision (raises if a scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status`
+  leaves them out of its list).
 - Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
 - `expose_tools=True` adds a `get_spend` tool for the model.
 - `price=lambda response: Decimal(...) | None` prices models genai-prices does not know.
@@ -530,7 +531,7 @@ Gotchas:
 - For a `FallbackModel` rejection, `price` receives a `ModelResponse` rebuilt from the attempt's model,
   provider and usage, with no `parts` and no `provider_url`, so a `price` that reads the output or keys
   on the endpoint will misprice it. A `ModelFallback` capability rejection reaches `price` as the real response.
-- Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
+- Spec-loadable except callables (`store`, `price`, `scope`, `clock`, callable `usd`/`tokens`).
 
 ## AskUser
 

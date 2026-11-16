@@ -278,7 +278,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Refuse the request if any budget with a ceiling is already spent."""
-        enforcing = [(budget, key) for budget, key in await self._keyed(ctx) if budget.enforces]
+        resolved = [(resolve_ceilings(budget, ctx), key) for budget, key in await self._keyed(ctx)]
+        enforcing = [(budget, key) for budget, key in resolved if budget.enforces]
         read = await self._read(list(dict.fromkeys(key for _, key in enforcing)))
         for budget, key in enforcing:
             self._check(budget, read[key], ctx)
@@ -419,7 +420,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         usd, priced, price_error = self._price_of(response, failed_attempt=failed_attempt)
         keyed = await self._keyed(ctx)
         accrued = await self._accrue_boundaries(keyed, response, token, boundaries, usd=usd, priced=priced)
-        statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
+        # Resolved only once the response is accrued, so a failing ceiling callable cannot drop the spend.
+        statuses = [_status(resolve_ceilings(budget, ctx), key, accrued[key]) for budget, key in keyed]
 
         error: Exception | None = None
         snapshot = SpendSnapshot(
@@ -791,9 +793,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return await self._store.add_many(entries) if entries else {}
 
     async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
-        """Each budget, its ceilings resolved for this run, paired with the store key it accumulates under right now."""
+        """Each budget paired with the store key it accumulates under right now."""
         now = await self._now()
-        return [(resolve_ceilings(budget, ctx), self._key(budget, ctx, now, None)) for budget in self.budgets]
+        return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 
     def _price_of(self, response: ModelResponse, *, failed_attempt: bool = False) -> tuple[Decimal, bool, str | None]:
         """What cost to record, whether it prices the whole response, and why it was rejected.

@@ -630,6 +630,23 @@ class TestResolvedCeiling:
         with pytest.raises(UserError, match=match):
             await _gate(guard, ctx=_run_ctx(deps=_Account('u1', allowance_usd=allowance)))
 
+    async def test_a_failing_ceiling_still_records_the_spend(self):
+        """The response was billed whatever the callable does, so it is accrued before the ceiling is read."""
+
+        def broken(ctx: RunContext[Any]) -> Decimal | None:
+            raise RuntimeError('allowance service down')
+
+        guard = SpendLimits(
+            budgets=[Budget[Any](usd=broken, name='broken'), Budget[Any](window='total', name='all')],
+            price=lambda r: Decimal('1'),
+        )
+
+        with pytest.raises(RuntimeError, match='allowance service down'):
+            await _record(guard)
+
+        [status] = await guard.status()
+        assert status.spent.usd == Decimal('1')
+
     async def test_a_boolean_token_ceiling_is_refused(self):
         guard = SpendLimits(budgets=[Budget[Any](tokens=lambda ctx: True)])
 

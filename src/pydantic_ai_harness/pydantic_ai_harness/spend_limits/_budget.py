@@ -88,8 +88,9 @@ class Budget(Generic[AgentDepsT]):
     Budget(usd=lambda ctx: ctx.deps.allowance_usd, window='month', scope=lambda ctx: ctx.deps.account_id)
     ```
 
-    A callable ceiling is resolved from the run on every request, alongside `scope`, so each
-    partition can carry its own allowance. Returning `None` means no ceiling for that partition.
+    A callable ceiling is resolved from the run alongside `scope` whenever the budget is read, so
+    each partition can carry its own allowance. It returns a positive amount, or `None` for no
+    ceiling on that partition.
     Under durable execution it must return the same value when replayed with the same run
     context: it is read in orchestration, so a changed value can flip a replayed refusal.
     """

@@ -115,7 +115,7 @@ SpendLimits[Account](
 )
 ```
 
-The callable is typed against the agent's `deps` like `scope`, and is called on every request alongside it, so keep it to reading what the application loaded before the run. Returning `None` means no ceiling for that partition. `BudgetStatus`, `SpendRecordedEvent`, `warn_at`, and the refusal all use the resolved ceiling. The counter key does not include the ceiling, so what a partition has spent carries over when its allowance changes.
+The callable is typed against the agent's `deps` like `scope`, and is called alongside it whenever the budget is read, more than once per request, so keep it to reading what the application loaded before the run. Return a positive amount, or `None` for no ceiling on that partition; zero is refused as it is for a plain ceiling. `BudgetStatus`, `SpendRecordedEvent`, `warn_at`, and the refusal all use the resolved ceiling. The counter key does not include the ceiling, so what a partition has spent carries over when its allowance changes.
 
 A budget with no ceiling is a counter. It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
