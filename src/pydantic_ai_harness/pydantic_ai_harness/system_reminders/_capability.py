@@ -164,7 +164,7 @@ class Reminder(Generic[AgentDepsT]):
         if self.interval < 1:
             raise ValueError(f'interval must be >= 1, got {self.interval}')
         if self.skip_unchanged and self.scope != 'conversation':
-            raise ValueError("skip_unchanged requires scope='conversation'")
+            raise ValueError("`skip_unchanged` requires `scope='conversation'`")
         if self.first_after is not None and self.first_after < 1:
             raise ValueError(f'first_after must be >= 1, got {self.first_after}')
         if self.max_fires is not None and self.max_fires < 1:
@@ -382,9 +382,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                         exc, ctx.run_id, 'LLMReminder generation operation failed; using GoalReanchor text instead'
                     )
                     result, error_type = None, 'DurabilityError'
-                result = (
-                    GoalReanchor[AgentDepsT]()(ctx) if error_type is not None else dynamic._frame(result, ctx.messages)  # pyright: ignore[reportPrivateUsage]
-                )
+                result = GoalReanchor[AgentDepsT]()(ctx) if error_type is not None else dynamic._frame(result)  # pyright: ignore[reportPrivateUsage]
             if result is not None:
                 texts.append(result)
         return texts
@@ -489,12 +487,6 @@ class LLMReminder(Generic[AgentDepsT]):
     request, the behavior before the default changed. Leaving it unset behaves exactly like `interval=10`, but
     warns that the default used to be `1`; pass `interval=10` to silence it.
     """
-    skip_unchanged: bool = False
-    """Skip a firing whose generated text matches the latest generated reminder in the history the model sees.
-
-    The generation call is still made; only an unchanged record is left out, so the history doesn't gain copies of
-    a nudge the model already has in front of it. The latest record may come from any `LLMReminder`.
-    """
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
     _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
     """Runs whose generation failure was already logged, oldest first (an ordered set, bounded)."""
@@ -523,7 +515,7 @@ class LLMReminder(Generic[AgentDepsT]):
         if _request_reserved_for_parent(ctx):
             return GoalReanchor[AgentDepsT]()(ctx)
         try:
-            return self._frame(await self._generate(ctx), ctx.messages)
+            return self._frame(await self._generate(ctx))
         except Exception as exc:
             self._log_failure(exc, ctx.run_id)
             return GoalReanchor[AgentDepsT]()(ctx)
@@ -572,17 +564,9 @@ class LLMReminder(Generic[AgentDepsT]):
         text = result.output.strip()
         return text or None
 
-    def _frame(self, text: str | None, messages: Sequence[ModelMessage]) -> GeneratedReminder | None:
-        """Mark generated text as such, so `SystemReminders` quotes it instead of sending it in system voice.
-
-        Returns `None` for `skip_unchanged` text that matches the latest generated reminder in `messages`.
-        """
-        if text is None:
-            return None
-        reminder = GeneratedReminder(text, _model_label(self.model))
-        if self.skip_unchanged and reminder.data == _latest_generated_data(messages):
-            return None
-        return reminder
+    def _frame(self, text: str | None) -> GeneratedReminder | None:
+        """Mark generated text as such, so `SystemReminders` quotes it instead of sending it in system voice."""
+        return None if text is None else GeneratedReminder(text, _model_label(self.model))
 
 
 async def _awaited(
@@ -634,7 +618,7 @@ class _StaticText:
 
     text: str
     scope: _Scope
-    skip_unchanged: bool = False
+    skip_unchanged: bool
 
     def __str__(self) -> str:
         return self.text
@@ -693,14 +677,6 @@ def _is_reminder_data(part: UserPromptPart) -> bool:
     )
 
 
-def _is_reminder_prompt(part: object) -> TypeGuard[SystemPromptPart]:
-    return (
-        isinstance(part, SystemPromptPart)
-        and is_str_dict(part.metadata)
-        and part.metadata.get('origin') == _REMINDER_ORIGIN
-    )
-
-
 def _lasting_reminder_texts(messages: Sequence[ModelMessage], reminders: Sequence[Reminder[AgentDepsT]]) -> set[str]:
     """The contents of the lasting reminder prompts in the history the model sees, if any of `reminders` needs them."""
     if not any(reminder.skip_unchanged for reminder in reminders):
@@ -710,23 +686,11 @@ def _lasting_reminder_texts(messages: Sequence[ModelMessage], reminders: Sequenc
         for message in post_compaction_window(messages)
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if _is_reminder_prompt(part) and part.scope == 'conversation'
+        if isinstance(part, SystemPromptPart)
+        and part.scope == 'conversation'
+        and is_str_dict(part.metadata)
+        and part.metadata.get('origin') == _REMINDER_ORIGIN
     }
-
-
-def _latest_generated_data(messages: Sequence[ModelMessage]) -> str | None:
-    """The quoted text of the latest generated reminder in the history the model sees."""
-    for message in reversed(post_compaction_window(messages)):
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in reversed(message.parts):
-            if (
-                isinstance(part, UserPromptPart)
-                and _is_reminder_data(part)
-                and isinstance(item := part.content[-1], TextContent)
-            ):
-                return item.content
-    return None
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:

@@ -266,7 +266,7 @@ class TestReminderValidation:
             Reminder('t', max_fires=0)
 
     def test_skip_unchanged_requires_conversation_scope(self) -> None:
-        with pytest.raises(ValueError, match="skip_unchanged requires scope='conversation'"):
+        with pytest.raises(ValueError, match="`skip_unchanged` requires `scope='conversation'`"):
             Reminder('t', tag=None, skip_unchanged=True)
 
 
@@ -1519,48 +1519,6 @@ class TestEndToEnd:
             history = (await agent.run(prompt, message_history=history)).all_messages()
 
         assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1]
-
-    async def test_unchanged_generated_reminder_is_not_recorded_again(self) -> None:
-        """A `skip_unchanged` `LLMReminder` records generated text only when it differs from the latest record."""
-        outputs = iter(['same', 'same', 'new', 'same', 'same'])
-        requests = 0
-
-        def generate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(next(outputs))])
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal requests
-            requests += 1
-            if requests < 4:
-                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{requests}')])
-            return ModelResponse(parts=[TextPart('done')])
-
-        reminder = LLMReminder[None](model=FunctionModel(generate), interval=1, skip_unchanged=True)
-        agent: Agent[None, str] = Agent(
-            FunctionModel(model_fn),
-            deps_type=type(None),
-            capabilities=[SystemReminders[None](dynamic_reminders=[reminder])],
-        )
-
-        @agent.tool_plain
-        def step() -> str:
-            return 'ok'
-
-        result = await agent.run('go')
-
-        model = 'function:generate:'
-        assert [text for text in _sent_texts(result.all_messages()) if text.startswith('<generated_reminder')] == [
-            _llm_data('same', model=model),
-            _llm_data('new', model=model),
-            _llm_data('same', model=model),
-        ]
-
-        compacted = [*result.all_messages(), ModelResponse(parts=[CompactionPart(content='earlier')])]
-        result = await agent.run('again', message_history=compacted)
-
-        assert [text for text in _sent_texts(result.new_messages()) if text.startswith('<generated_reminder')] == [
-            _llm_data('same', model=model)
-        ]
 
     @pytest.mark.parametrize(('interval', 'firings'), [(None, [10, 20]), (1, list(range(1, 22))), (8, [8, 16])])
     async def test_llm_reminder_history_grows_by_one_record_per_firing(
