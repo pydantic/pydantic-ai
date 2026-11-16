@@ -118,7 +118,7 @@ from urllib.parse import urlparse
 import anyio
 import idna
 
-from pydantic_ai._telemetry import current_run_telemetry, open_span
+from pydantic_ai._telemetry import RunTelemetry, current_run_telemetry, open_span, set_content_attribute
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
@@ -969,7 +969,8 @@ class BrowserEvent:
 
         Names follow the OTel HTTP semantic conventions where one applies, so a
         backend that already understands `url.full` or `http.response.status_code`
-        reads these without a custom mapping.
+        reads these without a custom mapping. A span event keeps `browser.event.message`
+        and `url.full` only when the run captures content.
         """
         attributes: dict[str, str | int] = {'browser.event.kind': self.kind, 'browser.event.level': self.level}
         if self.message:
@@ -981,6 +982,10 @@ class BrowserEvent:
         if self.status is not None:
             attributes['http.response.status_code'] = self.status
         return attributes
+
+
+_EVENT_CONTENT_ATTRIBUTES = ('browser.event.message', 'url.full')
+"""`BrowserEvent.attributes()` keys a span event carries only when the run captures content."""
 
 
 class _ConsoleMessage(Protocol):
@@ -1089,6 +1094,12 @@ class PlaywrightBrowserSession:
         operation's span cannot be recovered from the OpenTelemetry context there.
         The toolset publishes it here for the length of an operation instead.
         """
+        self.operation_telemetry: RunTelemetry | None = None
+        """Telemetry of the run whose operation is running, set and cleared with `operation_span`.
+
+        The page's events are attached from Playwright's receive task, which does not
+        run in the calling run's context, so they follow this run's content setting.
+        """
 
     def record(self, event: BrowserEvent) -> None:
         """Log a browser event and attach it to the operation that was running.
@@ -1108,7 +1119,13 @@ class PlaywrightBrowserSession:
         self.events_recorded += 1
         span = self.operation_span
         if span is not None and span.is_recording():
-            span.add_event(f'browser.{event.kind}', event.attributes())
+            attributes = event.attributes()
+            telemetry = self.operation_telemetry
+            if telemetry is None or not telemetry.include_content:
+                # What the page logged and the URLs it touched are content.
+                for key in _EVENT_CONTENT_ATTRIBUTES:
+                    attributes.pop(key, None)
+            span.add_event(f'browser.{event.kind}', attributes)
 
     def failure_since_operation_start(self) -> BrowserEvent | None:
         """The last refused or failed request caused by the running operation, if any.
@@ -1854,15 +1871,16 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             # The configured budget, not what is left of it: the error copy tells the
             # model how long the call was allowed, which a countdown would understate.
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
-            # The session can outlive a run, so the tracer is the calling run's, read now.
+            # The session can outlive a run, so the telemetry is the calling run's, read now.
+            telemetry = current_run_telemetry()
             with open_span(
-                current_run_telemetry(),
+                telemetry,
                 f'browser {action}',
                 # The outcome starts at `ok` and every failure path overwrites it,
                 # because a tool failure is a returned string, not an exception.
                 attributes={'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
-                self._session.operation_span = span
+                self._session.operation_span, self._session.operation_telemetry = span, telemetry
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -1886,8 +1904,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     # tab the operation left rather than the one it started on.
                     ended_on = self._session.page if self._session.page is not None else page
                     if ended_on is not None:
-                        span.set_attribute('url.full', _without_credentials(ended_on.url))
-                    self._session.operation_span = None
+                        set_content_attribute(telemetry, span, 'url.full', _without_credentials(ended_on.url))
+                    self._session.operation_span, self._session.operation_telemetry = None, None
 
     async def _refuse(self, action: str, timeout_ms: int | None, message: str) -> str:
         """Return a bounded refusal without acquiring a page.
@@ -1904,16 +1922,15 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         async with self._operation_lock:
             if (error := self._timeout_error(timeout_ms)) is not None:
                 return error
+            telemetry = current_run_telemetry()
             with open_span(
-                current_run_telemetry(),
-                f'browser {action}',
-                attributes={'browser.action': action, 'browser.outcome': 'ok'},
+                telemetry, f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
             ) as span:
-                self._session.operation_span = span
+                self._session.operation_span, self._session.operation_telemetry = span, telemetry
                 try:
                     return self._error(message)
                 finally:
-                    self._session.operation_span = None
+                    self._session.operation_span, self._session.operation_telemetry = None, None
 
     async def _settle(self, page: _Page, action: str, deadlines: _Deadlines) -> str | None:
         """Let the navigation finish, then re-check where it landed.

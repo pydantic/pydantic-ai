@@ -3049,6 +3049,34 @@ class TestBrowserEvents:
             # A response carries no message, so no empty attribute is emitted for one.
             assert 'browser.event.message' not in event.attributes
 
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_page_urls_and_event_text_are_recorded_only_with_content(self, include_content: bool) -> None:
+        # What the page logged and the URLs it touched are content; the event's shape is not.
+        page = _FakePage()
+        session = self._session(page)
+        toolset = _toolset(page, session=session)
+
+        class _BusyPage(_FakePage):
+            async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
+                session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
+                session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
+                return await super().inner_text(selector, timeout=timeout)
+
+        session.page = _BusyPage()
+        with _recording_spans(include_content=include_content) as exporter:
+            await toolset.get_text()
+        (span,) = exporter.get_finished_spans()
+        assert span.attributes is not None
+        assert ('url.full' in span.attributes) is include_content
+        console, response = span.events
+        assert console.attributes is not None and response.attributes is not None
+        assert ('browser.event.message' in console.attributes) is include_content
+        assert ('url.full' in response.attributes) is include_content
+        assert response.attributes['browser.event.kind'] == 'response'
+        assert response.attributes['browser.event.level'] == 'error'
+        assert response.attributes['http.request.method'] == 'POST'
+        assert response.attributes['http.response.status_code'] == 503
+
     async def test_failed_operation_is_marked_on_the_span(self) -> None:
         page = _FakePage(click_error=PlaywrightTimeoutError('Timeout 5000ms exceeded.'))
         session = self._session(page)
