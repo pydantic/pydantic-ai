@@ -426,6 +426,9 @@ class TestCommand:
         assert list(plugin.complete([])) == list(plugin.complete(['f'])) == ['fake', 'delete']
         assert list(plugin.complete(['fake', ''])) == []
 
+    def test_complete_offers_the_shipped_providers(self, checkout: Path) -> None:
+        assert list(plugin_of(load(checkout)).complete([])) == ['e2b', 'boxd', 'delete']
+
     @pytest.mark.parametrize('gap', ['no gh', 'no login', 'token refused'])
     async def test_without_a_github_login(
         self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch, gap: str
