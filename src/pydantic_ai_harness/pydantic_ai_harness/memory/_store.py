@@ -14,7 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 
 _VALID_SEGMENT_RE = re.compile(r'[A-Za-z0-9_.-]{1,200}')
 MAX_RECEIPTS = 1024
-"""How many recent operation receipts `InMemoryStore` and `FileStore` keep for replay protection."""
+"""How many recent operation receipts `InMemoryMemoryStore` and `FileMemoryStore` keep for replay protection."""
 MAX_METADATA_CHARS = 4_096
 """The longest write metadata the bundled stores accept, measured as its JSON encoding."""
 _METADATA_ADAPTER = TypeAdapter(dict[str, str])
@@ -247,7 +247,7 @@ class MemoryStore(Protocol):
 class MetadataMemoryStore(MemoryStore, Protocol):
     """A `MemoryStore` that records caller-supplied metadata with each write, such as who made it.
 
-    `InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement it, and a custom store
+    `InMemoryMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement it, and a custom store
     opts in by implementing `write_with_metadata`: `Memory(write_metadata=...)` checks for it with
     `isinstance`, as `search_memory` does for `SearchableMemoryStore`.
 

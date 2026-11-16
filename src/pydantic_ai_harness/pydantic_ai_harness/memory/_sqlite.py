@@ -107,7 +107,7 @@ class SqliteMemoryStore:
         if database is not None and str(database) in ('', ':memory:'):
             raise ValueError(
                 'an in-memory SQLite database does not work with per-call connections -- '
-                'use `InMemoryStore`, or pass a caller-owned `connection=`'
+                'use `InMemoryMemoryStore`, or pass a caller-owned `connection=`'
             )
         self._database = database
         self._connection = connection

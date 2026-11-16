@@ -18,7 +18,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, features
 from pydantic_clai2.config.features import check_feature_name

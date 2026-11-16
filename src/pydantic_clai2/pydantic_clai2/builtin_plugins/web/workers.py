@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai_harness.subagents import DelegationStartedEvent, SubAgentMessageEvent, TaskBackgroundedEvent
+from pydantic_ai_harness.sub_agents import DelegationStartedEvent, SubAgentMessageEvent, TaskBackgroundedEvent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     EventTranslator,
     Item,

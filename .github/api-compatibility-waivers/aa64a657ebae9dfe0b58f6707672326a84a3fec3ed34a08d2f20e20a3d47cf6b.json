@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`GOOGLE_THINKING_LEVEL_SCALE` gains `'XHIGH'` at the top, for Gemini 4 Hydrogen; the existing levels keep their order.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13299"
+}

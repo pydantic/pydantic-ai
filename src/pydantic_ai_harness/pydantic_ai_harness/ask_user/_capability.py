@@ -64,7 +64,8 @@ class AskUser(AbstractCapability[AgentDepsT]):
     with `DeferredToolRequests` instead, so the host answers in a later run.
 
     Each question is a deferred tool call marked as a question, and the answerer is called from
-    `handle_deferred_tool_calls` through `wait_for_external_event`, as `RequestInput` calls its `ask`.
+    `handle_deferred_tool_calls` through `wait_for_external_event`, as `HandleDeferredToolCalls` calls a
+    handler that takes a resume token.
     So the wait is in process in a plain run, and recorded by the engine in a durable run on an
     engine that supports it, such as AWS Lambda durable functions; other durable engines refuse it.
 
@@ -167,7 +168,8 @@ class AskUser(AbstractCapability[AgentDepsT]):
         """Answer its own questions before a `HandleDeferredToolCalls` handler sees the pending calls, wherever it is listed.
 
         A generic handler that fills every call in `requests.calls` would otherwise answer the question
-        itself, and the answerer would never be asked. `RequestInput` is innermost, so it comes later still.
+        itself, and the answerer would never be asked. A handler that takes a resume token is innermost, so
+        it comes later still.
         """
         return CapabilityOrdering(wraps=[HandleDeferredToolCalls])
 
