@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,7 +18,6 @@ from opensandbox.config import ConnectionConfig
 import pydantic_ai_harness.opensandbox_sandbox as opensandbox_package
 from pydantic_ai import Agent, RunContext, models
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -26,6 +25,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
+from tests.harness.conftest import Instrumented
 
 from .._docs_examples import python_blocks
 from .fake_opensandbox import FakeOpenSandbox
@@ -306,7 +306,7 @@ class TestRuns:
         self,
         server: FakeOpenSandbox,
         working_dir: str,
-        instrumented: Callable[[bool], tuple[Instrumentation, Any]],
+        instrumented: Instrumented,
     ) -> None:
         """Creating, reattaching to and destroying the sandbox each get a span, under the call or tool that needed it."""
         tracing, exporter = instrumented(False)
