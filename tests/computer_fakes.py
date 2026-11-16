@@ -48,8 +48,8 @@ _LOOKING = (Wait, Screenshot)
 class FakeComputer(AbstractCapability[Any]):
     """A `computer` tool that records the actions it runs, refusing to act on a read-only workspace.
 
-    It refuses `hold_key`, so tests can see an action refused, and returns what zoom and cursor-position actions
-    read before its screenshot. With `native`, it also adds a `ComputerTool` declaring `display_size`, as
+    It refuses `hold_key`, so tests can see an action refused, and returns what zoom, cursor-position and screenshot
+    actions before the last one read, before its screenshot. With `native`, it also adds a `ComputerTool` declaring `display_size`, as
     `ComputerUse` does.
     """
 
@@ -69,8 +69,8 @@ class FakeComputer(AbstractCapability[Any]):
     async def _computer(self, ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
         result = ComputerResult(performed=0)
         outputs: list[str | BinaryImage] = []
-        for action in actions:
-            if isinstance(action, Zoom):
+        for index, action in enumerate(actions):
+            if isinstance(action, Zoom) or (isinstance(action, Screenshot) and index < len(actions) - 1):
                 outputs.append(BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png'))
             elif isinstance(action, CursorPosition):
                 outputs.append('The pointer is at (640, 400).')

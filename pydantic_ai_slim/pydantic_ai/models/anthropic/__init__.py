@@ -312,14 +312,12 @@ try:
     from ._computer import (
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
-        RETURNS_OUTPUT,
-        SCREENSHOT_NOT_LAST,
-        SCREENSHOT_NOT_LAST_FIELD,
         ComputerBatch,
         ComputerBlock,
         ComputerReplay,
         NativeComputer,
         computer_replay,
+        returns_output,
     )
     from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
@@ -4106,10 +4104,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
             # A denial or an interruption isn't a tool error: only a failed or retried call is (`ERROR_OUTCOMES`).
-            response = part.model_response_str(wrap_if_error=False)
-            if part.outcome == 'retried' and f'"{SCREENSHOT_NOT_LAST_FIELD}"' in response:
-                response = SCREENSHOT_NOT_LAST  # in place of a validation error Claude can't read
-            text = BetaTextBlockParam(text=response, type='text')
+            text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
             return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
         content = _result_items(part)
         if not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
@@ -4135,12 +4130,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ends = list(itertools.accumulate(counts))
         performed, error = metadata['performed'], metadata.get('error')
         ran = [index for index, end in enumerate(ends) if end <= performed]
-        returned = sum(blocks[index]['name'] in RETURNS_OUTPUT for index in ran)
+        returned = sum(returns_output(blocks, index) for index in ran)
         outputs, screen, note = _split_computer_content(content, returned)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, (block, end, count) in enumerate(zip(blocks, ends, counts)):
             if end <= performed:
-                output = next(outputs, None) if block['name'] in RETURNS_OUTPUT else None
+                output = next(outputs, None) if returns_output(blocks, index) else None
                 is_last_ran = index == ran[-1]
                 results.append(await self._map_ran_computer_call(block, is_last_ran, screen, note, output, map_context))
             elif error is not None and end - count <= performed:

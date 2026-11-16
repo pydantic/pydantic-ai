@@ -195,8 +195,8 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
     assert all('greater than or equal to 0' in r['content'][0]['text'] for r in results)
 
 
-async def test_a_screenshot_before_other_calls_is_refused(allow_model_requests: None) -> None:
-    """The screen is captured once, after the batch, so an earlier screenshot call would get no image of its own."""
+async def test_a_screenshot_before_other_calls_gets_the_screen_where_it_was_taken(allow_model_requests: None) -> None:
+    """Live Claude puts a screenshot first in a batch; it runs with the batch, and its own result carries its image."""
     computer = FakeComputer()
     client = MockAnthropic.create_mock(
         [
@@ -209,24 +209,16 @@ async def test_a_screenshot_before_other_calls_is_refused(allow_model_requests: 
         ]
     )
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    result = await _agent(model, computer).run('Go.')
+    await _agent(model, computer).run('Go.')
 
-    assert computer.actions == []
-    # Only the screenshot before the click is refused; the last one would have run.
-    (call,) = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {
-        'actions': [
-            {'type': 'screenshot', 'not_the_last_call': True},
-            {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []},
-            {'type': 'screenshot'},
-        ]
-    }
+    assert computer.actions == [Click(x=5, y=6)]
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
-    # Claude is told why in a sentence, not the validation error.
-    assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
-        (True, ['A screenshot must be the last call in a batch: the screen is captured after the batch runs.'])
-    ] * 3
+    assert [(r['tool_use_id'], r['is_error'], [block['type'] for block in r['content']]) for r in results] == [
+        ('toolu_1', False, ['text', 'image']),
+        ('toolu_2', False, ['text']),
+        ('toolu_3', False, ['text', 'image']),
+    ]
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:

@@ -250,16 +250,16 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     first, *_, last = request_capture.bodies('/v1/messages')
     # The capability's `computer` tool went out as Claude's toolset, which has no name or schema of ours.
     assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
-    # Every member call got its own result, in order and in the toolset. Claude's first batch put a screenshot before
-    # its click, which was refused, as the screen is captured only after a batch; it then took the screenshot alone and
-    # clicked and typed in a second batch. Each call that ran got `OK`, and the last of a batch the screenshot.
+    # Claude put a screenshot before its click and typing, and the batch ran in one go: one request after the first.
+    assert len(request_capture.bodies('/v1/messages')) == 2
+    # Every member call got its own result, in order and in the toolset: `OK`, with the screen as the screenshot call
+    # found it, and the last call the screen after the batch.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
     assert all(result['toolset_name'] == 'computer' for result in results)
-    assert [[block['type'] for block in json_objects(result['content'])] for result in results] == snapshot(
-        [['text'], ['text'], ['text'], ['text', 'image'], ['text'], ['text', 'image']]
-    )
+    assert [call['name'] for call in calls] == snapshot(['screenshot', 'left_click', 'type'])
+    assert _results(last) == snapshot([(False, ['OK', 'image']), (False, ['OK']), (False, ['OK', 'image'])])
 
 
 @needs_anthropic

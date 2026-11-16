@@ -136,10 +136,7 @@ class NativeComputer:
             )
             for block in blocks
         ]
-        member_actions = [
-            self._member_actions(block, incomplete, split, last=index == len(checked) - 1)
-            for index, block in enumerate(checked)
-        ]
+        member_actions = [self._member_actions(block, incomplete, split) for block in checked]
         actions = [action for member in member_actions for action in member]
         replay = ComputerReplay(
             computer_blocks=checked,
@@ -156,7 +153,7 @@ class NativeComputer:
         )
 
     def _member_actions(
-        self, block: ComputerBlock, incomplete: Collection[str], split: Mapping[str, Sequence[str]], *, last: bool
+        self, block: ComputerBlock, incomplete: Collection[str], split: Mapping[str, Sequence[str]]
     ) -> list[dict[str, Any]]:
         """The `computer` tool actions one call becomes, or one the tool refuses if it can't run as asked."""
         name, args = computer_member(block, self.version)
@@ -164,9 +161,6 @@ class NativeComputer:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'incomplete_input': True}]
         if block['id'] in split:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
-        if name == 'screenshot' and not last:
-            # The `computer` tool captures the screen once, after the batch, but each screenshot call needs its image.
-            return [{'type': 'screenshot', SCREENSHOT_NOT_LAST_FIELD: True}]
         return map_computer_member(name, args)
 
 
@@ -238,14 +232,14 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
     return action, {key: value for key, value in block['input'].items() if key != 'action'}
 
 
-RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})
-"""The calls whose result has content of its own, before the screenshot every result ends with; each is one action."""
+def returns_output(blocks: list[ComputerBlock], index: int) -> bool:
+    """Whether a call's result has content of its own, before the screen the last call that ran gets.
 
-SCREENSHOT_NOT_LAST_FIELD = 'not_the_last_call'
-"""The field that makes the `computer` tool refuse a screenshot call before a batch's last call."""
+    A zoom and the pointer position do, and so does a screenshot before the last call, captured where it is.
+    """
+    name = blocks[index]['name']
+    return name in ('zoom', 'cursor_position') or (name == 'screenshot' and index < len(blocks) - 1)
 
-SCREENSHOT_NOT_LAST = 'A screenshot must be the last call in a batch: the screen is captured after the batch runs.'
-"""What Claude is told for that refusal."""
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
