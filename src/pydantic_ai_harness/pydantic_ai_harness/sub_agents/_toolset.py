@@ -281,7 +281,8 @@ class SubAgent(Generic[AgentDepsT]):
     keep_partial_output: bool = dataclass_field(default=False, kw_only=True)
     """Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response.
     The parent gets it after the steering message, in a `<partial_output>` frame. It has not passed the child's
-    output validation. Only a response the child went on from without a retry counts."""
+    output validation and can be text the child rejected, so leave this off for a child whose guardrails keep content
+    from its parent."""
 
     @property
     def resolved_name(self) -> str | None:
