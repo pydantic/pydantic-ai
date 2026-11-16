@@ -50,11 +50,12 @@ except UserError as e:
   `LocalWorkspace('.', env={'GH_TOKEN': ...})`. Never pass `os.environ` (leaks LLM API keys to the
   model's commands). Under `uv run`, `python`/`pytest` resolve from the agent's venv via `PATH`.
 - For a token the sandbox's commands can use but not read (such as `GH_TOKEN` for `git push`/`gh`), use the
-  provider's proxy option, which only shapes a new sandbox. Each provider's docs page has a "Give commands a
-  credential they cannot read" section:
+  provider's proxy option, which only shapes a new sandbox. Each provider's docs page has a section on it:
   - E2B: `E2BSandbox(network={'rules': {host: [{'transform': {'headers': {...}}}]}})`; HTTPS only.
   - boxd: `BoxdSandbox(secrets=['GH_TOKEN'])`, naming a secret made beforehand with
-    `secrets.set(name, value, scope='unattached', domains=[...])`; without `domains` the real value is set.
+    `secrets.set(name, value, scope='private-unattached', domains=[...])`; without `domains` the real value is set.
+    boxd also substitutes request bodies, so a command can store the value on a named host (a GitHub
+    issue or gist) and read it back: use a fine-grained token without Gists access.
 - On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox); `Coder()` without a
   workspace fails as on POSIX. Commands run in PowerShell and paths are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
   `list_files` read the files when `rg` is missing.

@@ -93,8 +93,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     """Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in
     its machine spec. A secret bound to domains is set in the machine's environment as a placeholder that
     boxd's proxy, outside the machine, replaces with the real value on requests to those domains, so the
-    agent's commands can use a credential they cannot read; a secret without domains is set as its real
-    value. An attached machine keeps the ones it was created with."""
+    agent's commands can send it without it being in their environment; a secret without domains is set
+    as its real value. An attached machine keeps the ones it was created with."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
