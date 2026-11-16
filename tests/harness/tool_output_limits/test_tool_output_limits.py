@@ -1152,7 +1152,6 @@ class TestInternals:
             data=b'x' * 100,
             value='x' * 100,
             suffix='',
-            attribute_prefix='tool_output_limits',
         )
         assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 

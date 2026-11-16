@@ -111,8 +111,6 @@ class _Unit:
     data: bytes
     value: ToolReturnContent
     suffix: str
-    attribute_prefix: str
-    """Prefix of the span attributes that record this unit's reduction."""
 
 
 _ActionName = Literal['truncate', 'spill', 'summarize']
@@ -128,6 +126,16 @@ class _Reduction:
     """The spill handle, set only when `action` is `'spill'`."""
     fallback_from: _ActionName | None = None
     """The band's action, when it could not run and a `then` fallback produced `text` instead."""
+    fallback_error: str | None = None
+    """The type name of the exception that stopped `fallback_from`, when one did rather than a binary return."""
+
+
+@dataclass
+class _SpillFailed:
+    """What `_write_spill` returns in place of a handle when the store could not take the write."""
+
+    error: str
+    """The type name of the exception the store raised."""
 
 
 @dataclass
@@ -366,9 +374,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
 
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(
-            return_value, tool_name=call.tool_name, suffix='', attribute_prefix='tool_output_limits'
-        )
+        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
         value_reduction = await self._reduce(ctx, call, bands, value_unit)
         content_reduction = await self._reduce_content(ctx, call, bands, content)
 
@@ -419,7 +425,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return spilled_out
         return value_reduction.text
 
-    def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str, attribute_prefix: str) -> _Unit:
+    def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
         if is_binary(value):
             return _Unit(
@@ -428,7 +434,6 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 data=to_bytes(value),
                 value=value,
                 suffix=suffix,
-                attribute_prefix=attribute_prefix,
             )
         if self.serializer is not None and not isinstance(value, str):
             try:
@@ -452,7 +457,6 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             data=text.encode('utf-8'),
             value=value,
             suffix=suffix,
-            attribute_prefix=attribute_prefix,
         )
 
     async def _reduce(
@@ -492,19 +496,27 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         else:
             size_unit = 'tokens' if self.over_tokens else 'chars'
             reduced_size = measure(reduction.text, over_tokens=self.over_tokens, tokenizer=self.tokenizer)
-        prefix = unit.attribute_prefix
-        span.set_attributes(
-            {
-                f'{prefix}.action': reduction.action,
-                f'{prefix}.original_size': original_size,
-                f'{prefix}.reduced_size': reduced_size,
-                f'{prefix}.size_unit': size_unit,
-            }
-        )
+        attributes: dict[str, str | int] = {
+            'tool_output_limits.action': reduction.action,
+            'tool_output_limits.original_size': original_size,
+            'tool_output_limits.reduced_size': reduced_size,
+            'tool_output_limits.size_unit': size_unit,
+        }
         if reduction.fallback_from is not None:
-            span.set_attribute(f'{prefix}.fallback_from', reduction.fallback_from)
+            attributes['tool_output_limits.fallback_from'] = reduction.fallback_from
+        if reduction.fallback_error is not None:
+            attributes['tool_output_limits.fallback_error'] = reduction.fallback_error
+        handle_key = 'tool_output_limits.handle'
+        if unit.suffix == '.content':
+            # A `ToolReturn`'s `content` is recorded under `tool_output_limits.content.*` with the same names.
+            attributes = {
+                key.replace('tool_output_limits.', 'tool_output_limits.content.', 1): value
+                for key, value in attributes.items()
+            }
+            handle_key = 'tool_output_limits.content.handle'
+        span.set_attributes(attributes)
         if reduction.handle is not None:
-            set_content_attribute(ctx, span, f'{prefix}.handle', reduction.handle)
+            set_content_attribute(ctx, span, handle_key, reduction.handle)
 
     async def _reduce_content(
         self,
@@ -521,9 +533,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 ctx,
                 call,
                 bands,
-                self._make_unit(
-                    content, tool_name=call.tool_name, suffix='.content', attribute_prefix='tool_output_limits.content'
-                ),
+                self._make_unit(content, tool_name=call.tool_name, suffix='.content'),
             )
 
         text = ''.join(part for part in content if isinstance(part, str))
@@ -550,7 +560,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         if isinstance(action, Truncate):
             if unit.binary:
-                return await self._fallback(ctx, call, action, unit)
+                return await self._fallback(ctx, call, action, unit, error=None)
             assert unit.text is not None
             text = truncate_text(unit.text, action.max_chars, action.strategy, keep_tail_lines=action.keep_tail_lines)
             return _Reduction(text, 'truncate')
@@ -566,14 +576,21 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         failed: Truncate | Spill | Summarize,
         unit: _Unit,
+        *,
+        error: str | None,
     ) -> _Reduction | None:
-        """Run the `then` of an action that could not run, or keep the unit unchanged when there is none."""
+        """Run the `then` of an action that could not run, or keep the unit unchanged when there is none.
+
+        `error` is the type name of the exception that stopped `failed`, or `None` when it can't take binary.
+        """
         if failed.then is None:
             return None
         reduction = await self._apply(ctx, call, failed.then, unit)
         if reduction is not None:
-            # Set on the way out of a chain of fallbacks, so the outermost, the band's own action, is kept.
+            # Set on the way out of a chain of fallbacks, so the outermost, the band's own action, is kept,
+            # with the error that stopped it. A later fallback's error is in the log.
             reduction.fallback_from = _action_name(failed)
+            reduction.fallback_error = error
         return reduction
 
     async def _spill(
@@ -591,8 +608,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             assert unit.text is not None
             payload = unit.text
         handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
-        if handle is None:
-            return await self._fallback(ctx, call, action, unit)
+        if not isinstance(handle, str):
+            # `None` is a failure recorded by a version that didn't keep the error type.
+            error = handle.error if handle is not None else None
+            return await self._fallback(ctx, call, action, unit, error=error)
 
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
@@ -604,10 +623,11 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     @durable_operation('spill')
     async def _write_spill(
         self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, payload: str, binary: bool, fallback: str
-    ) -> str | None:
-        """Write a spill and return its handle, or `None` when the store could not take it.
+    ) -> str | _SpillFailed | None:
+        """Write a spill and return its handle, or why the store could not take it.
 
         `payload` is the text, or base64 when `binary`: a durable engine may carry it to another worker as JSON.
+        `None` is never returned now, but a replay can return one recorded before the error type was kept.
         """
         data = base64.b64decode(payload) if binary else payload.encode('utf-8')
         try:
@@ -616,9 +636,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
             # say so rather than degrading quietly.
             warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=3)
+            return _SpillFailed(type(error).__name__)
         except Exception as exc:
             _log_fallback('Spilling', tool_name, fallback, exc)
-        return None
+            return _SpillFailed(type(exc).__name__)
 
     def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
         """How the model reads a spill back, naming the tools by the names they have in this run."""
@@ -635,7 +656,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> _Reduction | None:
         if unit.binary:
-            return await self._fallback(ctx, call, action, unit)
+            return await self._fallback(ctx, call, action, unit, error=None)
         assert unit.text is not None
         try:
             if action.summarize is not None:
@@ -650,7 +671,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             raise
         except Exception as exc:
             _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
-            return await self._fallback(ctx, call, action, unit)
+            return await self._fallback(ctx, call, action, unit, error=type(exc).__name__)
         return _Reduction(summary, 'summarize')
 
     @durable_operation('summarize')

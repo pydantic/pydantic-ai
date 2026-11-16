@@ -15,7 +15,7 @@ from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.messages import ToolReturn, ToolReturnPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, Summarize, ToolOutputLimits, Truncate
 
 
 def instrumented(*, include_content: bool = False) -> tuple[Instrumentation, InMemorySpanExporter]:
@@ -53,6 +53,10 @@ class FailingStore:
 
     async def read(self, handle: str) -> bytes:  # pragma: no cover - nothing is ever written
         raise FileNotFoundError(handle)
+
+
+def failing_summarize(tool_name: str, text: str) -> str:
+    raise ValueError('summarizer down')
 
 
 TRUNCATE = ToolOutputLimits[object](bands=[Band(over=100, action=Truncate(max_chars=50))])
@@ -118,6 +122,7 @@ class TestToolOutputLimitsTelemetry:
                 'tool_output_limits.reduced_size': 50,
                 'tool_output_limits.size_unit': 'chars',
                 'tool_output_limits.fallback_from': 'spill',
+                'tool_output_limits.fallback_error': 'OSError',
             }
         )
 
@@ -135,6 +140,7 @@ class TestToolOutputLimitsTelemetry:
                 'tool_output_limits.reduced_size': 500,
                 'tool_output_limits.size_unit': 'chars',
                 'tool_output_limits.fallback_from': 'spill',
+                'tool_output_limits.fallback_error': 'OSError',
             }
         )
 
@@ -150,6 +156,35 @@ class TestToolOutputLimitsTelemetry:
             'spill',
             'truncate',
         )
+        # Truncate can't take binary, so no exception stopped it.
+        assert 'tool_output_limits.fallback_error' not in attributes
+
+    async def test_a_failed_summary_records_its_error_type(self):
+        limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Summarize(summarize=failing_summarize, then=Truncate(max_chars=50)))]
+        )
+        instrumentation, exporter = instrumented()
+        await agent_with_tool(limits, 'x' * 500, instrumentation).run('go')
+
+        attributes = limits_attributes(exporter)
+        assert (attributes['tool_output_limits.fallback_from'], attributes['tool_output_limits.fallback_error']) == (
+            'summarize',
+            'ValueError',
+        )
+
+    async def test_a_chain_of_failures_records_the_bands_own_action_and_its_error(self):
+        """The spill fails with `OSError`, then its summary with `ValueError`; the band's own spill is what's kept."""
+        summarize = Summarize(summarize=failing_summarize, then=Truncate(max_chars=50))
+        limits = ToolOutputLimits[object](bands=[Band(over=100, action=Spill(then=summarize))], store=FailingStore())
+        instrumentation, exporter = instrumented()
+        await agent_with_tool(limits, 'x' * 500, instrumentation).run('go')
+
+        attributes = limits_attributes(exporter)
+        assert (
+            attributes['tool_output_limits.action'],
+            attributes['tool_output_limits.fallback_from'],
+            attributes['tool_output_limits.fallback_error'],
+        ) == ('truncate', 'spill', 'OSError')
 
     async def test_content_reduced_on_its_own_gets_its_own_attributes(self):
         instrumentation, exporter = instrumented()
@@ -189,6 +224,28 @@ class TestToolOutputLimitsTelemetry:
         ]
         assert part.metadata is not None
         assert limits_attributes(exporter)['tool_output_limits.handle'] == part.metadata['overflow_handle']
+
+    async def test_a_content_spill_records_its_handle_only_with_content(self, tmp_path: Path):
+        spill = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
+        )
+        output = ToolReturn(return_value='small', content='y' * 300)
+
+        instrumentation, exporter = instrumented()
+        await agent_with_tool(spill, output, instrumentation).run('go')
+        attributes = limits_attributes(exporter)
+        assert attributes['tool_output_limits.content.action'] == 'spill'
+        assert 'tool_output_limits.content.handle' not in attributes
+
+        instrumentation, exporter = instrumented(include_content=True)
+        result = await agent_with_tool(spill, output, instrumentation).run('go')
+        [part] = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert part.metadata is not None
+        assert (
+            limits_attributes(exporter)['tool_output_limits.content.handle'] == part.metadata['overflow_content_handle']
+        )
 
     async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
         exporter = InMemorySpanExporter()
