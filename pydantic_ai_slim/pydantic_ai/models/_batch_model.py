@@ -307,7 +307,7 @@ def _fail_each(requests: Sequence[_Queued], error: Exception) -> None:
         queued.future.set_exception(error if index == 0 else _own_copy(error))
 
 
-def _own_copy(error: Exception) -> Exception:
+def _own_copy(error: BaseException) -> BaseException:
     if not isinstance(error, AgentRunError):
         return error
     copied = copy.copy(error)
@@ -627,7 +627,9 @@ class BatchPool:
                 return checked, None
         loop = asyncio.get_running_loop()
         key = (loop, check_key)
-        if (poll := self._polls.get(key)) is None:
+        poll = self._polls.get(key)
+        joined = poll is not None
+        if poll is None:
             poll = self._polls[key] = loop.create_task(
                 self._fetch(model, batch, check_key, ticket.get('trace_context'), requester)
             )
@@ -636,6 +638,9 @@ class BatchPool:
         await asyncio.wait((poll,))
         if poll.cancelled():
             raise UserError(_EXITED_MESSAGE)
+        if joined and (error := poll.exception()) is not None:
+            # A run that joined another's check gets its own error, like the requests of a batch that failed to submit.
+            raise _own_copy(error)
         return poll.result()
 
     def _poll_done(

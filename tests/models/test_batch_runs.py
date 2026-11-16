@@ -23,6 +23,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     CallToolsNode,
+    Conversation,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestNode,
@@ -31,6 +32,7 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
     UsageLimitExceeded,
+    UserPromptPart,
 )
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, SelectModel
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
@@ -395,6 +397,37 @@ async def test_a_check_that_would_fail_again_reaches_the_run(error: ModelAPIErro
         await Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]).run('Hello')
     assert exc_info.value is error
     assert wrapped.failed == 1
+
+
+async def test_runs_sharing_a_failed_check_each_get_their_own_error() -> None:
+    """A run gives the error it raises its conversation, so runs waiting on one check each need their own error."""
+
+    class SlowFailingCheckModel(SlowBatchTestModel):
+        async def batch_status(self, batch: Batch) -> Batch:
+            self._record('batch_status')
+            await asyncio.sleep(0.05)
+            raise ModelHTTPError(status_code=401, model_name='test', body={'error': 'denied'})
+
+    checks: list[str] = []
+    wrapped = SlowFailingCheckModel(on_batch_call=checks.append)
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
+
+    first, second = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+
+    assert checks.count('batch_status') == 1
+    assert isinstance(first, ModelHTTPError) and isinstance(second, ModelHTTPError)
+    assert first is not second
+    assert (first.status_code, first.body) == (second.status_code, second.body)
+    assert [_first_prompt(error.conversation) for error in (first, second)] == ['one', 'two']
+
+
+def _first_prompt(conversation: Conversation | None) -> object:
+    assert conversation is not None
+    request = conversation.messages[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    return part.content
 
 
 def _one_request() -> list[BatchRequest]:
