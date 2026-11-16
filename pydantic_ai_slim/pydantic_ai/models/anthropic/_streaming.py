@@ -108,14 +108,16 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
-    _computer_started: int = field(default=0, init=False)
-    """How many of the batch's calls the `computer` call last started held."""
+    _after_computer_batch: list[ModelResponseStreamEvent] = field(
+        default_factory=list[ModelResponseStreamEvent], init=False
+    )
+    """The events that follow the batch's place, held until the response ends so the batch's call starts first."""
     _computer_input: list[str] = field(default_factory=list[str], init=False)
 
     @cached_property
     def _computer_batch(self) -> ComputerBatch:
-        # A response's computer toolset calls are one batch: one `computer` call at the first one's place, started when
-        # another block or the response's end follows a member, so no later part's event comes before it.
+        # A response's computer toolset calls are one batch: one `computer` call at the first one's place, started once
+        # the response ends, when all its calls are known.
         return ComputerBatch(self._native_computer, self.provider_name)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -123,15 +125,14 @@ class AnthropicStreamedResponse(StreamedResponse):
             self._fetched_pages = list(self._history_fetched_pages)
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
                 for event_ in self._map_event(event):
+                    if self._computer_batch.blocks:
+                        self._after_computer_batch.append(event_)
+                    else:
+                        yield event_
+            if (part := self._computer_batch.call_part()) is not None:
+                yield self._parts_manager.handle_part(vendor_part_id=part.tool_call_id, part=part)
+                for event_ in self._after_computer_batch:
                     yield event_
-            for event_ in self._start_computer_batch():
-                yield event_
-
-    def _start_computer_batch(self) -> Iterator[ModelResponseStreamEvent]:
-        batch = self._computer_batch
-        if len(batch.blocks) > self._computer_started and (part := batch.call_part()) is not None:
-            self._computer_started = len(batch.blocks)
-            yield self._parts_manager.handle_part(vendor_part_id=batch.blocks[0]['id'], part=part)
 
     def _map_event(self, event: BetaRawMessageStreamEvent) -> Iterator[ModelResponseStreamEvent]:
         match event:
@@ -191,7 +192,6 @@ class AnthropicStreamedResponse(StreamedResponse):
         if native_computer and native_computer.answers(current_block):
             self._computer_input = []
             return
-        yield from self._start_computer_batch()
         if isinstance(current_block, BetaToolUseBlock):
             self._computer_batch.note_other(current_block.name)
         match current_block:
@@ -431,7 +431,6 @@ class AnthropicStreamedResponse(StreamedResponse):
         except ValueError:
             # Cut off mid-input, as at `max_tokens`: kept as the partial JSON, so the run stops on it as for any tool
             # call cut off. It goes after the toolset's earlier calls, as the response's last part.
-            yield from self._start_computer_batch()
             yield self._parts_manager.handle_part(
                 vendor_part_id=current_block.id,
                 part=ComputerCallPart(
@@ -444,7 +443,13 @@ class AnthropicStreamedResponse(StreamedResponse):
             return
         block = ComputerBlock(id=current_block.id, name=current_block.name, input=computer_args)
         if native_computer.is_toolset:
-            self._computer_batch.add(block)
+            batch = self._computer_batch
+            batch.add(block)
+            if len(batch.blocks) == 1:
+                # Takes the batch's place among the parts; its event comes at the response's end.
+                self._parts_manager.handle_part(
+                    vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
+                )
         else:
             yield self._parts_manager.handle_part(
                 vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
