@@ -22,6 +22,7 @@ from pydantic_ai_harness.e2b_sandbox._backend import DEFAULT_SANDBOX_TIMEOUT, E2
 
 if TYPE_CHECKING:
     import e2b
+    from e2b import SandboxNetworkOpts
 
 
 @dataclass(kw_only=True)
@@ -72,6 +73,12 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
     for 1280x800, or its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template."""
+    network: SandboxNetworkOpts | None = field(default=None, repr=False)
+    """E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged; a spec cannot set them.
+
+    Their `rules` have E2B add headers, such as a token, to requests as they leave the sandbox, so
+    commands can use the token without it ever being inside the sandbox.
+    """
 
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)
@@ -142,4 +149,5 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             desktop=self.desktop,
+            network=self.network,
         )
