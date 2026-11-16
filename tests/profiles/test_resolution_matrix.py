@@ -2839,6 +2839,112 @@ def test_fireworks_gemma():
     )
 
 
+@pytest.mark.skipif(
+    not (openai_imports() and google_imports() and bedrock_imports() and huggingface_imports()),
+    reason='openai, google, bedrock or huggingface extras not installed',
+)
+def test_gemma_4_thinking_across_routes():
+    """Gemma 4's thinking flags on the Gemini API, the hosts issue #12067 names, Together and Fireworks.
+
+    The routes that map the Google family take its flags; Cerebras, Vercel and SambaNova don't map it and stay
+    unchanged.
+    """
+    profiles = {
+        'google': GoogleProvider.model_profile('gemma-4-31b-it'),
+        'ollama': OllamaProvider.model_profile('gemma4:31b'),
+        'huggingface': HuggingFaceProvider.model_profile('google/gemma-4-26B-A4B-it'),
+        'bedrock': BedrockProvider.model_profile('google.gemma-4-31b'),
+        'openai-compatible': OpenAICompatibleProvider.model_profile('google/gemma-4-31B-it'),
+        'vllm': VLLMProvider.model_profile('google/gemma-4-26B-A4B-it'),
+        'together': TogetherProvider.model_profile('google/gemma-4-31B-it'),
+        'fireworks': FireworksProvider.model_profile('accounts/fireworks/models/gemma-4-31b-it'),
+        'openrouter': OpenRouterProvider.model_profile('google/gemma-4-31b-it'),
+        'cerebras': CerebrasProvider.model_profile('gemma-4-31b'),
+        'vercel': VercelProvider.model_profile('google/gemma-4-31b-it'),
+        'sambanova': SambaNovaProvider.model_profile('gemma-4-31B-it'),
+    }
+    keys = (
+        'supports_thinking',
+        'thinking_always_enabled',
+        'google_supports_thinking_level',
+        'google_thinking_levels',
+        'google_supports_strict_tool_definition',
+    )
+    assert {
+        route: {key: profile.get(key) for key in keys if key in profile}
+        for route, profile in profiles.items()
+        if profile is not None
+    } == snapshot(
+        {
+            'google': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'ollama': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_supports_strict_tool_definition': False,
+            },
+            'huggingface': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'bedrock': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'openai-compatible': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'vllm': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'together': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'fireworks': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'openrouter': {
+                'supports_thinking': True,
+                'thinking_always_enabled': False,
+                'google_supports_thinking_level': True,
+                'google_thinking_levels': frozenset({'HIGH', 'MINIMAL'}),
+                'google_supports_strict_tool_definition': False,
+            },
+            'cerebras': {'supports_thinking': False, 'thinking_always_enabled': False},
+            'vercel': {},
+            'sambanova': {},
+        }
+    )
+
+
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_together_qwen():
     profile = TogetherProvider.model_profile('Qwen/Qwen2.5-72B-Instruct-Turbo')
