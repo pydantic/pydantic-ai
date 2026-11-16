@@ -7,8 +7,7 @@ from collections.abc import Mapping
 
 from pydantic_ai.messages import Authority
 from pydantic_ai.workspaces import AuthorityWorkspace, Workspace
-
-_LEVELS: tuple[Authority, ...] = ('none', 'user', 'operator')
+from pydantic_ai.workspaces._authority_paths import lowest_authority
 
 
 async def file_digest(workspace: Workspace, path: str) -> str:
@@ -26,22 +25,23 @@ async def pin_accepted_files(
 
     `accepted` maps workspace paths, such as `'AGENTS.md'`, `'.agents/skills/review/SKILL.md'` or
     `'.claude/agents/reviewer.md'`, to the [`file_digest`][pydantic_ai_harness.repo_context.file_digest] recorded when
-    the user accepted them. A file that still matches keeps the level the workspace gives it, a deleted one is
-    skipped, and a changed one never rises above that level. Files not in `accepted` are untouched. The changed files are wrapped in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]
-    `path_authority`, so [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] reports the lower level until
-    the user accepts the new content and the app records its digest.
+    the user accepted them. A file that still matches keeps the level the workspace gives it. A changed or deleted one
+    gets `changed`, but never more than that level, so a deleted file recreated later is capped too. Files not in
+    `accepted` are untouched. The capped files are wrapped in an
+    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] `path_authority`, so
+    [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] reports the lower level until the user accepts the
+    new content and the app records its digest.
 
     Files are compared when this is called, so call it before each run and pass the result as the run's workspace.
     """
     path_authority: dict[str, Authority] = {}
     for path, digest in accepted.items():
         try:
-            current = await file_digest(workspace, path)
+            current: str | None = await file_digest(workspace, path)
         except FileNotFoundError:
-            continue
+            current = None
         if current != digest:
-            level = await workspace.authority_of(path)
-            path_authority[path] = changed if _LEVELS.index(changed) < _LEVELS.index(level) else level
+            path_authority[path] = lowest_authority((changed, await workspace.authority_of(path)))
     if not path_authority:
         return workspace
     return AuthorityWorkspace(workspace, authority='operator', path_authority=path_authority)

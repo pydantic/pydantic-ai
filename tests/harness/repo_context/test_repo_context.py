@@ -1829,8 +1829,11 @@ class TestPinAcceptedFiles:
         pinned = await pin_accepted_files(workspace, accepted, changed='user')
         assert await pinned.authority_of(path) == 'none'
 
-    async def test_a_deleted_file_is_skipped(self, workspace: Workspace) -> None:
-        assert await pin_accepted_files(workspace, {'AGENTS.md': '0' * 64}) is workspace
+    async def test_a_deleted_file_stays_capped_when_recreated(self, tmp_path: Path, workspace: Workspace) -> None:
+        pinned = await pin_accepted_files(workspace, {'AGENTS.md': '0' * 64})
+        _write(tmp_path / 'AGENTS.md', 'Use spaces.')
+
+        assert await pinned.authority_of('AGENTS.md') == 'none'
 
     async def test_a_lower_workspace_level_is_kept(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'Use tabs.')
