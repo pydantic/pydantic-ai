@@ -80,7 +80,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -1894,29 +1894,36 @@ async def test_settings_a_hook_sets_reach_every_candidate():
         assert seen == [('first', 3, 0.5), ('last', 3, 0.9)]
 
 
-async def test_callable_model_settings_resolve_once_per_step():
-    """A callable `model_settings` layer is resolved once per step, even when an attempt moves to another model."""
-    calls: list[int] = []
+async def test_callable_model_settings_resolve_again_for_another_model():
+    """A callable `model_settings` layer is resolved again, with that model as `ctx.model`, when an attempt moves to
+    another model, and not again when the step's own model serves it."""
+    calls: list[tuple[int, str]] = []
 
     def settings(ctx: RunContext[Any]) -> ModelSettings:
-        calls.append(ctx.run_step)
+        calls.append((ctx.run_step, ctx.model.model_name))
         return {'temperature': 0.2}
 
     temperatures: list[float | None] = []
 
-    def respond(fail: bool) -> FunctionModel:
+    def respond(name: str, fail: bool) -> FunctionModel:
         def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             temperatures.append((info.model_settings or {}).get('temperature'))
             if fail:
-                raise ModelAPIError(model_name='m', message='boom')
+                raise ModelAPIError(model_name=name, message='boom')
             return ModelResponse(parts=[TextPart('hello')])
 
-        return FunctionModel(fn)
+        return FunctionModel(fn, model_name=name)
 
-    agent = Agent(respond(True), model_settings=settings, capabilities=[ModelFallback(respond(False))])
+    agent = Agent(
+        respond('primary', True), model_settings=settings, capabilities=[ModelFallback(respond('backup', False))]
+    )
     assert (await agent.run('x')).output == 'hello'
-    assert calls == [1]
+    assert calls == [(1, 'primary'), (1, 'backup')]
     assert temperatures == [0.2, 0.2]
+
+    calls.clear()
+    assert (await Agent(respond('primary', False), model_settings=settings).run('x')).output == 'hello'
+    assert calls == [(1, 'primary')]
 
 
 async def test_a_streamed_request_a_wrapper_answers_without_calling_the_model():
@@ -2958,3 +2965,170 @@ async def test_spec_falls_back_on_cut_off_responses_by_default_and_can_opt_out()
         capabilities=[resolve],
     )
     assert (await agent.run('x')).output == 'backup answered'
+
+
+@dataclass
+class _PerModel(AbstractCapability[Any]):
+    """Instructions and a `temperature` tailored to `ctx.model`, logging the model each hook saw."""
+
+    seen: list[tuple[str, str]]
+
+    def get_instructions(self):
+        def instructions(ctx: RunContext[Any]) -> str:
+            self.seen.append(('instructions', ctx.model.model_name))
+            return f'You are {ctx.model.model_name}.'
+
+        return instructions
+
+    def get_model_settings(self):
+        def settings(ctx: RunContext[Any]) -> ModelSettings:
+            self.seen.append(('settings', ctx.model.model_name))
+            return {'temperature': 0.9 if ctx.model.model_name == 'backup' else 0.1}
+
+        return settings
+
+
+def _sent(name: str, sent: list[tuple[str, str | None, float | None]], *, fails: bool = False) -> FunctionModel:
+    """A model that logs the instructions and `temperature` it was sent, and calls `noop` to answer a prompt."""
+
+    def log(messages: list[ModelMessage], info: AgentInfo) -> None:
+        sent.append((name, info.instructions, (info.model_settings or {}).get('temperature')))
+        if fails:
+            raise ModelAPIError(model_name=name, message='down')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        log(messages, info)
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('noop')])
+        return ModelResponse(parts=[TextPart(name)])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        log(messages, info)
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            yield {0: DeltaToolCall(name='noop', json_args='{}')}
+        else:
+            yield name
+
+    return FunctionModel(respond, stream_function=stream, model_name=name)
+
+
+def _recorded_instructions(messages: list[ModelMessage]) -> list[str | None]:
+    return [message.instructions for message in messages if isinstance(message, ModelRequest)]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_instructions_and_settings_resolve_for_the_model_fallen_back_to(stream: bool):
+    """An attempt at another model is sent the instructions and settings resolved for it, and history records them."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            capabilities=[_PerModel(seen), ModelFallback(_sent('backup', sent))],
+        )
+    )
+    if stream:
+        async with agent.run_stream('x') as result:
+            assert await result.get_output() == 'backup'
+        messages = result.all_messages()
+    else:
+        run_result = await agent.run('x')
+        assert run_result.output == 'backup'
+        messages = run_result.all_messages()
+    # Each step starts from the primary again, as without `sticky`.
+    assert sent == snapshot(
+        [
+            ('primary', 'You are primary.', 0.1),
+            ('backup', 'You are backup.', 0.9),
+            ('primary', 'You are primary.', 0.1),
+            ('backup', 'You are backup.', 0.9),
+        ]
+    )
+    assert _recorded_instructions(messages) == snapshot(['You are backup.', 'You are backup.'])
+    assert seen == snapshot(
+        [
+            ('instructions', 'primary'),
+            ('settings', 'primary'),
+            ('instructions', 'backup'),
+            ('settings', 'backup'),
+            ('instructions', 'primary'),
+            ('settings', 'primary'),
+            ('instructions', 'backup'),
+            ('settings', 'backup'),
+        ]
+    )
+
+
+async def test_sticky_resolves_instructions_and_settings_for_the_model_it_stays_on():
+    """Later steps of a sticky conversation are sent the instructions and settings of the model they stay on."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            capabilities=[_PerModel(seen), ModelFallback(_sent('backup', sent), sticky=True)],
+        )
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert sent == snapshot(
+        [('primary', 'You are primary.', 0.1), ('backup', 'You are backup.', 0.9), ('backup', 'You are backup.', 0.9)]
+    )
+    assert _recorded_instructions(result.all_messages()) == snapshot(['You are backup.', 'You are backup.'])
+
+
+async def test_instructions_and_settings_resolve_once_when_the_step_model_answers():
+    """Without a fallback, the instructions and settings are resolved once per step, for the step's model."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    agent = _with_noop(
+        Agent(_sent('primary', sent), capabilities=[_PerModel(seen), ModelFallback(_sent('backup', sent))])
+    )
+    result = await agent.run('x')
+    assert result.output == 'primary'
+    assert sent == snapshot([('primary', 'You are primary.', 0.1), ('primary', 'You are primary.', 0.1)])
+    assert seen == snapshot(
+        [('instructions', 'primary'), ('settings', 'primary'), ('instructions', 'primary'), ('settings', 'primary')]
+    )
+
+
+async def test_instruction_parts_a_hook_changed_reach_every_model():
+    """Instruction parts a `before_model_request` hook changed are sent to every model as the hook left them.
+
+    The model settings are still resolved for each model, with the hook's settings on top.
+    """
+
+    @dataclass
+    class Rewrite(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parts = request_context.model_request_parameters.instruction_parts or []
+            request_context.model_request_parameters = replace(
+                request_context.model_request_parameters,
+                instruction_parts=[*parts, _messages.InstructionPart('Be brief.')],
+            )
+            request_context.model_settings = {**(request_context.model_settings or {}), 'max_tokens': 10}
+            return request_context
+
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    max_tokens: list[int | None] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        max_tokens.append((info.model_settings or {}).get('max_tokens'))
+        raise ModelAPIError(model_name='primary', message='down')
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        max_tokens.append((info.model_settings or {}).get('max_tokens'))
+        sent.append(('backup', info.instructions, (info.model_settings or {}).get('temperature')))
+        return ModelResponse(parts=[TextPart('backup')])
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        capabilities=[_PerModel(seen), Rewrite(), ModelFallback(FunctionModel(backup, model_name='backup'))],
+    )
+    result = await agent.run('x')
+    assert sent == snapshot([('backup', 'You are primary.\n\nBe brief.', 0.9)])
+    assert max_tokens == [10, 10]
+    assert _recorded_instructions(result.all_messages()) == snapshot(['You are primary.\n\nBe brief.'])
