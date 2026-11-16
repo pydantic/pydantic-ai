@@ -1105,7 +1105,7 @@ class HeldWriteWorkspace:
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        return None
+        return None  # pragma: no cover
 
     async def working_dir(self) -> str:
         return '/work'
