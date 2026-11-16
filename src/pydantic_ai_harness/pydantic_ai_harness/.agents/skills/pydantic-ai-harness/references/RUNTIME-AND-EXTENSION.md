@@ -487,7 +487,8 @@ authored code executes in your process and would bypass a sandbox. A run also ra
 a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
 With `defer_loading=True` these checks refuse each authoring tool call instead. `creation.load_active(workspace)`
 makes them against `workspace` before loading, and only against it, so pass the same workspace as `agent.run(workspace=...)`
-instead of a `LocalWorkspace` capability; `creation.store.load_active()` has no workspace and skips them, so only
+instead of a `LocalWorkspace` capability (for a directory outside the working directory,
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('.')), authority='operator', path_authority={'/abs/path': 'operator'})`); `creation.store.load_active()` has no workspace and skips them, so only
 use it where you would run the model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
