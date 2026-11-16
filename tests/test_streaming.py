@@ -137,7 +137,7 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=RequestUsage(input_tokens=51),
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -161,7 +161,7 @@ async def test_streamed_text_response():
             RunUsage(
                 requests=2,
                 input_tokens=103,
-                output_tokens=5,
+                output_tokens=10,
                 tool_calls=1,
             )
         )
@@ -179,7 +179,7 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=RequestUsage(input_tokens=51),
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -199,7 +199,7 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    usage=RequestUsage(input_tokens=52, output_tokens=9),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -213,7 +213,7 @@ async def test_streamed_text_response():
             RunUsage(
                 requests=2,
                 input_tokens=103,
-                output_tokens=11,
+                output_tokens=14,
                 tool_calls=1,
             )
         )
@@ -243,7 +243,7 @@ def test_streamed_text_sync_response():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=51),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
@@ -268,7 +268,7 @@ def test_streamed_text_sync_response():
         RunUsage(
             requests=2,
             input_tokens=103,
-            output_tokens=5,
+            output_tokens=10,
             tool_calls=1,
         )
     )
@@ -279,7 +279,7 @@ def test_streamed_text_sync_response():
     assert result.response == snapshot(
         ModelResponse(
             parts=[TextPart(content='{"ret_a":"a-apple"}')],
-            usage=RequestUsage(input_tokens=52, output_tokens=11),
+            usage=RequestUsage(input_tokens=52, output_tokens=9),
             model_name='test',
             model_id='test:test',
             timestamp=IsDatetime(),
@@ -296,7 +296,7 @@ def test_streamed_text_sync_response():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=51),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
@@ -316,7 +316,7 @@ def test_streamed_text_sync_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                usage=RequestUsage(input_tokens=52, output_tokens=11),
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
@@ -330,7 +330,7 @@ def test_streamed_text_sync_response():
         RunUsage(
             requests=2,
             input_tokens=103,
-            output_tokens=11,
+            output_tokens=14,
             tool_calls=1,
         )
     )
@@ -1667,7 +1667,7 @@ async def test_streamed_structured_response():
                     tool_call_id='pyd_ai_tool_call_id__final_result',
                 )
             ],
-            usage=RequestUsage(input_tokens=50),
+            usage=RequestUsage(input_tokens=50, output_tokens=7),
             model_name='test',
             model_id='test:test',
             timestamp=IsDatetime(),
@@ -3396,7 +3396,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=RequestUsage(input_tokens=57),
+                    usage=RequestUsage(input_tokens=57, output_tokens=4),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -3425,7 +3425,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=RequestUsage(input_tokens=58, output_tokens=4),
+                    usage=RequestUsage(input_tokens=58, output_tokens=9),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -5299,7 +5299,7 @@ async def test_tool_raises_call_deferred():
             [
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                    usage=RequestUsage(input_tokens=51),
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsDatetime(),
@@ -5312,7 +5312,7 @@ async def test_tool_raises_call_deferred():
         assert await result.validate_response_output(responses[0]) == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4))
         assert result.timestamp == IsNow(tz=datetime.UTC)
         assert result.is_complete
 
@@ -6108,7 +6108,7 @@ async def test_get_output_after_stream_output():
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                     )
                 ],
-                usage=RequestUsage(input_tokens=51),
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
