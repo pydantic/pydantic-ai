@@ -1249,6 +1249,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         agent = Agent(_scripted([{'type': 'mouse_down'}]), capabilities=[Provider().capability(), ComputerUse()])
         assert (await agent.run('Go.')).output == 'done'
 
+    @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
     async def test_a_deferred_computer_use_releases_the_buttons_its_run_holds(self) -> None:
         provider = ScreenProvider()
 
