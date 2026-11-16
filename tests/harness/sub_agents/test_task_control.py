@@ -590,6 +590,8 @@ class TestSubAgentsTaskControl:
         assert (resumed.task_id, resumed.prompt) == (recorder.of(TaskAssignedEvent)[0].task_id, 'And then?')
 
     async def test_a_message_to_a_finished_background_task_resumes_it_in_the_background(self) -> None:
+        recorder = Recorder()
+
         def follow_up(messages: list[ModelMessage]) -> ModelResponse:
             return call('message_task', task_id=task_id_in(tool_returns(messages)[0]), message='Again.')
 
@@ -601,34 +603,14 @@ class TestSubAgentsTaskControl:
                 text('Waiting.'),
                 text('Done.'),
             ),
-            capabilities=[controlled()],
+            capabilities=[controlled(), recorder],
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'is running in the background' in tool_returns(result.all_messages())[-1]
         assert len(task_texts(result.all_messages())) == 2
-
-    async def test_an_ancestor_resumes_a_task_once_the_task_that_started_it_finished(self) -> None:
-        recorder = Recorder()
-        middle = Agent(
-            scripted(call('delegate_task', agent_name='researcher', task='Deep.'), echo_last_return),
-            name='middle',
-            capabilities=[SubAgents(agents=[researcher()], task_control=TaskControl())],
-        )
-
-        def resume_grandchild(messages: list[ModelMessage]) -> ModelResponse:
-            grandchild = tool_returns(messages)[-1].split()[4]
-            return call('delegate_task', agent_name='researcher', task='Mine now.', resume=grandchild)
-
-        parent = Agent(
-            scripted(call('delegate_task', agent_name='middle', task='Go.'), resume_grandchild, echo_last_return),
-            capabilities=[controlled(researcher(), SubAgent(middle)), recorder],
-        )
-        with anyio.fail_after(WAIT):
-            result = await parent.run('Go.')
-        assert result.output.endswith('(ok):\nchild output')
         [resumed] = recorder.of(TaskResumedEvent)
-        assert resumed.parent_task_id is None
+        assert resumed.task_id == recorder.of(TaskAssignedEvent)[0].task_id
 
     async def test_list_tasks_shows_each_task_once_with_its_status(self) -> None:
         gate = Gate()

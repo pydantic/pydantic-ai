@@ -1,5 +1,6 @@
 """`/permissions`: the `run.permissions` mode on every run, its approval question, and the denial of last resort."""
 
+import contextlib
 import io
 from pathlib import Path
 from typing import get_args
@@ -23,7 +24,7 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
 )
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.sub_agents import SubAgents
+from pydantic_ai_harness.sub_agents import DelegationTask, DelegationTasks, SubAgents
 from pydantic_clai2.builtin_plugins.ask_user_menu import QuestionMenu, TerminalAnswerer, terminal_approver
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
@@ -385,6 +386,49 @@ async def test_delegates_that_carry_the_sessions_permissions_are_not_refused(
     else:
         with pytest.raises(SkipToolExecution):
             await keep.before_tool_execute(ctx, call=ToolCallPart('delegate_task', args), tool_def=tool_def, args=args)
+
+
+@pytest.mark.parametrize(
+    ('tool_name', 'task_id', 'bound', 'refused'),
+    [
+        ('message_task', 'finished', True, True),
+        ('message_task', 'running', True, False),
+        ('message_task', 'unknown', True, False),
+        ('message_task', 'finished', False, False),
+        ('cancel_task', 'finished', True, False),
+    ],
+)
+async def test_a_message_that_resumes_an_unchecked_delegate_is_refused(
+    tool_name: str, task_id: str, bound: bool, refused: bool
+) -> None:
+    """`message_task` on a finished task resumes it, so it is checked like the delegation it repeats."""
+    _, _, keep = session_permissions(lambda: 'read-only')
+    sub_agents = SubAgents[None](agent_folders=None)
+    ctx = RunContext[None](
+        deps=None, model=TestModel(), usage=RunUsage(), agent=Agent(TestModel()), capabilities={'subagents': sub_agents}
+    )
+    owner = DelegationTasks()
+    tool_def = ToolDefinition(name=tool_name, capability_id='subagents')
+    args = {'task_id': task_id, 'message': 'more'}
+    async with owner.opened():
+        for status in ('finished', 'running'):
+            owner.records[status] = DelegationTask(
+                id=status, agent_name='helper', prompt='p', conversation_id='c', status=status
+            )
+        with owner.bind() if bound else contextlib.nullcontext():
+            if refused:
+                with pytest.raises(SkipToolExecution):
+                    await keep.before_tool_execute(
+                        ctx, call=ToolCallPart(tool_name, args), tool_def=tool_def, args=args
+                    )
+            else:
+                assert (
+                    await keep.before_tool_execute(
+                        ctx, call=ToolCallPart(tool_name, args), tool_def=tool_def, args=args
+                    )
+                    == args
+                )
+        owner.records.clear()
 
 
 def test_settings_copy_the_harness_permission_mode() -> None:

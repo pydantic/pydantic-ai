@@ -398,21 +398,14 @@ def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
 
 
 def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
-    """The task `resume` names, if the delegating run started it, or is above it and every task in between finished.
+    """The task `resume` names, if the delegating run, and not another task, started it.
 
     Raises:
-        ModelRetry: the task can't be resumed, or a task that can still resume it is running.
+        ModelRetry: the task can't be resumed, or another task started it.
     """
     previous = owner.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
-    caller, parent = DelegationTasks.child_id(), previous.parent_id
-    while parent != caller:
-        above = owner.records.get(parent) if parent is not None else None
-        if above is None or above.status == 'running':
-            raise ModelRetry(
-                f'Task {resume} was started by another task; only the agent that started it can resume it, '
-                'or one above it once every task in between has finished.'
-            )
-        parent = above.parent_id
+    if previous.parent_id != DelegationTasks.child_id():
+        raise ModelRetry(f'Task {resume} was started by another task; only the agent that started it can resume it.')
     return previous
 
 
