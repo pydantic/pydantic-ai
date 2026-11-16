@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from itertools import islice
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import ToolKind
@@ -60,7 +59,7 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
         from pydantic_ai_harness.compaction import ClearToolResults, PruneToolResults
 
         agent = Agent(
-            'openai:gpt-5.6-luna',
+            'openai:gpt-6.1-sol',
             capabilities=[ClearToolResults(max_fraction=0.7), PruneToolResults()],
         )
         ```
@@ -111,10 +110,18 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
 
 
 def _latest_returns(messages: Sequence[ModelMessage]) -> list[ToolReturnPart]:
-    """The tool results the latest model response, the last message, answered."""
+    """The tool results the latest model response answered.
+
+    On a resume with deferred tool results, the returns already executed in the latest step follow that
+    response, so it is found by type rather than by position.
+    """
     returns: list[ToolReturnPart] = []
-    for message in islice(reversed(messages), 1, None):
+    responses = 0
+    for message in reversed(messages):
         if isinstance(message, ModelResponse):
-            break
-        returns.extend(part for part in message.parts if isinstance(part, ToolReturnPart))
+            responses += 1
+            if responses == 2:
+                break
+        elif responses:
+            returns.extend(part for part in message.parts if isinstance(part, ToolReturnPart))
     return returns

@@ -395,7 +395,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ClearToolResults, PruneToolResults
 
 agent = Agent(
-    '{{ openai:small }}',
+    '{{ openai:medium }}',
     capabilities=[ClearToolResults(max_fraction=0.7), PruneToolResults()],
 )
 ```

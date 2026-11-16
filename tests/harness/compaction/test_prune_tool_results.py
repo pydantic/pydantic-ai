@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
+from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -20,6 +21,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import PruneToolResults
 from pydantic_ai_harness.compaction import ClearToolResults
 from tests.conftest import try_import
@@ -135,6 +137,32 @@ class TestPruneToolResults:
         )
 
         assert _returns(script.seen[2])['g1'] == PRUNED
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_prunes_when_the_call_itself_was_approved_on_resume(self) -> None:
+        @dataclass
+        class ApproveEveryTool(AbstractCapability[None]):
+            async def before_tool_execute(
+                self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
+                if call.tool_name == 'prune_tool_result' and not ctx.tool_call_approved:
+                    raise ApprovalRequired
+                return args
+
+        look = ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g2')
+        script = Script([GREP, ModelResponse(parts=[*_prune('g1').parts, look]), DONE])
+        agent = _agent(script, PruneToolResults(), ApproveEveryTool())
+
+        paused = await agent.run('find the TODOs', output_type=[str, DeferredToolRequests])
+        assert isinstance(paused.output, DeferredToolRequests)
+
+        await agent.run(
+            message_history=paused.all_messages(), deferred_tool_results=DeferredToolResults(approvals={'p1': True})
+        )
+
+        returns = _returns(script.seen[2])
+        assert returns['g1'] == PRUNED
+        assert returns['g2'] == JUNK
 
     async def test_refuses_a_result_from_an_earlier_step(self) -> None:
         look = ModelResponse(parts=[ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g2')])

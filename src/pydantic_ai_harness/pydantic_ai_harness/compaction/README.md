@@ -436,7 +436,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ClearToolResults, PruneToolResults
 
 agent = Agent(
-    'openai:gpt-5.6-luna',
+    'openai:gpt-6.1-sol',
     capabilities=[ClearToolResults(max_fraction=0.7), PruneToolResults()],
 )
 ```
