@@ -189,6 +189,14 @@ def test_seed_pcm_audio_rejects_truncated_wav() -> None:
         seed_pcm_audio(audio=truncated, provider_name='test', sample_rate=24000)
 
 
+def test_seed_pcm_audio_sample_rate_error_names_provider_without_article() -> None:
+    """The sample-rate error drops the article, so a provider whose name starts with a vowel reads correctly."""
+    audio = _wav_content(b'\x00\x01', sample_rate=8000)
+
+with pytest.raises(UserError, match='recorded at 8000 Hz into openai realtime session expecting 24000 Hz'):
+                             seed_pcm_audio(audio=audio, provider_name='openai', sample_rate=24000)
+
+
 async def _noop_runner(name: str, args: dict[str, Any], call_id: str) -> str:  # pragma: no cover
     raise AssertionError('tool runner should not be called')
 
