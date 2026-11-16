@@ -915,16 +915,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Refuse a task while `max_running_tasks` tasks of the conversation are already running."""
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
-            name_attributes, name_content = self._telemetry(ctx).agent_name(agent_name)
-            record_decision(
-                ctx,
-                'sub_agents task refused',
+            self._telemetry(ctx).decision(
+                'task refused',
+                agent_name=agent_name,
                 attributes={
-                    **name_attributes,
                     'sub_agents.running_tasks': running,
                     'sub_agents.max_running_tasks': limit,
                 },
-                content=name_content,
             )
             raise ModelRetry(
                 f'{running} tasks are already running, the most allowed at once. Wait for a report, or cancel a '
@@ -1011,20 +1008,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if _emits_events(ctx):
             await ctx.emit(event)
         if isinstance(event, ParentMessage) and event.vetoed:
-            name_attributes, name_content = self._telemetry(ctx).agent_name(event.agent_name)
-            record_decision(
-                ctx,
-                'sub_agents vetoed',
-                attributes={**name_attributes, 'sub_agents.event': event.kind, 'sub_agents.task_id': event.task_id},
-                content={**name_content, **veto_reason_content(event)},
+            self._telemetry(ctx).decision(
+                'vetoed',
+                agent_name=event.agent_name,
+                task_id=event.task_id,
+                attributes={'sub_agents.event': event.kind},
+                content=veto_reason_content(event),
             )
         elif isinstance(event, TaskBackgroundedEvent):
-            name_attributes, name_content = self._telemetry(ctx).agent_name(event.agent_name)
-            record_decision(
-                ctx,
-                'sub_agents task backgrounded',
-                attributes={**name_attributes, 'sub_agents.reason': event.reason, 'sub_agents.task_id': event.task_id},
-                content=name_content,
+            self._telemetry(ctx).decision(
+                'task backgrounded',
+                agent_name=event.agent_name,
+                task_id=event.task_id,
+                attributes={'sub_agents.reason': event.reason},
             )
         if record is not None:
             await owner.notify(record, event)
@@ -1554,22 +1550,22 @@ def _record_delegation_ended(
     `execute_tool` span.
     """
     name_attributes, name_content = telemetry.agent_name(agent_name)
-    attributes: dict[str, str] = {**name_attributes, 'sub_agents.outcome': outcome}
+    attributes: dict[str, str] = {'sub_agents.outcome': outcome}
     if model is not None:
         attributes['sub_agents.model'] = model
     if record is not None and record.background:
-        record_decision(
-            telemetry.ctx,
-            'sub_agents task settled',
-            attributes={**attributes, 'sub_agents.task_id': record.id},
-            content=name_content,
+        telemetry.decision(
+            'task settled',
+            agent_name=agent_name,
+            task_id=record.id,
+            attributes=attributes,
         )
         return
     span = current_span(telemetry.ctx)
     # The SDK warns about, and drops, an attribute set on a span that has already ended.
     if not span.is_recording():
         return
-    span.set_attributes(attributes)
+    span.set_attributes({**name_attributes, **attributes})
     for key, value in name_content.items():
         set_content_attribute(telemetry.ctx, span, key, value)
 

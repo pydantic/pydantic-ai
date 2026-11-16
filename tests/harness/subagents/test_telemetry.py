@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -60,7 +60,7 @@ def sub_agents_attributes(span: ReadableSpan) -> dict[str, Any]:
 
 
 async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    await asyncio.sleep(1)
+    await anyio.sleep_forever()
     return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
 
 
