@@ -17,7 +17,6 @@ from anthropic.types.beta import (
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
-from ..._utils import is_str_dict
 from ...computer_use import ComputerCallPart
 from ...messages import ModelResponsePart, ToolCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
@@ -110,7 +109,7 @@ class NativeComputer:
 
     def call_part(
         self,
-        blocks: list[dict[str, Any]],
+        blocks: list[ComputerBlock],
         provider_name: str,
         *,
         incomplete: Collection[str] = (),
@@ -120,28 +119,13 @@ class NativeComputer:
 
         Nothing runs for a call in `incomplete` (by ID), which didn't arrive whole, such as one cut off at `max_tokens`.
         `split` names, by call ID, the other tools Claude called just before a call: run as one batch, the call would
-        run before them, so the batch is refused and Claude asked again. A call whose input isn't an object, or whose
-        name isn't text, counts as incomplete, since the SDK doesn't validate responses and Anthropic takes only an
-        object and a name back.
+        run before them, so the batch is refused and Claude asked again.
         """
         split = split or {}
-        malformed = [
-            block['id'] for block in blocks if not (isinstance(block['name'], str) and is_str_dict(block['input']))
-        ]
-        incomplete = {*incomplete, *malformed}
-        # A malformed call keeps its ID, with its name and input emptied, so Anthropic takes it back.
-        checked = [
-            ComputerBlock(
-                id=block['id'],
-                name=block['name'] if isinstance(block['name'], str) else '',
-                input=block['input'] if is_str_dict(block['input']) else {},
-            )
-            for block in blocks
-        ]
-        member_actions = [self._member_actions(block, incomplete, split) for block in checked]
+        member_actions = [self._member_actions(block, incomplete, split) for block in blocks]
         actions = [action for member in member_actions for action in member]
         replay = ComputerReplay(
-            computer_blocks=checked,
+            computer_blocks=blocks,
             computer_tool=self.version,
             computer_action_counts=[len(member) for member in member_actions],
         )
@@ -154,7 +138,7 @@ class NativeComputer:
             self.name,
             # A field Claude left out takes the `computer` tool's default.
             {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
-            tool_call_id=checked[0]['id'],
+            tool_call_id=blocks[0]['id'],
             provider_name=provider_name,
             provider_details=dict(replay),
         )
@@ -177,7 +161,7 @@ class ComputerBatch:
 
     computer: NativeComputer | None
     provider_name: str
-    blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    blocks: list[ComputerBlock] = field(default_factory=list[ComputerBlock])
     index: int = 0
     """Where in the response's parts the toolset's batch goes: at its first call."""
     between: list[str] = field(default_factory=list[str])
@@ -191,7 +175,7 @@ class ComputerBatch:
         if self.computer is None or not self.computer.answers(block):
             self.note_other(block.name)
             return False
-        call = {'id': block.id, 'name': block.name, 'input': block.input}
+        call = ComputerBlock(id=block.id, name=block.name, input=block.input)
         if self.computer.is_toolset:
             self.add(call, len(parts))
         else:
@@ -199,7 +183,7 @@ class ComputerBatch:
             parts.append(self.computer.call_part([call], self.provider_name))
         return True
 
-    def add(self, call: dict[str, Any], index: int = 0) -> None:
+    def add(self, call: ComputerBlock, index: int = 0) -> None:
         """Add a toolset call to the batch; `index` is where in the parts the batch goes if this is its first call."""
         if not self.blocks:
             self.index = index
@@ -233,10 +217,7 @@ def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion)
     """A call's member and input: the earlier tools name the member in the input's `action`."""
     if version == 'computer_toolset_20260801':
         return block['name'], block['input']
-    action = block['input'].get('action', '')
-    if not isinstance(action, str):
-        return '', dict(block['input'])  # names the `action` among the fields that don't map
-    return action, {key: value for key, value in block['input'].items() if key != 'action'}
+    return block['input'].get('action', ''), {key: value for key, value in block['input'].items() if key != 'action'}
 
 
 def returns_output(blocks: list[ComputerBlock], index: int) -> bool:

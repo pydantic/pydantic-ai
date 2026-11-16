@@ -16,12 +16,10 @@ from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
-_ANTHROPIC_BASE_BUILTINS = frozenset(
-    {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ComputerTool}
-)
+_ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below. `ComputerTool` is gated by `anthropic_computer_tool_version`."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool` and `ComputerTool`, which are gated
+per-model in the profile below."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -653,16 +651,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     if supports_advisor:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
-    # Each model's computer use tool, from Anthropic's compatibility table. Claude 5.5 and later take only the
-    # toolset on the Claude API. Retired or retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get a function tool.
-    # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
-    computer_tool_version: AnthropicComputerToolVersion | None = None
-    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
-        computer_tool_version = 'computer_toolset_20260801'
-    elif model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
-        computer_tool_version = 'computer_20251124'
-    elif model_name.startswith('claude-haiku-4-5'):
-        computer_tool_version = 'computer_20250124'
+    computer_tool_version = _computer_tool_version(model_name)
+    if computer_tool_version is not None:
+        supported_native_tools = supported_native_tools | {ComputerTool}
 
     profile = AnthropicModelProfile(
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
@@ -724,6 +715,23 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         # native mid-conversation system role on any transport, where the announcement would be a system message.
         profile['default_framing_announcement'] = 'always'
     return profile
+
+
+def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
+    """The model's computer use tool, from Anthropic's compatibility table.
+
+    Sent on the Claude API and both Bedrock APIs, the clients it is recorded on; `AnthropicModel.profile` turns it off
+    for Vertex AI and Foundry. Claude 5.5 and later take only the toolset. Retired or retiring models (Opus 4 and 4.1,
+    Sonnet 4 and 4.5) get a function tool.
+    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    """
+    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
+        return 'computer_toolset_20260801'
+    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        return 'computer_20251124'
+    if model_name.startswith('claude-haiku-4-5'):
+        return 'computer_20250124'
+    return None
 
 
 def _code_execution_tool_versions(

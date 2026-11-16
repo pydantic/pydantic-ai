@@ -50,7 +50,7 @@ from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCall
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
-from ._computer import ComputerBatch, NativeComputer
+from ._computer import ComputerBatch, ComputerBlock, NativeComputer
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -434,7 +434,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     ) -> Iterator[ModelResponseStreamEvent]:
         # Every member streams its input, `{}` when it takes none, so one that streamed nothing was cut off before it.
         computer_input_json = ''.join(self._computer_input)
-        computer_args: Any
+        computer_args: dict[str, Any]
         try:
             computer_args = pydantic_core.from_json(computer_input_json)
         except ValueError:
@@ -442,7 +442,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             # change what the rest does.
             self._computer_batch.incomplete.add(current_block.id)
             computer_args = {}
-        block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
+        block = ComputerBlock(id=current_block.id, name=current_block.name, input=computer_args)
         batch = self._computer_batch
         if native_computer.is_toolset:
             batch.add(block)

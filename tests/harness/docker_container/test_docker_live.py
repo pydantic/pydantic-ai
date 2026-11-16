@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
 import anyio
@@ -182,7 +183,8 @@ class TestLiveDockerDesktop:
         # The lock keys come last and twice, so they are off again for the rest.
         for name in [*_KEYSYMS, *_LOCK_KEYS, *_LOCK_KEYS]:
             await display.act(PressKeys(keys=(name,)))
-        presses = [detail for kind, detail, _ in await _xev_events(backend) if kind == 'KeyPress']
+        events = await _xev_events(backend, lambda events: _logged(events, 'KeyRelease', 'Scroll_Lock') == 2)
+        presses = [detail for kind, detail, _ in events if kind == 'KeyPress']
         # xdotool presses Num Lock itself to reach a keypad digit or the decimal point.
         expected = [*_KEYSYMS.values(), *_LOCK_KEYS.values(), *_LOCK_KEYS.values()]
         assert [key for key in presses if key != 'Num_Lock'] == [key for key in expected if key != 'Num_Lock']
@@ -191,20 +193,22 @@ class TestLiveDockerDesktop:
         display = await _xev_window(backend)
         for button in ('left', 'middle', 'right', 'back', 'forward'):
             await display.act(Click(x=400, y=300, button=button))
-        presses = [detail for kind, detail, _ in await _xev_events(backend) if kind == 'ButtonPress']
+        events = await _xev_events(backend, lambda events: _logged(events, 'ButtonRelease', '9') == 1)
+        presses = [detail for kind, detail, _ in events if kind == 'ButtonPress']
         assert presses == ['1', '2', '3', '8', '9']
 
     async def test_a_scroll_clicks_the_wheel_once_per_step(self, backend: DockerContainerBackend) -> None:
         display = await _xev_window(backend)
         for direction in ('up', 'down', 'left', 'right'):
             await display.act(Scroll(x=400, y=300, direction=direction, amount=3))
-        presses = [detail for kind, detail, _ in await _xev_events(backend) if kind == 'ButtonPress']
+        events = await _xev_events(backend, lambda events: _logged(events, 'ButtonRelease', '7') == 3)
+        presses = [detail for kind, detail, _ in events if kind == 'ButtonPress']
         assert presses == [*'444', *'555', *'666', *'777']
 
     async def test_a_drag_holds_the_button_from_its_start_to_its_end(self, backend: DockerContainerBackend) -> None:
         display = await _xev_window(backend)
         await display.act(Drag(path=(Point(x=200, y=200), Point(x=500, y=250), Point(x=300, y=350))))
-        events = await _xev_events(backend)
+        events = await _xev_events(backend, lambda events: _logged(events, 'ButtonRelease', '1') == 1)
         kinds = [kind for kind, _, _ in events]
         assert [(kind, detail) for kind, detail, _ in events if kind.startswith('Button')] == [
             ('ButtonPress', '1'),
@@ -220,10 +224,12 @@ class TestLiveDockerDesktop:
             await display.act(Drag(path=path, modifiers=('shift',)))
         with anyio.move_on_after(1):
             await display.act(HoldKeys(keys=('ctrl', 'a'), seconds=20))
-        events = [(kind, detail) for kind, detail, _ in await _xev_events(backend) if kind != 'MotionNotify']
+        # The keys are let go of last, Control_L after `a`.
+        logged = await _xev_events(backend, lambda events: _logged(events, 'KeyRelease', 'Control_L') == 1)
+        events = [(kind, detail) for kind, detail, _ in logged if kind != 'MotionNotify']
         await anyio.sleep(2)
         # Nothing is pressed after the cancel, and each press has its release.
-        assert [(kind, detail) for kind, detail, _ in await _xev_events(backend) if kind != 'MotionNotify'] == events
+        assert [(kind, detail) for kind, detail, _ in await _xev_log(backend) if kind != 'MotionNotify'] == events
         pressed = [detail for kind, detail in events if kind.endswith('Press')]
         released = [detail for kind, detail in events if kind.endswith('Release')]
         assert sorted(pressed) == sorted(released)
@@ -305,17 +311,31 @@ async def _xev_window(backend: DockerContainerBackend) -> Display:
         ['xdotool', 'search', '--sync', '--onlyvisible', '--name', 'Event Tester'], env={'DISPLAY': ':1'}, timeout=30
     )
     await display.act(Click(x=400, y=300))  # focuses it
-    await anyio.sleep(0.5)
+    await _xev_events(backend, lambda events: _logged(events, 'ButtonRelease', '1') == 1)
     await backend.run(['sh', '-c', f': >{_XEV_LOG}'])
     return display
 
 
-async def _xev_events(backend: DockerContainerBackend) -> list[tuple[str, str, int]]:
+async def _xev_log(backend: DockerContainerBackend) -> list[tuple[str, str, int]]:
     """Each event `xev` logged: its type, the keysym or button, and its modifier and button state."""
-    await anyio.sleep(0.5)
     log = (await backend.run(['cat', _XEV_LOG])).stdout
     events: list[tuple[str, str, int]] = []
     for block in log.split('\n\n'):
         if match := _XEV_EVENT.search(block):
             events.append((match[1], match[3] or match[4] or '', int(match[2], 16)))
     return events
+
+
+async def _xev_events(
+    backend: DockerContainerBackend, done: Callable[[list[tuple[str, str, int]]], bool]
+) -> list[tuple[str, str, int]]:
+    """The events `xev` logged, read again until `done` holds for them or 10 seconds pass."""
+    deadline = time.monotonic() + 10
+    while not done(events := await _xev_log(backend)) and time.monotonic() < deadline:
+        await anyio.sleep(0.1)
+    return events
+
+
+def _logged(events: list[tuple[str, str, int]], kind: str, detail: str) -> int:
+    """How many of `events` are of type `kind` for the keysym or button `detail`."""
+    return sum(event[:2] == (kind, detail) for event in events)

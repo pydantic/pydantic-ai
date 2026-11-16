@@ -67,8 +67,9 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- Claude Haiku 4.5, Opus 4.5, Sonnet 4.6 and later get Anthropic's own computer use tool through `AnthropicModel`,
-  and the function tool through other APIs such as Bedrock Converse; see
+- Claude Haiku 4.5, Opus 4.5, Sonnet 4.6 and later get Anthropic's own computer use tool through `AnthropicModel` on
+  the Claude API and Amazon Bedrock, and the function tool on Google Vertex AI, Microsoft Foundry and other APIs such
+  as Bedrock Converse; see
   [Anthropic](../models/anthropic.md#computer-use).
 - GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](../models/openai.md#native-tools).
@@ -133,8 +134,9 @@ Their computer use tools scale a larger screenshot down, and Claude then clicks 
 largest size that fits. A 1280x800 screen fits every model.
 
 Claude Opus 4.8 and the Claude 5 models refuse a screenshot larger than 2576 pixels on the longer side or 4784 image
-tokens, and the run stops with Anthropic's error. GPT-5.4 and GPT-5.5 take any size, but click less accurately above
-2560x1440 (measured).
+tokens, and the run stops with Anthropic's error.
+
+GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 clicked within a pixel up to 2560x1440 and missed by hundreds of pixels at 3840x2160, while GPT-5.4 already missed one target by 40 pixels at 2560x1440.
 
 ## When something goes wrong
 
@@ -142,7 +144,7 @@ tokens, and the run stops with Anthropic's error. GPT-5.4 and GPT-5.5 take any s
 - A position outside the screen fails the whole call before anything runs.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run, whether it finishes, fails or is cancelled. If a release after a failed action fails too, the call fails saying the button may still be held.
+- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run however it ends, so a drag must finish within one run, which matters when calls wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of each call instead. If a release after a failed action fails too, the call fails saying the button may still be held.
 
 ## Watching a run
 

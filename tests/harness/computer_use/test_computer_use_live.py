@@ -41,8 +41,8 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.messages import BinaryImage, CompactionPart, ModelRequest
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.messages import BinaryImage, CompactionPart, ModelRequest, ModelResponse
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -54,9 +54,12 @@ from ..display_fakes import FAKE_DISPLAY_SIZE, ScreenProvider, png
 
 with try_import() as openai_installed:
     from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as anthropic_installed:
+    from anthropic import AsyncAnthropicBedrockMantle
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -452,12 +455,10 @@ async def test_claude_zoom_and_cursor_position_answer_their_own_calls(
 
     assert '640' in result.output and '400' in result.output
     last = request_capture.bodies('/v1/messages')[-1]
-    calls = content_blocks(last, 'tool_use')
-    results = content_blocks(last, 'tool_result')
-    assert [
-        (call['name'], [block['type'] for block in json_objects(result['content'])])
-        for call, result in zip(calls, results)
-    ] == snapshot([('zoom', ['text', 'image']), ('cursor_position', ['text', 'text', 'image'])])
+    assert [call['name'] for call in content_blocks(last, 'tool_use')] == snapshot(['zoom', 'cursor_position'])
+    assert _results(last) == snapshot(
+        [(False, ['OK', 'image']), (False, ['OK', 'The pointer is at (640, 400).', 'image'])]
+    )
 
 
 def _force_the_computer_until_it_is_called(ctx: RunContext[object]) -> ModelSettings:
@@ -594,6 +595,44 @@ async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
     assert _tools(request_capture.bodies()[0]) == [{'type': 'computer_toolset_20260801'}]
 
 
+@needs_anthropic
+@pytest.mark.vcr
+async def test_claude_on_the_bedrock_messages_api_drives_the_screen_through_the_computer_toolset(
+    allow_model_requests: None, request_capture: RequestCapture
+) -> None:
+    client = AsyncAnthropicBedrockMantle(
+        api_key=os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
+        aws_region='us-east-1',
+        http_client=request_capture.client,
+    )
+    provider = ScreenProvider()
+    model = AnthropicModel('anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
+
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
+    assert _tools(request_capture.bodies()[0]) == [{'type': 'computer_toolset_20260801'}]
+
+
+@needs_openai
+@pytest.mark.vcr
+async def test_gpt_on_bedrock_mantle_drives_the_screen_through_the_native_computer_tool(
+    allow_model_requests: None, request_capture: RequestCapture
+) -> None:
+    mantle = BedrockMantleProvider(
+        region_name='us-east-1',
+        api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'),
+        http_client=request_capture.client,
+    )
+    model = infer_model('bedrock-mantle:openai.gpt-5.5', lambda _: mantle)
+    provider = ScreenProvider()
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
+
+    assert provider.actions == DONE
+    first, *_, last = request_capture.bodies('/responses')
+    assert {'type': 'computer'} in _objects(first, 'tools')
+    assert _items(last, 'computer_call_output')
+
+
 @needs_openai
 @pytest.mark.vcr
 async def test_gpt_gets_the_whole_history_back_with_store_off(
@@ -650,6 +689,32 @@ async def test_gpt_compacts_a_history_of_computer_calls_through_the_compact_endp
 
 
 @needs_openai
+@pytest.mark.vcr
+async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_endpoint(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    capabilities = [provider.capability(), ComputerUse()]
+    result = await Agent(model, capabilities=capabilities, model_settings=settings).run(TASK)
+    assert provider.actions == DONE
+    # Up to the last screenshot, so the window ends with a result of a call the server holds.
+    *messages, final = result.all_messages()
+    assert isinstance(final, ModelResponse) and not final.tool_calls
+    context = ModelRequestContext(
+        model=model, messages=messages, model_settings=settings, model_request_parameters=_computer_request()
+    )
+    compacted = await model.compact_messages(context)
+
+    assert isinstance(compacted.parts[0], CompactionPart)
+    compact = request_capture.body('/responses/compact')
+    # Only the result goes, as a `computer_call_output` beside the computer tool, after the stored response.
+    assert 'previous_response_id' in compact
+    assert compact['tools'] == [{'type': 'computer'}]
+    assert _kinds(compact) == ['computer_call_output']
+
+
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='compaction replaces the history')
 async def test_gpt_compacts_a_history_of_computer_calls_on_the_server(
@@ -755,7 +820,7 @@ async def test_gpt_is_told_why_a_denied_call_has_a_blank_screenshot(
     result = await agent.run(message_history=paused.all_messages(), deferred_tool_results=denied)
 
     assert provider.actions == []
-    assert isinstance(result.output, str) and 'no' in result.output.lower()
+    assert isinstance(result.output, str) and 'said no' in result.output.lower()
     last = request_capture.bodies('/responses')[-1]
     (output,) = [item for item in _items(last, 'computer_call_output') if item['call_id'] == approval.tool_call_id]
     note = _objects(last, 'input')[_objects(last, 'input').index(output) + 1]
@@ -815,7 +880,7 @@ async def test_gpt_is_told_how_a_pixel_scroll_ran(
 
 @needs_openai
 @pytest.mark.vcr
-async def test_gpt_computer_call_cut_off_by_the_token_limit_runs_nothing(
+async def test_gpt_computer_call_cut_off_by_the_token_limit_has_no_actions(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
     model = _gpt(openai_api_key, request_capture, 'gpt-5.5')
@@ -825,7 +890,7 @@ async def test_gpt_computer_call_cut_off_by_the_token_limit_runs_nothing(
 
     assert response.finish_reason == 'length'
     (call,) = [part for part in response.parts if isinstance(part, ComputerCallPart)]
-    # OpenAI sends the cut-off call with no actions; its arguments don't parse, so nothing would run.
+    # OpenAI sends the cut-off call with no actions.
     assert call.actions is None
 
 

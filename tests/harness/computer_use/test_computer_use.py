@@ -66,7 +66,12 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, DisplayAction
+from pydantic_ai_harness.computer_use import (
+    ActionsPerformedEvent,
+    ComputerUse,
+    DisplayAction,
+    UnsupportedActionError,
+)
 from tests.conftest import RequestCapture, try_import
 from tests.harness._recording_durability import RecordingDurability
 
@@ -1222,9 +1227,11 @@ Each call runs a list of actions in order and returns a screenshot of the result
             tasks.cancel_scope.cancel()
         assert provider.actions == [MouseDown(), MouseUp()]
 
-    async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
+    async def test_a_call_refused_before_it_acts_leaves_its_presses_to_the_run_end(
         self, durability: list[AbstractCapability[Any]]
     ) -> None:
+        # A failed call may have pressed any button it names, so the run's end releases them; a release with nothing
+        # pressed causes no click.
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'mouse_down'}, {'type': 'click', 'x': 5000, 'y': 1}]),
@@ -1234,7 +1241,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
-        assert provider.actions == []
+        assert provider.actions == [MouseUp()]
 
     async def test_an_environment_gone_at_the_end_of_a_run_leaves_its_result(self) -> None:
         class LostOnRelease(ScreenBackend):
@@ -1251,7 +1258,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert (await agent.run('Go.')).output == 'done'
 
     @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
-    async def test_a_deferred_computer_use_releases_the_buttons_its_run_holds(self) -> None:
+    async def test_a_computer_use_loaded_mid_run_releases_at_the_end_of_each_call(self) -> None:
         provider = ScreenProvider()
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1259,11 +1266,43 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'computer'})])
             if len(messages) == 3:
                 return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'mouse_down'}]})])
+            if len(messages) == 5:
+                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'move', 'x': 5, 'y': 5}]})])
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(FunctionModel(respond), capabilities=[provider.capability(), ComputerUse(defer_loading=True)])
-        await agent.run('Go.')
-        assert provider.actions == [MouseDown(), MouseUp()]
+        _, pressed, _ = _returns((await agent.run('Go.')).all_messages())
+
+        assert pressed.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
+        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
+
+    async def test_a_call_after_one_that_failed_after_a_press_releases_it_before_reporting_what_is_held(
+        self,
+    ) -> None:
+        class FirstScreenshotFails(ScreenBackend):
+            failed = False
+
+            async def screenshot(self) -> bytes:
+                if not FirstScreenshotFails.failed:
+                    FirstScreenshotFails.failed = True
+                    raise WorkspaceError('the capture failed')
+                return await super().screenshot()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return FirstScreenshotFails(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        failed, moved = _returns((await agent.run('Go.')).all_messages())
+
+        assert failed.outcome == 'failed'
+        # The press may or may not have stuck, so the next call releases it rather than call it still pressed.
+        assert moved.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
+        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
 
     async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
         provider = ScreenProvider()
@@ -1293,6 +1332,79 @@ Each call runs a list of actions in order and returns a screenshot of the result
 
         assert tool_return.metadata is not None and tool_return.metadata['performed'] == 1
         assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_failed_call_says_it_released_the_button_an_earlier_call_pressed(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'hold_key', 'keys': ['shift'], 'seconds': 1}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        _, failed = _returns((await agent.run('Go.')).all_messages())
+
+        assert failed.content == [
+            snapshot(
+                "Action 1 of 1 (hold_key) failed: the fake display cannot perform 'hold_key'. The left mouse button was released. Screenshot attached (1280x800)."
+            ),
+            SCREENSHOT,
+        ]
+        assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_press_the_display_refuses_leaves_nothing_held(self) -> None:
+        class NoRightButton(ScreenBackend):
+            async def act(self, action: DisplayAction) -> None:
+                # Its release is refused too, so a press counted as held would be reported as maybe still held.
+                raise UnsupportedActionError('this display has no right button')
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return NoRightButton(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down', 'button': 'right'}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.content == [
+            snapshot(
+                'Action 1 of 1 (mouse_down) failed: this display has no right button. Screenshot attached (1280x800).'
+            ),
+            SCREENSHOT,
+        ]
+        assert provider.actions == []
+
+    async def test_leaving_a_run_early_releases_the_buttons_it_holds(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'screenshot'}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        async with agent.iter('Go.') as run:
+            async for _ in run:
+                if provider.actions:
+                    break
+        assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_run_replayed_from_its_journal_releases_the_button_its_call_pressed(self) -> None:
+        provider, recorded = ScreenProvider(), RecordingDurability()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), recorded],
+        )
+        await agent.run('Go.')
+        journal = {name: result for name, result in recorded.results if name.endswith('.call')}
+        provider.actions.clear()
+
+        # As on a fresh worker: a new capability, and an engine that replays the call without acting.
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), RecordingDurability(journal=journal, isolated=True)],
+        )
+        await agent.run('Go.')
+        assert provider.actions == [MouseUp()]
 
     async def test_a_button_whose_press_took_effect_but_failed_is_released(self) -> None:
         class LostReply(ScreenBackend):

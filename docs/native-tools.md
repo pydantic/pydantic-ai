@@ -773,8 +773,6 @@ The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends a tool of the 
 
 The local tool is found by its kind, not its name (see [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]). If the request has no non-deferred tool of that kind, the native tool is left out when it is `optional`, and the request is refused when it isn't.
 
-A call of the `computer` kind runs only when the response it came in finished normally: a response cut off at the token limit, filtered or failed makes it a [retry](tools-advanced.md#tool-retries) telling the model the computer did nothing.
-
 `ComputerUse` adds it for you, with the size of the screenshots the model sees, and leaves it out with `native=False`.
 
 ### Provider Support
