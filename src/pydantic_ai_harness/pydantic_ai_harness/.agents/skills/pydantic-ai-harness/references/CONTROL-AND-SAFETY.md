@@ -498,7 +498,8 @@ budget, and a spec cannot express one. `SpendLimits(budgets=(),
 store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, ...)`.
 
 - Readings: `await limits.status(ctx_or_none, scope='acme')` returns `BudgetStatus` list (`spent`,
-  `remaining_usd`, `warning`, `exhausted`); `await limits.exhausted(scope=...)` for an admission
+  `usd_limit`/`token_limit` holding the resolved ceilings, `remaining_usd`, `warning`, `exhausted`; read
+  those rather than `status.budget.usd`, which is the callable for a resolved ceiling); `await limits.exhausted(scope=...)` for an admission
   decision (raises if a scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status`
   leaves them out of its list).
 - Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
