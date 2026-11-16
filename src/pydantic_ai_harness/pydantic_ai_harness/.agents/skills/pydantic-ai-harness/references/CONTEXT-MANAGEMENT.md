@@ -93,8 +93,8 @@ agent = Agent(
             tiers=[
                 ClampOversizedMessages(max_part_tokens=50_000),
                 DeduplicateFileReads(file_key=file_key),
-                ClearToolResults(max_tokens=1, keep_pairs=3),
-                SummarizingCompaction(max_messages=1, keep_messages=20),
+                ClearToolResults(keep_pairs=3),
+                SummarizingCompaction(keep_messages=20),
             ],
             target_fraction=0.8,
         )
@@ -102,9 +102,11 @@ agent = Agent(
 )
 ```
 
-Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction` but must still be valid,
-hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly one of
-`target_tokens` / `target_fraction` is required. Any object with
+Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction`, so tiers need none.
+On its own trigger, a tier raising a `skip_on` exception (default: `ModelAPIError`,
+`FallbackExceptionGroup`, `UnexpectedModelBehavior`) is skipped with a warning and a span with
+`compaction.skipped='tier_failed'` and `error.type`; other errors, and any on a direct `compact()`,
+propagate. `tiers` must be non-empty and exactly one of `target_tokens` / `target_fraction` is required. Any object with
 `async def compact(messages, ctx) -> list[ModelMessage]` (`CompactionStrategy`) can be a tier.
 Each tier's kept messages set a floor under `target_tokens`: its `keep_tokens`/`keep_messages` tail
 with the current turn, the first user message under `preserve_first_user_message`, and pins. A target
@@ -162,7 +164,7 @@ model with structured output, or a `FallbackModel` of both. Each older step (a r
 requests answering it) gets one judge request with two questions, `needed_verbatim` and
 `still_matters`. Steps are kept by `needed_verbatim` rank until the target (default half the
 trigger), the rest are reduced by `still_matters` rank (summarized when `summarizer` is a
-`SummarizingCompaction`, whose trigger is ignored, so `max_messages=1` works; otherwise tool
+`SummarizingCompaction`, whose trigger is ignored and can be omitted; otherwise tool
 results are cut to `truncated_result_chars`), and the remainder dropped. Steps holding a user prompt
 are never dropped. All judge requests of one compaction count as one request; judgements are cached
 per instance by task and step. Judge errors propagate: wrap in `FallbackCompaction`. As a
@@ -203,8 +205,8 @@ agent = Agent(
         FallbackCompaction(
             max_fraction=0.85,
             fallback_chain=[
-                SummarizingCompaction(max_messages=1, keep_tokens=20_000),
-                SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+                SummarizingCompaction(keep_tokens=20_000),
+                SlidingWindowCompaction(keep_tokens=20_000),
             ],
         )
     ],
@@ -219,7 +221,7 @@ request of the run, with `focus` forwarded through `with_focus` when the strateg
 Below `min_tokens`, after `max_per_run` accepted requests, or with one already scheduled, the tool
 return says why nothing happens. It orders itself after the automatic compaction capabilities and
 stands down when one already compacted that request. The span gets `compaction.model_requested`.
-The strategy's own trigger is required but bypassed. Under durable execution the strategy runs as
+The strategy's own trigger is bypassed and can be omitted. Under durable execution the strategy runs as
 the `compact` durable operation; the stable default `id='compact_on_request'` makes recovery work
 without configuration, and `id=None` breaks it. Under Temporal that operation is an activity
 without `tracer` or `capabilities`, so `RelevanceCompaction` or a `receipts=True` strategy fails.
@@ -233,7 +235,7 @@ agent = Agent(
     'test',
     capabilities=[
         CompactOnRequest(
-            SummarizingCompaction(max_messages=1, keep_messages=6),
+            SummarizingCompaction(keep_messages=6),
             min_tokens=30_000,
             max_per_run=2,
         )
@@ -286,6 +288,8 @@ capability to see post-compaction usage, before it to see what triggered compact
 
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a
   `ModelRequest` in history; every strategy preserves or re-injects it. `Planning` does not need it.
+  Pass `source='tool'` or `source='model'` for content the user didn't write, so it reaches the model
+  as `<pinned source="...">` data rather than as the user's words.
 - `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
   loaded: when they summarize or drop a load's record (a `load_capability` exchange, or the
   `CapabilityLoadDeltaPart` of a load from code), they record it again after the summary as a

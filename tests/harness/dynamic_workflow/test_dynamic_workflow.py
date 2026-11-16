@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
+from collections.abc import Awaitable, Callable, Container
 from typing import Any
 
 import pytest
+from anyio.from_thread import BlockingPortal
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
@@ -1489,6 +1491,63 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):  # pragma: no branch
                 await task
+
+
+async def test_create_executor_override_defers_sibling_starts() -> None:
+    events: list[str] = []
+
+    class DeferredStartToolset(DynamicWorkflowToolset[object]):
+        def create_executor(
+            self,
+            ctx: RunContext[object],
+            *,
+            dispatch: Callable[[str, dict[str, object]], Awaitable[object]],
+            valid_names: Container[str],
+            flush: Callable[[], Awaitable[None]] | None,
+            global_sequential: bool,
+            portal: BlockingPortal | None,
+            max_sleep_seconds: float | None,
+        ) -> MontyExecutor:
+            known = [name for name in ('alpha', 'beta', 'gamma') if name in valid_names]
+            events.append(f'executor {known} {flush} {global_sequential} {portal} {max_sleep_seconds}')
+            gates: list[asyncio.Future[None]] = []
+
+            async def deferred(name: str, call_kwargs: dict[str, object]) -> object:
+                events.append(f'register {name}')
+                gate = asyncio.get_running_loop().create_future()
+                gates.append(gate)
+                await gate
+                events.append(f'start {name}')
+                return await dispatch(name, call_kwargs)
+
+            async def release() -> None:
+                await asyncio.sleep(0)
+                for gate in gates:
+                    gate.set_result(None)
+                gates.clear()
+
+            return super().create_executor(
+                ctx,
+                dispatch=deferred,
+                valid_names=valid_names,
+                flush=release,
+                global_sequential=global_sequential,
+                portal=portal,
+                max_sleep_seconds=max_sleep_seconds,
+            )
+
+    ts = DeferredStartToolset(agents=[_wf_agent('A', 'alpha'), _wf_agent('B', 'beta')])
+    out = await _run_script(ts, "import asyncio\nawait asyncio.gather(alpha(task='a'), beta(task='b'))")
+    assert out == snapshot(['A', 'B'])
+    assert events == snapshot(
+        [
+            "executor ['alpha', 'beta'] None False None None",
+            'register alpha',
+            'register beta',
+            'start alpha',
+            'start beta',
+        ]
+    )
 
 
 # --- Runtime reveal --------------------------------------------------------
