@@ -41,7 +41,7 @@ Compaction updates persistent run history and replaces the current request view.
 
 ## Triggers
 
-Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`. Token counts anchor on the provider-reported usage of the most recent model response when one is available. That provider usage includes the instructions, tool definitions, and `FilePart` payloads sent in the anchored request; only the messages added since are estimated. The suffix after the anchor, or a history with no usage anchor, uses `tokenizer` or the shared class-aware text heuristic, which estimates dense Cyrillic, base64, and compact JSON more conservatively than ordinary ASCII prose and cannot see `FilePart` payloads. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Pending tool schemas newly revealed for the request are conservatively estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a large total. **Migration:** existing tuned token thresholds may trigger earlier or later under the updated estimate; recalibrate custom thresholds against your workloads.
+Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`. Token counts anchor on the provider-reported usage of the most recent model response when one is available. That provider usage includes the instructions, tool definitions, and `FilePart` payloads sent in the anchored request; only the messages added since are estimated. The suffix after the anchor, or a history with no usage anchor, uses `tokenizer` or a heuristic of ~4 characters per token, priced up for denser text: ~1.5 characters per token for non-ASCII scripts and base64-like runs, one token per CJK character, and ~2 for compact JSON; it cannot see `FilePart` payloads. Upgrading moves every token budget measured with this estimate -- `max_tokens`/`target_tokens` triggers, `keep_tokens` retention, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands and the `compaction.tokens_*` span attributes -- so histories holding non-ASCII text, base64 or compact JSON compact earlier than before. Pass `tokenizer` to measure with a real tokenizer instead. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Pending tool schemas newly revealed for the request are conservatively estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a large total.
 
 ### `max_fraction`: one setting for every model
 
@@ -167,7 +167,6 @@ agent = Agent(
     ],
 )
 
-
 @agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
@@ -259,7 +258,7 @@ fallback = FallbackCompaction(
     fallback_chain=[
         SummarizingCompaction(max_messages=1, keep_tokens=20_000),
         SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
-    ],
+    ]
 )
 ```
 
@@ -378,7 +377,9 @@ from pydantic_ai_harness import ClampOversizedMessages
 
 agent = Agent(
     '{{ openai:medium }}',
-    capabilities=[ClampOversizedMessages(max_part_tokens=50_000, keep_head_chars=2_000, keep_tail_chars=2_000)],
+    capabilities=[
+        ClampOversizedMessages(max_part_tokens=50_000, keep_head_chars=2_000, keep_tail_chars=2_000)
+    ],
 )
 ```
 
@@ -641,7 +642,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
 | `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
 
-`gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the shared class-aware heuristic. Raw message content is not recorded.
+`gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the same heuristic as the triggers. Raw message content is not recorded.
 
 `SummarizingCompaction` runs its summarizer as a nested `Agent` named `summarizing_compaction`, so under `Agent.instrument_all()` (or `logfire.instrument_pydantic_ai()`) its runs carry `agent_name = summarizing_compaction`. Filter on that to track summarization usage and cost separately from the parent agent.
 

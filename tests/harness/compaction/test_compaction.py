@@ -330,14 +330,33 @@ class TestEstimateTokenCount:
         ]
         assert estimate_token_count(msgs) > 0
 
-    def test_dense_text_estimates_track_pinned_reference_counts(self):
-        """Pin exact counts for each dense class: repetitive letters, compact JSON, base64, non-ASCII."""
+    @pytest.mark.parametrize(
+        ('text', 'expected'),
+        [
+            # cl100k_base: 226 tokens.
+            pytest.param(base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode(), 232, id='base64'),
+            # cl100k_base: 240 tokens.
+            pytest.param('{"id": 1, "name": "x", "tags": [1, 2, 3]}' * 10, 205, id='compact-json'),
+            # cl100k_base: 801 tokens.
+            pytest.param('Привет, как дела? ' * 100, 1116, id='cyrillic'),
+            # cl100k_base: 800 tokens.
+            pytest.param('日本語のテキスト' * 100, 800, id='cjk'),
+            pytest.param('a' * 512, 128, id='repeated-letter'),
+            pytest.param('src/pydantic_ai_harness/compaction/_shared.py', 11, id='path'),
+            pytest.param('some_really_long_identifier_name_here', 9, id='identifier'),
+        ],
+    )
+    def test_dense_text_is_priced_at_or_above_a_real_tokenizer(self, text: str, expected: int):
+        assert estimate_token_count([_user(text)]) == expected
+
+    def test_cyrillic_at_the_issue_ratio_is_not_undercounted(self):
+        # Microsoft Conductor measured ~500,000 characters of Cyrillic at 261k real tokens.
+        text = 'Привет, как дела? ' * (500_000 // 18)
+        assert estimate_token_count([_user(text)]) > 261_000
+
+    def test_non_ascii_does_not_hide_an_encoded_run(self):
         payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
-        compact_json = '{"id": 1, "name": "x", "tags": [1, 2, 3]}'
-        assert estimate_token_count([_user('a' * 512)]) == 64
-        assert estimate_token_count([_user(payload)]) == 232
-        assert estimate_token_count([_user(compact_json)]) == 13
-        assert estimate_token_count([_user('Привет, как дела? ' * 100)]) == 606
+        assert estimate_token_count([_user(payload + 'é')]) == 232
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +416,7 @@ class TestEstimateContextTokens:
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='old')
         request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='i' * 4_000)
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
-        assert estimate_context_tokens(msgs) == 50_500 + 10 + 500
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 1_000
 
     def test_changed_instructions_replace_the_anchored_set(self):
         # The next request sends the new set instead of the one the anchor paid for, as when
@@ -405,13 +424,13 @@ class TestEstimateContextTokens:
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
         request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 4_400)
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
-        assert estimate_context_tokens(msgs) == 50_500 + 10 + 50
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 100
 
     def test_shorter_instructions_lower_the_estimate(self):
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
         request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 400)
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
-        assert estimate_context_tokens(msgs) == 50_500 + 10 - 400
+        assert estimate_context_tokens(msgs) == 50_500 + 10 - 900
 
     def test_changed_instructions_are_swapped_with_a_tokenizer(self):
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='one two')
@@ -2860,6 +2879,23 @@ async def test_tiered_compaction_triggers_for_dense_post_anchor_tool_result():
     result = await cap.before_model_request(_make_ctx(rc.messages), rc)
     assert calls == ['t1']
     assert len(result.messages) == 4
+
+
+async def test_tiered_compaction_triggers_for_dense_text_after_the_usage_anchor():
+    """A Cyrillic tool result after a 90k anchor crosses a 100k target the 4-chars-per-token count left it under."""
+    calls: list[str] = []
+    cap = TieredCompaction(tiers=[_RecordingTier('t1', calls, drop=1)], target_tokens=100_000)
+    messages: list[ModelMessage] = [
+        _user('hi'),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='fetch', args='{}', tool_call_id='c1')],
+            usage=RequestUsage(input_tokens=89_000, output_tokens=1_000),
+        ),
+        _tool_return('fetch', 'c1', 'Привет, как дела? ' * 2_000),
+    ]
+    rc = _make_request_context(messages)
+    await cap.before_model_request(_make_ctx(rc.messages), rc)
+    assert calls == ['t1']
 
 
 # ---------------------------------------------------------------------------

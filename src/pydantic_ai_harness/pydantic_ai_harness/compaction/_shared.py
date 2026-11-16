@@ -6,6 +6,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -220,84 +221,56 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
     return []
 
 
-_JSON_STRUCTURE_CHARS = frozenset('{}[],:"')
-_BASE64_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-')
+_CJK = re.compile(r'[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]')
+"""Hangul, CJK and kana code points: about one token each."""
+
+_ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
+"""A base64 or base64url-like run; `_is_encoded` rules out paths and identifiers."""
+
+_JSON_PUNCTUATION = '{}[],:"'
+
+_DENSE_CHARS_PER_TOKEN = 1.5
+"""Characters per token of encoded runs and of non-ASCII text outside CJK (Cyrillic measures ~1.9)."""
+
+_JSON_CHARS_PER_TOKEN = 2
 
 
-def _estimate_ascii_dense_text_segment(text: str) -> int | None:
-    """Estimate dense ASCII text more closely than the ASCII-prose baseline."""
-    if len(text) >= 512 and text.isalpha() and len(set(text)) == 1:
-        # Long single-letter runs are heavily merged by common BPE tokenizers.
-        return len(text) // 8
-    if len(text) >= 32 and sum(char in _JSON_STRUCTURE_CHARS for char in text) * 5 >= len(text):
-        return len(text) // 3
-    return None
+def _is_encoded(run: str) -> bool:
+    chars = set(run)
+    return any(c.isdigit() for c in chars) and any(c.isupper() for c in chars) and any(c.islower() for c in chars)
 
 
-def _estimate_base64_runs(text: str, baseline: int) -> int | None:
-    """Re-price base64 runs at about 2/3 of their length, replacing their baseline share."""
-    adjusted = baseline
-    found_base64 = False
-    index = 0
-    while index < len(text):
-        if text[index] not in _BASE64_CHARS:
-            index += 1
-            continue
-        end = index + 1
-        while end < len(text) and text[end] in _BASE64_CHARS:
-            end += 1
-        run = text[index:end]
-        unpadded = run.rstrip('=')
-        if (
-            len(unpadded) >= 24
-            and '=' not in unpadded
-            and len(set(unpadded)) >= 8
-            and (any(char in '+/_-' for char in unpadded) or sum(char.isdigit() for char in unpadded) >= 2)
-        ):
-            run_estimate = (2 * len(run) + 2) // 3
-            adjusted += run_estimate - len(run) // CHARS_PER_TOKEN
-            found_base64 = True
-        index = end
-    return adjusted if found_base64 else None
+def _dense_surcharge(text: str) -> float:
+    """Tokens *text* costs beyond `CHARS_PER_TOKEN`, for content that tokenizes denser than English prose.
 
-
-def _estimate_dense_text_segment(text: str) -> int | None:
-    """Estimate a dense text segment more closely than the ASCII-prose baseline."""
-    if not text:
-        return None
-
-    if text.isascii():
-        ascii_estimate = _estimate_ascii_dense_text_segment(text)
-        if ascii_estimate is not None:
-            return ascii_estimate
-
-    non_ascii_chars = sum(not char.isascii() for char in text)
-    if non_ascii_chars:
-        ascii_chars = len(text) - non_ascii_chars
-        # Cyrillic text averages about 2.7 code points per token in the pinned reference corpus.
-        return ascii_chars // CHARS_PER_TOKEN + (non_ascii_chars * 10 + 13) // 27
-
-    return _estimate_base64_runs(text, len(text) // CHARS_PER_TOKEN)
+    Rates are set at or above common tokenizers' counts: an overcount compacts a little early,
+    an undercount sends a request the provider rejects.
+    """
+    ascii_chars = len(text) if text.isascii() else len(text.encode('ascii', 'ignore'))
+    non_ascii = len(text) - ascii_chars
+    cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
+    surcharge = cjk * (1 - 1 / CHARS_PER_TOKEN) + (non_ascii - cjk) * (1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
+    if encoded := sum(len(run) for run in _ENCODED_RUN.findall(text) if _is_encoded(run)):
+        surcharge += encoded * (1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
+    elif ascii_chars >= 32 and sum(text.count(c) for c in _JSON_PUNCTUATION) * 5 >= ascii_chars:
+        surcharge += ascii_chars * (1 / _JSON_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
+    return surcharge
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
-    """Approximate a string's token count using *tokenizer* or the shared class-aware estimate."""
-    if tokenizer is not None:
-        return tokenizer(text)
-    return _count_segments((text,), None)
+    """Approximate the token count of a single string.
+
+    Uses *tokenizer* when given, otherwise ~4 characters per token, priced up for non-ASCII
+    scripts, base64-like runs and compact JSON.
+    """
+    return _count_segments([text], tokenizer)
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    """Count segments with *tokenizer*, or apply dense-text adjustments to the ASCII baseline."""
+    """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-
-    estimate = sum(len(s) for s in segments) // CHARS_PER_TOKEN
-    for segment in segments:
-        dense_estimate = _estimate_dense_text_segment(segment)
-        if dense_estimate is not None:
-            estimate += dense_estimate - len(segment) // CHARS_PER_TOKEN
-    return estimate
+    return int(sum(len(s) / CHARS_PER_TOKEN + _dense_surcharge(s) for s in segments))
 
 
 def estimate_token_count(
@@ -309,7 +282,7 @@ def estimate_token_count(
     Args:
         messages: Messages to count tokens for.
         tokenizer: Optional callable that returns the token count for a string.
-            When `None`, uses the shared class-aware estimate for dense scripts, base64, and compact JSON.
+            When `None`, uses the `estimate_text_tokens` heuristic.
     """
     return _count_segments(_collect_text(messages), tokenizer)
 
@@ -329,13 +302,13 @@ def estimate_context_tokens(
     that response. A response whose usage sums several model requests re-counts the context of each,
     so it anchors on the input tokens of the one that measures the context instead: the first
     request of a Google long decode, the last sampling pass of an Anthropic response that reported
-    its passes. Only the messages after the anchor are estimated with the shared class-aware text
-    estimate (or *tokenizer*), without re-counting instructions, which the anchor already covers;
-    when the instructions changed since the anchor, the estimate swaps the old set for the new one
-    rather than adding the new set on top. Tool schemas named by availability deltas after the anchor
-    are estimated from the pending request parameters. Dense text is estimated more conservatively
-    than ordinary ASCII prose, while tool definitions the heuristic cannot see are still separately
-    accounted for.
+    its passes. Only the messages after the anchor are estimated with the `estimate_text_tokens`
+    heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
+    covers; when the instructions changed since the anchor, the estimate swaps the old set for
+    the new one rather than adding the new set on top. Tool schemas named by availability
+    deltas after the anchor are estimated from the pending request parameters. The tool
+    definitions the heuristic cannot see, and the exact count of token-dense content before the
+    anchor, are both inside the provider's number.
 
     Without provider usage, the history's message text falls back to `estimate_token_count`,
     while schemas named by availability deltas are still estimated from the pending request

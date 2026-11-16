@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
 )
 
 CHARS_PER_TOKEN = 4
-"""Character-budget baseline only; token estimates use the shared class-aware heuristic."""
+"""Rough approximation: ~4 characters per token on average."""
 
 
 def with_text(item: str | TextContent, text: str) -> str | TextContent:
