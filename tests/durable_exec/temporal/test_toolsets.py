@@ -2409,7 +2409,8 @@ async def _force_sequential(ctx: RunContext[None], tool_def: ToolDefinition) -> 
 
 
 _shared_first = Tool(first)
-# Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
+# Applies `sequential` to its own copy of `_shared_first`, which the `shared_sequential` agent holds through a toolset
+# without it.
 _sequential_toolset = FunctionToolset([_shared_first], sequential=True)
 
 _tool_instances_agents = {
@@ -2464,7 +2465,7 @@ _one_at_a_time = ['scheduled', 'completed', 'scheduled', 'completed']
     [
         ('sequential', _at_once, _one_at_a_time),
         ('defer_loading', _at_once, []),
-        ('shared_sequential', _at_once, _one_at_a_time),
+        ('shared_sequential', _at_once, _at_once),
         ('prepare_sequential', _one_at_a_time, _one_at_a_time),
     ],
 )
@@ -2474,9 +2475,9 @@ async def test_function_toolset_defaults_on_tool_instances_replay(
     """A history recorded before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances replays.
 
     Without the patch marker, the workflow lists the tools the way it did before: both calls are dispatched at once
-    and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose own
-    `prepare` makes it sequential stays sequential. A new run gets the toolset's value. Unsandboxed, so
-    `workflow.patched` can be faked for the original run.
+    and neither tool is deferred, while a tool whose own `prepare` makes it sequential stays sequential. A new run
+    gets the toolset's value. A `Tool` that a sequential toolset also holds runs at once in a toolset without
+    `sequential`, in both runs. Unsandboxed, so `workflow.patched` can be faked for the original run.
     """
     agent = _tool_instances_agents[flag]
 
