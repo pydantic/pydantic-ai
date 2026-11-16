@@ -841,9 +841,8 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
   `cost_limit` and `per_request_input_tokens_limit` are not projected.
 - A batch over `tool_calls_limit` runs none of its calls; each gets `NOT_EXECUTED` under its
   `tool_call_id` and `outcome='denied'`, outside core's tool pipeline: no tool call/result events or tool
-  hooks for them. With no request left, for a batch the caller streamed with
-  `node.stream()`, for calls after streamed text that ends a `run_stream()`, or on a run resumed with
-  deferred tool results, core raises as before.
+  hooks for them. With no request left, for calls after streamed text that ends a
+  `run_stream()`, or on a run resumed with deferred tool results, core raises as before.
 - `wrapped_up_by(result.new_messages())` (`.wrap_up_at_limits`) returns the `LimitName` that cut the run
   short, or `None`; it reads the final prompt's `metadata` (`origin` `'pydantic-ai-harness.wrap_up_at_limits.v1'`).
 - With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per

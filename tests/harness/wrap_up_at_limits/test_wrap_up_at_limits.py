@@ -10,7 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
@@ -162,30 +162,30 @@ class TestWrapUpAtLimits:
             'function_tool_result:b1',
         ]
 
-    async def test_batch_the_caller_streamed_keeps_its_results(self) -> None:
+    async def test_batch_is_answered_when_the_caller_streams_nodes(self) -> None:
         looked_up: list[str] = []
         agent = _agent(_Researcher(), looked_up)
 
-        with capture_run_messages() as messages, pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
-            async with agent.iter('Research', usage_limits=UsageLimits(tool_calls_limit=3)) as run:
-                node = run.next_node
-                while not isinstance(node, End):
-                    if Agent.is_call_tools_node(node):
-                        # Streaming the node runs its tools, so the batch is past the point of being answered instead.
-                        async with node.stream(run.ctx) as events:
-                            async for _ in events:
-                                pass
-                    node = await run.next(node)
+        async with agent.iter('Research', usage_limits=UsageLimits(tool_calls_limit=3)) as run:
+            node = run.next_node
+            while not isinstance(node, End):
+                if Agent.is_call_tools_node(node):
+                    async with node.stream(run.ctx) as events:
+                        async for _ in events:
+                            pass
+                node = await run.next(node)
+        assert run.result is not None
 
+        assert run.result.output == 'what I found so far'
         assert sorted(looked_up) == ['a1', 'b1']
         returns = [
             part.content
-            for message in messages
+            for message in run.result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, ToolReturnPart)
         ]
-        assert returns == ['notes on a1', 'notes on b1']
+        assert returns == ['notes on a1', 'notes on b1', NOT_EXECUTED, NOT_EXECUTED]
 
     async def test_records_spans(self) -> None:
         exporter = InMemorySpanExporter()

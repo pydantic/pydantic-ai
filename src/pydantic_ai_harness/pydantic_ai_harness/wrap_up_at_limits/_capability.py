@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic_ai import CallToolsNode, ModelRequestNode
-from pydantic_ai.capabilities import AbstractCapability, AgentNode
+from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -65,32 +65,30 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     prompt: str = DEFAULT_WRAP_UP_PROMPT
     """What the model is told on the final request."""
 
-    async def before_node_run(
-        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]
-    ) -> AgentNode[AgentDepsT]:
+    async def after_node_run(
+        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT], result: NodeResult[AgentDepsT]
+    ) -> NodeResult[AgentDepsT]:
         """Answer a tool-call batch that would exceed `tool_calls_limit` as not executed, so the next request wraps up.
 
-        None of the batch's calls run, as with core's own check. With no request left, on a run resumed with
-        deferred tool results, or for a node whose tools already ran, core decides as usual.
+        Decided as the model request hands its response on, before anything can run the batch. None of its
+        calls run, as with core's own check. With no request left, core raises as usual.
         """
         limits = ctx.usage_limits
         if (
-            not isinstance(node, CallToolsNode)
-            or node.tool_call_results is not None
-            # A caller that streamed the node under `Agent.iter()` already ran its tools.
-            or node._wrapped_events_iterator is not None  # pyright: ignore[reportPrivateUsage]
+            not isinstance(node, ModelRequestNode)
+            or not isinstance(result, CallToolsNode)
             or limits is None
             or limits.tool_calls_limit is None
             or (limits.request_limit is not None and ctx.usage.requests >= limits.request_limit)
         ):
-            return node
-        calls = node.model_response.tool_calls
+            return result
+        calls = result.model_response.tool_calls
         tools = ctx.tools
         function_calls = sum(
             1 for call in calls if (tool := tools.get(call.tool_name)) is None or tool.kind == 'function'
         )
         if ctx.usage.tool_calls + function_calls <= limits.tool_calls_limit:
-            return node
+            return result
         parts: list[ModelRequestPart] = [
             ToolReturnPart(
                 call.tool_name,
