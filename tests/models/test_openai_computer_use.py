@@ -46,7 +46,6 @@ from ..workspace_fakes import InMemoryProvider
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message, with_history_digests
 
 with try_import() as imports_successful:
-    from openai import omit as OMIT
     from openai.types import responses as resp
     from openai.types.responses.response import Conversation
 
@@ -103,17 +102,13 @@ COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)
 
 
 @pytest.mark.parametrize(
-    'response_scoped,stored_id,settings,native',
+    'response_scoped,stored_id,settings',
     [
-        pytest.param(False, 'call_1', None, True, id='unique-ids'),
+        pytest.param(False, 'call_1', None, id='unique-ids'),
         # Stored qualified with its response and restored before the request.
-        pytest.param(True, 'resp_1:call_1', None, True, id='response-scoped-ids'),
+        pytest.param(True, 'resp_1:call_1', None, id='response-scoped-ids'),
         # The server holds the call, so only its output is sent.
-        pytest.param(False, 'call_1', {'openai_previous_response_id': 'auto'}, True, id='held-by-the-server'),
-        # Without the computer tool, the endpoint would refuse that output, so the whole history goes as functions.
-        pytest.param(
-            False, 'call_1', {'openai_previous_response_id': 'auto'}, False, id='held-by-the-server-without-the-tool'
-        ),
+        pytest.param(False, 'call_1', {'openai_previous_response_id': 'auto'}, id='held-by-the-server'),
     ],
 )
 async def test_compacting_a_history_with_a_computer_call_enables_the_computer_tool(
@@ -121,7 +116,6 @@ async def test_compacting_a_history_with_a_computer_call_enables_the_computer_to
     response_scoped: bool,
     stored_id: str,
     settings: OpenAIResponsesModelSettings | None,
-    native: bool,
 ) -> None:
     profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'), profile=profile)
@@ -170,23 +164,68 @@ async def test_compacting_a_history_with_a_computer_call_enables_the_computer_to
             messages=with_history_digests(history),
             model_settings=settings,
             model_request_parameters=ModelRequestParameters(
-                function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True
+                function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True
             ),
         )
     )
 
-    if native:
-        (output,) = [item for item in sent['input'] if item.get('type') == 'computer_call_output']
-        assert output['call_id'] == 'call_1'
-        # The endpoint refuses a `computer_call_output` unless the computer tool is enabled.
-        assert sent['extra_body'] == {'tools': [{'type': 'computer'}]}
-    else:
-        assert sent['previous_response_id'] is OMIT and sent['extra_body'] is None
-        assert [item.get('type', item.get('role')) for item in sent['input']] == [
-            'user',
-            'function_call',
-            'function_call_output',
+    (output,) = [item for item in sent['input'] if item.get('type') == 'computer_call_output']
+    assert output['call_id'] == 'call_1'
+    # The endpoint refuses a `computer_call_output` unless the computer tool is enabled.
+    assert sent['extra_body'] == {'tools': [{'type': 'computer'}]}
+
+
+@pytest.mark.parametrize(
+    'settings,compact',
+    [
+        pytest.param({'openai_previous_response_id': 'auto'}, False, id='previous-response'),
+        pytest.param({'openai_conversation_id': 'conv_1'}, False, id='conversation'),
+        pytest.param({'openai_previous_response_id': 'auto'}, True, id='compaction'),
+    ],
+)
+async def test_answering_a_stored_computer_call_without_the_native_tool_is_refused(
+    allow_model_requests: None, settings: OpenAIResponsesModelSettings, compact: bool
+) -> None:
+    """Live, the API refuses it: `You provided computer_output, but the "computer" tool is not enabled.`"""
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock([])))
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'screenshot'}]},
+        tool_call_id='call_1',
+        tool_kind=COMPUTER_KIND.id,
+        provider_name='openai',
+        provider_details={'computer_call': _COMPUTER_ITEM},
+    )
+    result = ToolReturnPart('computer', ['Ran 1 action.', _SCREEN], tool_call_id='call_1', tool_kind=COMPUTER_KIND.id)
+    history = with_history_digests(
+        [
+            ModelRequest.user_text_prompt('Go.'),
+            ModelResponse(
+                parts=[call],
+                provider_name='openai',
+                provider_response_id='resp_1',
+                provider_details={'conversation_id': 'conv_1'},
+            ),
+            ModelRequest(parts=[result]),
         ]
+    )
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    params = ModelRequestParameters(function_tools=[computer], allow_text_output=True)
+
+    with pytest.raises(UserError) as error:
+        if compact:
+            await model.compact_messages(
+                ModelRequestContext(
+                    model=model, messages=history, model_settings=settings, model_request_parameters=params
+                )
+            )
+        else:
+            await model.request(history, settings, params)
+    assert error.value.message == snapshot(
+        'The stored response or conversation holds a native computer call, so its result must be sent with the '
+        'native computer tool: the API refuses it otherwise. Keep the native computer tool for this run, or continue '
+        'without `openai_previous_response_id` and `openai_conversation_id`.'
+    )
 
 
 @pytest.mark.parametrize(

@@ -41,7 +41,7 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.messages import BinaryImage, CompactionPart, ModelRequest
+from pydantic_ai.messages import BinaryImage, CompactionPart, ModelRequest, ModelResponse
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
@@ -595,53 +595,6 @@ async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
 
 @needs_openai
 @pytest.mark.vcr
-@pytest.mark.moves_cache_prefix(reason='the resumed agent sends the computer tool as a function, not the native tool')
-async def test_gpt_answers_a_stored_computer_call_after_the_tool_opts_out(
-    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
-) -> None:
-    """A run paused on a native call the server holds resumes with `ComputerUse(native=False)`."""
-    provider = ScreenProvider()
-    hooks = Hooks[object]()
-
-    @hooks.on.before_tool_execute
-    async def ask_before_acting(
-        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
-    ) -> ValidatedToolArgs:
-        if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
-            raise ApprovalRequired
-        return args
-
-    model = _gpt(openai_api_key, request_capture)
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
-    native = Agent(
-        model,
-        capabilities=[provider.capability(), ComputerUse(), hooks],
-        output_type=[str, DeferredToolRequests],
-        model_settings=settings,
-    )
-    paused = await native.run(TASK)
-    assert isinstance(paused.output, DeferredToolRequests)
-    (approval,) = paused.output.approvals
-    paused_requests = len(request_capture.bodies('/responses'))
-
-    opted_out = Agent(model, capabilities=[provider.capability(), ComputerUse(native=False)], model_settings=settings)
-    approved = DeferredToolResults(approvals={approval.tool_call_id: True})
-    await opted_out.run(message_history=paused.all_messages(), deferred_tool_results=approved)
-
-    assert provider.actions == DONE
-    resumed = request_capture.bodies('/responses')[paused_requests:]
-    # The API refuses a `computer_call_output` without its computer tool, so the server's copy of the call is left
-    # and the whole history goes, with the call as a function call.
-    assert resumed and all('previous_response_id' not in body for body in resumed)
-    assert 'computer_call_output' not in _kinds(resumed[0])
-    (output,) = [
-        item for item in _items(resumed[0], 'function_call_output') if item['call_id'] == approval.tool_call_id
-    ]
-    assert output
-
-
-@needs_openai
-@pytest.mark.vcr
 async def test_gpt_on_bedrock_mantle_drives_the_screen_through_the_native_computer_tool(
     allow_model_requests: None, request_capture: RequestCapture
 ) -> None:
@@ -716,6 +669,32 @@ async def test_gpt_compacts_a_history_of_computer_calls_through_the_compact_endp
 
 
 @needs_openai
+@pytest.mark.vcr
+async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_endpoint(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _gpt(openai_api_key, request_capture, 'gpt-5.4-mini')
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    capabilities = [provider.capability(), ComputerUse()]
+    result = await Agent(model, capabilities=capabilities, model_settings=settings).run(TASK)
+    assert provider.actions == DONE
+    # Up to the last screenshot, so the window ends with a result of a call the server holds.
+    *messages, final = result.all_messages()
+    assert isinstance(final, ModelResponse) and not final.tool_calls
+    context = ModelRequestContext(
+        model=model, messages=messages, model_settings=settings, model_request_parameters=_computer_request()
+    )
+    compacted = await model.compact_messages(context)
+
+    assert isinstance(compacted.parts[0], CompactionPart)
+    compact = request_capture.body('/responses/compact')
+    # Only the result goes, as a `computer_call_output` beside the computer tool, after the stored response.
+    assert 'previous_response_id' in compact
+    assert compact['tools'] == [{'type': 'computer'}]
+    assert _kinds(compact) == ['computer_call_output']
+
+
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='compaction replaces the history')
 async def test_gpt_compacts_a_history_of_computer_calls_on_the_server(
