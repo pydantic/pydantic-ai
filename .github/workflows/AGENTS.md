@@ -130,9 +130,12 @@ and the job itself must **not** have `needs: activation`.
 No workflow here triggers on `pull_request_target`. GitHub blocks that event by default in public
 repositories from 2026-12-02 (#12961). Do not add it back.
 
-A `pull_request` run for a fork PR holds no secrets and a read-only token. A job that needs either
-skips fork PRs with `github.event.pull_request.head.repo.full_name == github.repository`. To take a
-fork PR's change, a maintainer recreates it as a same-repository PR.
+A `pull_request` run for a fork PR holds no secrets and a read-only token. A `pull_request` job
+that needs either skips fork PRs with
+`github.event.pull_request.head.repo.full_name == github.repository`. To take a fork PR's change, a
+maintainer recreates it as a same-repository PR.
+A `workflow_run` job, such as `PR Review Gates` or `after-ci.yml`, still wakes on a fork PR's runs
+with secrets or a write token. It runs only default-branch code.
 
 A `pull_request` run uses the PR's own copy of the workflow file. Who can change that copy decides
 what a same-repository run may trust:

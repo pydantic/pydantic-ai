@@ -4,7 +4,8 @@ name: PR Guard
 on:
   # A fork pull request's own runs hold a read-only token, so the guard sweeps from the default
   # branch instead. `pr_guard_sweep.py` reacts to the opened, reopened, ready-for-review and edited
-  # events since the last successful sweep, so a failed or late sweep loses none.
+  # events since the last successful sweep, so a failed or late sweep loses none within the
+  # sweep's three-hour lookback.
   schedule:
     - cron: '3-59/10 * * * *'
   workflow_dispatch:

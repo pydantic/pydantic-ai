@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field, TypeAdapter
 OVERLAP = timedelta(minutes=5)
 FIRST_SWEEP = timedelta(hours=1)
 # A sweep anchors on the last successful sweep, so one pull request that keeps failing widens every later
-# sweep's window. The cap bounds that repeated work. An event older than the cap when no sweep has succeeded
-# since is never judged, so a gap that long leaves its pull requests to a maintainer.
+# sweep's window. The cap bounds that repeated work. When no sweep succeeds within the cap after an event,
+# the guard never judges that event, and its pull request is left to a maintainer.
 LONGEST_LOOKBACK = timedelta(hours=3)
 GUARD = Path(__file__).with_name('pr_guard.sh')
 
