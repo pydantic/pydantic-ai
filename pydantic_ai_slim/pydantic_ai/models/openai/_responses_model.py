@@ -1257,7 +1257,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         provider_response_id=response.id,
                         timestamp=timestamp,
                     )
-                    items.append(map_computer_call(item, model_request_parameters, call_id, self.system))
+                    if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
+                        items.append(computer_call)
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
