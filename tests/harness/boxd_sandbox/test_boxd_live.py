@@ -148,9 +148,13 @@ async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
 
         async def pressed(*keys: str) -> list[str]:
             await display.act(PressKeys(keys=keys))
-            await anyio.sleep(0.2)
-            logged = await backend.run(['agent-browser', 'eval', 'JSON.stringify(K.splice(0))'], timeout=60)
-            return json.loads(json.loads(logged.stdout))
+            # Polls Chromium's key log; a dropped key leaves it empty until the deadline.
+            got: list[str] = []
+            with anyio.move_on_after(10):
+                while not got:
+                    logged = await backend.run(['agent-browser', 'eval', 'JSON.stringify(K.splice(0))'], timeout=60)
+                    got = json.loads(json.loads(logged.stdout))
+            return got
 
         missed = {name: got for name, code in _KEY_CODES.items() if code not in (got := await pressed(name))}
         assert missed == {}
