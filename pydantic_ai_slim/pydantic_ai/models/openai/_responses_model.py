@@ -843,10 +843,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             store=self._resolve_store(model_settings),
             allow_no_new_messages=True,
         )
-        # As in `_build_responses_request_params`: an output of a call the server holds is a `computer_call_output`,
-        # which the endpoint refuses without the computer tool, so then the whole history goes.
-        calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
-        if calls and self._native_computer_name(model_request_parameters) is None:
+        calls = self._held_computer_calls(restored, new_messages, model_request_parameters)
+        if calls is None:
             previous_response_id, calls = None, {}
         else:
             messages = new_messages
@@ -1532,12 +1530,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         restored = self._restore_response_scoped_tool_call_ids(messages)
         previous_response_id, conversation_id, new_messages = self._resolve_server_side_state(model_settings, messages)
-        # The calls the server holds in the stored response or conversation: an output of one is a
-        # `computer_call_output` even when the call itself isn't sent again.
-        calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
-        if calls and self._native_computer_name(wire_request_parameters) is None:
-            # The API refuses a `computer_call_output` without its computer tool, so the whole history goes, with
-            # its computer calls as function calls.
+        calls = self._held_computer_calls(restored, new_messages, wire_request_parameters)
+        if calls is None:
             previous_response_id, conversation_id, calls = None, None, {}
         else:
             messages = new_messages
@@ -2253,6 +2247,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if computer_name and computer_name not in model_request_parameters.declared_tool_defs:
             tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
+
+    def _held_computer_calls(
+        self,
+        restored: list[ModelMessage],
+        new_messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, ToolCallPart] | None:
+        """The `computer_call`s the server holds before `new_messages`, or `None` if the whole history must go instead.
+
+        An output of a held call is a `computer_call_output` even when the call itself isn't sent again. The API refuses
+        one without its computer tool, so then the request leaves the server-side state and sends the computer calls
+        as function calls.
+        """
+        calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
+        if calls and self._native_computer_name(model_request_parameters) is None:
+            return None
+        return calls
 
     @staticmethod
     def _native_computer_name(model_request_parameters: ModelRequestParameters) -> str | None:
