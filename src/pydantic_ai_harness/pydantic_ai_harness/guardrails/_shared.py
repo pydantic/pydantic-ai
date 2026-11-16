@@ -416,25 +416,33 @@ def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[Guardra
     return verdict, recorded.position
 
 
+def guard_at(guards: Sequence[GuardCallable], position: int) -> GuardCallable | None:
+    """The guard at `position`, or `None` when a replayed verdict names a position the chain no longer has.
+
+    A durable run replays the position recorded with its verdict, and the chain can have been
+    shortened since. The verdict still applies as it did before; only the span loses the guard's name.
+    """
+    return guards[position] if position < len(guards) else None
+
+
 def decision_attributes(
     direction: GuardrailDirection,
     action: Literal['allow', 'block', 'replace', 'retry', 'approve'],
     *,
-    guard: GuardCallable,
+    guard: GuardCallable | None,
     position: int,
     tool_name: str | None,
 ) -> dict[str, str | int]:
     """Attributes every guardrail span carries, regardless of content settings.
 
     `guardrail.guard` is the deciding guard's qualified name, defined by code, never by its `repr`,
-    which can show bound arguments such as keys. `guardrail.position` is its index in the chain.
+    which can show bound arguments such as keys. It is left out when `guard` is `None` (see `guard_at`).
+    `guardrail.position` is its index in the chain.
     """
-    attributes: dict[str, str | int] = {
-        'guardrail.direction': direction,
-        'guardrail.action': action,
-        'guardrail.guard': _guard_name(guard),
-        'guardrail.position': position,
-    }
+    attributes: dict[str, str | int] = {'guardrail.direction': direction, 'guardrail.action': action}
+    if guard is not None:
+        attributes['guardrail.guard'] = _guard_name(guard)
+    attributes['guardrail.position'] = position
     if tool_name is not None:
         attributes['guardrail.tool'] = tool_name
     return attributes
@@ -444,7 +452,7 @@ def trace_block(
     ctx: RunContext[AgentDepsT],
     *,
     direction: GuardrailDirection,
-    guard: GuardCallable,
+    guard: GuardCallable | None,
     position: int,
     message: str,
     tool_name: str | None = None,
@@ -467,7 +475,7 @@ def trace_retry(
     ctx: RunContext[AgentDepsT],
     *,
     direction: GuardrailDirection,
-    guard: GuardCallable,
+    guard: GuardCallable | None,
     position: int,
     message: str,
 ) -> None:
@@ -488,7 +496,7 @@ def trace_redaction(
     ctx: RunContext[AgentDepsT],
     *,
     direction: GuardrailDirection,
-    guard: GuardCallable,
+    guard: GuardCallable | None,
     position: int,
     replacement: object,
     tool_name: str | None = None,
@@ -513,7 +521,7 @@ def trace_approval(
     ctx: RunContext[AgentDepsT],
     *,
     direction: GuardrailDirection,
-    guard: GuardCallable,
+    guard: GuardCallable | None,
     position: int,
     tool_name: str,
     tool_call_id: str,
