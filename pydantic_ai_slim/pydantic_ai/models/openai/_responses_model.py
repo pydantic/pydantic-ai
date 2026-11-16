@@ -726,6 +726,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off Batch API, Responses WebSocket and native computer tool defaults for Azure clients and the gateway.
 
+        Elsewhere, offer the native computer tool to the models whose profile sets `openai_supports_computer_tool`.
+
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
         """
@@ -741,6 +743,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 profile,
                 OpenAIModelProfile(openai_responses_supports_websocket=False, openai_supports_computer_tool=False),
             )
+        if profile.get('openai_supports_computer_tool', False):
+            # Added here rather than by the profile, so a user's `profile=` can still leave it out.
+            supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) | {ComputerTool}
+            profile = merge_profile(profile, ModelProfile(supported_native_tools=supported))
         return profile
 
     @classmethod
@@ -1253,8 +1259,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         provider_response_id=response.id,
                         timestamp=timestamp,
                     )
-                    if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
-                        items.append(computer_call)
+                    items.append(map_computer_call(item, model_request_parameters, call_id, self.system))
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
