@@ -117,8 +117,9 @@ from urllib.parse import urlparse
 
 import anyio
 import idna
+from opentelemetry import trace
 
-from pydantic_ai._telemetry import current_run_telemetry, open_span, set_content_attribute
+from pydantic_ai._telemetry import current_run_telemetry, open_span
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
@@ -142,8 +143,9 @@ except ImportError as _import_error:
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
+    from contextlib import AbstractContextManager
 
-    from opentelemetry.trace import Span
+    from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
         Browser as PlaywrightBrowserHandle,
         BrowserContext as PlaywrightBrowserContext,
@@ -154,6 +156,8 @@ if TYPE_CHECKING:
         StorageState,
         WebSocketRoute as PlaywrightWebSocketRoute,
     )
+
+    from pydantic_ai._telemetry import RunTelemetry
 
 _T = TypeVar('_T')
 
@@ -891,6 +895,13 @@ async def _auto_install_chromium() -> str | None:
     return stdout.decode(errors='replace')
 
 
+_FALLBACK_TRACER = trace.get_tracer('pydantic-ai-harness.playwright')
+"""Tracer used when the session is driven outside an agent run.
+
+Inside a run the session takes the run's own tracer, so browser spans land
+wherever the agent's instrumentation settings send its tool calls.
+"""
+
 _ABORTED_FAILURE = 'net::ERR_FAILED'
 """Failure text Chromium reports for a request the route guard aborted.
 
@@ -1073,6 +1084,8 @@ class PlaywrightBrowserSession:
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
         self._launch_lock = anyio.Lock(fast_acquire=True)
+        self.tracer: Tracer = _FALLBACK_TRACER
+        """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
         """What the browser did outside the tool calls, newest last."""
         self.events_recorded = 0
@@ -1859,15 +1872,15 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
             # The session can outlive a run, so the telemetry is the calling run's, read now.
             telemetry = current_run_telemetry()
-            with open_span(
+            with self._operation_span(
                 telemetry,
-                f'browser {action}',
+                action,
                 # The outcome starts at `ok` and every failure path overwrites it,
                 # because a tool failure is a returned string, not an exception.
-                attributes={'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
+                {'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
                 self._session.operation_span = span
-                self._session.operation_includes_content = telemetry is not None and telemetry.include_content
+                self._session.operation_includes_content = telemetry is None or telemetry.include_content
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -1890,8 +1903,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     # because `tabs` can have moved it, and the span should name the
                     # tab the operation left rather than the one it started on.
                     ended_on = self._session.page if self._session.page is not None else page
-                    if ended_on is not None:
-                        set_content_attribute(telemetry, span, 'url.full', _without_credentials(ended_on.url))
+                    if ended_on is not None and self._session.operation_includes_content:
+                        span.set_attribute('url.full', _without_credentials(ended_on.url))
                     self._session.operation_span = None
 
     async def _refuse(self, action: str, timeout_ms: int | None, message: str) -> str:
@@ -1910,15 +1923,24 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             if (error := self._timeout_error(timeout_ms)) is not None:
                 return error
             telemetry = current_run_telemetry()
-            with open_span(
-                telemetry, f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
-            ) as span:
+            with self._operation_span(telemetry, action, {'browser.action': action, 'browser.outcome': 'ok'}) as span:
                 self._session.operation_span = span
-                self._session.operation_includes_content = telemetry is not None and telemetry.include_content
+                self._session.operation_includes_content = telemetry is None or telemetry.include_content
                 try:
                     return self._error(message)
                 finally:
                     self._session.operation_span = None
+
+    def _operation_span(
+        self, telemetry: RunTelemetry | None, action: str, attributes: dict[str, str | int]
+    ) -> AbstractContextManager[Span]:
+        """Open an operation's span on the calling run's telemetry, or on the session's `tracer` outside a run.
+
+        Outside a run there is no content setting to follow, so the span records as it always has.
+        """
+        if telemetry is not None:
+            return open_span(telemetry, f'browser {action}', attributes=attributes)
+        return self._session.tracer.start_as_current_span(f'browser {action}', attributes=attributes)
 
     async def _settle(self, page: _Page, action: str, deadlines: _Deadlines) -> str | None:
         """Let the navigation finish, then re-check where it landed.
@@ -2614,10 +2636,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         is producing or about to consume.
         """
         async with self._operation_lock:
-            with open_span(
-                current_run_telemetry(),
-                f'browser {action}',
-                attributes={'browser.action': action, 'browser.outcome': 'ok'},
+            with self._operation_span(
+                current_run_telemetry(), action, {'browser.action': action, 'browser.outcome': 'ok'}
             ):
                 return body()
 
