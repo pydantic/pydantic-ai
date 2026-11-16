@@ -54,10 +54,7 @@ with try_import() as anthropic_imports_successful:
         completion_message,
         get_mock_chat_completion_kwargs,
     )
-    from .test_thinking_block_binding import (
-        _STALE_THINKING_BLOCK_MESSAGE,  # pyright: ignore[reportPrivateUsage]
-        stale_thinking_block_error,
-    )
+    from .test_thinking_block_binding import stale_thinking_block_error
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
@@ -370,8 +367,7 @@ async def test_anthropic_code_execution_files_retrying_transport_gave_up_on_expi
         if 'container' in body:
             return httpx2.Response(status_code, json={'type': 'error', 'error': error})
         if stale_after_drop and not dropping:
-            stale = {'type': 'invalid_request_error', 'message': _STALE_THINKING_BLOCK_MESSAGE}
-            return httpx2.Response(400, json={'type': 'error', 'error': stale})
+            return httpx2.Response(400, json=stale_thinking_block_error().body)
         reply = completion_message(
             [BetaTextBlock(text='Summarized.', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
         )

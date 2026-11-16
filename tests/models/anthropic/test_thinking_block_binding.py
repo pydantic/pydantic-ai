@@ -357,8 +357,7 @@ async def test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gav
         dropping = isinstance(thinking, dict) and 'block_binding' in thinking
         sent.append((request.url.path, dropping))
         if not dropping:
-            error = {'type': 'invalid_request_error', 'message': _STALE_THINKING_BLOCK_MESSAGE}
-            return httpx2.Response(400, json={'type': 'error', 'error': error})
+            return httpx2.Response(400, json=stale_thinking_block_error().body)
         if request.url.path.endswith('/count_tokens'):
             return httpx2.Response(200, json={'input_tokens': 10})
         if body.get('stream'):
