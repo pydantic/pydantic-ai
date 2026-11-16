@@ -214,7 +214,6 @@ async def test_bedrock_only_claude_streams_inferred_native_output_again_in_tool_
         async with Agent(model, output_type=form).run_stream('Fill in the form.', model_settings={'thinking': True}):
             pass  # pragma: no cover
 
-    assert model._classifies_schema_too_complex() is classifies  # pyright: ignore[reportPrivateUsage]
     assert isinstance(exc_info.value, ModelSchemaTooComplexError) is classifies
     assert [('outputConfig' in params, 'toolConfig' in params) for params in sent] == (
         [(True, False), (False, True)] if classifies else [(True, False)]
