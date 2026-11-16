@@ -175,8 +175,10 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
     whole part: `allow` releases the events as they arrived, `block` raises
     [`OutputBlocked`][pydantic_ai_harness.guardrails.OutputBlocked] without releasing them, and
     `replace` releases a start and end event carrying the replacement part instead, which must be
-    of the same type. Events that arrive while a part is held are held with it, so the caller sees
-    them in their original order. `retry` and `approve` raise
+    of the same type. An allowed tool call is likewise released as one start and end event carrying
+    the screened part, as its argument deltas can overwrite earlier keys. Events that arrive while a
+    part is held are held with it, so the caller sees them in their original order. `retry` and
+    `approve` raise
     [`UserError`][pydantic_ai.exceptions.UserError], as does `replace` for a tool call, whose
     original arguments the run would still execute: rewrite those with `ToolGuardrail`.
 
@@ -271,7 +273,7 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         )
         match verdict.action:
             case 'allow':
-                return held
+                return _replace_part(held, index, part) if isinstance(part, ToolCallPart) else held
             case 'replace':
                 assert _is_part(verdict.replacement)
                 trace_redaction(ctx, direction='stream', replacement=verdict.replacement)

@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ThinkingPart,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -140,8 +141,7 @@ class TestStreamGuardrail:
                 'PartDeltaEvent 1',
                 "PartEndEvent 1 text 'Call SSN 123'",
                 'guard tool-call',
-                'PartStartEvent 2 tool-call \'{"city": \'',
-                'PartDeltaEvent 2',
+                'PartStartEvent 2 tool-call \'{"city": "Paris"}\'',
                 'PartEndEvent 2 tool-call \'{"city": "Paris"}\'',
                 'FunctionToolCallEvent',
                 'FunctionToolResultEvent',
@@ -165,8 +165,7 @@ class TestStreamGuardrail:
                 "PartStartEvent 1 text '[redacted]'",
                 'FinalResultEvent',
                 "PartEndEvent 1 text '[redacted]'",
-                'PartStartEvent 2 tool-call \'{"city": \'',
-                'PartDeltaEvent 2',
+                'PartStartEvent 2 tool-call \'{"city": "Paris"}\'',
                 'PartEndEvent 2 tool-call \'{"city": "Paris"}\'',
                 'FunctionToolCallEvent',
                 'FunctionToolResultEvent',
@@ -390,6 +389,22 @@ class TestStreamGuardrail:
                 "PartStartEvent 0 text '[redacted]'",
                 "PartEndEvent 0 text '[redacted]'",
             ]
+        )
+
+    async def test_an_allowed_tool_call_is_released_as_its_screened_final_part(self):
+        async def events() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=0, part=ToolCallPart(tool_name='weather', args={'city': 'SSN 123'}))
+            yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'city': 'Paris'}))
+            yield PartEndEvent(index=0, part=ToolCallPart(tool_name='weather', args={'city': 'Paris'}))
+
+        def guard(part: StreamGuardrailPart) -> bool:
+            return 'SSN' not in str(part)
+
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        released = [event async for event in StreamGuardrail(guard=guard).wrap_run_event_stream(ctx, stream=events())]
+
+        assert [_describe(event) for event in released] == snapshot(
+            ["PartStartEvent 0 tool-call {'city': 'Paris'}", "PartEndEvent 0 tool-call {'city': 'Paris'}"]
         )
 
     async def test_refuses_durable_execution(self):
