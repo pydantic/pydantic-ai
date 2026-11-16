@@ -907,7 +907,7 @@ Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/compu
 | Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
 | Claude Haiku 4.5 | `computer_20250124` |
 
-Other models, Google Vertex AI and Microsoft Foundry, and any model with `ComputerUse(native=False)`, get a function
+Other models, Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any model with `ComputerUse(native=False)`, get a function
 tool. Each model's largest screenshot is
 listed under [Screen size](../harness/computer-use.md#screen-size).
 

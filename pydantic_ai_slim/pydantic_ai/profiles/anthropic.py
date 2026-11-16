@@ -6,7 +6,6 @@ from typing import Literal, TypeAlias
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
-    ComputerTool,
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
@@ -18,8 +17,8 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool` and `ComputerTool`, which are gated
-per-model in the profile below."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated per-model in the profile
+below, and `ComputerTool`, which `AnthropicModel.profile` adds by `anthropic_computer_tool_version`."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -652,8 +651,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
     computer_tool_version = _computer_tool_version(model_name)
-    if computer_tool_version is not None:
-        supported_native_tools = supported_native_tools | {ComputerTool}
 
     profile = AnthropicModelProfile(
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
@@ -726,7 +723,7 @@ def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | No
     """The model's computer use tool, from Anthropic's compatibility table.
 
     Sent on the Claude API and both Bedrock APIs, the clients it is recorded on; `AnthropicModel.profile` turns it off
-    for Vertex AI and Foundry. Claude 5.5 and later take only the toolset. Retired or retiring models (Opus 4 and 4.1,
+    for Vertex AI, Foundry and Claude Platform on AWS. Claude 5.5 and later take only the toolset. Retired or retiring models (Opus 4 and 4.1,
     Sonnet 4 and 4.5) get a function tool.
     https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
     """
