@@ -421,7 +421,7 @@ navigation:
           - page: "Bubblewrapped Workspace"
             path: "harness/bubblewrap-sandbox.md"
             slug: "harness/bubblewrap-sandbox"
-      - section: "Files & shell"
+      - section: "Files & Shell"
         slug: ""
         contents:
           - page: "FileSystem"
