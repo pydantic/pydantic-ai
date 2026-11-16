@@ -69,7 +69,8 @@ async def test_a_judge_is_not_asked_in_flow_code(prefect_test_server: None, tmp_
     with temporary_settings({PREFECT_LOCAL_STORAGE_PATH: tmp_path}):
         messages = await run()
 
-    # The heuristic alone found the loop in the response, checked whole in flow code.
-    assert [nudge['pattern'] for nudge in nudges(messages) if isinstance(nudge, dict)] == ['repeated_stream_text']
+    # The heuristic alone found the loop in the response, checked whole in flow code. `nudges` reads only
+    # `LoopNudgePart`s, so this also shows the nudge came back from Prefect as one.
+    assert nudges(messages) == [('repeated_stream_text', ())]
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'The config is fine.'
