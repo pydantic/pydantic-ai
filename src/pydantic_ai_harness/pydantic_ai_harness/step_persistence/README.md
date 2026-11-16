@@ -873,6 +873,9 @@ shows. Where a session's history lives decides what to copy:
   lists every run, but core gives each run a fresh conversation ID when none is
   passed, so one-shot runs and delegates each have one of their own.
 
+Run `move_heads` while nothing else writes to the store: `listing` pages by last
+activity, so a head saved during the move can shift the pages and be skipped.
+
 ```python
 from pydantic_ai import Conversation
 from pydantic_ai.conversation_store import ConversationConflict, ConversationStore

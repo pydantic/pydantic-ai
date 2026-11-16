@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import re
-from collections.abc import Callable
 from pathlib import Path
 
 from pydantic_ai import Agent
@@ -12,30 +10,19 @@ from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-
-_ROOT = Path(__file__).parents[3]
-_SURFACES = (
-    _ROOT / 'docs' / 'harness' / 'step-persistence.md',
-    _ROOT / 'src' / 'pydantic_ai_harness' / 'pydantic_ai_harness' / 'step_persistence' / 'README.md',
-)
+from tests.harness._docs_examples import python_blocks
 
 
-def _recipe(path: Path) -> str:
-    section = path.read_text(encoding='utf-8').split('## Moving sessions to a `ConversationStore`', 1)[1]
-    match = re.search(r'```python\n(.*?)```', section, flags=re.DOTALL)
-    assert match
-    return match.group(1)
+def _recipe(path: str) -> str:
+    (block,) = [example for example in python_blocks(path) if 'async def move_heads(' in example.source]
+    return block.source
 
 
-def _recipe_function(name: str) -> Callable[..., object]:
+async def _call(name: str, *args: object) -> None:
     namespace: dict[str, object] = {}
-    exec(_recipe(_SURFACES[0]), namespace)
+    exec(_recipe('docs/harness/step-persistence.md'), namespace)
     function = namespace[name]
     assert callable(function)
-    return function
-
-
-async def _call(function: Callable[..., object], *args: object) -> None:
     result = function(*args)
     assert inspect.isawaitable(result)
     await result
@@ -43,24 +30,25 @@ async def _call(function: Callable[..., object], *args: object) -> None:
 
 class TestStepPersistenceSessionMigration:
     def test_docs_and_readme_share_the_recipe(self) -> None:
-        assert _recipe(_SURFACES[0]) == _recipe(_SURFACES[1])
+        assert _recipe('docs/harness/step-persistence.md') == _recipe(
+            'src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/README.md'
+        )
 
     async def test_move_conversation_copies_the_newest_snapshot(self) -> None:
         steps = InMemoryStepStore()
         agent = Agent(TestModel(), capabilities=[StepPersistence(store=steps)])
         first = await agent.run('hello', conversation_id='chat')
         second = await agent.run('again', message_history=first.all_messages(), conversation_id='chat')
-        move_conversation = _recipe_function('move_conversation')
         conversations = InMemoryConversationStore()
 
-        await _call(move_conversation, steps, conversations, 'chat')
+        await _call('move_conversation', steps, conversations, 'chat')
         moved = await conversations.load('chat')
         assert moved is not None
         assert moved.messages == second.all_messages()
 
         third = await agent.run('and again', conversation=moved)
         await conversations.save(third)
-        await _call(move_conversation, steps, conversations, 'chat')
+        await _call('move_conversation', steps, conversations, 'chat')
         reloaded = await conversations.load('chat')
         assert reloaded is not None
         assert reloaded.messages == third.all_messages()
@@ -71,11 +59,10 @@ class TestStepPersistenceSessionMigration:
         runs = {name: await agent.run(name) for name in ('one', 'two')}
         for name, result in runs.items():
             await heads.save(summary=ConversationSummary(id=name, workspace='.'), messages=result.all_messages())
-        move_heads = _recipe_function('move_heads')
         conversations = InMemoryConversationStore()
 
-        await _call(move_heads, heads, conversations)
-        await _call(move_heads, heads, conversations)
+        await _call('move_heads', heads, conversations)
+        await _call('move_heads', heads, conversations)
 
         for name, result in runs.items():
             moved = await conversations.load(name)

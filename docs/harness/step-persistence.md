@@ -577,6 +577,8 @@ Save each session to a `ConversationStore` once, then load and save around each 
 - If you saved [conversation heads](#conversation-heads-and-background-names) with `SqliteConversationStore`, each head is the conversation, including edits between runs such as compaction. `move_heads` copies every head.
 - Otherwise, a run's latest `complete` snapshot holds the history it continued plus what the run added, so the newest run of a conversation that has one holds the conversation up to that point. Call `move_conversation` for each ID your application passed as `conversation_id=` for a session. `list_runs()` lists every run, but core gives each run a fresh conversation ID when none is passed, so one-shot runs and delegates each have one of their own.
 
+Run `move_heads` while nothing else writes to the store: `listing` pages by last activity, so a head saved during the move can shift the pages and be skipped.
+
 ```python
 from pydantic_ai import Conversation
 from pydantic_ai.conversation_store import ConversationConflict, ConversationStore
