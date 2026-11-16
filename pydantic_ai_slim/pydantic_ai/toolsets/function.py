@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from copy import copy
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
@@ -102,11 +103,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Defaults to None (no timeout).
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
@@ -728,13 +732,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.add_tool(tool)
         # `add_tool` applies the toolset's `sequential`, `requires_approval`, and `defer_loading` when they're
         # `True`; a `Tool`'s plain booleans can't distinguish an explicit `False`, so restore the overrides
-        # passed here.
-        tool.sequential = sequential
-        tool.requires_approval = requires_approval
-        tool.defer_loading = defer_loading
-        tool._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
-        tool._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
-        return tool
+        # passed here on the copy it stored.
+        added = self.tools[tool.name]
+        added.sequential = sequential
+        added.requires_approval = requires_approval
+        added.defer_loading = defer_loading
+        added._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        added._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        return added
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
@@ -743,28 +748,32 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
         `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none.
 
+        The toolset stores a copy with these applied, so the `Tool` passed in keeps its own values
+        wherever else it's used.
+
         Args:
             tool: The tool to add.
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        if tool.max_retries is None and self.max_retries is not None:
-            tool.max_retries = self.max_retries
-        if tool.strict is None and self.strict is not None:
-            tool.strict = self.strict
-        if tool.include_return_schema is None and self.include_return_schema is not None:
-            tool.include_return_schema = self.include_return_schema
-        if self.sequential and not tool.sequential:
-            tool.sequential = True
-            tool._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        added = copy(tool)
+        if added.max_retries is None and self.max_retries is not None:
+            added.max_retries = self.max_retries
+        if added.strict is None and self.strict is not None:
+            added.strict = self.strict
+        if added.include_return_schema is None and self.include_return_schema is not None:
+            added.include_return_schema = self.include_return_schema
+        if self.sequential and not added.sequential:
+            added.sequential = True
+            added._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.requires_approval:
-            tool.requires_approval = True
-        if self._defer_loading and not tool.defer_loading:
-            tool.defer_loading = True
-            tool._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+            added.requires_approval = True
+        if self._defer_loading and not added.defer_loading:
+            added.defer_loading = True
+            added._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.metadata is not None:
-            tool.metadata = self.metadata | (tool.metadata or {})
-        self.tools[tool.name] = tool
+            added.metadata = self.metadata | (added.metadata or {})
+        self.tools[added.name] = added
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:

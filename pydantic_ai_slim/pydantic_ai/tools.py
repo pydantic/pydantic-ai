@@ -385,8 +385,8 @@ class Tool(Generic[ToolAgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
-    # Set when a `FunctionToolset` turned on `sequential` or `defer_loading` from its own value. Temporal and
-    # DBOS list the tool without them, wherever it is held, for workflows started before `FunctionToolset` did so.
+    # Set on the copy a `FunctionToolset` stores when it turned on `sequential` or `defer_loading` from its own
+    # value. Temporal and DBOS list that copy without them for workflows started before `FunctionToolset` did so.
     # Unannotated, so they aren't dataclass fields: a dataclass subclass adding a required field stays valid.
     _sequential_from_toolset = False
     _defer_loading_from_toolset = False
