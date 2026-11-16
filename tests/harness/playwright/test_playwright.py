@@ -14,7 +14,7 @@ import socket
 import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import Literal, Protocol, get_args
 
 import anyio
@@ -2164,7 +2164,6 @@ class TestPlaywrightBrowserHooks:
         assert browser.block_private_addresses is True
         assert browser.auto_install_chromium is False
         assert browser.cdp_url is None
-        assert browser.cdp_url_factory is None
         assert browser.cdp_context == 'new'
         assert browser.storage_state is None
 
@@ -2193,10 +2192,10 @@ class TestPlaywrightBrowserHooks:
         assert 'cdp_url' not in rendered
         assert "allowed_domains=['example.com']" in rendered  # non-secret configuration still shows
 
-        async def provisioned() -> str:
+        async def provisioned(ctx: RunContext[None]) -> str:
             return 'https://cloud.example.com/?token=s3cret'  # pragma: no cover
 
-        assert 'cdp_url_factory' not in repr(PlaywrightBrowser[None](cdp_url_factory=provisioned))
+        assert 'cdp_url' not in repr(PlaywrightBrowser[None](cdp_url=provisioned))
 
     def test_two_configured_alike_become_one(self) -> None:
         # Each instance builds its own session and toolset, which stay out of equality, so two browsers
@@ -2212,10 +2211,12 @@ class TestPlaywrightBrowserHooks:
         with pytest.raises(TypeError, match='storage_state'):
             PlaywrightBrowser[None].from_spec(storage_state=_STORAGE_STATE)  # pyright: ignore[reportCallIssue]
 
-    def test_from_spec_refuses_an_endpoint_factory(self) -> None:
-        # A callable has no serialized form, so a spec cannot name one.
-        with pytest.raises(TypeError, match='cdp_url_factory'):
-            PlaywrightBrowser[None].from_spec(cdp_url_factory=lambda: None)  # pyright: ignore[reportCallIssue]
+    def test_from_spec_takes_only_an_endpoint_string(self) -> None:
+        # A function has no serialized form, so a spec names the endpoint itself.
+        params = AgentSpec.model_json_schema_with_capabilities([PlaywrightBrowser])['$defs'][
+            'spec_params_PlaywrightBrowser'
+        ]
+        assert params['properties']['cdp_url']['anyOf'] == [{'type': 'string'}, {'type': 'null'}]
 
 
 class TestDurabilityRejection:
@@ -2496,20 +2497,100 @@ class TestPlaywrightBrowserLifecycle:
         assert all(not page.closed for page in browser.contexts[0].pages)
         assert browser.closed and cm.exited
 
-    async def test_cdp_factory_is_lazy_and_resolved_once_per_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize(
+        'start_url',
+        [
+            'chrome://newtab/',
+            'file:///home/agent/notes.txt',
+            'data:text/html,<p>note</p>',
+            'blob:https://example.com/preview',
+        ],
+    )
+    async def test_default_context_leaves_tabs_outside_the_web_alone(
+        self, monkeypatch: pytest.MonkeyPatch, start_url: str
+    ) -> None:
+        # A browser that opened on its start page holds nothing else, so refusing that tab would fail
+        # every attach. A `file:`, `data:` or `blob:` document in a tab falls under the same rule.
+        start = _FakePage(url=start_url, title='BROWSER_OWNED', body='BROWSER_OWNED')
+        cm = _install_fake_driver(monkeypatch, start)
+        _populate_default_context(monkeypatch, tabs=1)
+        agent = Agent(
+            TestModel(call_tools=['get_text', 'tabs']),
+            capabilities=[
+                PlaywrightBrowser(
+                    cdp_url='http://localhost:9222', cdp_context='default', allowed_domains=['example.com']
+                )
+            ],
+        )
+        reported = _tool_results(await agent.run('inspect the existing browser'))
+        assert 'Hello body' in reported
+        assert 'BROWSER_OWNED' not in reported and 'blocked by the browser policy' not in reported
+        browser = cm.driver.chromium.browser
+        assert browser is not None
+        context = browser.contexts[0]
+        assert len(context.pages) == 2 and context.pages[0] is start
+        assert context.pages[1].url == 'about:blank' and context.pages[1].popup_events == ['popup']
+        assert not start.closed and not start.handlers and start.goto_calls == []
+        assert start.url == start_url
+
+    async def test_default_context_lists_and_counts_only_the_tabs_it_adopts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The start page's name does not resolve, as on a real resolver, so the default policy refuses it.
+        async def resolve(host: str) -> tuple[str, ...]:
+            if host == 'newtab':
+                raise socket.gaierror('Name or service not known')
+            return ('93.184.216.34',)
+
+        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        cm = _install_fake_driver(monkeypatch, _FakePage(url='https://example.com/', title='Example'))
+        start = _FakePage(url='chrome://newtab/', title='New Tab')
+        # Eight adopted tabs reach the limit, so the start page fits only because it is not counted.
+        _populate_default_context(monkeypatch, tabs=8, inherit=lambda context: context.opened.append(start))
+        agent = Agent(
+            TestModel(call_tools=['tabs']),
+            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default')],
+        )
+        reported = _tool_results(await agent.run('list the tabs'))
+        assert reported.startswith('0 (active): Example -- https://example.com/')
+        assert reported.count('about:blank') == 7
+        assert 'more than 8 tabs' not in reported and 'newtab' not in reported and 'New Tab' not in reported
+        browser = cm.driver.chromium.browser
+        assert browser is not None and len(browser.contexts[0].pages) == 9
+        assert not start.closed and not start.handlers
+
+    async def test_default_context_names_a_tab_that_moved_to_a_page_outside_the_web(self) -> None:
+        page = _FakePage(url='https://example.com/', body='Allowed content')
+        session = PlaywrightBrowserSession(
+            cdp_url='http://localhost:9222',
+            cdp_context='default',
+            policy=EgressPolicy(allowed_domains=['example.com']),
+        )
+        async with session:
+            tools = _toolset(page, session=session)
+            assert await tools.get_text() == 'Allowed content'
+            page.url = 'chrome://settings/'
+            result = await tools.get_text()
+        assert 'showing a page the agent cannot read: chrome://settings/' in result
+        assert 'Close that tab in the provider browser' in result
+        assert 'blocked by the browser policy' not in result
+
+    async def test_cdp_url_function_is_lazy_and_called_once_per_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
         calls = 0
 
-        async def endpoint() -> str:
+        async def endpoint(ctx: RunContext[None]) -> str:
             nonlocal calls
             calls += 1
             return f'http://localhost:9222/{calls}'
 
-        capability = PlaywrightBrowser(cdp_url_factory=endpoint)
-        no_browser = Agent(TestModel(call_tools=[]), capabilities=[capability])
+        capability = PlaywrightBrowser(cdp_url=endpoint)
+        no_browser = Agent(TestModel(call_tools=[]), deps_type=type(None), capabilities=[capability])
         await no_browser.run('answer without browsing')
         assert calls == 0 and cm.entries == 0
-        browser = Agent(TestModel(call_tools=['screenshot', 'snapshot']), capabilities=[capability])
+        browser = Agent(
+            TestModel(call_tools=['screenshot', 'snapshot']), deps_type=type(None), capabilities=[capability]
+        )
         await browser.run('inspect')
         await browser.run('inspect again')
         assert calls == 2
@@ -2517,7 +2598,9 @@ class TestPlaywrightBrowserLifecycle:
         assert cm.driver.chromium.launched == []
         assert cm.entries == 2 and cm.exited
 
-    async def test_cdp_factory_is_not_repeated_after_connect_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_cdp_url_function_is_not_repeated_after_connect_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage(), launch_error=PlaywrightError('not ready'))
         calls = 0
 
@@ -2526,7 +2609,7 @@ class TestPlaywrightBrowserLifecycle:
             calls += 1
             return 'http://localhost:9222'
 
-        async with PlaywrightBrowserSession(cdp_url_factory=endpoint) as session:
+        async with PlaywrightBrowserSession(cdp_url=endpoint) as session:
             with pytest.raises(PlaywrightError, match='not ready'):
                 await session.ensure_page()
             with pytest.raises(PlaywrightError, match='not ready'):
@@ -2535,7 +2618,7 @@ class TestPlaywrightBrowserLifecycle:
         assert cm.driver.chromium.connected == ['http://localhost:9222', 'http://localhost:9222']
         assert cm.exited
 
-    async def test_cdp_factory_resolves_again_when_the_session_is_reentered(
+    async def test_cdp_url_function_is_called_again_when_the_session_is_reentered(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
@@ -2546,7 +2629,7 @@ class TestPlaywrightBrowserLifecycle:
             calls += 1
             return f'http://localhost:9222/{calls}'
 
-        session = PlaywrightBrowserSession(cdp_url_factory=endpoint)
+        session = PlaywrightBrowserSession(cdp_url=endpoint)
         async with session:
             await session.ensure_page()
         async with session:
@@ -2554,19 +2637,23 @@ class TestPlaywrightBrowserLifecycle:
         assert calls == 2
         assert cm.driver.chromium.connected == ['http://localhost:9222/1', 'http://localhost:9222/2']
 
-    async def test_cdp_factory_failure_releases_the_driver(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_cdp_url_function_failure_releases_the_driver(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
 
-        async def endpoint() -> str:
+        async def endpoint(ctx: RunContext[None]) -> str:
             raise UserError('Provider is unavailable')
 
-        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(cdp_url_factory=endpoint)])
+        agent = Agent(
+            TestModel(call_tools=['screenshot']),
+            deps_type=type(None),
+            capabilities=[PlaywrightBrowser(cdp_url=endpoint)],
+        )
         with pytest.raises(UserError, match='Provider is unavailable'):
             await agent.run('inspect')
         assert cm.exited
         assert cm.driver.chromium.connected == []
 
-    async def test_cdp_factory_timeout_cancels_provisioning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_cdp_url_function_timeout_cancels_provisioning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
         cancelled = False
 
@@ -2578,13 +2665,13 @@ class TestPlaywrightBrowserLifecycle:
                 cancelled = True
             return 'http://localhost:9222'  # pragma: no cover
 
-        async with PlaywrightBrowserSession(cdp_url_factory=endpoint, launch_timeout_ms=1) as session:
+        async with PlaywrightBrowserSession(cdp_url=endpoint, launch_timeout_ms=1) as session:
             with pytest.raises(PlaywrightTimeoutError, match='Timeout 1ms'):
                 await session.ensure_page()
         assert cancelled and cm.exited
         assert cm.driver.chromium.connected == []
 
-    async def test_cdp_factory_is_called_again_after_a_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_cdp_url_function_is_called_again_after_a_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
         calls = 0
 
@@ -2595,17 +2682,43 @@ class TestPlaywrightBrowserLifecycle:
                 raise PlaywrightTimeoutError('Timeout 1ms exceeded.')
             return 'http://localhost:9222'
 
-        async with PlaywrightBrowserSession(cdp_url_factory=endpoint) as session:
+        async with PlaywrightBrowserSession(cdp_url=endpoint) as session:
             with pytest.raises(PlaywrightTimeoutError):
                 await session.ensure_page()
             await session.ensure_page()
         assert calls == 2
         assert cm.driver.chromium.connected == ['http://localhost:9222']
 
+    @pytest.mark.parametrize('call', ['sync', 'async'])
+    async def test_cdp_url_function_provisions_from_the_run_deps(
+        self, monkeypatch: pytest.MonkeyPatch, call: str
+    ) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+
+        @dataclass
+        class Deps:
+            user: str
+            created: list[str] = field(default_factory=list[str])
+
+        def provision(ctx: RunContext[Deps]) -> str:
+            ctx.deps.created.append(f'browser-{ctx.deps.user}')
+            return f'http://localhost:9222/{ctx.deps.user}'
+
+        async def provision_async(ctx: RunContext[Deps]) -> str:
+            return provision(ctx)
+
+        capability = PlaywrightBrowser[Deps](cdp_url=provision if call == 'sync' else provision_async)
+        agent = Agent(TestModel(call_tools=['screenshot']), deps_type=Deps, capabilities=[capability])
+        alice, bob = Deps('alice'), Deps('bob')
+        await agent.run('inspect', deps=alice)
+        await agent.run('inspect', deps=bob)
+        assert cm.driver.chromium.connected == ['http://localhost:9222/alice', 'http://localhost:9222/bob']
+        # The capability only disconnects, so what each run created is on its deps for the app to delete.
+        assert (alice.created, bob.created) == (['browser-alice'], ['browser-bob'])
+
     @pytest.mark.parametrize(
         'kwargs, message',
         [
-            ({'cdp_url': 'http://localhost:9222', 'cdp_url_factory': lambda: None}, 'not both'),
             ({'cdp_context': 'default'}, 'requires'),
             ({'cdp_context': 'existing'}, 'must be'),
             ({'cdp_context': 'invalid'}, 'must be'),

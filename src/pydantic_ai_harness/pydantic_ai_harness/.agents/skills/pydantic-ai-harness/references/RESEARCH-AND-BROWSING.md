@@ -344,13 +344,16 @@ Fields: `headless=True`, `allowed_domains=None` (exact host plus subdomains), `p
 `max_content_tokens=4000`, `action_timeout_ms=5000`, `navigation_timeout_ms=60000` (`0` disables
 either), `chromium_sandbox=True`, `auto_install_chromium=False`, `storage_state=None` (Playwright
 cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium).
-`cdp_url_factory` calls an async endpoint supplier on first browser use and caches its result per
-run; a timeout is a tool error and is retried, an exception ends the run, and the caller owns
-provisioning and cleanup. `cdp_context='default'` reuses sign-ins and tabs instead of creating a
-`'new'` context. It requires a CDP endpoint and excludes `storage_state`. The agent can act as
-every signed-in account, so attach it to a profile dedicated to the agent, never an everyday
-browser, and set `allowed_domains` for untrusted pages. Loaded tabs and frames must pass the egress
-policy, and new service-worker registrations are refused; downloads follow the browser's settings.
+`cdp_url` also takes a sync or async function of the run context that returns the endpoint: the
+first browser tool call of a run calls it and the result is reused for that run; a timeout is a
+tool error and is retried, an exception ends the run, and the capability only disconnects, so the
+app deletes what the function created (record it on `ctx.deps`). `cdp_context='default'` reuses
+sign-ins and tabs instead of creating a `'new'` context. It requires a CDP endpoint and excludes
+`storage_state`. The agent can act as every signed-in account, so attach it to a profile dedicated
+to the agent, never an everyday browser, and set `allowed_domains` for untrusted pages. Tabs showing
+a page outside the web that the policy refuses (the browser's start page, `file:`, `data:`, `blob:`)
+are left out; other loaded tabs and frames must pass the egress policy, and new service-worker
+registrations are refused; downloads follow the browser's settings.
 Playwright routes service-worker requests through the guards unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass
 them, and a page loaded before attachment can register a worker until it navigates.

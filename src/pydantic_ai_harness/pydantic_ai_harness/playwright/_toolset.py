@@ -129,7 +129,7 @@ import socket
 import sys
 import warnings
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -163,7 +163,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterable, Sequence
+    from collections.abc import Callable, Coroutine, Iterable, Sequence
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -220,6 +220,9 @@ _ERROR_PAGE_SCHEME = 'chrome-error://'
 
 _INLINE_SUBFRAME_PREFIXES = ('about:srcdoc', 'data:', 'blob:')
 """URL prefixes of subframes whose document the page supplied itself, so no request loads it."""
+
+_WEB_URL_PREFIXES = ('http://', 'https://')
+"""URL prefixes of documents loaded from a web origin, as opposed to pages the browser or a page supplies."""
 
 _BLOCK_SERVICE_WORKER_REGISTRATION = (
     'if (self.ServiceWorkerContainer) ServiceWorkerContainer.prototype.register = async () => {'
@@ -1066,9 +1069,6 @@ class _FailedRequest(Protocol):
     def failure(self) -> str | None: ...  # pragma: no cover
 
 
-CdpUrlFactory = Callable[[], Awaitable[str]]
-"""Return a CDP endpoint asynchronously when a browser tool needs to connect."""
-
 CdpContextMode = Literal['new', 'default']
 """Whether a CDP-attached session creates an isolated context or uses the browser's default one."""
 
@@ -1082,7 +1082,9 @@ class PlaywrightBrowserSession:
     still tears down cleanly.
 
     `PlaywrightBrowser` creates one session per run. Sessions using the same
-    default CDP context share its pages. It can also be driven directly:
+    default CDP context share its pages. `cdp_url` can also be a function, sync
+    or async, that returns the endpoint: the first connect calls it, and its
+    result is reused until the session is entered again. It can also be driven directly:
 
     ```python
     async with PlaywrightBrowserSession(policy=EgressPolicy()) as session:
@@ -1096,28 +1098,25 @@ class PlaywrightBrowserSession:
         policy: EgressPolicy | None = None,
         headless: bool = True,
         storage_state: StorageState | None = None,
-        cdp_url: str | None = None,
-        cdp_url_factory: CdpUrlFactory | None = None,
+        cdp_url: str | Callable[[], str | Awaitable[str]] | None = None,
         cdp_context: CdpContextMode = 'new',
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         launch_timeout_ms: int = DEFAULT_NAVIGATION_TIMEOUT_MS,
     ) -> None:
-        if cdp_url is not None and cdp_url_factory is not None:
-            raise UserError('Pass either `cdp_url` or `cdp_url_factory`, not both.')
         if cdp_context not in ('new', 'default'):
             raise UserError('`cdp_context` must be `new` or `default`.')
         if cdp_context == 'default':
-            if cdp_url is None and cdp_url_factory is None:
-                raise UserError('`cdp_context="default"` requires `cdp_url` or `cdp_url_factory`.')
+            if cdp_url is None:
+                raise UserError('`cdp_context="default"` requires `cdp_url`.')
             if storage_state is not None:
                 raise UserError('`storage_state` cannot be applied to the default CDP context.')
         self.policy = policy if policy is not None else EgressPolicy()
         """Egress policy the route guard enforces, and the default for a toolset built on this session."""
         self._headless = headless
         self._storage_state = storage_state
-        self._cdp_url = cdp_url
-        self._cdp_url_factory = cdp_url_factory
+        self._cdp_url_function = None if cdp_url is None or isinstance(cdp_url, str) else cdp_url
+        self._cdp_url = cdp_url if isinstance(cdp_url, str) else None
         self._cdp_context = cdp_context
         self._auto_install_chromium = auto_install_chromium
         self._chromium_sandbox = chromium_sandbox
@@ -1306,12 +1305,19 @@ class PlaywrightBrowserSession:
             # inline subframe's document came from a page this check covers, not a request.
             return
         document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
-        if (reason := await self.decide(document)) is not None:
+        if (reason := await self.decide(document)) is None:
+            return
+        if top_level and not frame.url.startswith(_WEB_URL_PREFIXES):
             raise BrowserUnavailableError(
-                f'The default CDP context contains a document blocked by the browser policy '
-                f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
-                'or navigate that tab to an allowed URL, then retry.'
+                f'A tab in the default CDP context is showing a page the agent cannot read: '
+                f'{_without_credentials(frame.url)}. Close that tab in the provider browser, or navigate it '
+                'to an allowed URL, then retry.'
             )
+        raise BrowserUnavailableError(
+            f'The default CDP context contains a document blocked by the browser policy '
+            f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
+            'or navigate that tab to an allowed URL, then retry.'
+        )
 
     async def _launch(self) -> None:
         """Start the driver and Chromium, then open the guarded page.
@@ -1349,15 +1355,15 @@ class PlaywrightBrowserSession:
             if not browser.contexts:
                 raise BrowserUnavailableError('The CDP browser has no default context.')
             context = browser.contexts[0]
-            pages = list(context.pages)
+            self._context = context
+            # The inherited pages keep running while the checks below wait on a lookup or a
+            # loading frame, so the guards go on first.
+            await self._install_guards(context)
+            pages = [page for page in context.pages if not await self._is_unreadable_tab(page.url)]
             if len(pages) > _MAX_TABS:
                 raise BrowserUnavailableError(
                     f'The default CDP context has more than {_MAX_TABS} tabs. Close some first.'
                 )
-            self._context = context
-            # The inherited pages keep running while the check below waits on a loading
-            # frame, so the guards go on first.
-            await self._install_guards(context)
             await self._validate_default_context_pages(pages)
             if not pages:
                 pages = [await self._bounded(context.new_page())]
@@ -1378,6 +1384,19 @@ class PlaywrightBrowserSession:
             self._wire_page(page)
             self.pages.append(page)
         self.page = pages[0]
+
+    async def _is_unreadable_tab(self, url: str) -> bool:
+        """Whether an inherited tab shows a page outside the web that the policy refuses, so attaching leaves it out.
+
+        A browser's own page, such as the `chrome://newtab/` start page, and a `file:`,
+        `data:` or `blob:` document are never wired, listed, counted, navigated or
+        closed. Refusing them instead would fail every attach to a browser that
+        opened on its start page. A tab still loading, Chromium's error page and a
+        refused `http(s)` document stay in, for the document check to handle.
+        """
+        if not url or url.startswith((_ERROR_PAGE_SCHEME, *_WEB_URL_PREFIXES)):
+            return False
+        return await self.decide(EgressRequest(url=url, kind='navigation', top_level=True)) is not None
 
     async def _install_guards(self, context: PlaywrightBrowserContext) -> None:
         """Keep requests of `context` on a path routes see, and route them when the policy enforces anything.
@@ -1426,8 +1445,9 @@ class PlaywrightBrowserSession:
         A browser reached over `cdp_url` is already running, so its own
         configuration decides this.
         """
-        if self._cdp_url is None and self._cdp_url_factory is not None:
-            self._cdp_url = await self._bounded(self._cdp_url_factory())
+        if self._cdp_url is None and self._cdp_url_function is not None:
+            endpoint = self._cdp_url_function()
+            self._cdp_url = await self._bounded(endpoint) if isinstance(endpoint, Awaitable) else endpoint
         if self._cdp_url is not None:
             try:
                 # Without `no_defaults`, Playwright makes the default context save downloads to
@@ -1670,7 +1690,7 @@ class PlaywrightBrowserSession:
         self._driver_cm = async_playwright()
         self._driver = None
         self._driver_entered = False
-        if self._cdp_url_factory is not None:
+        if self._cdp_url_function is not None:
             self._cdp_url = None
         self.launch_error = None
         self.dialog_decision = None

@@ -174,11 +174,10 @@ not raised to abort the agent run.
 | `max_content_tokens` | `4000` | Approximate token budget for every textual tool result. |
 | `action_timeout_ms` | `5000` | Default deadline for element actions (click, type, read, wait). `0` disables it. |
 | `navigation_timeout_ms` | `60000` | Default deadline for navigation and load settling, and for starting or attaching to the browser. `0` disables it. |
-| `chromium_sandbox` | `True` | Run the launched Chromium with its renderer sandbox. Turn it off only where the sandbox cannot start (a container without the kernel privileges it needs). Ignored when attaching over CDP (`cdp_url` or `cdp_url_factory`). |
+| `chromium_sandbox` | `True` | Run the launched Chromium with its renderer sandbox. Turn it off only where the sandbox cannot start (a container without the kernel privileges it needs). Ignored when attaching over CDP (`cdp_url`). |
 | `auto_install_chromium` | `False` | Fetch Chromium automatically when the binary is missing. |
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
-| `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
-| `cdp_url_factory` | `None` | Call an async function on first browser use and reuse its returned CDP endpoint for the run. Cannot be combined with `cdp_url` or used in specs. |
+| `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint, or at the one a function of the run context returns, instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
 | `cdp_context` | `'new'` | Choose `'new'` for an isolated context or `'default'` for the default context's sign-ins and tabs. Only `'default'` requires a CDP endpoint and excludes `storage_state`. |
 
 ## Two of them
@@ -300,28 +299,12 @@ navigate the blocked tab in the provider browser and retry; Pydantic AI leaves i
 unchanged. A frame that reports no URL yet gets one second to load; if it still
 has none, the call returns a tool error asking the model to retry.
 
-For lazy provisioning, pass an async function that returns the CDP endpoint:
-
-```python
-import os
-
-from pydantic_ai_harness.playwright import PlaywrightBrowser
-
-
-async def agent_browser_endpoint() -> str:
-    # Create or resume the provider's browser for the agent's profile here.
-    return os.environ['AGENT_BROWSER_CDP_URL']
-
-
-browser = PlaywrightBrowser(cdp_url_factory=agent_browser_endpoint, cdp_context='default')
-```
-
-The factory runs on first browser use, within `navigation_timeout_ms`. Its
-returned endpoint is cached for the run, including connection retries. A
-timeout is a tool error and the next browser call tries again; an exception the
-factory raises ends the run. A later run calls it again. The caller owns
-provisioning and cleanup, including resources created before a failure or
-timeout.
+A tab showing a page outside the web that the policy refuses, such as the
+browser's own `chrome://newtab/` start page or a `file:`, `data:` or `blob:`
+document, is left out: Pydantic AI does not list, read, navigate or close it,
+or count it toward the eight tabs, and opens a blank tab when no other is left.
+A tab that moves to such a page while attached returns a tool error naming the
+page.
 
 While attached, the session refuses new service-worker registrations, and
 Playwright leaves the browser's download and emulation settings as they are.
@@ -330,6 +313,57 @@ those of workers registered before attachment, unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before
 attachment bypass the guards, and a page loaded before attachment can still
 register a worker until it navigates.
+
+### Provisioning a browser per run
+
+Pass a function of the run context, sync or async, as `cdp_url` to create or
+resume a provider browser for each run, for example one per user:
+
+```python
+from dataclasses import dataclass, field
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness.playwright import PlaywrightBrowser
+
+
+@dataclass
+class Deps:
+    user_id: str
+    browser_ids: list[str] = field(default_factory=list[str])
+
+
+async def browser_for_user(ctx: RunContext[Deps]) -> str:
+    # Create or resume the provider's browser for this user's profile here.
+    browser_id = f'browser-{ctx.deps.user_id}'
+    ctx.deps.browser_ids.append(browser_id)
+    return f'wss://browsers.example.com/{browser_id}'
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    deps_type=Deps,
+    capabilities=[PlaywrightBrowser(cdp_url=browser_for_user, cdp_context='default')],
+)
+
+
+async def main():
+    deps = Deps(user_id='alice')
+    try:
+        await agent.run('Check my open orders.', deps=deps)
+    finally:
+        for browser_id in deps.browser_ids:
+            print(f'Delete or sleep {browser_id} here.')
+```
+
+The first browser tool call of a run calls the function, and its endpoint is
+reused for the rest of that run, including connection retries; a run without
+browser calls never calls it. `navigation_timeout_ms` bounds an async call: one
+that times out is a tool error, and the next browser call tries again. An
+exception the function raises ends the run. At run end the capability only
+disconnects, so record what the function created on the run's deps as soon as
+the provider returns it, and delete or sleep it once `agent.run` returns, as
+above. A spec cannot carry a function, so `from_spec` takes only an endpoint
+string.
 
 ## Lifecycle
 
@@ -354,8 +388,9 @@ async with PlaywrightBrowserSession() as session:
     await page.goto('https://example.com')
 ```
 
-The session takes the same `cdp_url`, `cdp_url_factory` and `cdp_context`
-options as the capability, with the same checks.
+The session takes the same `cdp_url` and `cdp_context` options as the
+capability, with the same checks. A `cdp_url` function passed to the session
+takes no arguments, since the session has no run context.
 
 `PlaywrightBrowserToolset` is exported on the same basis: pass it a session to
 get the eighteen tools without the capability's hooks. The policy lives on the

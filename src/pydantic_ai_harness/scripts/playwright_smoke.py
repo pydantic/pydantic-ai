@@ -7,7 +7,7 @@ it after installing the browser binary to verify the real integration end to end
     playwright install chromium
     uv run python scripts/playwright_smoke.py
 
-It exercises the public `PlaywrightBrowser` surface and checks thirteen things:
+It exercises the public `PlaywrightBrowser` surface and checks fourteen things:
 
 - lazy launch plus a real navigation to https://example.com (prints the title),
 - the allowlist bounce (a disallowed host returns an error result, not content),
@@ -38,9 +38,12 @@ It exercises the public `PlaywrightBrowser` surface and checks thirteen things:
   its own context (the existing cookie is not visible), the allowlist still bounces,
   and the host browser's own page survives teardown,
 - reusing that browser's default context with `cdp_context='default'` and a
-  `cdp_url_factory`: an inherited tab on a loopback address refuses the run until
+  `cdp_url` function: an inherited tab on a loopback address refuses the run until
   the host closes it, then the run sees the existing cookie, the allowlist still
-  bounces, the factory is called once, and the host's tabs survive teardown,
+  bounces, the function is called once, and the host's tabs survive teardown,
+- a default context holding only a browser page (`chrome://version/`): the run
+  leaves that tab out, works in a blank tab of its own, and the browser page is
+  still open and unread when the run disconnects,
 - clean teardown: each scenario runs its own capability, whose `wrap_run` closes
   the browser when the run ends. After it prints `all checks passed`, confirm no
   Chromium lingered, e.g. `pgrep -fl chromium` shows nothing this script started.
@@ -56,7 +59,7 @@ from tempfile import TemporaryDirectory
 
 from playwright.async_api import StorageState, async_playwright
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -376,7 +379,7 @@ async def _check_cdp_default_context() -> None:
     client did not launch. A cookie is logged into the host browser's default
     context and a second tab is left on a loopback page. The first run must refuse
     without reading that page; once the host closes it, a run through a
-    `cdp_url_factory` reads the cookie, is bounced by the allowlist, and leaves the
+    `cdp_url` function reads the cookie, is bounced by the allowlist, and leaves the
     host's tabs open when it disconnects.
     """
     server, secret_port = await _serve_secret()
@@ -386,7 +389,7 @@ async def _check_cdp_default_context() -> None:
     endpoint = f'http://127.0.0.1:{port}'
     calls: list[str] = []
 
-    async def provision() -> str:
+    async def provision(ctx: RunContext[object]) -> str:
         calls.append(endpoint)
         return endpoint
 
@@ -410,7 +413,7 @@ async def _check_cdp_default_context() -> None:
 
                     await loopback.close()
                     reused = PlaywrightBrowser[object](
-                        cdp_url_factory=provision, cdp_context='default', allowed_domains=['example.com']
+                        cdp_url=provision, cdp_context='default', allowed_domains=['example.com']
                     )
                     _, cookies, bounced = await _run_tools(
                         reused,
@@ -429,6 +432,42 @@ async def _check_cdp_default_context() -> None:
     finally:
         server.close()
     print('cdp default context ok -- session inherited, blocked tab refused, allowlist enforced, host tabs left open')
+
+
+async def _check_cdp_default_context_browser_page() -> None:
+    """A default context holding only a browser page is attached to, and that page is left alone.
+
+    The mocked suite cannot answer this: it turns on what URL a real Chrome reports
+    for its own pages over CDP. The host browser's only tab shows
+    `chrome://version/`, which the allowlist refuses. The run must not fail the
+    attach or read that page: it opens a blank tab of its own, and the browser
+    page is still open on the same URL after the run disconnects.
+    """
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    with TemporaryDirectory() as user_data_dir:
+        async with async_playwright() as pw:
+            # The default headless shell has no `chrome://` pages; the full Chromium build does.
+            default_context = await pw.chromium.launch_persistent_context(
+                user_data_dir, channel='chromium', headless=True, args=[f'--remote-debugging-port={port}']
+            )
+            try:
+                (browser_page,) = default_context.pages
+                await browser_page.goto('chrome://version/')
+                title = await browser_page.title()
+                attached = PlaywrightBrowser[object](
+                    cdp_url=f'http://127.0.0.1:{port}', cdp_context='default', allowed_domains=['example.com']
+                )
+                listed, text = await _run_tools(attached, [('tabs', {}), ('get_text', {})])
+                assert 'chrome://' not in listed and 'about:blank' in listed, listed
+                assert 'cannot read' not in text and 'blocked by the browser policy' not in text, text
+                assert title and title not in listed and title not in text, (title, listed, text)
+                assert not browser_page.is_closed(), 'the run closed a browser page it left out'
+                assert browser_page.url == 'chrome://version/', browser_page.url
+            finally:
+                await default_context.close()
+    print('cdp default context browser page ok -- browser page left out, run used a blank tab, page left open')
 
 
 async def _serve_html(body: bytes) -> tuple[asyncio.Server, int]:
@@ -692,6 +731,7 @@ async def _main() -> None:
     await _check_typing_and_waiting()
     await _check_cdp_attach()
     await _check_cdp_default_context()
+    await _check_cdp_default_context_browser_page()
     print('all checks passed')
 
 
