@@ -478,7 +478,14 @@ class TestPixeltableToolsetSimilarity:
         t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_a')
         t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_b')
         tools = _tools([f'{catalog}.chunks'])
-        assert 'idx' not in tools.tools['similarity_search'].function_schema.json_schema['properties']
+        assert set(tools.tools['similarity_search'].function_schema.json_schema['properties']) == {
+            'table',
+            'query',
+            'column',
+            'columns',
+            'limit',
+            'index_name',
+        }
         with pytest.warns(HarnessDeprecationWarning, match=r'`PixeltableToolset.similarity_search\(idx=\.\.\.\)`'):
             result = tools.similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text', idx='e_a')
         assert result['rows'][0]['text'] == 'cats sit on mats'
