@@ -153,7 +153,8 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 | `detect_loops.action` | `nudge`, `error`, or `handler` |
 | `detect_loops.count` | `DetectedLoop.count` |
 | `detect_loops.window` | `DetectedLoop.window` |
-| `detect_loops.tool_names` | The tools involved |
+| `detect_loops.tool_names` | The tools involved that the run offers |
+| `detect_loops.unknown_tool_names` | Tools involved that the run doesn't offer, only when `trace_include_content` is enabled, since a made-up name is model output |
 | `detect_loops.fingerprints` | The hashes of the repeated calls or text, only when `trace_include_content` is enabled |
 
 The span contains no arguments, results, or response text. The fingerprints are left out unless `trace_include_content` is enabled, because a short argument can be recovered from its hash. Checks that find nothing emit nothing.
