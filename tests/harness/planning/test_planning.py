@@ -68,6 +68,7 @@ from pydantic_ai_harness.planning._toolset import (
     status_icon,
     validate_hierarchy,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import RequestCapture, try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
@@ -161,9 +162,6 @@ async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
     assert sequential and set(sequential.values()) == {expected}
 
 
-_READINESS_WAIT_TIMEOUT = 5.0
-
-
 class YieldingPlanStore(InMemoryPlanStore):
     """Yields to the event loop after each read, as a store doing real I/O does."""
 
@@ -217,7 +215,7 @@ async def test_concurrent_runs_on_one_store_keep_every_change() -> None:
     await store.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
     agent = Agent(capabilities=[Planning(store=store, enable_subtasks=True)])
 
-    with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as tg:
             tg.start_soon(partial(agent.run, 'wait for a', model=model_depending_on('a')))
             tg.start_soon(partial(agent.run, 'wait for b', model=model_depending_on('b')))
@@ -275,7 +273,7 @@ async def test_concurrent_runs_plan_tools_do_not_wait_for_each_other() -> None:
     first_store = GatedPlanStore(gate=second_store.entered)
 
     # The first run's plan tool waits inside its call until the second run's plan tool reads.
-    with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as tg:
             tg.start_soon(partial(agent.run, 'first', deps=first_store))
             await first_store.entered.wait()
