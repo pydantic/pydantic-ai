@@ -1184,6 +1184,7 @@ async def test_agent_without_listeners_registers_no_capability() -> None:
     # agent's own capabilities keep their order ahead of it), and nothing else about the tree changes.
     innermost = sum(1 for capability in after.capabilities if is_innermost(capability))
     assert after.capabilities[-innermost - 1] is hooks
+    assert sum(capability is hooks for capability in after.capabilities) == 1
     assert [capability for capability in after.capabilities if capability is not hooks] == list(before.capabilities)
 
     await agent.run('hello')

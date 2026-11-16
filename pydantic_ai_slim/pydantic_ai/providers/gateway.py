@@ -45,6 +45,9 @@ class _GatewayConfig:
 
 _gateway_providers: weakref.WeakKeyDictionary[Provider[Any], _GatewayConfig] = weakref.WeakKeyDictionary()
 
+# The providers `_fallback_provider` created from each gateway provider, by API format.
+_fallback_providers: weakref.WeakKeyDictionary[Provider[Any], dict[str, Provider[Any]]] = weakref.WeakKeyDictionary()
+
 _ProviderT = TypeVar('_ProviderT', bound='Provider[Any]')
 _HTTPClientT = TypeVar('_HTTPClientT', bound=AsyncHTTPClient)
 
@@ -465,32 +468,23 @@ _FALLBACK_MODEL_RESPONSE_HEADER = 'pydantic-ai-gateway-fallback-model'
 _FALLBACK_STATE_RESPONSE_HEADER = 'pydantic-ai-gateway-fallback-state'
 _FALLBACK_PROTOCOL_VERSION = 1
 
-# The gateway's own API format IDs, and the SDK that a provider for each format needs.
-_FALLBACK_FORMAT_SDKS: dict[str, str] = {
-    'openai': 'openai',
-    'anthropic': 'anthropic',
-    'gemini': 'google.genai',
-    'bedrock-converse': 'boto3',
-}
-
-# The gateway format IDs whose provider name in a `gateway/<provider>:<model>` string differs.
-_FALLBACK_FORMAT_PROVIDERS: dict[str, str] = {'gemini': 'google', 'bedrock-converse': 'bedrock'}
-
 _fallback_headers: ContextVar[Mapping[str, str] | None] = ContextVar('_gateway_fallback_headers', default=None)
 
 
 @cache
 def _accepted_fallback_formats() -> str:
     """The API formats this install can build a model for: those whose SDK is installed."""
-    return ','.join(name for name, module in _FALLBACK_FORMAT_SDKS.items() if _module_available(module))
-
-
-def _module_available(module: str) -> bool:
-    try:
-        return importlib.util.find_spec(module) is not None
-    except ModuleNotFoundError:  # pragma: lax no cover
-        # The parent package of a dotted name, like `google` for `google.genai`, isn't installed.
-        return False
+    # The gateway's own API format IDs, and the SDK that a provider for each format needs.
+    sdks = {'openai': 'openai', 'anthropic': 'anthropic', 'gemini': 'google.genai', 'bedrock-converse': 'boto3'}
+    formats: list[str] = []
+    for name, module in sdks.items():
+        try:
+            if importlib.util.find_spec(module) is not None:
+                formats.append(name)
+        except ModuleNotFoundError:  # pragma: lax no cover
+            # The parent package of a dotted name, like `google` for `google.genai`, isn't installed.
+            pass
+    return ','.join(formats)
 
 
 @contextmanager
@@ -521,7 +515,7 @@ def _fallback_target(headers: Mapping[str, str] | None) -> tuple[str, str | None
         return None
     upstream, model_name = model.removeprefix('gateway/').split(':', 1)
     # A format can also be named by the gateway's ID for it, as in the `formats` the client advertised.
-    upstream = _FALLBACK_FORMAT_PROVIDERS.get(upstream, upstream)
+    upstream = {'gemini': 'google', 'bedrock-converse': 'bedrock'}.get(upstream, upstream)
     return f'gateway/{upstream}:{model_name}', headers.get(_FALLBACK_STATE_RESPONSE_HEADER)
 
 
@@ -543,9 +537,6 @@ def _fallback_provider(provider: Provider[Any], upstream_provider: str) -> Provi
             http_client=config.http_client if _accepts_http_client(canonical, config.http_client) else None,
         )
     return fallback
-
-
-_fallback_providers: weakref.WeakKeyDictionary[Provider[Any], dict[str, Provider[Any]]] = weakref.WeakKeyDictionary()
 
 
 def _accepts_http_client(canonical: str, http_client: AsyncHTTPClient | None) -> bool:
