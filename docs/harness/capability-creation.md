@@ -16,14 +16,14 @@ Runtime capability creation lets an agent write, validate, and persist Pydantic 
 ```mermaid
 flowchart TB
     accTitle: Capability Creation: the agent writes capabilities for its next run
-    accDescr: In this run, the model calls author_capability(name, code) on CapabilityCreation(directory=...) and gets a result. The capability writes, imports and checks the capability's .py file in the directory and writes manifest.json. Your loop calls creation.store.load_active() and passes the active capabilities as capabilities= to the next agent.run, where their tools, hooks and instructions are live.
+    accDescr: In this run, the model calls author_capability(name, code) on CapabilityCreation(directory=...) and gets a result. The capability writes, imports and checks the capability's .py file in the directory and writes manifest.json. Your loop calls creation.load_active(workspace) and passes the active capabilities as capabilities= to the next agent.run, where their tools, hooks and instructions are live.
     subgraph thisrun["This run"]
         model(["model"])
         creation["CapabilityCreation(directory=...)<br/>author_capability(name, code)"]:::capability
     end
     files["&lt;directory&gt;/&lt;name&gt;.py<br/>manifest.json"]
     subgraph nextrun["Your loop, then the next run"]
-        load["creation.store.load_active()"]
+        load["creation.load_active(workspace)"]
         run["next agent.run<br/>its tools, hooks and<br/>instructions are live"]
     end
     model <-->|"tool call, result"| creation
@@ -72,33 +72,34 @@ Writing and validation happen in the current run; activation happens on the next
 
 The successful `author_capability` result tells the model the capability does not take effect in the current run. Writing and validating a capability does not schedule or inject it automatically.
 
-Pass `creation.store.load_active()` as `capabilities=` on each run; an authored capability is then active from the next run, without a process restart:
+Pass `await creation.load_active(workspace)` as `capabilities=` on each run; an authored capability is then active from the next run, without a process restart:
 
 ```python
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import CapabilityCreation
 
+workspace = LocalWorkspaceBackend('.')
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[creation])
 
 history = None
 done = False
 next_prompt = 'Start the task.'
 while not done:
-    extra = creation.store.load_active()
-    result = await agent.run(next_prompt, message_history=history, capabilities=extra)
+    extra = await creation.load_active(workspace)
+    result = await agent.run(next_prompt, message_history=history, capabilities=extra, workspace=workspace)
     history = result.all_messages()
     # ... decide `next_prompt` and `done` from `result` ...
 ```
 
-`creation.store` is the disk-backed `CapabilityStore` over the same `directory`. `store.load_active()` re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others. Each version of a capability that `load_active()` loads stays imported for the life of the process, so an instance from an earlier run keeps working after the model re-authors it.
+`load_active()` refuses a `workspace` that a run would refuse (see [Trust boundary](#trust-boundary)) before it runs any authored code. It then calls `load_active()` on `creation.store`, the disk-backed `CapabilityStore` over the same `directory`, which re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others. Each version of a capability that `load_active()` loads stays imported for the life of the process, so an instance from an earlier run keeps working after the model re-authors it.
 
 ## Persistence
 
-Authored capabilities persist to disk: each is one `<directory>/<name>.py` file, indexed by a sibling `manifest.json`. A fresh process picks them up by constructing a new `CapabilityCreation` over the same `directory` and calling `store.load_active()`.
+Authored capabilities persist to disk: each is one `<directory>/<name>.py` file, indexed by a sibling `manifest.json`. A fresh process picks them up by constructing a new `CapabilityCreation` over the same `directory` and calling `load_active()`.
 
 `manifest.json` records each capability's name, module file, class name, status (`active` or `disabled`), and last validation error. That is the surface a UI can read to show what the agent has authored. The manifest is written atomically (temp file plus `os.replace`), so a crash mid-write does not leave a partial file. A manifest that cannot be read (malformed JSON, or a field value this version does not accept) is read as empty, and `author_capability` and `disable_authored_capability` raise `UserError` instead of replacing it, so its entries are kept until you repair or remove it.
 
@@ -135,7 +136,7 @@ model that it changes nothing.
 
 With `defer_loading=True`, a run starts before the capability loads, so these checks, and the writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
 
-These checks can't cover a `store.load_active()` you call before the run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also only looks at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
+`creation.load_active(workspace)` makes the same checks against `workspace` before it loads anything. `creation.store.load_active()` has no workspace to ask, so it runs the code it finds: call it only on a directory you would run yourself. The checks also only look at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 
