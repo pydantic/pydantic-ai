@@ -120,12 +120,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._env = dict(env) if env is not None else None
         self._denied_env_patterns = list(denied_env_patterns)
         self._secret_env = dict(secret_env) if secret_env is not None else None
-        # Longest first, so a secret containing another is masked whole.
-        self._secrets = sorted(
-            ((value, f'[REDACTED:{name}]') for name, value in (secret_env or {}).items() if value),
-            key=lambda secret: len(secret[0]),
-            reverse=True,
-        )
+        self._secrets = [(value, f'[REDACTED:{name}]') for name, value in (secret_env or {}).items() if value]
         self._secret_bytes = [os.fsencode(value) for value, _ in self._secrets]
         self._tools = tuple(tools)
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
@@ -234,9 +229,23 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         return truncate_tail(self._redact(result), self._max_output_chars)
 
     def _redact(self, text: str) -> str:
-        for value, mask in self._secrets:
-            text = text.replace(value, mask)
-        return text
+        """`text` with every occurrence of a secret masked; overlapping occurrences form one masked span.
+
+        Spans are found in the original text, so masking one secret cannot leave part of another that overlaps it.
+        At a shared start, the longest span names the mask.
+        """
+        spans = sorted(
+            (match.start(), -len(value), mask)
+            for value, mask in self._secrets
+            for match in re.finditer(f'(?={re.escape(value)})', text)
+        )
+        parts: list[str] = []
+        end = 0
+        for start, negative_length, mask in spans:
+            if start >= end:
+                parts += [text[end:start], mask]
+            end = max(end, start - negative_length)
+        return ''.join(parts) + text[end:]
 
     def _resolve_env(self) -> dict[str, str] | None:
         """The variables handed to the workspace for each command, on top of its own environment.

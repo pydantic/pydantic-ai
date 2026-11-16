@@ -2434,6 +2434,11 @@ class TestShellSecretEnv:
         output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo abcdef abc')
         assert output == '[stdout]\n[REDACTED:LONG] [REDACTED:SHORT]\n'
 
+    async def test_overlapping_secrets_are_masked_as_one(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'LONG': 'abcdefghijk', 'SHORT': 'XYZabc'})
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo XYZabcdefghijk XYZabc')
+        assert output == '[stdout]\n[REDACTED:SHORT] [REDACTED:SHORT]\n'
+
     async def test_retry_message_is_masked(self, shell_dir: Path) -> None:
         with pytest.raises(ModelRetry) as exc_info:
             await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command=f'vi {_SECRET}')
