@@ -179,11 +179,11 @@ def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
 
 
-class _PruneLatestReturn(AbstractCapability[Any]):
+class _PruneLatestReturn(AbstractCapability[None]):
     """Points a scripted `prune_tool_result` call at the previous step's result, whose ID differs by provider."""
 
     async def before_tool_validate(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
     ) -> RawToolArgs:
         if call.tool_name != 'prune_tool_result':
             return args
@@ -341,7 +341,6 @@ FIXTURES: dict[str, Fixture] = {
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
     'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
-    'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
@@ -360,6 +359,7 @@ FIXTURES: dict[str, Fixture] = {
     'ModalSandbox': lambda _: _modal_sandbox(),
     'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
     'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
+    'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'RepoContext': _repo_context,
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
@@ -516,11 +516,11 @@ SCENARIOS: dict[str, Scenario] = {
             ('write_memory', {'content': 'The user follows sports too.'}),
         )
     ),
-    # The first run's second step prunes the first step's result.
-    'PruneToolResults': Scenario(state_calls=(('prune_tool_result', {'tool_call_id': '', 'summary': 'Quiet.'}),)),
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
     ),
+    # The first run's second step prunes the first step's result.
+    'PruneToolResults': Scenario(state_calls=(('prune_tool_result', {'tool_call_id': '', 'summary': 'Quiet.'}),)),
     # Each run ends with a review round, which takes a turn of its own.
     'RefineOutput': Scenario(
         turns=(

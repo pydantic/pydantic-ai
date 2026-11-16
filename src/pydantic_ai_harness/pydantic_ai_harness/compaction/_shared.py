@@ -1141,24 +1141,32 @@ def rebuild_with_cleared(
     so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
+    contents = dict.fromkeys(clear_return_ids, placeholder)
     return [
-        _clear_returns(message, clear_return_ids, placeholder)
+        _clear_returns(message, contents)
         if isinstance(message, ModelRequest)
         else _clear_inputs(message, clear_input_ids)
         for message in messages
     ]
 
 
-def _clear_returns(message: ModelRequest, clear_return_ids: set[str], placeholder: str) -> ModelRequest:
-    """*message* with the returns in *clear_return_ids* blanked, or *message* itself when none changes."""
+def replace_returns(messages: Sequence[ModelMessage], contents: Mapping[str, str]) -> list[ModelMessage]:
+    """Return *messages* with each tool result in *contents*, keyed by tool call ID, replaced by its content.
+
+    Like `rebuild_with_cleared`, but with a replacement per result, and the tool calls left as they are.
+    """
+    return [_clear_returns(message, contents) if isinstance(message, ModelRequest) else message for message in messages]
+
+
+def _clear_returns(message: ModelRequest, contents: Mapping[str, str]) -> ModelRequest:
+    """*message* with the returns in *contents* replaced, or *message* itself when none changes."""
     request_parts: list[ModelRequestPart] = []
     changed = False
     for part in message.parts:
+        content = contents.get(part.tool_call_id) if isinstance(part, ToolReturnPart) else None
         cleared = (
-            cleared_return(part, placeholder)
-            if isinstance(part, ToolReturnPart)
-            and part.tool_call_id in clear_return_ids
-            and str(part.content) != placeholder
+            cleared_return(part, content)
+            if isinstance(part, ToolReturnPart) and content is not None and str(part.content) != content
             else None
         )
         if cleared is not None:
