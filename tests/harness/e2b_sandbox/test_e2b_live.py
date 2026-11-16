@@ -44,6 +44,7 @@ from pydantic_ai_harness.e2b_sandbox import (
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from ..display_contract_live import check_display_contract, is_blank
+from ..display_fakes import screen
 
 pytestmark = pytest.mark.e2b_live
 
@@ -451,8 +452,7 @@ class TestDesktop:
     async def test_display_contract(self) -> None:
         """Validates that the template's `scrot`, `xwininfo` and `xdotool` answer as the fake's scripted output does."""
         async with _owned(desktop=True, sandbox_timeout=300) as backend:
-            assert backend.display is not None
-            await check_display_contract(backend.display)
+            await check_display_contract(screen(backend))
 
     async def test_the_first_screenshot_shows_the_desktop(self) -> None:
         """Validates that XFCE's desktop window, which the start waits for, is drawn by the first screenshot."""
