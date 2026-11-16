@@ -2267,6 +2267,23 @@ _GAVE_UP_TWINS = [
 ]
 
 
+def _error_summary(exc: ModelHTTPError) -> tuple[object, ...]:
+    """What a status a retrying transport gave up on must share with the provider SDK's error for the same response.
+
+    That's the error category, provider error code and type, suggested model ID, hint and `retry_after`.
+    """
+    categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
+    return (
+        categories,
+        exc.status_code,
+        exc.provider_error_code,
+        exc.provider_error_type,
+        exc.suggested_model_id,
+        exc.hint,
+        exc.retry_after,
+    )
+
+
 @pytest.mark.parametrize('case', _GAVE_UP_TWINS, ids=[case.id for case in _GAVE_UP_TWINS])
 async def test_transport_gave_up_status_error_category(allow_model_requests: None, case: Case):
     """A status a retrying transport gave up on raises what the provider SDK raises for the same response.
@@ -2279,21 +2296,9 @@ async def test_transport_gave_up_status_error_category(allow_model_requests: Non
             await Agent(case.model(handler)).run('hello')
         return exc_info.value
 
-    def summary(exc: ModelHTTPError) -> tuple[object, ...]:
-        categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
-        return (
-            categories,
-            exc.status_code,
-            exc.provider_error_code,
-            exc.provider_error_type,
-            exc.suggested_model_id,
-            exc.hint,
-            exc.retry_after,
-        )
-
     sdk_error = await error(case.handler)
     gave_up_error = await error(gave_up_on(case.handler))
-    assert summary(gave_up_error) == summary(sdk_error)
+    assert _error_summary(gave_up_error) == _error_summary(sdk_error)
 
 
 def _retrying_openai(client: httpx2.AsyncClient) -> Model:
@@ -2505,14 +2510,10 @@ async def test_compaction_transport_gave_up_status_error_category(
             await _compact(OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test', http_client=client)))
         return exc_info.value
 
-    def summary(exc: ModelHTTPError) -> tuple[object, ...]:
-        categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
-        return categories, exc.status_code, exc.provider_error_code, exc.provider_error_type, exc.retry_after
-
     sdk_error = await error(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
     gave_up_error = await error(retrying_client(handler))
     assert isinstance(gave_up_error.__cause__, httpx2.HTTPStatusError)
-    assert summary(gave_up_error) == summary(sdk_error)
+    assert _error_summary(gave_up_error) == _error_summary(sdk_error)
 
 
 @pytest.mark.parametrize(
