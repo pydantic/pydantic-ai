@@ -36,10 +36,12 @@ from pydantic_ai.computer_use import Click, Drag, Point, PressKeys, Scroll, Type
 from pydantic_ai.workspaces import WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.computer_use import DisplayAction
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from ..display_contract_live import check_display_contract
+from ..display_fakes import screen
 from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
 
 pytestmark = pytest.mark.boxd_live
@@ -96,8 +98,7 @@ async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> N
     stays at the size it was held at, and that a screenshot, a zoom and the pointer's position come back as the
     display contract expects."""
     async with _owned(client, desktop=(1440, 900)) as backend:
-        display = backend.display
-        assert display is not None
+        display = screen(backend)
         await display.screenshot()
         assert await display.display_size() == (1440, 900)
         await check_display_contract(display)
@@ -200,6 +201,51 @@ async def test_boxd_takes_scrolls_key_repeats_and_drags_past_its_per_call_limits
         await display.act(Scroll(x=50, y=50, direction='down', amount=150))
         await display.act(PressKeys(keys=('shift',), repeat=150))
         await display.act(Drag(path=tuple(Point(x=600 + n, y=400) for n in range(150))))
+
+
+# A page that logs a drag from the left box that lands on the right one, each key's `code`, and the modifiers held
+# around each click and wheel turn. The boxes fill the window's height, so a point 400 pixels down the screen is on
+# them below Chromium's toolbar.
+_EVENT_LOG_PAGE = """<body style="margin:0">
+<div id="source" draggable="true" style="position:absolute;left:0;width:400px;height:100vh"></div>
+<div id="target" style="position:absolute;left:600px;width:400px;height:100vh"></div><script>
+window.E = [];
+source.addEventListener('dragstart', e => { E.push('dragstart'); e.dataTransfer.setData('text/plain', 'x'); });
+target.addEventListener('dragover', e => e.preventDefault());
+target.addEventListener('drop', e => { e.preventDefault(); E.push('drop'); });
+document.addEventListener('keydown', e => E.push(e.code));
+document.addEventListener('click', e => E.push(`click shift=${e.shiftKey} meta=${e.metaKey}`));
+document.addEventListener('wheel', e => E.push(`wheel ctrl=${e.ctrlKey}`));
+</script></body>"""
+
+
+async def test_drags_key_repeats_and_modifiers_reach_a_browser(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions that boxd's `drag` and the drag split past 100 points both start and
+    land a browser's drag-and-drop, that a key repeated 3 times is pressed 3 times, and that boxd holds modifiers
+    around a click, a wheel turn and a drag, with `super` as the Meta key."""
+    async with _owned(client, desktop=True) as backend:
+        display = screen(backend)
+        await display.screenshot()
+        await backend.write_bytes('/tmp/events.html', _EVENT_LOG_PAGE.encode())
+        await backend.run(['agent-browser', 'open', 'file:///tmp/events.html'], timeout=120)
+
+        async def logged(action: DisplayAction) -> list[str]:
+            await display.act(action)
+            await anyio.sleep(1)  # lets every event arrive, so a key pressed once too often shows
+            got = await backend.run(['agent-browser', 'eval', 'JSON.stringify(E.splice(0))'], timeout=60)
+            return json.loads(json.loads(got.stdout))
+
+        drag = ['dragstart', 'drop']
+        assert await logged(Drag(path=(Point(x=200, y=400), Point(x=800, y=400)))) == drag
+        assert await logged(Drag(path=tuple(Point(x=200 + 4 * n, y=400) for n in range(150)))) == drag
+        assert await logged(Click(x=500, y=400)) == ['click shift=false meta=false']  # focuses the page
+        assert await logged(PressKeys(keys=('a',), repeat=3)) == ['KeyA'] * 3
+        assert await logged(Click(x=500, y=400, modifiers=('shift',))) == ['ShiftLeft', 'click shift=true meta=false']
+        assert await logged(Click(x=500, y=400, modifiers=('super',))) == ['MetaLeft', 'click shift=false meta=true']
+        scroll = Scroll(x=500, y=400, direction='down', amount=1, modifiers=('ctrl',))
+        assert await logged(scroll) == ['ControlLeft', 'wheel ctrl=true']
+        shift_drag = Drag(path=(Point(x=500, y=400), Point(x=510, y=400)), modifiers=('shift',))
+        assert await logged(shift_drag) == ['ShiftLeft', 'click shift=true meta=false']
 
 
 async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.AsyncBoxd) -> None:
