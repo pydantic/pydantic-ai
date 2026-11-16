@@ -3238,3 +3238,45 @@ async def test_dynamic_toolset_delegates_get_tool_for_tool_def():
     tool = await resolved.get_tool_for_tool_def(tool_def, ctx)
     assert rebuilt == ['echo']
     assert await resolved.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
+
+
+async def test_function_toolset_skips_replace_for_tools_without_prepare(monkeypatch: pytest.MonkeyPatch):
+    """Plain tools with no `prepare` and no `prepare_tool_def` override must not copy `RunContext`."""
+    from pydantic_ai.toolsets import function as function_toolset_mod
+
+    def plain(x: int) -> int:
+        return x
+
+    def with_prepare(x: int) -> int:
+        return x
+
+    async def prepare_fn(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        assert ctx.tool_name == 'with_prepare'
+        return tool_def
+
+    class CustomTool(Tool[None]):
+        async def prepare_tool_def(self, ctx: RunContext[None]) -> ToolDefinition | None:
+            assert ctx.tool_name == 'custom'
+            return self.tool_def
+
+    replace_calls = 0
+    real_replace = function_toolset_mod.replace
+
+    def counting_replace(obj: object, /, **changes: object) -> object:
+        nonlocal replace_calls
+        replace_calls += 1
+        return real_replace(obj, **changes)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(function_toolset_mod, 'replace', counting_replace)
+
+    plain_toolset = FunctionToolset([plain])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    plain_tools = await plain_toolset.get_tools(ctx)
+    assert list(plain_tools) == ['plain']
+    assert replace_calls == 0
+
+    mixed_toolset = FunctionToolset([plain, Tool(with_prepare, prepare=prepare_fn), CustomTool(lambda x: x, name='custom')])
+    mixed_tools = await mixed_toolset.get_tools(ctx)
+    assert set(mixed_tools) == {'plain', 'with_prepare', 'custom'}
+    assert replace_calls == 2
+

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -1301,7 +1300,8 @@ def _replace_capability_context(
         # A group member is itself to its hooks and events; only its gate is the group's.
         capability = capability.wrapped
     if type(ctx) is RunContext:
-        cap_ctx = copy(ctx)
+        cap_ctx = cast(RunContext[AgentDepsT], RunContext.__new__(RunContext))
+        cap_ctx.__dict__ = ctx.__dict__.copy()
         cap_ctx.capability_active = capability_active
         cap_ctx._capability = capability  # pyright: ignore[reportPrivateUsage]
         return cap_ctx
