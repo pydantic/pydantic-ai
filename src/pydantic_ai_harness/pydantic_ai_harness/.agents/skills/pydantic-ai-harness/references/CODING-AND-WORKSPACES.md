@@ -58,6 +58,9 @@ except UserError as e:
     issue or gist) and read it back: use a fine-grained token without Gists access.
   - Daytona: `DaytonaSandbox(secrets={'GH_TOKEN': 'secret-name'})`, mounting an organization Secret created with
     `hosts` (without them it goes to any host); HTTPS headers only, Basic auth included.
+  - OpenSandbox: `OpenSandboxBackend(credential_proxy=CredentialProxyConfig(enabled=True), network_policy=...)`
+    (backend only), then fill `(await backend.get_sandbox()).credential_vault` before passing the backend as
+    `workspace=`. Needs the server's egress sidecar in `dns+nft` mode and a policy allowing every bound host.
 - On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox); `Coder()` without a
   workspace fails as on POSIX. Commands run in PowerShell and paths are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
   `list_files` read the files when `rg` is missing.
@@ -498,7 +501,7 @@ Python up to 3.14.
 
 ### OpenSandbox
 
-`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, secure_access=False, sandbox_timeout=None, working_dir='/workspace', env=None)`
+`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, network_policy=None, secure_access=False, sandbox_timeout=None, working_dir='/workspace', env=None)`
 (backend `OpenSandboxBackend`, extra `[opensandbox]`) runs commands and file operations in a sandbox on
 your own OpenSandbox server, which runs it as a Docker container or a Kubernetes pod.
 
@@ -518,11 +521,13 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
 - `allow_internet_access=False` asks the server for a deny-all egress policy on a new sandbox; the default
   sends none, so the server's configuration applies. The server's egress sidecar enforces it: its default `dns`
   mode filters DNS lookups only, and `dns+nft` also blocks direct IP connections. asyncio only.
+- `network_policy=` takes the SDK's `NetworkPolicy` for a new sandbox, passed through unchanged; it cannot be
+  combined with `allow_internet_access=False` (`UserError`; `ValueError` on the backend).
 - `secure_access=True` asks the server to turn on Secure Access for a new sandbox (Kubernetes with the ingress
   gateway; Docker rejects it). The gateway and server proxy then require the sandbox's token, which the SDK
   fetches with the server API key and sends automatically. Requests that reach the pod directly are not checked.
 - Without the server proxy, the SDK does not send the server API key to a sandbox's endpoint; the endpoint checks
-  only what the server configures for it. Attaching never changes `allow_internet_access` or `secure_access`.
+  only what the server configures for it. Attaching never changes `allow_internet_access`, `network_policy` or `secure_access`.
 
 ## Remote hosts and bubblewrap
 
