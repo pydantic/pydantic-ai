@@ -361,6 +361,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'InputGuardrail': Anonymous('several guards is the design'),
     'OutputGuardrail': Anonymous('several guards is the design'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
+    'StreamGuardrail': Anonymous('several guards is the design'),
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),

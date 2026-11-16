@@ -54,6 +54,8 @@ if TYPE_CHECKING:
         OutputBlocked,
         OutputGuardrail,
         OutputGuardrailFunc,
+        StreamGuardrail,
+        StreamGuardrailFunc,
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
@@ -192,6 +194,8 @@ __all__ = [
     'SpritesSandboxBackend',
     'StackOne',
     'StepPersistence',
+    'StreamGuardrail',
+    'StreamGuardrailFunc',
     'SubAgent',
     'SubAgents',
     'SummarizingCompaction',
@@ -300,6 +304,8 @@ _LAZY_EXPORTS = {
     'SSHWorkspaceBackend': 'ssh_workspace',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
+    'StreamGuardrail': 'guardrails',
+    'StreamGuardrailFunc': 'guardrails',
     'SubAgent': 'sub_agents',
     'SubAgents': 'sub_agents',
     'SummarizingCompaction': 'compaction',

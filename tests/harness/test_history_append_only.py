@@ -59,6 +59,7 @@ from pydantic_ai_harness import (
     SlidingWindowCompaction,
     SmartSearch,
     StackOne,
+    StreamGuardrail,
     SummarizingCompaction,
     SystemReminders,
     TieredCompaction,
@@ -346,6 +347,7 @@ FIXTURES: dict[str, Fixture] = {
     'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
     'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
     'StackOne': lambda _: StackOne('account', client=_hosted_server()),
+    'StreamGuardrail': lambda _: StreamGuardrail(guard=lambda part: True),
     'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
     'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
     'TieredCompaction': lambda _: TieredCompaction(
