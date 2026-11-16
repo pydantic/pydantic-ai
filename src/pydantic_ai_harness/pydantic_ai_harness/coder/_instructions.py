@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
+from pydantic_ai import TraitInstruction
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 Autonomy = Literal['low', 'medium', 'high', 'max']
@@ -43,7 +44,8 @@ _DELEGATION = (
 )
 """Overrides the instruction a `DelegationTasks` owner adds, which tells the model to delegate when it
 saves context. A delegate starts from a fresh context and re-explores the project, so unrequested
-delegation multiplies tool calls and cost."""
+delegation multiplies tool calls and cost. Only for models with the `delegates_unprompted` trait: other
+models don't delegate unasked, and keep the `DelegationTasks` guidance as it is."""
 
 _TARGETS = 'Measure results against any numeric target the task states.'
 """Wherever the agent decides on its own when the work is good enough: `'high'`, `'max'`, and every delegate."""
@@ -97,14 +99,22 @@ def _checks(*, measure: bool, cleanup: bool, misread_max: bool) -> str:
     )
 
 
-def _compose(lead: str, *, context: Sequence[str], checks: str, delegation: Sequence[str], suffix: str) -> str:
-    return '\n\n'.join([_INTRO, lead, *context, _READING, *delegation, checks, _FINISHING]) + '\n' + suffix
+def _compose(lead: str, *, context: Sequence[str], checks: str, suffix: str) -> str:
+    return '\n\n'.join([_INTRO, lead, *context, _READING, checks, _FINISHING]) + '\n' + suffix
+
+
+def delegation_instruction(delegate_tool: str) -> TraitInstruction:
+    """The rule against unrequested delegation, for the models that delegate unprompted.
+
+    Its own append-mode block, `capability:coder_instructions:delegation`, resolved against the model handling each
+    request: after a fallback to a model without the trait, the model is told the block was withdrawn.
+    """
+    return TraitInstruction('delegates_unprompted', _DELEGATION.format(tool_name=delegate_tool), name='delegation')
 
 
 def coder_instructions(
     *,
     autonomy: Autonomy,
-    delegate_tool: str | None,
     extra: str | None = None,
     repo_files: Sequence[str] | None = None,
     nested_instructions: bool = False,
@@ -119,15 +129,14 @@ def coder_instructions(
     is_max = autonomy == 'max'
     parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread_max=is_max)
     delegate_checks = _checks(measure=True, cleanup=is_max, misread_max=is_max)
-    delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     context = [
         *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
         *([_NESTED_REPO_FILES] if nested_instructions else []),
     ]
     suffix = '\n' + extra if extra else ''
     return (
-        _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, delegation=delegation, suffix=suffix),
-        _compose(_DELEGATED, context=context, checks=delegate_checks, delegation=delegation, suffix=suffix),
+        _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, suffix=suffix),
+        _compose(_DELEGATED, context=context, checks=delegate_checks, suffix=suffix),
     )
 
 

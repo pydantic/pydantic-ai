@@ -7,9 +7,17 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ValidatedToolArgs
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ModelFallback, ValidatedToolArgs
+from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -428,11 +436,18 @@ class TestCoder:
     @pytest.mark.parametrize('repo_context', [False, True])
     @pytest.mark.parametrize('sub_agents', [False, True])
     @pytest.mark.parametrize('extra_instructions', [None, 'Keep new files under 400 lines.'])
+    @pytest.mark.parametrize('delegates_unprompted', [False, True])
     async def test_instructions_follow_the_composition(
-        self, tmp_path: Path, repo_context: bool, sub_agents: bool, extra_instructions: str | None
+        self,
+        tmp_path: Path,
+        repo_context: bool,
+        sub_agents: bool,
+        extra_instructions: str | None,
+        delegates_unprompted: bool,
     ) -> None:
-        """The delegation rule comes with `delegate_task`, and extra guidance is appended, with or without `RepoContext`."""
-        model = TestModel(call_tools=[])
+        """The delegation rule comes with `delegate_task`, for models that delegate unprompted, and extra guidance is
+        appended, with or without `RepoContext`."""
+        model = TestModel(call_tools=[], profile={'traits': {'delegates_unprompted': delegates_unprompted}})
         coder = Coder(instructions=extra_instructions, repo_context=repo_context, sub_agents=sub_agents)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
@@ -443,10 +458,50 @@ class TestCoder:
         assert (
             "Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks, "
             'whatever other instructions say about delegating.' in text
-        ) is sub_agents
+        ) is (sub_agents and delegates_unprompted)
         assert ('delegate_task' in tools) is sub_agents
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
+
+    async def test_delegation_rule_is_withdrawn_after_a_fallback_to_a_model_without_the_trait(
+        self, tmp_path: Path
+    ) -> None:
+        """A conversation that opened on a model that delegates unprompted, and falls back to one that doesn't, is
+        told the delegation rule no longer applies, after the new prompt and without rewriting its instructions."""
+        sent: list[tuple[str | None, list[str]]] = []
+
+        def model(name: str, *, delegates: bool, fails: bool = False) -> FunctionModel:
+            def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                last = messages[-1]
+                assert isinstance(last, ModelRequest)
+                sent.append(
+                    (info.instructions, [str(p.content) for p in last.parts if isinstance(p, SystemPromptPart)])
+                )
+                if fails:
+                    raise ModelAPIError(model_name=name, message='down')
+                return ModelResponse(parts=[TextPart('done')])
+
+            profile: ModelProfile = {
+                'supports_inline_system_prompts': True,
+                'traits': {'delegates_unprompted': delegates},
+            }
+            return FunctionModel(respond, model_name=name, profile=profile)
+
+        workspace = LocalWorkspaceBackend(tmp_path)
+        first = await Agent(model('gpt', delegates=True), capabilities=[Coder(repo_context=False)]).run(
+            'go', workspace=workspace
+        )
+        agent = Agent(
+            model('gpt', delegates=True, fails=True),
+            capabilities=[Coder(repo_context=False), ModelFallback(model('claude', delegates=False))],
+        )
+        await agent.run('continue', message_history=first.all_messages(), workspace=workspace)
+        opened_with, _ = sent[0]
+        assert opened_with is not None and "Don't spawn sub-agents" in opened_with
+        assert [instructions == opened_with for instructions, _ in sent] == [True, True, True]
+        assert sent[-1][1] == [
+            '<pyai:context id="capability:coder_instructions:delegation">\nThis context has been withdrawn.\n</pyai:context>'
+        ]
 
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),

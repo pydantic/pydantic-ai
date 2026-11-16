@@ -18,6 +18,7 @@ from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
     Autonomy,
     coder_instructions,
+    delegation_instruction,
     project_instructions,
 )
 from pydantic_ai_harness.compaction import ClearToolResults
@@ -134,19 +135,26 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     the first dynamic part. It contributes no toolset. `id` is set on the instance, not as a class
     default, so two copies are rejected rather than merged. A delegate's text comes from
     `delegation_depth()`, which the delegating run sets before the child run is awaited, and which
-    a recorded delegation sets again on the worker.
+    a recorded delegation sets again on the worker. The rule against unrequested delegation is a block of its own,
+    `delegation`, sent only to models with the `delegates_unprompted` trait.
     """
 
     guidance: str
     delegated_guidance: str
     project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
+    delegation: SubAgents[AgentDepsT] | None = None
+    """The `SubAgents` capability `Coder` adds, if any."""
     delegate: bool = False
 
     def __post_init__(self) -> None:
         self.id = 'coder_instructions'
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return [self.delegated_guidance if self.delegate else self.guidance, *self.project]
+        return [
+            self.delegated_guidance if self.delegate else self.guidance,
+            *([delegation_instruction(self.delegation.tool_name)] if self.delegation is not None else []),
+            *self.project,
+        ]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         if delegation_depth() <= 1:
@@ -273,7 +281,6 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         guidance, delegated_guidance = coder_instructions(
             autonomy=autonomy,
-            delegate_tool=delegation.tool_name if delegation is not None else None,
             extra=instructions,
             repo_files=bundled_repo_context.filenames
             if bundled_repo_context is not None and bundled_repo_context.autoload_instructions
@@ -289,7 +296,12 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project)),
+            _CoderGuidance[AgentDepsT](
+                guidance,
+                delegated_guidance,
+                tuple(project),
+                delegation,
+            ),
             _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
                 denied_commands=[],
