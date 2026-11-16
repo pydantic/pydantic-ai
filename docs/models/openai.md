@@ -70,6 +70,8 @@ agent = Agent(model)
 ...
 ```
 
+For short-lived or rotating credentials, `api_key` also accepts an async callable that returns the key, which the OpenAI SDK calls before each request. [Batch processing](../batch.md#which-requests-share-a-batch) refuses such a client, and [Responses WebSockets](#responses-websockets) send its requests over HTTP.
+
 ## Custom OpenAI Client
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
