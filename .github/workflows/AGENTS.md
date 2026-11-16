@@ -177,7 +177,9 @@ the sender's `write` or `admin` permission. The triage role, below write, can ap
 
 `PR Review Gates` accepts a douwebot receipt from any successful `pull_request` run of `bots.yml`
 on the head. Only an author who can push `.github/workflows/` can open a same-repository PR that
-changes `bots.yml`, so the gate trusts that author's reviewer.
+changes `bots.yml`, so the gate trusts that author's reviewer. A receipt from a
+`pull_request_target` run stays valid: only `main`'s copy could start one, and `main` no longer
+triggers on that event.
 
 ## `PR Guard` sweeps on a schedule
 

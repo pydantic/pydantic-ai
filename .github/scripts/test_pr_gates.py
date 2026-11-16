@@ -1015,7 +1015,8 @@ def test_review_publication_errors_fail_closed(
     [
         ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', True),
         ('.github/workflows/other.yml', 'pull_request', HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'success', True),
+        ('.github/workflows/bots.yml', 'workflow_dispatch', HEAD, 'success', 'success', False),
         ('.github/workflows/bots.yml', 'pull_request', OLD_HEAD, 'success', 'success', False),
         ('.github/workflows/bots.yml', 'pull_request', HEAD, 'failure', 'success', False),
         ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'failure', False),

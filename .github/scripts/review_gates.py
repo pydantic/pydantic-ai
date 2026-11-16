@@ -418,7 +418,9 @@ class ReviewGhCli(GhCli):
         run = ReviewRun.model_validate_json(self._api(f'{self._repo}/actions/runs/{run_id}'))
         if not (
             run.path == '.github/workflows/bots.yml'
-            and run.event == 'pull_request'
+            # Receipts on heads reviewed before `bots.yml` moved to `pull_request` come from `main`'s copy
+            # on `pull_request_target`. `main` no longer has that trigger, so no new run can carry it.
+            and run.event in {'pull_request', 'pull_request_target'}
             and run.name == 'PR Bots'
             and run.head_sha == head
             and run.conclusion == 'success'
