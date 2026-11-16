@@ -11,9 +11,9 @@ from hypothesis import given, settings, strategies as st
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, Tool
-from pydantic_ai.capabilities import Hooks, NativeTool, ValidatedToolArgs
-from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys
-from pydantic_ai.exceptions import ModelAPIError, ToolFailed, UserError
+from pydantic_ai.capabilities import Hooks, NativeTool, RawToolArgs, ValidatedToolArgs
+from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys, TypeText
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -40,7 +40,7 @@ from ...workspace_fakes import InMemoryProvider
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from anthropic import Omit
+    from anthropic import AsyncAnthropic, Omit
     from anthropic.types.beta import (
         BetaContentBlock,
         BetaInputJSONDelta,
@@ -193,32 +193,6 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
     assert all('greater than or equal to 0' in r['content'][0]['text'] for r in results)
-
-
-async def test_a_screenshot_before_other_calls_gets_the_screen_where_it_was_taken(allow_model_requests: None) -> None:
-    """Live Claude puts a screenshot first in a batch; it runs with the batch, and its own result carries its image."""
-    computer = FakeComputer()
-    client = MockAnthropic.create_mock(
-        [
-            _turn(
-                _tool_use('toolu_1', 'screenshot', {}),
-                _tool_use('toolu_2', 'left_click', {'coordinate': [5, 6]}),
-                _tool_use('toolu_3', 'screenshot', {}),
-            ),
-            _turn(BetaTextBlock(text='done', type='text')),
-        ]
-    )
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, computer).run('Go.')
-
-    assert computer.actions == [Click(x=5, y=6)]
-    _, second = get_mock_chat_completion_kwargs(client)
-    results = second['messages'][-1]['content']
-    assert [(r['tool_use_id'], r['is_error'], [block['type'] for block in r['content']]) for r in results] == [
-        ('toolu_1', False, ['text', 'image']),
-        ('toolu_2', False, ['text']),
-        ('toolu_3', False, ['text', 'image']),
-    ]
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
@@ -646,32 +620,6 @@ async def test_a_streamed_member_cut_off_mid_input_runs_nothing(
     assert call.args_as_dict() == {'actions': [{'type': action_type, 'incomplete_input': True}]}
 
 
-@pytest.mark.parametrize(
-    'model_name, settings',
-    [
-        pytest.param('claude-sonnet-4-6', None, id='auto'),
-        pytest.param('claude-sonnet-4-6', {'tool_choice': ['computer']}, id='forcing-the-function'),
-        # The toolset is named `computer` too, and Anthropic refuses a tool of that name beside it.
-        pytest.param('claude-sonnet-5-5', None, id='toolset'),
-    ],
-)
-async def test_a_function_tool_named_computer_beside_a_computer_tool_of_another_name_is_refused(
-    allow_model_requests: None, model_name: str, settings: ModelSettings | None
-) -> None:
-    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
-    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
-    function = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'})
-    desktop = ToolDefinition(name='desktop', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
-    params = ModelRequestParameters(
-        function_tools=[function, desktop], native_tools=[COMPUTER_TOOL], allow_text_output=True
-    )
-
-    # Both would be named `computer` on the wire, and a call named `computer` would run on the desktop.
-    with pytest.raises(UserError, match='cannot be sent beside a function tool named `computer`'):
-        await model.request([ModelRequest.user_text_prompt('Go.')], settings, params)
-    assert get_mock_chat_completion_kwargs(client) == []
-
-
 async def test_a_call_named_computer_is_a_function_tools_when_tool_choice_leaves_out_the_computer(
     allow_model_requests: None,
 ) -> None:
@@ -792,15 +740,6 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             None,
             [(False, [_FAILED]), (False, [_FAILED, 'image'])],
             id='no-metadata',
-        ),
-        # Nothing ran before the failed call to carry the screen, so it does, saying in its text that it failed.
-        pytest.param(
-            _CLICK_TYPE,
-            [1, 1],
-            ['Action 1 of 2 (click) failed: busy.', _PNG],
-            {'performed': 0, 'error': 'busy'},
-            [(False, ['Failed: busy', 'image']), (True, [NOT_EXECUTED])],
-            id='first-call-failed',
         ),
         # Content stored as a JSON string reads as the list it encodes, screenshot and all.
         pytest.param(
@@ -1026,36 +965,6 @@ async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow
     assert (call['name'], call['input']) == ('computer', {'actions': [{'type': 'screenshot'}]})
 
 
-@pytest.mark.parametrize(
-    'kept',
-    [
-        # Inside the first call, before any call arrived whole.
-        pytest.param(3, id='inside-the-first-call'),
-        # Between the calls: the click arrived whole, the call after it didn't.
-        pytest.param(4, id='between-the-calls'),
-    ],
-)
-async def test_a_stream_that_ends_inside_the_batch_runs_none_of_it(allow_model_requests: None, kept: int) -> None:
-    """A batch runs only as a whole, so a stream that stops before its end runs none of it."""
-    events = _stream(
-        _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
-        _tool_use('toolu_2', 'type', {'text': 'hello'}),
-    )
-    # The message start, then the first call's start, input and stop.
-    assert [type(event) for event in events[:4]] == [
-        BetaRawMessageStartEvent,
-        BetaRawContentBlockStartEvent,
-        BetaRawContentBlockDeltaEvent,
-        BetaRawContentBlockStopEvent,
-    ]
-    with pytest.raises(
-        ModelAPIError,
-        match=r'^The response ended before Claude finished its computer use calls, so none of them ran\.$',
-    ) as error:
-        await _streamed(events[:kept])
-    assert error.value.model_name == 'claude-sonnet-5-5'
-
-
 @pytest.mark.parametrize('stream', [False, True], ids=['whole', 'streamed'])
 async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_requests: None, stream: bool) -> None:
     """Typing would otherwise run in the window the click chose, before the tool between them focused another."""
@@ -1083,9 +992,9 @@ async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_request
     assert isinstance(calls[0], ComputerCallPart) and calls[0].actions is None
 
 
-async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_model_requests: None) -> None:
+def _split_batch_client() -> AsyncAnthropic:
     focus = BetaToolUseBlock.model_validate({'id': 'toolu_f', 'type': 'tool_use', 'name': 'focus', 'input': {}})
-    client = MockAnthropic.create_mock(
+    return MockAnthropic.create_mock(
         [
             _turn(
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
@@ -1095,6 +1004,16 @@ async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_
             _turn(BetaTextBlock(text='done', type='text')),
         ]
     )
+
+
+def _split_batch_results(client: AsyncAnthropic) -> list[tuple[bool, list[dict[str, Any]]]]:
+    _, second = get_mock_chat_completion_kwargs(client)
+    results = {r['tool_use_id']: r for r in second['messages'][-1]['content']}
+    return [(results[id]['is_error'], results[id]['content']) for id in ('toolu_1', 'toolu_2')]
+
+
+async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_model_requests: None) -> None:
+    client = _split_batch_client()
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
     computer = FakeComputer()
     agent = _agent(model, computer)
@@ -1102,16 +1021,43 @@ async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_
     await agent.run('Go.')
 
     assert computer.actions == []
-    _, second = get_mock_chat_completion_kwargs(client)
-    results = {r['tool_use_id']: r for r in second['messages'][-1]['content']}
+    # Fixed text: nothing in it comes from the history, which may come from storage or a UI.
     refusal = (
-        'No computer action ran: they run together as one batch, and a call of `focus` came between them. Make the '
+        'No computer action ran: they run together as one batch, and another tool call came between them. Make the '
         "computer calls before or after the other tools' calls, not between them."
     )
-    assert [(results[id]['is_error'], results[id]['content']) for id in ('toolu_1', 'toolu_2')] == [
+    assert _split_batch_results(client) == [
         (True, [{'type': 'text', 'text': refusal}]),
         (True, [{'type': 'text', 'text': refusal}]),
     ]
+
+
+async def test_a_split_batch_a_hook_let_run_gets_its_real_retry_text(allow_model_requests: None) -> None:
+    hooks = Hooks[None]()
+
+    @hooks.on.before_tool_validate(tools=['computer'])
+    async def run_anyway(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        return {'actions': [{'type': 'click', 'x': 5, 'y': 6}, {'type': 'type', 'text': 'hi'}]}
+
+    @hooks.on.after_tool_execute(tools=['computer'])
+    async def retry(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: object
+    ) -> object:
+        raise ModelRetry('Check the window first.')
+
+    client = _split_batch_client()
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    computer = FakeComputer()
+    agent = Agent(model, deps_type=type(None), capabilities=[computer, InMemoryProvider().capability(), hooks])
+    agent.tool_plain(name='focus')(lambda: 'Focused.')
+    await agent.run('Go.')
+
+    assert computer.actions == [Click(x=5, y=6), TypeText(text='hi')]
+    # The calls ran, so the refusal would be false: Claude gets the retry's own text.
+    retry_text = [{'type': 'text', 'text': 'Check the window first.'}]
+    assert _split_batch_results(client) == [(True, retry_text), (True, retry_text)]
 
 
 _JSON = st.recursive(

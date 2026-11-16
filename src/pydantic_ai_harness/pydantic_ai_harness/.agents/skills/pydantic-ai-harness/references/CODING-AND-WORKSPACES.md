@@ -402,9 +402,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
-- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or
-  `desktop=(w, h)` of at least 1024x768, fixed at creation. It can't press F13 to F24, print screen, pause, scroll
-  lock, the menu key, media keys, side mouse buttons or emoji. A public sandbox's desktop is refused.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`, or pass
+  `desktop=(w, h)`; the size is fixed at creation. It can't press F13 to F24, keypad Enter, the keypad operators,
+  print screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond
+  U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
