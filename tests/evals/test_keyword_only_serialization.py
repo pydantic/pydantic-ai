@@ -7,6 +7,7 @@ from typing import Literal
 
 import pytest
 import yaml
+from pydantic import JsonValue
 
 from ..conftest import try_import
 
@@ -14,7 +15,15 @@ with try_import() as imports_successful:
     from jsonschema.validators import validator_for
 
     from pydantic_evals import Case, Dataset
-    from pydantic_evals.evaluators import Evaluator, EvaluatorContext, ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.evaluators import (
+        Equals,
+        EqualsExpected,
+        Evaluator,
+        EvaluatorContext,
+        HasMatchingSpan,
+        ReportEvaluator,
+        ReportEvaluatorContext,
+    )
     from pydantic_evals.reporting.analyses import ScalarResult
 
     @dataclass(kw_only=True)
@@ -45,6 +54,16 @@ with try_import() as imports_successful:
 
         minimum: int = field(default=0, kw_only=True)
         evaluation_name: str = 'length'
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
+            return len(ctx.output) >= self.minimum
+
+    @dataclass(kw_only=True, init=False)
+    class KeywordOnlyVarKeyword(Evaluator[str, str, str]):
+        minimum: int
+
+        def __init__(self, *, minimum: int, **kwargs: object) -> None:
+            self.minimum = minimum
 
         def evaluate(self, ctx: EvaluatorContext[str, str, str]) -> bool:
             return len(ctx.output) >= self.minimum
@@ -103,6 +122,7 @@ with try_import() as imports_successful:
         'KeywordOnlyFirstWithDefault': RoundTripCase(
             KeywordOnlyFirstWithDefault(minimum=4), {'minimum': 4}, KEYWORD_FORMS
         ),
+        'KeywordOnlyVarKeyword': RoundTripCase(KeywordOnlyVarKeyword(minimum=4), {'minimum': 4}, KEYWORD_FORMS),
         'Positional': RoundTripCase(Positional(minimum=4), 4, frozenset({'short_spec'})),
         'PositionalWithKeywordOnlyDefault': RoundTripCase(
             PositionalWithKeywordOnlyDefault(minimum=4), 4, frozenset({'short_spec'}) | KEYWORD_FORMS
@@ -112,6 +132,29 @@ with try_import() as imports_successful:
             {'minimum': {'length': 4}},
             frozenset({'short_spec'}) | KEYWORD_FORMS,
         ),
+    }
+
+    @dataclass(frozen=True)
+    class SchemaCase:
+        """An evaluator entry and the evaluator it loads as, or `None` when the built-in schema rejects it."""
+
+        entry: dict[str, JsonValue]
+        loaded: Evaluator[str, str, str] | None = None
+
+    BUILTIN_SCHEMA_CASES: dict[str, SchemaCase] = {
+        'scalar-short-form': SchemaCase({'Equals': 5}, Equals(value=5)),
+        'object-keyword-form': SchemaCase({'Equals': {'value': {'a': 1}}}, Equals(value={'a': 1})),
+        'query-keyword-form': SchemaCase(
+            {'HasMatchingSpan': {'query': {'name_equals': 'x'}}}, HasMatchingSpan(query={'name_equals': 'x'})
+        ),
+        'defaulted-short-form': SchemaCase({'EqualsExpected': 'check'}, EqualsExpected(evaluation_name='check')),
+        'unknown-keyword': SchemaCase({'Equals': {'a': 1}}),
+        'missing-value': SchemaCase({'Equals': {}}),
+        'contains-unknown-keyword': SchemaCase({'Contains': {'a': 1}}),
+        'query-fields-as-keywords': SchemaCase({'HasMatchingSpan': {'name_equals': 'x'}}),
+        'mistyped-keyword': SchemaCase({'Equals': {'value': 5, 'evaluation_name': 3}}),
+        'mistyped-flag': SchemaCase({'Contains': {'value': 'x', 'case_sensitive': 'no'}}),
+        'empty-entry': SchemaCase({}),
     }
 
 
@@ -126,6 +169,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals
         'KeywordOnlyField',
         'MixedFields',
         'KeywordOnlyFirstWithDefault',
+        'KeywordOnlyVarKeyword',
         'Positional',
         'PositionalWithKeywordOnlyDefault',
         'ObjectPositional',
@@ -170,6 +214,35 @@ def test_non_string_keyed_short_form():
     assert loaded.evaluators == [IntKeyed(minimum={1: 4})]
     report = loaded.evaluate_sync(lambda value: value)
     assert all(result.value is True for result in report.cases[0].assertions.values())
+
+
+@pytest.mark.parametrize(
+    'case_id',
+    [
+        'scalar-short-form',
+        'object-keyword-form',
+        'query-keyword-form',
+        'defaulted-short-form',
+        'unknown-keyword',
+        'missing-value',
+        'contains-unknown-keyword',
+        'query-fields-as-keywords',
+        'mistyped-keyword',
+        'mistyped-flag',
+        'empty-entry',
+    ],
+)
+def test_builtin_evaluator_schema(case_id: str):
+    """The built-in schema rejects short forms the loader reads as keyword arguments, and empty entries.
+
+    Schema generation and loading make no model request, so there is nothing to record.
+    """
+    case = BUILTIN_SCHEMA_CASES[case_id]
+    raw: dict[str, JsonValue] = {'name': 'built-in', 'cases': [{'inputs': 'hello'}], 'evaluators': [case.entry]}
+    schema = Dataset[str, str, str].model_json_schema_with_evaluators()
+    assert (list(validator_for(schema)(schema).iter_errors(raw)) == []) is (case.loaded is not None)
+    if case.loaded is not None:
+        assert Dataset[str, str, str].from_dict(raw).evaluators == [case.loaded]
 
 
 @pytest.mark.parametrize('fmt', ['json', 'yaml'])
