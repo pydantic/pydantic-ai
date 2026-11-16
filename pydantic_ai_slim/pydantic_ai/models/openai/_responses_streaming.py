@@ -19,7 +19,6 @@ from pydantic_core import to_json
 
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
-from ...computer_use import COMPUTER_KIND
 from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
@@ -399,15 +398,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             vendor_part_id=item_id,
             tool_name=item.name,
             args=item.arguments,
-            tool_call_id=stored_tool_call_id(
-                item.call_id,
-                # Without the response ID yet, the ID is kept as sent rather than scoped by the timestamp:
-                # a request continuing this response by `previous_response_id` no longer holds it, so
-                # only the response ID can restore the IDs its results carry.
-                response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
-                provider_response_id=self.provider_response_id,
-                timestamp=self.timestamp,
-            ),
+            tool_call_id=self._stored_tool_call_id(item.call_id),
             id=item_id,
             provider_name=self.provider_name,
             provider_details=provider_details,
@@ -600,21 +591,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case _:
                 pass
 
-    def _computer_call_id(self, item: responses.ResponseComputerToolCall) -> str:
+    def _stored_tool_call_id(self, call_id: str) -> str:
         return stored_tool_call_id(
-            item.call_id,
+            call_id,
+            # Without the response ID yet, the ID is kept as sent rather than scoped by the timestamp: a request
+            # continuing this response by `previous_response_id` no longer holds it, so only the response ID can
+            # restore the IDs its results carry.
             response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
             provider_response_id=self.provider_response_id,
             timestamp=self.timestamp,
         )
 
     def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
-        if not (computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
-            return
+        call_id = self._stored_tool_call_id(item.call_id)
         # Its actions arrive whole in the done event, and OpenAI finishes each item before adding the next, so the
         # call starts complete here and keeps its place among the other parts.
-        call = map_computer_call(item, computer_name, self._computer_call_id(item), self.provider_name)
-        yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
+        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
+            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str

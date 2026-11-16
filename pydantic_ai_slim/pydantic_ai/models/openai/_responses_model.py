@@ -1240,7 +1240,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
                 case responses.ResponseComputerToolCall():
-                    items.extend(self._map_computer_call(item, response.id, timestamp, model_request_parameters))
+                    call_id = self._stored_tool_call_id(item.call_id, response.id, timestamp)
+                    if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
+                        items.append(computer_call)
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
@@ -1300,34 +1302,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return ToolCallPart(
             item.name,
             item.arguments,
-            tool_call_id=stored_tool_call_id(
-                item.call_id,
-                response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
-                provider_response_id=response_id,
-                timestamp=timestamp,
-            ),
+            tool_call_id=self._stored_tool_call_id(item.call_id, response_id, timestamp),
             id=item.id,
             provider_name=self.system,
             provider_details=fn_provider_details,
         )
 
-    def _map_computer_call(
-        self,
-        item: responses.ResponseComputerToolCall,
-        response_id: str,
-        timestamp: datetime,
-        model_request_parameters: ModelRequestParameters,
-    ) -> list[ModelResponsePart]:
-        """The `computer` tool's call, or nothing when the request has no `computer` tool to run it."""
-        if not (computer_name := model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
-            return []
-        call_id = stored_tool_call_id(
-            item.call_id,
+    def _stored_tool_call_id(self, call_id: str, response_id: str, timestamp: datetime) -> str:
+        return stored_tool_call_id(
+            call_id,
             response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
             provider_response_id=response_id,
             timestamp=timestamp,
         )
-        return [map_computer_call(item, computer_name, call_id, self.system)]
 
     def _map_code_interpreter_call(
         self, item: responses.ResponseCodeInterpreterToolCall
@@ -2270,7 +2257,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
         *,
-        computer_name: str | None = None,
+        computer_name: str | None,
     ) -> ResponsesToolChoice:
         supports = support_openai_tool_forcing(
             self.model_name,
