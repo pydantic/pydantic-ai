@@ -82,3 +82,13 @@ async def test_xfce_exiting_fails_the_start_with_its_output(fake_e2b: FakeE2B, s
 
     assert result.returncode == 1
     assert result.stderr == 'the XFCE desktop did not start:\nno session bus\n'
+
+
+async def test_a_template_without_xfce_starts_with_no_desktop(fake_e2b: FakeE2B, stubs: Path) -> None:
+    start = await _start_script(fake_e2b)
+    (stubs / 'startxfce4').unlink()
+
+    result = _run(start, stubs, '1280x800')
+
+    assert result.returncode == 0, result.stderr
+    assert not (stubs / 'xfce-starts').exists()
