@@ -1,4 +1,7 @@
-"""Tests for the `computer` tool's actions."""
+"""Tests for the `computer` tool's actions.
+
+Not VCR tests: validating and serializing an action happens before any provider is involved, so a recording adds nothing.
+"""
 
 from __future__ import annotations
 
@@ -12,10 +15,19 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai.computer_use import (
     Click,
     ComputerToolAction,
+    CursorPosition,
+    Drag,
     HoldKeys,
+    MouseDown,
+    MouseUp,
+    MoveMouse,
+    Point,
     PressKeys,
     Region,
+    Screenshot,
     Scroll,
+    TypeText,
+    Wait,
     Zoom,
 )
 
@@ -71,38 +83,54 @@ def test_fields_an_action_does_not_have_are_refused() -> None:
             adapter.validate_python([invalid])
 
 
-def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
-    adapter = TypeAdapter(list[ComputerToolAction])
-    actions = adapter.validate_python(
-        [
-            {'type': 'keypress', 'keys': ['CTRL', 'Return']},
-            {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
-            {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
-            {'type': 'scroll', 'direction': 'down', 'x': 10, 'y': 20},
-            {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 5, 'bottom': 5}},
-        ]
-    )
-    assert actions == [
-        PressKeys(keys=('ctrl', 'enter')),
+_EVERY_ACTION: list[tuple[dict[str, object], ComputerToolAction]] = [
+    (
+        {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
         Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
-        HoldKeys(keys=('escape',), seconds=1),
-        Scroll(direction='down', x=10, y=20),
+    ),
+    ({'type': 'move', 'x': 3, 'y': 4}, MoveMouse(x=3, y=4)),
+    (
+        {'type': 'drag', 'path': [{'x': 0, 'y': 0}, {'x': 5, 'y': 6}]},
+        Drag(path=(Point(x=0, y=0), Point(x=5, y=6))),
+    ),
+    ({'type': 'mouse_down', 'button': 'right'}, MouseDown(button='right')),
+    ({'type': 'mouse_up'}, MouseUp()),
+    ({'type': 'scroll', 'direction': 'down', 'x': 10, 'y': 20}, Scroll(direction='down', x=10, y=20)),
+    ({'type': 'type', 'text': 'hello'}, TypeText(text='hello')),
+    ({'type': 'keypress', 'keys': ['CTRL', 'Return']}, PressKeys(keys=('ctrl', 'enter'))),
+    ({'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1}, HoldKeys(keys=('escape',), seconds=1)),
+    ({'type': 'wait', 'seconds': 0.5}, Wait(seconds=0.5)),
+    ({'type': 'screenshot'}, Screenshot()),
+    (
+        {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 5, 'bottom': 5}},
         Zoom(region=Region(left=0, top=0, right=5, bottom=5)),
-    ]
+    ),
+    ({'type': 'cursor_position'}, CursorPosition()),
+]
+
+
+@pytest.mark.parametrize('given, expected', [pytest.param(*case, id=case[1].type) for case in _EVERY_ACTION])
+def test_each_action_reads_its_fields_and_round_trips_through_json(
+    given: dict[str, object], expected: ComputerToolAction
+) -> None:
+    adapter = TypeAdapter(list[ComputerToolAction])
+    actions = adapter.validate_python([given])
+    assert actions == [expected]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
-    invalid_actions: list[dict[str, object]] = [
-        {'type': 'click', 'x': 10},
-        {'type': 'scroll', 'x': 1, 'y': 2},
-        {'type': 'teleport'},
-        {'x': 1, 'y': 2},
-    ]
-    for invalid in invalid_actions:
-        with pytest.raises(ValidationError):
-            adapter.validate_python([invalid])
-    with pytest.raises(
-        ValidationError, match=r"'Hyper_L' is not a key: use a single character or one of ctrl, .*, f1 to f24"
-    ):
-        PressKeys(keys=('Hyper_L',))
+
+
+@pytest.mark.parametrize(
+    'invalid',
+    [
+        pytest.param({'type': 'click', 'x': 10}, id='x-without-y'),
+        pytest.param({'type': 'scroll', 'x': 1, 'y': 2}, id='scroll-without-direction'),
+        pytest.param({'type': 'teleport'}, id='unknown-type'),
+        pytest.param({'x': 1, 'y': 2}, id='no-type'),
+    ],
+)
+def test_actions_of_a_bad_shape_are_refused(invalid: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(list[ComputerToolAction]).validate_python([invalid])
 
 
 @pytest.mark.parametrize(
@@ -115,6 +143,11 @@ def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
             id='empty-region',
         ),
         pytest.param(lambda: PressKeys(keys=()), 'at least 1 item', id='no-keys'),
+        pytest.param(
+            lambda: PressKeys(keys=('Hyper_L',)),
+            "'Hyper_L' is not a key: use a single character or one of ctrl, ",
+            id='unknown-key',
+        ),
         pytest.param(lambda: HoldKeys(keys=('',), seconds=1), 'a key name must not be empty', id='empty-key'),
         # Splitting a combination can leave an empty key between two `+`.
         pytest.param(lambda: PressKeys(keys=('ctrl+++',)), 'a key name must not be empty', id='empty-key-in-combo'),
