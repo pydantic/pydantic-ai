@@ -42,6 +42,7 @@ from pydantic_ai import (
     exceptions,
     messages as _messages,
 )
+from pydantic_ai._fallback import FALLBACK_MODEL_PIN_KEY, stamp_continuation_pin
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -80,7 +81,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     StreamedResponse,
 )
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.fallback import FallbackModel, FallbackOn
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -3003,7 +3004,9 @@ def _answering_streams(name: str, calls: list[str]) -> FunctionModel:
 _SKIPS_IGNORING = (ModelAPIError, UnsupportedSettingWarning)
 
 
-def _skipping_agent(owner: str, primary: Model, backup: Model, fallback_on: Any = _SKIPS_IGNORING) -> Agent[Any, str]:
+def _skipping_agent(
+    owner: str, primary: Model, backup: Model, fallback_on: FallbackOn = _SKIPS_IGNORING
+) -> Agent[Any, str]:
     if owner == 'ModelFallback':
         return Agent(primary, capabilities=[ModelFallback(backup, fallback_on=fallback_on)])
     return Agent(FallbackModel(primary, backup, fallback_on=fallback_on))
@@ -3051,6 +3054,41 @@ async def test_a_model_that_honors_the_settings_is_not_moved_on_from(owner: str)
     assert calls == ['primary']
 
 
+def _pinned_history(owner: str, model: Model) -> list[ModelMessage]:
+    """A suspended response pinned to `model` the way `owner` pins it: `FallbackModel` in the response's metadata."""
+    history = _suspended_history(model.model_id)
+    if owner == 'FallbackModel':
+        response = history[-1]
+        assert isinstance(response, ModelResponse)
+        stamp_continuation_pin(response, model.model_id, key=FALLBACK_MODEL_PIN_KEY)
+    return history
+
+
+@_OWNERS
+async def test_a_continuation_pinned_to_a_model_that_would_ignore_a_setting_moves_on(owner: str):
+    """Resuming a suspended response doesn't send it to the pinned model without a setting it would ignore."""
+    calls: list[str] = []
+    primary = _ignoring_stop('primary', calls)
+    agent = _skipping_agent(owner, primary, _answering_streams('backup', calls))
+
+    result = await agent.run(message_history=_pinned_history(owner, primary), model_settings=_STOP)
+
+    assert result.output == 'backup answered'
+    assert calls == ['backup']
+
+
+@_OWNERS
+async def test_a_streamed_continuation_pinned_to_a_model_that_would_ignore_a_setting_moves_on(owner: str):
+    calls: list[str] = []
+    primary = _ignoring_stop('primary', calls)
+    agent = _skipping_agent(owner, primary, _answering_streams('backup', calls))
+
+    async with agent.run_stream(message_history=_pinned_history(owner, primary), model_settings=_STOP) as result:
+        assert await result.get_output() == 'backup answered'
+
+    assert calls == ['backup']
+
+
 @_OWNERS
 async def test_every_model_ignoring_a_setting_raises_the_group(owner: str):
     calls: list[str] = []
@@ -3066,7 +3104,7 @@ async def test_every_model_ignoring_a_setting_raises_the_group(owner: str):
 
 @_OWNERS
 @pytest.mark.parametrize('fallback_on', [(ModelAPIError,), (Exception,)], ids=['default', 'supertype'])
-async def test_a_model_that_would_ignore_a_setting_still_answers_unless_named(owner: str, fallback_on: Any):
+async def test_a_model_that_would_ignore_a_setting_still_answers_unless_named(owner: str, fallback_on: FallbackOn):
     """Without `UnsupportedSettingWarning` itself in `fallback_on`, the model answers and warns, as before."""
     calls: list[str] = []
 

@@ -3702,7 +3702,11 @@ def _crossed(error: ModelAPIError) -> BaseException:
 
 
 def test_an_unsupported_setting_warning_raised_for_fallback_crosses_as_itself_unretried():
-    """The warning a model raises for a `fallback_on` that names it reaches the workflow as itself, never retried."""
+    """The warning a model raises for a `fallback_on` that names it reaches the workflow as itself, never retried.
+
+    A unit test, as the `non_retryable` flag and the rebuilt error class aren't visible in a provider recording; the
+    end-to-end fallback is covered in `test_durability.py`.
+    """
     with pytest.raises(ApplicationError) as raised:
         with model_errors_as_application_errors(), raise_warnings():
             warn_unsupported_settings('m', {'stop_sequences': ['x']}, {'stop_sequences'}, has_function_tools=False)
@@ -3713,7 +3717,10 @@ def test_an_unsupported_setting_warning_raised_for_fallback_crosses_as_itself_un
 
 
 def test_an_unsupported_setting_warning_a_filter_raised_fails_the_activity_as_before():
-    """A warning a warnings filter turned into an error isn't translated: the activity fails, and retries, as before."""
+    """A warning a warnings filter turned into an error isn't translated: the activity fails, and retries, as before.
+
+    A unit test, as whether the activity translates an error isn't visible in a provider recording.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter('error', UnsupportedSettingWarning)
         with pytest.raises(UnsupportedSettingWarning):
