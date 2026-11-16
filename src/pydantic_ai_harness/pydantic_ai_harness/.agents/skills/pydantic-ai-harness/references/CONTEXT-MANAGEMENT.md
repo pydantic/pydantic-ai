@@ -288,6 +288,8 @@ capability to see post-compaction usage, before it to see what triggered compact
 
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a
   `ModelRequest` in history; every strategy preserves or re-injects it. `Planning` does not need it.
+  Pass `source='tool'` or `source='model'` for content the user didn't write, so it reaches the model
+  as `<pinned source="...">` data rather than as the user's words.
 - `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
   loaded: when they summarize or drop a load's record (a `load_capability` exchange, or the
   `CapabilityLoadDeltaPart` of a load from code), they record it again after the summary as a

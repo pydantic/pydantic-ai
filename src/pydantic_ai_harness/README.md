@@ -14,6 +14,18 @@
 
 Everything here is one primitive: a [capability](https://ai.pydantic.dev/capabilities/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [90+ of them](#capabilities), and complete agents like [Coder](pydantic_ai_harness/coder/) and [Researcher](pydantic_ai_harness/researcher/) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
+## Pydantic AI, the Harness, and CLAI
+
+Three packages, each built on the one before it. Start with the one that matches what you are doing:
+
+| Package | What it is | Start here when |
+|---|---|---|
+| [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
+| [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2) (`pydantic-clai2`) | A coding agent for your terminal, run as `clai2`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-clai2` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
+
 ## Quick start
 
 uv:
@@ -161,6 +173,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](pydantic_ai_harness/e2b_sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Kubernetes Sandbox](pydantic_ai_harness/kubernetes_sandbox/) | Harness | Commands and files in a sandbox pod from a Kubernetes [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool |
 | [Render Sandbox](pydantic_ai_harness/render_sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](pydantic_ai_harness/sprites_sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](pydantic_ai_harness/daytona_sandbox/) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
