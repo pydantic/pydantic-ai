@@ -44,7 +44,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource, message_hash
 
@@ -238,23 +238,22 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
             return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
         case CompactionPart():
             # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
-            if not part.content:
-                return None
-            return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}'
+            return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}' if part.content else None
         case SpeechPart():
             # A realtime user turn: index the spoken transcript so speech is searchable, not the
             # raw audio. `transcript` is optional, so an audio-only part contributes no text.
             if not part.transcript:
                 return None
             return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-        # Tool-list, capability, instruction and effort bookkeeping rather than conversation, and so is a capability's
-        # record. Listed explicitly so the fallback below stays a real runtime branch.
+        case CapabilityPart():
+            return _format_capability_part(part, terms=terms)
+        # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
+        # fallback below stays a real runtime branch.
         case (
             ToolAvailabilityDeltaPart()
             | CapabilityLoadDeltaPart()
             | InstructionBaselinePart()
             | ModelSettingsDeltaPart()
-            | CapabilityPart()
         ):
             return None
         # Reachable only on a pydantic-ai release newer than this one: a part type newer than this code contributes
@@ -264,6 +263,17 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
             if TYPE_CHECKING:
                 assert_never(part)
             return None
+
+
+def _format_capability_part(part: CapabilityPart, *, terms: frozenset[str] | None) -> str | None:
+    """What a capability told the model, such as a sub-agent's report or a background tool's result, or `None`.
+
+    Labeled with its kind, never as the user's, the way `SummarizingCompaction` shows it. A request-scoped part applied
+    to its own request only, so it isn't conversation.
+    """
+    if part.scope == 'request':
+        return None
+    return f'[{part.kind}]: {_clip(capability_part_text(part), _EXCERPT_CHARS, terms)}'
 
 
 def _format_message(message: ModelMessage, *, terms: frozenset[str] | None) -> str:

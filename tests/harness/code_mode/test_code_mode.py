@@ -103,7 +103,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
     _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
 _entered_toolsets: list[CodeModeToolset[Never]] = []
 
@@ -754,7 +754,8 @@ class TestCodeMode:
             return ModelResponse(parts=[TextPart(returned[0].model_response_str())])
 
         agent: Agent[object, str] = Agent(
-            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object](store=LocalFileStore())]
+            FunctionModel(model_fn),
+            capabilities=[CodeMode[object](), ToolOutputLimits[object](store=LocalFileOverflowStore())],
         )
         result = await agent.run('what type is x?')
         assert result.output == "<class 'dict'>"

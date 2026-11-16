@@ -45,6 +45,7 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
+    _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -342,6 +343,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_default_run_id(self) -> str | None:
         return self.wrapped.get_default_run_id()
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        if type(self).get_default_run_id is not WrapperCapability.get_default_run_id:
+            return self.get_default_run_id()
+        return await self.wrapped._get_default_run_id_for_inputs(get_inputs)
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return self.wrapped.get_default_conversation_id(run_id)

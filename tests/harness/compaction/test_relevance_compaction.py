@@ -46,7 +46,7 @@ from pydantic_ai_harness.compaction import (
     pin,
 )
 from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
-from pydantic_ai_harness.subagents import DelegationTask, TaskOutputPart
+from pydantic_ai_harness.sub_agents import DelegationTask, TaskOutputPart
 
 from ...conftest import try_import
 

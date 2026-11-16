@@ -30,7 +30,7 @@ class TaskOutputPart(
 
     Data on the user channel in a `<task_output>` tag naming the task, as the child's model wrote it, with a note that
     the sub-agent wrote it, not the user or the application. Find reports in history by this type, or with
-    [`is_task_report`][pydantic_ai_harness.subagents.is_task_report].
+    [`is_task_report`][pydantic_ai_harness.sub_agents.is_task_report].
     """
 
     task_id: str
@@ -57,7 +57,7 @@ class TaskQuestionPart(
     """A running task's question to its parent, as the parent receives it.
 
     The question was written by the child's model, so like its output it's data, never in the application's voice.
-    Find questions in history by this type, or with [`is_task_report`][pydantic_ai_harness.subagents.is_task_report].
+    Find questions in history by this type, or with [`is_task_report`][pydantic_ai_harness.sub_agents.is_task_report].
     """
 
     task_id: str

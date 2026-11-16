@@ -42,8 +42,9 @@ from .messages import (
     UserPromptPart,
     _CapabilityContentPart,  # pyright: ignore[reportPrivateUsage]
     _CapabilityInstructionPart,  # pyright: ignore[reportPrivateUsage]
-    _client_safe_retry_feedback,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -165,8 +166,10 @@ def _check_operator_voice(messages: Sequence[ModelMessage]) -> None:
                 )
 
 
-def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str, ceiling: Authority) -> None:
-    """Attribute every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] in `messages` to the capability that enqueued it, in place.
+def stamp_capability_parts(
+    messages: Sequence[ModelMessage], capability_id: str, ceiling: Authority
+) -> list[ModelMessage]:
+    """`messages` with every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] attributed to the capability that enqueued it.
 
     A part with no `capability_id` yet gets `capability_id`, and a part whose source has more authority than the
     capability's `ceiling` gets a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] with that authority
@@ -175,55 +178,101 @@ def stamp_capability_parts(messages: Sequence[ModelMessage], capability_id: str,
     Prompt parts that would speak with more authority than `ceiling` become capability parts at it: a
     `SystemPromptPart` below `'operator'`, and a `UserPromptPart` below `'user'`. Enqueued content never gains
     authority on its way to the model.
+
+    A `ModelResponse`, or a request with `instructions`, from a capability below `'operator'` raises `UserError`. Requests and parts are copied, never
+    changed in place: a capability can enqueue a request it took from the run's history, which must stay as it was.
     """
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            message.parts = [_within_ceiling(part, capability_id, ceiling) for part in message.parts]
-            for part in message.parts:
-                if isinstance(part, CapabilityPart):
-                    _stamp_capability_part(part, capability_id, ceiling)
+    return [
+        _request_within_ceiling(message, capability_id, ceiling)
+        if isinstance(message, ModelRequest)
+        else _response_within_ceiling(message, capability_id, ceiling)
+        for message in messages
+    ]
 
 
-_FRAMEWORK_STATE_PARTS = (
-    InstructionDeltaPart,
-    InstructionBaselinePart,
-    ToolAvailabilityDeltaPart,
-    CapabilityLoadDeltaPart,
-    ModelSettingsDeltaPart,
-)
-"""The framework's records of the run's own state, which the model reads in the application's voice."""
-
-
-def _within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
-    """`part` as a capability part at `ceiling` if it's a prompt part that would speak with more authority."""
-    if ceiling != 'operator' and isinstance(part, _FRAMEWORK_STATE_PARTS):
+def _request_within_ceiling(message: ModelRequest, capability_id: str, ceiling: Authority) -> ModelRequest:
+    """A copy of `message` with each part as a capability at `ceiling` may send it, and attributed to the capability."""
+    if ceiling != 'operator' and message.instructions is not None:
         raise UserError(
-            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue '
-            f"`{type(part).__name__}`, which the model reads in the application's voice."
+            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue a `ModelRequest` with '
+            "`instructions`, which the model reads in the application's voice. Send what it says as a "
+            '`CapabilityPart` instead.'
         )
+    return replace(
+        message,
+        parts=[
+            _stamped(part, capability_id, ceiling) if isinstance(part, CapabilityPart) else part
+            for part in (within_ceiling(part, capability_id, ceiling) for part in message.parts)
+        ],
+    )
+
+
+def _response_within_ceiling(message: ModelResponse, capability_id: str, ceiling: Authority) -> ModelResponse:
+    """`message`, which only a capability with operator authority can enqueue: the model reads it as its own turn."""
+    if ceiling != 'operator':
+        raise UserError(
+            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue a `ModelResponse`, which '
+            "the model reads as its own turn. Only a capability with operator authority can write the model's turns."
+        )
+    return message
+
+
+def within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+    """`part` as a capability below operator authority may send it, or `UserError` if it can't send it at all.
+
+    An allowlist, so a part type added later is refused until it's decided how it reads below the application's voice:
+    a capability part is lowered when it's stamped, a system prompt becomes an instruction at `ceiling`, user text at
+    `'none'` becomes data, retry feedback becomes the capability's own text (user text at `'user'`, data at `'none'`),
+    and a plain tool return is tool output whatever its sender. Anything else is refused, such as the framework's records of the run's own state, which the
+    model reads in the application's voice, a summary standing in for earlier history, a typed tool return the
+    framework acts on, and speech below `'user'`.
+    """
+    if ceiling == 'operator':
+        return part
     source = CapabilitySource(capability_id, authority=ceiling)
-    if ceiling != 'operator' and isinstance(part, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # `'no_output'` feedback is the one retry the model reads in the application's voice: below it, it's user text.
-        part = _client_safe_retry_feedback(part)
-    if isinstance(part, SystemPromptPart) and ceiling != 'operator':
-        return _CapabilityInstructionPart(
-            content=OperatorText(part.content),
-            source=source,
-            scope=part.scope,
-            metadata=part.metadata,
-            timestamp=part.timestamp,
-        )
-    if isinstance(part, UserPromptPart) and ceiling == 'none':
-        return _CapabilityContentPart(content=part.content, source=source, timestamp=part.timestamp)
-    return part
+    match part:
+        case RetryFeedbackPart():
+            # Feedback says the application's validation failed, which only the application can say: below it, it's
+            # the capability's own text, the user's at `'user'` and data at `'none'`.
+            text = _retry_feedback_text(part)
+            if ceiling == 'none':
+                return _CapabilityContentPart(content=text, source=source, timestamp=part.timestamp)
+            return UserPromptPart(content=text, timestamp=part.timestamp)
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart(tool_name=None):  # pyright: ignore[reportDeprecated]
+            return within_ceiling(_translate_legacy_retry_part(part), capability_id, ceiling)
+        # A legacy retry bound to a tool call is that call's result: tool output.
+        case CapabilityPart() | RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            return part
+        case SystemPromptPart():
+            return _CapabilityInstructionPart(
+                content=OperatorText(part.content),
+                source=source,
+                scope=part.scope,
+                metadata=part.metadata,
+                timestamp=part.timestamp,
+            )
+        case UserPromptPart():
+            if ceiling == 'none':
+                return _CapabilityContentPart(content=part.content, source=source, timestamp=part.timestamp)
+            return part
+        case SpeechPart() if ceiling == 'user':
+            return part
+        case ToolReturnPart() if type(part) is ToolReturnPart:
+            return part
+        case _:
+            raise UserError(
+                f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue '
+                f'`{type(part).__name__}`, which only a capability with operator authority can send.'
+            )
 
 
-def _stamp_capability_part(part: CapabilityPart, capability_id: str, ceiling: Authority) -> None:
-    """Attribute `part` to the capability `capability_id` and lower its source to `ceiling`, in place."""
-    if part.capability_id is None:
-        part.capability_id = capability_id
-    if _lower_authority(part.source.authority, ceiling) != part.source.authority:
-        part.source = CapabilitySource(capability_id, authority=ceiling)
+def _stamped(part: CapabilityPart, capability_id: str, ceiling: Authority) -> CapabilityPart:
+    """A copy of `part` attributed to the capability `capability_id`, with its source lowered to `ceiling`."""
+    source = part.source
+    if _lower_authority(source.authority, ceiling) != source.authority:
+        source = CapabilitySource(capability_id, authority=ceiling)
+    return replace(part, capability_id=part.capability_id or capability_id, source=source)
 
 
 def hand_built_capability_speech(messages: Sequence[ModelMessage]) -> str | None:

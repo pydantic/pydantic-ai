@@ -11,7 +11,7 @@ Harness capabilities are real code (they write files, run commands, call answere
 model with a `FunctionModel` and let the capabilities execute against temp directories and in-memory
 stores. `Agent.override(model=..., workspace=...)` swaps both without touching the production agent;
 `workspace=` takes a backend such as `LocalWorkspaceBackend(tmp_dir)`. This also works on an agent
-with `ModalSandbox`/`E2BSandbox`/`RenderSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox`/`OpenSandbox` attached: no sandbox is created, no factory needed.
+with `ModalSandbox`/`E2BSandbox`/`RenderSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox`/`KubernetesSandbox`/`OpenSandbox` attached: no sandbox is created, no factory needed.
 
 - `FunctionModel`: return a `ToolCallPart` on the first request and a `TextPart` once results are in.
 - `TestModel(call_tools=[])`: smoke test that the agent builds and runs. Plain `TestModel()` calls every
@@ -170,7 +170,7 @@ print(asked[0].questions[0].header)
 
 ## Memory with an In-Memory Store
 
-`Memory()` defaults to `InMemoryStore`. Seed it with `InMemoryStore({'<scope>/<file>': text})`, where
+`Memory()` defaults to `InMemoryMemoryStore`. Seed it with `InMemoryMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
 afterwards. The snapshot is a `MemorySnapshotPart` kept in message history, which the model gets
 as data in a `<memory>` tag on the user channel. It's added on a run's first request only when
@@ -182,9 +182,9 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
-store = InMemoryStore({'main/MEMORY.md': '- prefers tabs'})
+store = InMemoryMemoryStore({'main/MEMORY.md': '- prefers tabs'})
 injected: list[str] = []
 
 
@@ -206,8 +206,8 @@ print(store.files['main/MEMORY.md'])
 """
 ```
 
-`FileStore` needs a workspace: without one the run fails at start with a `UserError`; attach a
-`LocalWorkspace` or pass `FileStore(..., workspace=LocalWorkspaceBackend(tmp))`.
+`FileMemoryStore` needs a workspace: without one the run fails at start with a `UserError`; attach a
+`LocalWorkspace` or pass `FileMemoryStore(..., workspace=LocalWorkspaceBackend(tmp))`.
 
 ## CodeMode: Drive `run_code` Directly
 
@@ -301,7 +301,7 @@ spans: call `Agent.instrument_all(True)` in a fixture, then read `capfire.export
 
 ## Debug Common Failures
 
-**Missing workspace.** `FileSystem`, `Shell`, `Coder`, and `Memory(store=FileStore(...))` fail the run
+**Missing workspace.** `FileSystem`, `Shell`, `Coder`, and `Memory(store=FileMemoryStore(...))` fail the run
 at start, before any model request:
 
 ```python

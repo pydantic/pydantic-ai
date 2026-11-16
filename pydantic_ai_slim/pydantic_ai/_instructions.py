@@ -4,7 +4,7 @@ import warnings
 from collections import Counter
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Generic, TypeGuard
+from typing import TYPE_CHECKING, Generic, TypeGuard
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -33,6 +33,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
+
+if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
 
 InstructionFunc = _system_prompt.PromptFunc[AgentDepsT, str | InstructionPart]
 """A function computing an instruction: it may or may not take `RunContext`, may or may not be async,
@@ -91,6 +94,8 @@ class SourcedInstruction(Generic[AgentDepsT]):
     """
     dynamic: bool = False
     on_change: InstructionChangePolicy = 'rewrite'
+    owner: AbstractCapability[AgentDepsT] | None = field(default=None, compare=False)
+    """The capability whose code a function instruction is, which the context it's called with is attributed to."""
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -214,7 +219,14 @@ async def resolve_sourced_instructions(
             _add_instruction_part(context, instruction, sourced.id)
         elif isinstance(instruction, str):
             _add_instruction_text(context, instruction, sourced.id)
-        elif (part := await resolve_instruction_function(sourced, instruction, run_context)) is not None:
+        elif (
+            part := await resolve_instruction_function(
+                sourced,
+                instruction,
+                # What a capability's instruction function enqueues is held to that capability's authority.
+                run_context if sourced.owner is None else run_context._attributed_to(sourced.owner),  # pyright: ignore[reportPrivateUsage]
+            )
+        ) is not None:
             if context.group:
                 context.pending_parts.append(part)
             else:
