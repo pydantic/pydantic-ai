@@ -15,7 +15,7 @@ import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from typing import Protocol, get_args
+from typing import Literal, Protocol, get_args
 
 import anyio
 import pytest
@@ -127,13 +127,19 @@ class _FakeFrameContent:
         inner_text_error: PlaywrightError | None = None,
         wait_for_error: PlaywrightError | None = None,
         wait_delay: float = 0.0,
+        loaded_url: str | None = None,
     ) -> None:
         self.url = url
         self._text = text
         self._inner_text_error = inner_text_error
         self._wait_for_error = wait_for_error
         self._wait_delay = wait_delay
+        self._loaded_url = loaded_url
         self.wait_states: list[str | None] = []
+
+    async def wait_for_load_state(self, state: Literal['domcontentloaded'], *, timeout: float | None = None) -> None:
+        if self._loaded_url is not None:
+            self.url = self._loaded_url
 
     async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
         if self._inner_text_error is not None:
@@ -2226,6 +2232,83 @@ class TestChromiumAutoInstall:
 
 
 class TestPlaywrightBrowserLifecycle:
+    @pytest.mark.parametrize('tool_name', ['get_text', 'snapshot', 'screenshot', 'tabs'])
+    @pytest.mark.parametrize('location', ['first_tab', 'inactive_tab', 'frame', 'loading_frame'])
+    @pytest.mark.parametrize(
+        'blocked_url',
+        [
+            'http://127.0.0.1:8080/admin?access_token=inherited-secret',
+            'https://blocked.example/?access_token=inherited-secret',
+        ],
+    )
+    async def test_existing_context_refuses_loaded_documents_before_exposing_them(
+        self, monkeypatch: pytest.MonkeyPatch, tool_name: str, location: str, blocked_url: str
+    ) -> None:
+        page = _FakePage(url=blocked_url if location == 'first_tab' else 'about:blank', body='INHERITED_SECRET')
+        cm = _install_fake_driver(monkeypatch, page)
+        connect = _FakeChromium.connect_over_cdp
+
+        async def populated(
+            chromium: _FakeChromium, endpoint_url: str, *, timeout: int | None = None
+        ) -> _FakePlaywrightBrowser:
+            browser = await connect(chromium, endpoint_url, timeout=timeout)
+            context = await browser.new_context()
+            await context.new_page()
+            if location == 'inactive_tab':
+                context.opened.append(_FakePage(url=blocked_url, title='INHERITED_SECRET'))
+            elif location in ('frame', 'loading_frame'):
+                page.frames.append(
+                    _FakeFrameContent(
+                        url='' if location == 'loading_frame' else blocked_url,
+                        loaded_url=blocked_url,
+                        text='INHERITED_SECRET',
+                    )
+                )
+            return browser
+
+        monkeypatch.setattr(_FakeChromium, 'connect_over_cdp', populated)
+        agent = Agent(
+            TestModel(call_tools=[tool_name]),
+            capabilities=[
+                PlaywrightBrowser(
+                    cdp_url='http://localhost:9222',
+                    cdp_context='existing',
+                    policy=EgressPolicy(blocked_domains=['blocked.example']),
+                )
+            ],
+        )
+        reported = _tool_results(await agent.run('inspect the existing browser'))
+        assert 'blocked by the browser policy' in reported
+        assert 'Close its tab in the provider browser' in reported
+        assert 'INHERITED_SECRET' not in reported
+        assert 'inherited-secret' not in reported
+        browser = cm.driver.chromium.browser
+        assert browser is not None
+        assert all(not existing.closed and not existing.handlers for existing in browser.contexts[0].pages)
+
+    async def test_existing_context_rechecks_inactive_tabs_before_close(self) -> None:
+        page = _FakePage(url='about:blank', body='Allowed content')
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='existing')
+        async with session:
+            tools = _toolset(page, session=session)
+            assert await tools.get_text() == 'Allowed content'
+            inherited = _FakePage(url='http://127.0.0.1:8080/admin', body='INHERITED_SECRET')
+            session.pages.append(inherited)
+            assert 'blocked by the browser policy' in await tools.tabs(action='close', index=0)
+            assert not page.closed and not inherited.closed
+
+    async def test_existing_context_preserves_subframe_policy(self) -> None:
+        page = _FakePage(url='https://example.com/', body='Allowed content')
+        page.frames.append(_FakeFrameContent(url='https://embed.example.org/', text='Allowed embedded content'))
+        session = PlaywrightBrowserSession(
+            cdp_url='http://localhost:9222',
+            cdp_context='existing',
+            policy=EgressPolicy(allowed_domains=['example.com'], block_private_addresses=False),
+        )
+        async with session:
+            result = await _toolset(page, session=session).get_text()
+        assert 'Allowed embedded content' in result
+
     @pytest.mark.parametrize('page_count', [0, 2])
     async def test_existing_cdp_context_keeps_pages_and_native_handlers(
         self, monkeypatch: pytest.MonkeyPatch, page_count: int

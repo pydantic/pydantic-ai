@@ -294,6 +294,12 @@ handling as for a new context. If it has no page, one is opened. A missing
 default context or more than eight existing tabs returns a tool error rather
 than opening an empty context or closing inherited tabs.
 
+Loaded tab and frame URLs must pass the egress policy before page handlers are
+attached and before tools read or act on a page. A context containing a refused
+document returns a tool error. The browser owner must close or navigate its tab
+before retrying; Pydantic leaves inherited pages unchanged. Frame checks use the
+policy's `subframe` rules, including its configured allowlist reach.
+
 Pass `cdp_url_factory` instead of `cdp_url` when obtaining the endpoint should
 also be lazy. Supply an async function that creates or resumes the provider
 browser and returns its CDP URL. The resulting capability goes in the agent's

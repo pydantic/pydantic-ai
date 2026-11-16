@@ -258,9 +258,11 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     """Create an isolated context, or use the CDP browser's existing default context.
 
     `existing` requires `cdp_url` or `cdp_url_factory` and excludes `storage_state`.
-    It inherits saved sign-ins and open tabs. Egress guards and native session
-    handlers still apply, but the browser owner controls service workers and
-    downloads; those creation-time settings cannot be changed on an existing context.
+    It inherits saved sign-ins and open tabs. Loaded tab and frame URLs must pass
+    the egress policy before handlers are attached and before tools read or act
+    on a page. Egress guards and native session handlers still apply, but the
+    browser owner controls service workers and downloads; those creation-time
+    settings cannot be changed on an existing context.
     """
 
     id: str | None = 'playwright_browser'

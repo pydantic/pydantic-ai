@@ -255,6 +255,9 @@ class _Frame(Protocol):
 
     @property
     def url(self) -> str: ...  # pragma: no cover
+    async def wait_for_load_state(
+        self, state: Literal['domcontentloaded'], *, timeout: float | None = None
+    ) -> None: ...  # pragma: no cover
     async def inner_text(self, selector: str, *, timeout: float | None = None) -> str: ...  # pragma: no cover
     async def wait_for_selector(
         self, selector: str, *, timeout: float | None = None, state: _WaitState | None = None
@@ -1224,7 +1227,29 @@ class PlaywrightBrowserSession:
                 raise BrowserUnavailableError(self.launch_error)
             if self.page is None:
                 raise BrowserUnavailableError('Browser failed to launch.')  # pragma: no cover
+        if self._cdp_context == 'existing':
+            await self._validate_existing_pages(self.pages)
         return self.page
+
+    async def _validate_existing_pages(self, pages: Sequence[_Page]) -> None:
+        """Check loaded documents before listeners or tools can expose their contents.
+
+        Request routes cannot check documents loaded before attachment. Recheck
+        every tab because listing reads inactive titles and closing the active
+        tab can select another inherited page.
+        """
+        for page in pages:
+            for index, frame in enumerate(page.frames):
+                if not frame.url:
+                    # CDP can expose a cross-origin frame before its URL is populated.
+                    await self._bounded(frame.wait_for_load_state('domcontentloaded', timeout=self._launch_timeout_ms))
+                document = EgressRequest(url=frame.url, kind='navigation' if index == 0 else 'subframe')
+                if (reason := await self.decide(document)) is not None:
+                    raise BrowserUnavailableError(
+                        f'The existing CDP context contains a document blocked by the browser policy '
+                        f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
+                        'or navigate that tab to an allowed URL, then retry.'
+                    )
 
     async def _launch(self) -> None:
         """Start the driver and Chromium, then open the guarded page.
@@ -1267,6 +1292,7 @@ class PlaywrightBrowserSession:
                 raise BrowserUnavailableError(
                     f'The existing CDP context has more than {_MAX_TABS} tabs. Close some first.'
                 )
+            await self._validate_existing_pages(pages)
         else:
             # These creation-time controls cannot be applied to an existing context.
             # Service workers bypass routes; downloads have no tool-level contract.
