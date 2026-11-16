@@ -100,12 +100,7 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
             id='scroll-in-parts',
         ),
         pytest.param(TypeText(text='héllo'), ['type héllo'], id='type'),
-        pytest.param(
-            TypeText(text='a\tb\t\tc'),
-            ['type a', 'press tab modifiers=None', 'type b', 'press tab modifiers=None', 'press tab modifiers=None']
-            + ['type c'],
-            id='type-tabs',
-        ),
+        pytest.param(TypeText(text='a\tb'), ['type a\tb'], id='type-tab'),
         pytest.param(
             TypeText(text='a' * 4_001), [f'type {"a" * 2_000}', f'type {"a" * 2_000}', 'type a'], id='type-in-parts'
         ),
@@ -116,9 +111,8 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         ),
         pytest.param(PressKeys(keys=('Return',)), ['press enter modifiers=[]'], id='alias'),
         pytest.param(
-            PressKeys(keys=('ctrl', 'KP_Enter', 'numpad_multiply')),
-            ['keydown ctrl', 'keydown num_enter', 'keydown num_asterisk', 'keyup num_asterisk', 'keyup num_enter']
-            + ['keyup ctrl'],
+            PressKeys(keys=('numlock', 'numpad5')),
+            ['keydown num_lock', 'keydown num5', 'keyup num5', 'keyup num_lock'],
             id='renamed-keys',
         ),
         pytest.param(
@@ -151,6 +145,7 @@ async def test_each_action_maps_onto_daytona_calls(
         pytest.param(
             PressKeys(keys=('printscreen',)), "cannot press the key 'printscreen'", id='key-without-a-daytona-name'
         ),
+        pytest.param(PressKeys(keys=('numpad_add',)), "cannot press the key 'numpad_add'", id='numpad-key'),
         pytest.param(HoldKeys(keys=('é',), seconds=1), "cannot press the key 'é'", id='non-ascii-key'),
         pytest.param(object(), 'cannot perform <object', id='unknown-action-type'),
     ],
@@ -479,17 +474,6 @@ async def test_a_desktop_size_is_set_on_a_new_sandbox(fake_daytona: FakeDaytona)
         {'DISPLAY': ':0', 'VNC_RESOLUTION': '1280x800'},
         None,
     ]
-
-
-@pytest.mark.parametrize('size', [(1000, 800), (1280, 700)], ids=['narrow', 'short'])
-def test_a_desktop_smaller_than_daytona_starts_is_refused(size: tuple[int, int]) -> None:
-    with pytest.raises(UserError, match="Daytona's desktop is at least 1024x768"):
-        DaytonaSandboxBackend(desktop=size)
-
-
-def test_attaching_with_a_desktop_below_daytonas_minimum_is_allowed() -> None:
-    backend = DaytonaSandboxBackend(ref=WorkspaceRef(provider='daytona', id='sandbox-1'), desktop=(800, 600))
-    assert backend.display is not None
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display() -> None:

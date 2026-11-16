@@ -39,7 +39,7 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from ..display_contract_live import check_display_contract
+from ..display_contract_live import check_display_contract, png_size
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
 pytestmark = pytest.mark.daytona_live
@@ -67,9 +67,11 @@ async def client() -> AsyncIterator[daytona.AsyncDaytona]:
 
 
 @asynccontextmanager
-async def _owned(client: daytona.AsyncDaytona) -> AsyncGenerator[DaytonaSandboxBackend]:
+async def _owned(
+    client: daytona.AsyncDaytona, desktop: bool | tuple[int, int] = False
+) -> AsyncGenerator[DaytonaSandboxBackend]:
     """Create a sandbox and delete it on the way out, even when the test deleted it already."""
-    backend = DaytonaSandboxBackend(client=client, auto_stop_interval=LIVE_AUTO_STOP_INTERVAL)
+    backend = DaytonaSandboxBackend(client=client, auto_stop_interval=LIVE_AUTO_STOP_INTERVAL, desktop=desktop)
     native = await backend.get_sandbox()
     try:
         yield backend
@@ -291,6 +293,14 @@ async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -
         assert result.stdout.splitlines() == ['1', path]
 
 
+async def test_a_desktop_below_1024x768_keeps_its_size(client: daytona.AsyncDaytona) -> None:
+    async with _owned(client, desktop=(800, 600)) as backend:
+        display = backend.display
+        assert display is not None
+        assert await display.display_size() == (800, 600)
+        assert png_size(await display.screenshot()) == (800, 600)
+
+
 class TestLiveDaytonaDesktop:
     """Runs the display against a sandbox started with a desktop. Commands and files are the module's other tests':
     a desktop sandbox runs them the same way."""
@@ -330,12 +340,12 @@ class TestLiveDaytonaDesktop:
         await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'], timeout=30)
 
         await display.act(Click(x=300, y=180))
-        await display.act(TypeText(text='hello, desktop'))
+        await display.act(TypeText(text='hello,\tdesktop'))
         await display.act(PressKeys(keys=('!',)))
         await display.act(PressKeys(keys=('enter',)))
 
         typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
-        assert typed.stdout == 'hello, desktop!\n'
+        assert typed.stdout == 'hello,\tdesktop!\n'
 
 
 # The README's Python blocks are the same as this page's.
