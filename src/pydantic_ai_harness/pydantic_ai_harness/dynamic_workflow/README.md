@@ -509,8 +509,8 @@ Under other engines, sub-agents run concurrently.
 context once per `run_workflow` call, and returns a `WorkflowCallScheduler`. Each call reaches its
 `run` as a `WorkflowCall` carrying the sub-agent's `agent_name`, and starts when `run` awaits
 `call.start()`. Its `flush` is awaited each time the script waits on its calls, once every call
-made before the wait has reached `run`. A durable engine integration can use this to register every call of a batch, in the order the script made
-them, before any of them starts:
+made before the wait has reached `run`. A durable engine integration can use this to register
+every call of a batch, in the order the script made them, before any of them starts:
 
 ```python
 import asyncio
@@ -546,10 +546,10 @@ workflow = DynamicWorkflow(agents=[reviewer], call_scheduler=start_together)
 A call only completes after `run` awaits its `call.start()`, so a scheduler that holds calls back
 has to release them in `flush`. Under `AWSLambdaDurability`, the calls that have started when
 `flush` returns run as one `parallel` operation, so a released call has to await `call.start()`
-without suspending first: one that waits on something else first, such as a concurrency limit, misses the
-operation and the script waits on it indefinitely. An exception that `run` raises itself reaches
-the script as a `RuntimeError` naming only its type. Under `DBOSDurability` the calls already
-start one at a time in dispatch order, and the `call_scheduler` factory is not called.
+without suspending first: one that waits on something else first, such as a concurrency limit,
+misses the operation and the script waits on it indefinitely. An exception that `run` raises
+itself reaches the script as a `RuntimeError` naming only its type. Under `DBOSDurability` the
+calls already start one at a time in dispatch order, and the `call_scheduler` factory is not called.
 
 ## API
 
