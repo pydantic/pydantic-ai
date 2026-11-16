@@ -1783,6 +1783,7 @@ class TestPinAcceptedFiles:
     async def test_unchanged_files_keep_the_workspaces_level(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'AGENTS.md', 'Use tabs.')
         accepted = {'AGENTS.md': await file_digest(workspace, 'AGENTS.md')}
+        assert accepted['AGENTS.md'] == snapshot('3daa6bb31940f085636347a3b35f70c917d89e6cde3ed69c46d31e148a607df1')
 
         assert await pin_accepted_files(workspace, accepted) is workspace
 

@@ -25,9 +25,10 @@ async def pin_accepted_files(
 
     `accepted` maps workspace paths, such as `'AGENTS.md'`, `'.agents/skills/review/SKILL.md'` or
     `'.claude/agents/reviewer.md'`, to the [`file_digest`][pydantic_ai_harness.repo_context.file_digest] recorded when
-    the user accepted them. A file that still matches keeps the level the workspace gives it. A changed one, or one
-    that is no longer a file, gets `changed`, but never more than that level, so a deleted file recreated later is
-    capped too. Files not in `accepted` are untouched. The capped files are wrapped in an
+    the user accepted them. A file that still matches keeps the level the workspace gives it. A changed file, or one
+    that is no longer a file (so a deleted file recreated later is capped too), gets `changed`. A cap never raises a
+    file above the level the workspace gives it, so a file outside the working directory stays at `'none'`. Files not
+    in `accepted` are untouched. The capped files are wrapped in an
     [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] `path_authority`, so
     [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] reports the lower level until the user accepts the
     new content and the app records its digest.
