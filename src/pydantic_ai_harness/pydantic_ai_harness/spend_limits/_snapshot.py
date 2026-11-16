@@ -110,10 +110,10 @@ class BudgetStatus:
     """The token ceiling this reading is measured against, resolved for the run when `Budget.tokens` is a callable."""
 
     remaining_usd: Decimal | None
-    """`None` when the budget sets no USD limit."""
+    """`None` when no USD ceiling applies to this reading (`usd_limit` is `None`)."""
 
     remaining_tokens: int | None
-    """`None` when the budget sets no token limit."""
+    """`None` when no token ceiling applies to this reading (`token_limit` is `None`)."""
 
     warning: bool
     """Whether spend has crossed `Budget.warn_at`. Always `False` without one."""
