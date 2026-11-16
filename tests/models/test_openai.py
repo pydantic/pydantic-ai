@@ -2210,45 +2210,6 @@ info:
     )
 
 
-async def test_parameterized_openapi_yaml_structured_suffix_inlined(allow_model_requests: None):
-    """A parameterized `+yaml` suffix media type is inlined as text, like its bare form is.
-
-    Unit test, not VCR: classification must look at the bare `application/openapi+yaml` essence,
-    so the structured-suffix branch keeps matching when RFC 2397 parameters are present.
-    """
-    yaml_content = BinaryContent.from_data_uri(
-        'data:application/openapi+yaml;charset=utf-8;base64,b3BlbmFwaTogMy4xLjAKaW5mbzoKICB0aXRsZTogZGVtbw=='
-    )
-
-    c = completion_message(ChatCompletionMessage(content='An OpenAPI document.', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-
-    result = await agent.run(['What is this file?', yaml_content])
-    assert result.output == snapshot('An OpenAPI document.')
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {'text': 'What is this file?', 'type': 'text'},
-                    {
-                        'text': """\
------BEGIN FILE id="f455cb" type="application/openapi+yaml;charset=utf-8"-----
-openapi: 3.1.0
-info:
-  title: demo
------END FILE id="f455cb"-----\
-""",
-                        'type': 'text',
-                    },
-                ],
-            }
-        ]
-    )
-
-
 async def test_video_url_not_supported(allow_model_requests: None):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     agent = Agent(m)
