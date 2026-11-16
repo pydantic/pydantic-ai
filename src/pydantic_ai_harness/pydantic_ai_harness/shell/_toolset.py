@@ -19,7 +19,7 @@ from typing import Any
 import anyio
 
 from pydantic_ai import RunContext
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutError
@@ -91,6 +91,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         max_log_bytes: int | None = None,
         env: Mapping[str, str] | None = None,
         denied_env_patterns: Sequence[str] = (),
+        secret_env: Mapping[str, str] | None = None,
         tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES,
         cwd: Path | None = None,
         id: str | None = None,
@@ -118,6 +119,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._allow_interactive = allow_interactive
         self._env = dict(env) if env is not None else None
         self._denied_env_patterns = list(denied_env_patterns)
+        self._secret_env = dict(secret_env) if secret_env is not None else None
+        self._secrets = _masks(self._secret_env or {})
         self._tools = tuple(tools)
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
@@ -177,6 +180,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             allow_interactive=self._allow_interactive,
             env=self._env,
             denied_env_patterns=self._denied_env_patterns,
+            secret_env=self._secret_env,
             tools=self._tools,
             id=self.id,
         )
@@ -203,35 +207,43 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        """Enforce the model-visible output cap at the tool dispatch seam.
+        """Mask `secret_env` values and enforce the model-visible output cap at the tool dispatch seam.
 
         Tools place control metadata (status, exit code, `start_command`'s ID
         line) at the end of their responses, so keeping the tail preserves it
-        without any per-tool cases here. Only `str` results are capped; a
-        future tool returning rich content (e.g. `ToolReturn`) needs this seam
-        extended.
+        without any per-tool cases here. Only `str` results, `ModelRetry` and
+        `ToolFailed` messages are masked and capped; a future tool returning rich
+        content (e.g. `ToolReturn`) needs this seam extended.
         """
-        result = await super().call_tool(name, tool_args, ctx, tool)
+        try:
+            result = await super().call_tool(name, tool_args, ctx, tool)
+        except (ModelRetry, ToolFailed) as exc:
+            if not self._secrets:
+                raise
+            raise type(exc)(self._redact(exc.message)) from exc
         if not isinstance(result, str):
             return result
-        return truncate_tail(result, self._max_output_chars)
+        return truncate_tail(self._redact(result), self._max_output_chars)
+
+    def _redact(self, text: str) -> str:
+        for value, mask in self._secrets:
+            text = text.replace(value, mask)
+        return text
 
     def _resolve_env(self) -> dict[str, str] | None:
         """The variables handed to the workspace for each command, on top of its own environment.
 
         The workspace decides the base environment.
         `None` adds nothing. An explicit `env` is added, minus names that match
-        `denied_env_patterns` (glob, via `fnmatch`).
+        `denied_env_patterns` (glob, via `fnmatch`), then `secret_env`, which the patterns do not filter.
         """
-        if self._env is None:
+        if self._env is None and self._secret_env is None:
             return None
-        if not self._denied_env_patterns:
-            return dict(self._env)
         return {
             name: value
-            for name, value in self._env.items()
+            for name, value in (self._env or {}).items()
             if not any(fnmatch.fnmatchcase(name, pattern) for pattern in self._denied_env_patterns)
-        }
+        } | (self._secret_env or {})
 
     async def _cwd_for(self, ctx: RunContext[AgentDepsT]) -> str:
         """The absolute workspace directory the next `run_command` or `start_command` command starts in."""
@@ -583,6 +595,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             # The wrapper makes only the job directory writable again, not a jobs directory the command made read-only.
             parts.append('[job directory not removed: permission denied]')
         return '\n'.join(parts)
+
+
+def _masks(secret_env: Mapping[str, str]) -> list[tuple[str, str]]:
+    """Each non-empty secret with its mask, longest first so a secret containing another is masked whole."""
+    secrets = [(value, f'[REDACTED:{name}]') for name, value in secret_env.items() if value]
+    return sorted(secrets, key=lambda secret: len(secret[0]), reverse=True)
 
 
 def _job_id(ctx: RunContext[AgentDepsT]) -> str | None:

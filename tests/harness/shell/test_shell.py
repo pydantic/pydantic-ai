@@ -28,7 +28,15 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextContent,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -45,6 +53,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import BackgroundTools
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -2324,6 +2333,119 @@ class TestEnvControlPropagation:
         assert isinstance(toolset, ShellToolset)
         # None of the provider-credential prefixes survive.
         assert toolset._resolve_env() == {'PATH': '/usr/bin'}  # pyright: ignore[reportPrivateUsage]
+
+
+_SECRET = 'sk-secret-123abc'
+
+
+def _secret_toolset(**kwargs: Any) -> ShellToolset[None]:
+    return ShellToolset(
+        allowed_commands=[],
+        denied_commands=[],
+        denied_operators=[],
+        default_timeout=10.0,
+        max_output_chars=50_000,
+        persist_cwd=False,
+        allow_interactive=False,
+        secret_env={'TMP_TOKEN': _SECRET, 'EMPTY': ''},
+        **kwargs,
+    )
+
+
+class TestShellSecretEnv:
+    """`secret_env` reaches commands and is masked in what the tools return to the model."""
+
+    async def test_run_command_output_is_masked(self, tmp_path: Path) -> None:
+        output = await call_tool(
+            [Shell(secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'run_command',
+            {'command': 'printf "token=%s" "$TMP_TOKEN"'},
+        )
+        assert output == '[stdout]\ntoken=[REDACTED:TMP_TOKEN]'
+
+    async def test_background_output_is_masked(self, shell_dir: Path) -> None:
+        ts = _secret_toolset()
+        command_id = _parse_command_id(
+            await _call_shell_tool(ts, shell_dir, 'start_command', command='printf "%s" "$TMP_TOKEN"')
+        )
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
+        stopped = await _call_shell_tool(ts, shell_dir, 'stop_command', command_id=command_id)
+        assert stopped.startswith('[stdout]\n[REDACTED:TMP_TOKEN]\n')
+
+    async def test_persistent_output_is_masked(self, tmp_path: Path) -> None:
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "%s\\n" "$TMP_TOKEN"'},
+        )
+        assert output.startswith('[REDACTED:TMP_TOKEN]\n')
+        assert _SECRET not in output
+
+    async def test_longer_secret_is_masked_whole(self, shell_dir: Path) -> None:
+        ts = ShellToolset[None](
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10.0,
+            max_output_chars=50_000,
+            persist_cwd=False,
+            allow_interactive=False,
+            secret_env={'SHORT': 'abc', 'LONG': 'abcdef'},
+        )
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo abcdef abc')
+        assert output == '[stdout]\n[REDACTED:LONG] [REDACTED:SHORT]\n'
+
+    async def test_retry_message_is_masked(self, shell_dir: Path) -> None:
+        with pytest.raises(ModelRetry) as exc_info:
+            await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command=f'vi {_SECRET}')
+        assert exc_info.value.message == "Interactive commands are not allowed. Command: 'vi [REDACTED:TMP_TOKEN]'"
+
+    async def test_failure_message_is_masked(self, shell_dir: Path) -> None:
+        ts = _secret_toolset()
+        with patch.object(ShellToolset, '_job', side_effect=WorkspaceError(f'refused {_SECRET}')):
+            with pytest.raises(ToolFailed) as exc_info:
+                await _call_shell_tool(ts, shell_dir, 'check_command', command_id='0' * 32)
+        assert exc_info.value.message == 'refused [REDACTED:TMP_TOKEN]'
+
+    async def test_retry_message_unchanged_without_secrets(self, shell_dir: Path) -> None:
+        with pytest.raises(ModelRetry, match='Interactive commands are not allowed'):
+            await _call_shell_tool(_shell_toolset(shell_dir), shell_dir, 'run_command', command='vi x')
+
+    def test_secret_env_is_added_unfiltered(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(env={'FOO': 'bar', 'TMP_X': 'drop'}, denied_env_patterns=['TMP_*'])
+        assert ts._resolve_env() == {'FOO': 'bar', 'TMP_TOKEN': _SECRET, 'EMPTY': ''}  # pyright: ignore[reportPrivateUsage]
+
+    async def test_for_run_and_capability_carry_secret_env(self, shell_dir: Path) -> None:
+        toolset = Shell(secret_env={'TMP_TOKEN': _SECRET}, persist_cwd=True).get_toolset()
+        run_ts = await toolset.for_run(_ctx(shell_dir))
+        assert isinstance(run_ts, ShellToolset)
+        assert run_ts._resolve_env() == {'TMP_TOKEN': _SECRET}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_background_tools_push_run_command_output(tmp_path: Path) -> None:
+    """With `BackgroundTools`, a `run_command` result reaches the model when the command ends, without polling."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'sleep 0.2; echo built'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[LocalWorkspace(tmp_path), Shell(), BackgroundTools(tools=['run_command'])],
+    )
+    result = await agent.run('build')
+    pushed = [
+        item.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        for item in part.content
+        if isinstance(item, TextContent)
+    ]
+    assert len(pushed) == 1
+    assert '[stdout]\nbuilt\n' in pushed[0]
 
 
 class _RefusesRemove(LocalWorkspaceBackend):

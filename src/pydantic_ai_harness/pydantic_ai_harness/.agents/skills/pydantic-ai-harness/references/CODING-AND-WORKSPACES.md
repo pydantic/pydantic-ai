@@ -291,7 +291,8 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
 (per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
-`allow_interactive=False`, `env`, `denied_env_patterns`.
+`allow_interactive=False`, `env`, `denied_env_patterns`, `secret_env` (added like `env`, values masked as
+`[REDACTED:<name>]` in tool results; not in logs the model reads with file tools).
 
 - `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
   it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.
@@ -301,6 +302,8 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
   `persist_cwd=True` or `tools=['shell']`; `tools=['shell']` with `default_timeout` outside (0, 270].
 - Only the first token is checked: `python`, `git`, `make`, `uv` can spawn anything.
 - `denied_env_patterns` does **not** filter `LocalWorkspace(env=)`.
+- For output pushed to the model when a command ends, add `BackgroundTools(tools=['run_command'])`.
+  Commands get stdin at EOF; there is no tool to send input.
 - Background commands **outlive the run**; a later run on the same workspace can check or stop them.
   Clean up with `stop_command` or your own code. They need `mv` and `base64` in the workspace, and
   `setsid` for process-group stops.
