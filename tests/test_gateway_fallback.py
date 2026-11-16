@@ -217,9 +217,7 @@ class ClosingStream(httpx2.AsyncByteStream):
     closed: bool = False
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        # One event per chunk, so the consumer can stop reading before the body ends.
-        for event in self.content.split(b'\n\n'):
-            yield event + b'\n\n'
+        yield self.content
 
     async def aclose(self) -> None:
         self.closed = True
