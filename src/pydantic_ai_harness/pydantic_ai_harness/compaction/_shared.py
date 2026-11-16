@@ -689,16 +689,15 @@ def record_failed_compaction(
 ) -> None:
     """Emit a `compact_messages` span recording a compaction attempt that raised *error* and was skipped."""
     with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
-        if span.is_recording():
-            span.set_attributes(
-                {
-                    'compaction.strategy': strategy,
-                    'compaction.skipped': skipped,
-                    'error.type': f'{type(error).__module__}.{type(error).__qualname__}',
-                    'compaction.messages_before': len(messages),
-                    'compaction.tokens_before': estimate_token_count(messages, tokenizer),
-                }
-            )
+        span.set_attributes(
+            {
+                'compaction.strategy': strategy,
+                'compaction.skipped': skipped,
+                'error.type': f'{type(error).__module__}.{type(error).__qualname__}',
+                'compaction.messages_before': len(messages),
+                'compaction.tokens_before': estimate_token_count(messages, tokenizer),
+            }
+        )
 
 
 async def compact_if_smaller(

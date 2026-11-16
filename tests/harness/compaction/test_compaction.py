@@ -2752,7 +2752,10 @@ class TestTieredCompaction:
             await cap.before_model_request(_make_ctx(rc.messages), rc)
 
     async def test_triggerless_tiers_with_a_failing_summarizer_in_an_agent_run(self):
+        summarized: list[list[ModelMessage]] = []
+
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summarized.append(messages)
             raise ModelAPIError('summarizer', 'overloaded')
 
         seen: list[list[ModelMessage]] = []
@@ -2760,7 +2763,10 @@ class TestTieredCompaction:
             _recording_model(seen),
             capabilities=[
                 TieredCompaction(
-                    tiers=[SummarizingCompaction(FunctionModel(summarize)), SlidingWindowCompaction(keep_messages=1)],
+                    tiers=[
+                        SummarizingCompaction(FunctionModel(summarize), keep_messages=1),
+                        SlidingWindowCompaction(keep_messages=1),
+                    ],
                     target_tokens=1,
                 )
             ],
@@ -2775,6 +2781,7 @@ class TestTieredCompaction:
             for part in message.parts
             if isinstance(part, UserPromptPart)
         ]
+        assert len(summarized) == 1
         assert prompts == ['a' * 400, 'latest']
 
     def test_validation_target_tokens(self):
