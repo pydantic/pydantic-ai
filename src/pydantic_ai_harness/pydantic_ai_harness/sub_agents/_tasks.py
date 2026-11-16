@@ -127,7 +127,10 @@ class DelegationTask:
 
         A settled task's history is kept in its saved file only, so its snapshot has no activity.
         """
-        responses = [message for message in self.messages if isinstance(message, ModelResponse)]
+        # A resumed task's history holds earlier runs too; only this run's responses describe its progress.
+        responses = [
+            message for message in self.messages if isinstance(message, ModelResponse) and message.run_id == self.run_id
+        ]
         usage = RunUsage(requests=len(responses))
         for response in responses:
             usage.incr(response.usage)

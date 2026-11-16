@@ -663,6 +663,40 @@ class TestSubAgentsTaskControl:
         assert '\n' not in checked
         assert checked.endswith('s, with 0 model requests.')
 
+    async def test_check_task_on_a_resumed_task_shows_only_its_new_run(self) -> None:
+        opened = anyio.Event()
+
+        async def blocked(messages: list[ModelMessage]) -> ModelResponse:
+            await opened.wait()
+            return text('second answer')
+
+        def resume(messages: list[ModelMessage]) -> ModelResponse:
+            task_id = task_id_in(tool_returns(messages)[-1])
+            return call('delegate_task', agent_name='researcher', task='Again.', resume=task_id, background=True)
+
+        def check(messages: list[ModelMessage]) -> ModelResponse:
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='First.'),
+                resume,
+                check,
+                release,
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(Agent(scripted(text('first answer'), blocked))))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        checked = tool_returns(result.all_messages())[2]
+        assert checked.endswith('s, with 0 model requests.')
+        assert 'first answer' not in checked
+
     async def test_a_snapshot_is_bounded(self) -> None:
         task = DelegationTask(
             id='t',
@@ -670,12 +704,17 @@ class TestSubAgentsTaskControl:
             prompt='Go.',
             conversation_id='c',
             pending_question='Which branch?',
+            run_id='current',
             messages=[
+                ModelResponse(parts=[TextPart('earlier run')], usage=RequestUsage(input_tokens=99), run_id='earlier'),
                 ModelResponse(
                     parts=[ToolCallPart(f'tool{i}', {'arg': 'x' * 100}) for i in range(7)],
                     usage=RequestUsage(input_tokens=10, output_tokens=2),
+                    run_id='current',
                 ),
-                ModelResponse(parts=[TextPart('y' * 5000)], usage=RequestUsage(input_tokens=20, output_tokens=3)),
+                ModelResponse(
+                    parts=[TextPart('y' * 5000)], usage=RequestUsage(input_tokens=20, output_tokens=3), run_id='current'
+                ),
             ],
         )
         snapshot = task.snapshot()
