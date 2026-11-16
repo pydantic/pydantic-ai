@@ -1146,13 +1146,7 @@ class TestInternals:
         assert 'omitted' in _head_tail_preview('a' * 100, 10)
 
     def test_build_spill_preview_tokens_unit(self):
-        unit = _Unit(
-            binary=False,
-            text='x' * 100,
-            data=b'x' * 100,
-            value='x' * 100,
-            suffix='',
-        )
+        unit = _Unit(binary=False, text='x' * 100, data=b'x' * 100, value='x' * 100, suffix='')
         assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 
 

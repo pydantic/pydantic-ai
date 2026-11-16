@@ -115,6 +115,12 @@ class _Unit:
 
 _ActionName = Literal['truncate', 'spill', 'summarize']
 
+_ACTION_NAMES: Mapping[type[Truncate] | type[Spill] | type[Summarize], _ActionName] = {
+    Truncate: 'truncate',
+    Spill: 'spill',
+    Summarize: 'summarize',
+}
+
 
 @dataclass
 class _Reduction:
@@ -428,13 +434,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
         if is_binary(value):
-            return _Unit(
-                binary=True,
-                text=None,
-                data=to_bytes(value),
-                value=value,
-                suffix=suffix,
-            )
+            return _Unit(binary=True, text=None, data=to_bytes(value), value=value, suffix=suffix)
         if self.serializer is not None and not isinstance(value, str):
             try:
                 text = _ensure_text(self.serializer(value))
@@ -451,13 +451,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             text = to_text(value)
         if self.strip_ansi:
             text = strip_ansi(text)
-        return _Unit(
-            binary=False,
-            text=text,
-            data=text.encode('utf-8'),
-            value=value,
-            suffix=suffix,
-        )
+        return _Unit(binary=False, text=text, data=text.encode('utf-8'), value=value, suffix=suffix)
 
     async def _reduce(
         self,
@@ -490,33 +484,27 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if not span.is_recording():
             # Measuring the replacement can mean running a tokenizer.
             return
+        prefix = 'tool_output_limits.content' if unit.suffix == '.content' else 'tool_output_limits'
+        size_unit: Literal['chars', 'tokens', 'bytes']
         if unit.binary:
             size_unit = 'bytes'
             reduced_size = len(reduction.text.encode('utf-8'))
         else:
-            size_unit = 'tokens' if self.over_tokens else 'chars'
+            size_unit = _text_size_unit(self.over_tokens)
             reduced_size = measure(reduction.text, over_tokens=self.over_tokens, tokenizer=self.tokenizer)
         attributes: dict[str, str | int] = {
-            'tool_output_limits.action': reduction.action,
-            'tool_output_limits.original_size': original_size,
-            'tool_output_limits.reduced_size': reduced_size,
-            'tool_output_limits.size_unit': size_unit,
+            f'{prefix}.action': reduction.action,
+            f'{prefix}.original_size': original_size,
+            f'{prefix}.reduced_size': reduced_size,
+            f'{prefix}.size_unit': size_unit,
         }
         if reduction.fallback_from is not None:
-            attributes['tool_output_limits.fallback_from'] = reduction.fallback_from
+            attributes[f'{prefix}.fallback_from'] = reduction.fallback_from
         if reduction.fallback_error is not None:
-            attributes['tool_output_limits.fallback_error'] = reduction.fallback_error
-        handle_key = 'tool_output_limits.handle'
-        if unit.suffix == '.content':
-            # A `ToolReturn`'s `content` is recorded under `tool_output_limits.content.*` with the same names.
-            attributes = {
-                key.replace('tool_output_limits.', 'tool_output_limits.content.', 1): value
-                for key, value in attributes.items()
-            }
-            handle_key = 'tool_output_limits.content.handle'
+            attributes[f'{prefix}.fallback_error'] = reduction.fallback_error
         span.set_attributes(attributes)
         if reduction.handle is not None:
-            set_content_attribute(ctx, span, handle_key, reduction.handle)
+            set_content_attribute(ctx, span, f'{prefix}.handle', reduction.handle)
 
     async def _reduce_content(
         self,
@@ -760,11 +748,11 @@ async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: d
 
 
 def _action_name(action: Truncate | Spill | Summarize) -> _ActionName:
-    if isinstance(action, Truncate):
-        return 'truncate'
-    if isinstance(action, Spill):
-        return 'spill'
-    return 'summarize'
+    return _ACTION_NAMES[type(action)]
+
+
+def _text_size_unit(over_tokens: bool) -> Literal['chars', 'tokens']:
+    return 'tokens' if over_tokens else 'chars'
 
 
 def _next_action(action: Action) -> Action | None:
@@ -842,7 +830,7 @@ def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_t
         sketch = ''
     else:
         text = unit.text or ''
-        size_unit = 'tokens' if over_tokens else 'chars'
+        size_unit = _text_size_unit(over_tokens)
         amount = measure(text, over_tokens=over_tokens, tokenizer=None) if over_tokens else len(text)
         size_desc = f'{amount:,} {size_unit}'
         body = _head_tail_preview(text, preview_chars)
