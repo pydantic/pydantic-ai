@@ -1103,7 +1103,7 @@ class PlaywrightBrowserSession:
         operation's span cannot be recovered from the OpenTelemetry context there.
         The toolset publishes it here for the length of an operation instead.
         """
-        self.operation_includes_content = False
+        self._operation_includes_content = False
         """Whether the run that opened `operation_span` includes content in traces, published with it."""
 
     def record(self, event: BrowserEvent) -> None:
@@ -1124,7 +1124,7 @@ class PlaywrightBrowserSession:
         self.events_recorded += 1
         span = self.operation_span
         if span is not None and span.is_recording():
-            span.add_event(f'browser.{event.kind}', event.attributes(include_content=self.operation_includes_content))
+            span.add_event(f'browser.{event.kind}', event.attributes(include_content=self._operation_includes_content))
 
     def failure_since_operation_start(self) -> BrowserEvent | None:
         """The last refused or failed request caused by the running operation, if any.
@@ -1880,7 +1880,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                 {'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
                 self._session.operation_span = span
-                self._session.operation_includes_content = telemetry is None or telemetry.include_content
+                self._session._operation_includes_content = telemetry is None or telemetry.include_content  # pyright: ignore[reportPrivateUsage]
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -1903,7 +1903,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     # because `tabs` can have moved it, and the span should name the
                     # tab the operation left rather than the one it started on.
                     ended_on = self._session.page if self._session.page is not None else page
-                    if ended_on is not None and self._session.operation_includes_content:
+                    if ended_on is not None and self._session._operation_includes_content:  # pyright: ignore[reportPrivateUsage]
                         span.set_attribute('url.full', _without_credentials(ended_on.url))
                     self._session.operation_span = None
 
@@ -1925,7 +1925,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             telemetry = current_run_telemetry()
             with self._operation_span(telemetry, action, {'browser.action': action, 'browser.outcome': 'ok'}) as span:
                 self._session.operation_span = span
-                self._session.operation_includes_content = telemetry is None or telemetry.include_content
+                self._session._operation_includes_content = telemetry is None or telemetry.include_content  # pyright: ignore[reportPrivateUsage]
                 try:
                     return self._error(message)
                 finally:

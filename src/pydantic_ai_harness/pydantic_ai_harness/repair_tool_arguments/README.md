@@ -61,7 +61,8 @@ that keeps that ID, so the repaired arguments would otherwise never reach the mo
 ## Telemetry
 
 Each repair attempt emits a `repair_tool_arguments` span in the run's trace. Valid JSON and parsed
-arguments do not emit this span. The span contains no arguments or tool contents, including when
-`trace_include_content` is enabled. Core still emits its normal tool spans.
+arguments do not emit this span. The span contains no arguments or tool contents. If the repair raises,
+the span records the error's type, and its message, which can quote the arguments, only when the
+run includes content in traces. Core still emits its normal tool spans.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/repair_tool_arguments/).

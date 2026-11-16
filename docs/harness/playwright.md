@@ -321,7 +321,7 @@ between tool calls.
 - Set `headless=False` to watch the run in a real window.
 - Every browser operation opens an OpenTelemetry span named `browser <action>`
   (`browser click`, `browser navigate`), carrying `browser.action`,
-  `browser.timeout_ms`, `browser.outcome`, and the resulting `url.full`. What the
+  `browser.timeout_ms`, `browser.outcome`, and, with content, the resulting `url.full`. What the
   page did during that operation is attached as span events: console output,
   uncaught script errors, responses, requests the egress policy refused, dialogs
   the page opened, and tabs it opened. Each event carries `browser.event.kind`,
