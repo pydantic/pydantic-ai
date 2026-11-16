@@ -530,9 +530,9 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_side(self) -> int | None:
         """The longest side, in pixels, of a screenshot the call's model takes, or `None` for no limit.
 
-        The agent sets it from the profile's `computer_use_screenshot_max_side`, using the smallest when a capability
-        like `ModelFallback` can switch models. A computer use capability can then refuse a screen the model can't see
-        before the call acts. A history a UI rebuilt reads `None`.
+        The agent sets it from the profile's `computer_use_screenshot_max_side`, using the smallest across a
+        `FallbackModel`'s models. A computer use capability can then refuse a screen the model can't see before the
+        call acts. A history a UI rebuilt reads `None`.
         """
         return _label(self, _SCREENSHOT_MAX_SIDE)
 
