@@ -118,14 +118,14 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 </script>"""
 
 # Each key name the driver takes, with the key Chromium gets for it.
-_KEY_CODES = {
+_KEY_CODES: dict[str, str | None] = {
     **{'enter': 'Enter', 'escape': 'Escape', 'tab': 'Tab', 'backspace': 'Backspace', 'delete': 'Delete'},
     **{'insert': 'Insert', 'home': 'Home', 'end': 'End', 'pageup': 'PageUp', 'pagedown': 'PageDown'},
     **{'up': 'ArrowUp', 'down': 'ArrowDown', 'left': 'ArrowLeft', 'right': 'ArrowRight', 'space': 'Space'},
     **{'printscreen': 'PrintScreen', 'pause': 'Pause', 'menu': 'ContextMenu', 'capslock': 'CapsLock'},
     **{'numlock': 'NumLock', 'scrolllock': 'ScrollLock', **{f'f{n}': f'F{n}' for n in range(1, 13)}},
-    # Chromium gets F13 to F24 on this desktop as a key it cannot name, so only that a key arrives is checked.
-    **{f'f{n}': '\x00' for n in range(13, 25)},
+    # Chromium gets F13 to F24 on this desktop as a key it cannot name, so `None`: only that a key arrives is checked.
+    **{f'f{n}': None for n in range(13, 25)},
     **{f'numpad{n}': f'Numpad{n}' for n in range(10)},
     **{'numpad_enter': 'NumpadEnter', 'numpad_add': 'NumpadAdd', 'numpad_subtract': 'NumpadSubtract'},
     **{'numpad_multiply': 'NumpadMultiply', 'numpad_divide': 'NumpadDivide', 'numpad_decimal': 'NumpadDecimal'},
@@ -157,7 +157,11 @@ async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
                     got = json.loads(json.loads(logged.stdout))
             return got
 
-        missed = {name: got for name, code in _KEY_CODES.items() if code not in (got := await pressed(name))}
+        missed = {
+            name: got
+            for name, code in _KEY_CODES.items()
+            if not (got := await pressed(name)) or (code is not None and code not in got)
+        }
         assert missed == {}
         assert await pressed('ctrl', 'shift', '+') == ['ControlLeft', 'ShiftLeft', 'Equal']
 
