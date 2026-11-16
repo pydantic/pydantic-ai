@@ -345,6 +345,7 @@ class TestLiveDaytonaDesktop:
 
     async def test_commands_see_the_desktop(self, backend: WorkspaceBackend) -> None:
         """Shell commands get `DISPLAY`, so programs they start open on the desktop."""
+        assert isinstance(backend, DaytonaSandboxBackend)
         assert (await backend.run('echo "$DISPLAY"', shell=True)).stdout == ':0\n'
 
     async def test_modifiers_are_held_around_clicks_and_scrolls(self, backend: WorkspaceBackend) -> None:
