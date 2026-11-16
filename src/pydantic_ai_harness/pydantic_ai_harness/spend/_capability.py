@@ -745,11 +745,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
         """Raise if `spent` has reached either of the budget's ceilings, the dollar one checked first."""
         if budget.usd is not None and spent.usd >= budget.usd:
-            self._refuse(budget, ctx, 'usd', budget.usd, spent.usd, f'spent ${spent.usd} of ${budget.usd}')
+            self._refuse(budget, ctx, 'usd', budget.usd, spent.usd)
         if budget.tokens is not None and spent.tokens >= budget.tokens:
-            self._refuse(
-                budget, ctx, 'tokens', budget.tokens, spent.tokens, f'used {spent.tokens} of {budget.tokens} tokens'
-            )
+            self._refuse(budget, ctx, 'tokens', budget.tokens, spent.tokens)
 
     def _refuse(
         self,
@@ -758,9 +756,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         limit_kind: Literal['usd', 'tokens'],
         limit: Decimal | int,
         spent: Decimal | int,
-        detail: str,
     ) -> None:
         """Record the refusal by the `limit_kind` ceiling as a span and raise."""
+        detail = f'spent ${spent} of ${limit}' if limit_kind == 'usd' else f'used {spent} of {limit} tokens'
         record_decision(
             ctx,
             'spend budget exhausted',

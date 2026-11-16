@@ -13,7 +13,7 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, assert_never
+from typing import Annotated, Any, Literal, TypeAlias, assert_never
 
 from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
@@ -153,6 +153,10 @@ TextDetector = Callable[[str], GuardrailResult]
 
 GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
+
+
+GuardrailDirection: TypeAlias = Literal['input', 'output', 'tool args', 'tool result']
+"""The edge of the run where a guardrail made its decision."""
 
 
 GuardCallable = Callable[..., object]
@@ -413,7 +417,12 @@ def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[Guardra
 
 
 def decision_attributes(
-    direction: str, action: str, *, guard: GuardCallable, position: int, tool_name: str | None
+    direction: GuardrailDirection,
+    action: Literal['allow', 'block', 'replace', 'retry', 'approve'],
+    *,
+    guard: GuardCallable,
+    position: int,
+    tool_name: str | None,
 ) -> dict[str, str | int]:
     """Attributes every guardrail span carries, regardless of content settings.
 
@@ -434,7 +443,7 @@ def decision_attributes(
 def trace_block(
     ctx: RunContext[AgentDepsT],
     *,
-    direction: str,
+    direction: GuardrailDirection,
     guard: GuardCallable,
     position: int,
     message: str,
@@ -457,7 +466,7 @@ def trace_block(
 def trace_retry(
     ctx: RunContext[AgentDepsT],
     *,
-    direction: str,
+    direction: GuardrailDirection,
     guard: GuardCallable,
     position: int,
     message: str,
@@ -478,7 +487,7 @@ def trace_retry(
 def trace_redaction(
     ctx: RunContext[AgentDepsT],
     *,
-    direction: str,
+    direction: GuardrailDirection,
     guard: GuardCallable,
     position: int,
     replacement: object,
@@ -503,7 +512,7 @@ def trace_redaction(
 def trace_approval(
     ctx: RunContext[AgentDepsT],
     *,
-    direction: str,
+    direction: GuardrailDirection,
     guard: GuardCallable,
     position: int,
     tool_name: str,

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -303,13 +305,12 @@ class TestOutputGuardrailTracing:
         attributes = dict(_only_span(exporter).attributes or {})
         assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_replace_clean', 0)
 
-    async def test_a_retry_records_a_span(self):
+    async def test_a_retry_records_a_span(self, instrumented: Callable[[bool], tuple[Any, Any]]):
         """Without it a retry shows only as a second model request."""
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once())])
-        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
+        tracing, exporter = instrumented(False)
+        agent = Agent(
+            TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once()), tracing]
+        )
 
         assert (await agent.run('hello')).output == 'answer'
 
@@ -322,12 +323,13 @@ class TestOutputGuardrailTracing:
             'guardrail.position': 0,
         }
 
-    async def test_a_retry_span_carries_the_message_when_content_is_included(self):
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once())])
-        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+    async def test_a_retry_span_carries_the_message_when_content_is_included(
+        self, instrumented: Callable[[bool], tuple[Any, Any]]
+    ):
+        tracing, exporter = instrumented(True)
+        agent = Agent(
+            TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once()), tracing]
+        )
 
         await agent.run('hello')
 
@@ -345,12 +347,11 @@ class TestOutputGuardrailTracing:
 
         assert (await agent.run('hello')).output is replacement
 
-    async def test_a_replacement_is_stringified_when_content_is_on(self):
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=_replace_clean)])
-        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+    async def test_a_replacement_is_stringified_when_content_is_on(
+        self, instrumented: Callable[[bool], tuple[Any, Any]]
+    ):
+        tracing, exporter = instrumented(True)
+        agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=_replace_clean), tracing])
 
         await agent.run('hello')
 
