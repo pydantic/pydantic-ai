@@ -22,10 +22,13 @@ from pydantic import TypeAdapter, ValidationError
 
 T = TypeVar('T')
 _EVENT = TypeAdapter(dict[str, object])
+_TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
 # The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
 ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
 # The shape of a provider's own error code, such as Z.AI's `1302` request-rate limit or `1305` overload.
 PROVIDER_CODE = re.compile(r'[0-9]{1,6}')
+# The shape of an OpenCode Go usage window's name, such as `5 hour`, `weekly` or `monthly`.
+GO_LIMIT_NAME = re.compile(r'(?:[0-9]{1,3} )?[a-z]{1,10}')
 LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
 
 
@@ -97,12 +100,37 @@ class Attempt:
     """When the run started, in nanoseconds since the epoch."""
     ended: int = 0
     """When the run's process exited or was interrupted, in nanoseconds since the epoch; 0 while it runs."""
+    steps: int | None = None
+    """The `step_finish` events in the run's stream; `None` until the run's process ends."""
+    tokens: int | None = None
+    """The tokens those events report, every kind summed; `None` until the run's process ends."""
     error_type: str | None = None
     status: int | None = None
     code: str | None = None
     """The provider's own error code from the response body, such as Z.AI's `1302`."""
+    limit_name: str | None = None
+    """The OpenCode Go usage window that refused the run with `provider.go-limit`, such as `5 hour`."""
+    retry_after_ms: int | None = None
+    """The milliseconds OpenCode Go's `Retry-After` asked a `provider.go-limit` refusal to wait, from `retryAfterMs`."""
     finished: bool | None = None
     """Whether the failed run's stream holds a `step_finish` event; `None` while the run has not failed."""
+
+
+def step_tokens(line: str) -> int | None:
+    """Return the tokens a `step_finish` event reports, or None for any other event."""
+    try:
+        event = _EVENT.validate_json(line)
+        if event.get('type') != 'step_finish':
+            return None
+        part = _EVENT.validate_python(event.get('part'))
+        tokens = _TOKENS.validate_python(part.get('tokens', {}))
+    except ValidationError:
+        # A validation error repeats its input, a stream line can hold model text, and job logs are public.
+        raise ValueError('OpenCode wrote an invalid stream event') from None
+    total = 0.0
+    for value in tokens.values():
+        total += sum(value.values()) if isinstance(value, dict) else value
+    return int(total)
 
 
 def logfire_endpoint() -> str:
@@ -220,22 +248,40 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
     return config
 
 
+def _stream_usage(output: Path) -> tuple[int, int]:
+    """Count a run's `step_finish` events and their tokens, skipping every line that is not a valid event."""
+    steps = tokens = 0
+    for line in output.read_bytes().decode(errors='replace').split('\n'):
+        try:
+            step = step_tokens(line)
+        except ValueError:
+            continue
+        if step is not None:
+            steps += 1
+            tokens += step
+    return steps, tokens
+
+
 def _export_run(
     token: str, attempt: Attempt, resource: Mapping[str, str], *, trace_id: str, parent_id: str | None, served: bool
 ) -> None:
-    """Export the `OpenCode run` span of one ended run, with its provider and how it failed, if `token` is set."""
+    """Export the `OpenCode run` span of one ended run, with its provider, usage and how it failed, if `token` is set."""
     if not token:
         return
-    failure = {
+    fields = {
+        'steps': attempt.steps,
+        'tokens': attempt.tokens,
         'error_type': attempt.error_type,
         'error_status': attempt.status,
         'error_code': attempt.code,
+        'limit_name': attempt.limit_name,
+        'retry_after_ms': attempt.retry_after_ms,
         'step_finish': attempt.finished,
     }
     values = {
         **resource,
         'opencode_fallback.provider': attempt.provider.name,
-        **{f'opencode_fallback.{key}': value for key, value in failure.items() if value is not None},
+        **{f'opencode_fallback.{key}': value for key, value in fields.items() if value is not None},
     }
     span = otlp_span(
         'OpenCode run',
@@ -249,6 +295,56 @@ def _export_run(
     )
     # The export waits between the runs of its chain, inside the time budget of the run after it.
     export_spans(token, 'opencode-fallback', [span], timeout=5)
+
+
+def _report_failure(attempt: Attempt, output: Path) -> None:
+    """Print and record a failed run's error type, status, provider code and Go limit, and whether it took a step."""
+    try:
+        # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
+        events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
+        errors = [_EVENT.validate_python(event.get('error')) for event in events if event.get('type') == 'error']
+    except ValueError:
+        # A malformed or undecodable stream names no error, and the caller re-raises the process failure.
+        # A validation error would copy the stream into the public log.
+        events, errors = [], []
+    error = errors[-1] if errors else {}
+    try:
+        body = _EVENT.validate_json(str(_EVENT.validate_python(error.get('response')).get('body')))
+    except ValidationError:
+        body = {}
+    try:
+        # Z.AI's response body is `{"error": {"code": "1302", "message": ...}}`.
+        code = str(_EVENT.validate_python(body.get('error')).get('code'))
+    except ValidationError:
+        code = ''
+    # Job logs are public, and the error's message and response body can repeat the provider's response.
+    # OpenCode names its own error types; print only a value shaped like one, and only a code of one to six digits.
+    kind, status = error.get('type'), error.get('status')
+    attempt.error_type = kind if isinstance(kind, str) and ERROR_TYPE.fullmatch(kind) else None
+    attempt.status = status if isinstance(status, int) else None
+    attempt.code = code if PROVIDER_CODE.fullmatch(code) else None
+    if attempt.error_type == 'provider.go-limit':
+        # OpenCode Go's response body is `{"metadata": {"workspace": ..., "limitName": "5 hour"}, ...}`, and OpenCode
+        # sets `retryAfterMs` from the response's `Retry-After`. Read only the limit name: the workspace id stays out
+        # of the public log.
+        try:
+            name = _EVENT.validate_python(body.get('metadata')).get('limitName')
+        except ValidationError:
+            name = None
+        retry = error.get('retryAfterMs')
+        attempt.limit_name = name if isinstance(name, str) and GO_LIMIT_NAME.fullmatch(name) else None
+        attempt.retry_after_ms = retry if isinstance(retry, int) else None
+    attempt.finished = any(event.get('type') == 'step_finish' for event in events)
+    described = f'error type {attempt.error_type}' if attempt.error_type else 'no error type'
+    if attempt.status is not None:
+        described += f', status {attempt.status}'
+    if attempt.code:
+        described += f', code {attempt.code}'
+    if attempt.limit_name:
+        described += f', {attempt.limit_name} limit'
+    if attempt.retry_after_ms is not None:
+        described += f', retry after {attempt.retry_after_ms} ms'
+    print(f'OpenCode run on {attempt.provider.model} on {attempt.provider.plan} failed with {described}.')
 
 
 def run_with_fallback(
@@ -272,9 +368,10 @@ def run_with_fallback(
     the backup when it is odd. `launch` runs the command in the environment it is given and writes the event stream to
     the stream it is given, which `output` holds after each run. Each run gets a config that allows only its provider,
     and an environment whose only provider key is that account's. A run whose process fails prints its model, OpenCode
-    error type, status and provider code. Each run appends an `Attempt` to `attempts`, so a caller can report a chain
-    that raised. The returned result and `output` come from the run that served, so a run the chain moved past shows
-    only as its `Attempt`, whatever steps and tokens it spent.
+    error type, status and provider code, and for a `provider.go-limit` the Go usage window and its retry-after. Each
+    run appends an `Attempt` to `attempts`, so a caller can report a chain that raised. The returned result and `output`
+    come from the run that served, so a run the chain moved past shows only as its `Attempt` and its span, which count
+    that run's own steps and tokens.
 
     With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
     name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in
@@ -341,10 +438,15 @@ def run_with_fallback(
                     '--format',
                     'json',
                 ]
-                result = launch(command, env, stream)
-                served = True
+                try:
+                    result = launch(command, env, stream)
+                    served = True
+                finally:
+                    # The next run overwrites the stream, and a failed run's usage is recorded nowhere else.
+                    stream.flush()
+                    attempt.steps, attempt.tokens = _stream_usage(output)
         except subprocess.CalledProcessError:
-            report_failure(attempt)
+            _report_failure(attempt, output)
             raise
         finally:
             attempt.ended = time.time_ns()
@@ -352,37 +454,6 @@ def run_with_fallback(
             _export_run(token, attempt, resource, trace_id=trace_id, parent_id=parent_id, served=served)
         print(f'OpenCode run served by {provider.model} on {provider.plan}.')
         return result, provider
-
-    def report_failure(attempt: Attempt) -> None:
-        """Print the failed run's error type, status and provider code; record them and whether it finished a step."""
-        try:
-            # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
-            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
-            errors = [_EVENT.validate_python(event.get('error')) for event in events if event.get('type') == 'error']
-        except ValueError:
-            # A malformed or undecodable stream names no error, and the caller re-raises the process failure.
-            # A validation error would copy the stream into the public log.
-            events, errors = [], []
-        error = errors[-1] if errors else {}
-        try:
-            # Z.AI's response body is `{"error": {"code": "1302", "message": ...}}`.
-            body = _EVENT.validate_json(str(_EVENT.validate_python(error.get('response')).get('body')))
-            code = str(_EVENT.validate_python(body.get('error')).get('code'))
-        except ValidationError:
-            code = ''
-        # Job logs are public, and the error's message and response body can repeat the provider's response.
-        # OpenCode names its own error types; print only a value shaped like one, and only a code of one to six digits.
-        kind, status = error.get('type'), error.get('status')
-        attempt.error_type = kind if isinstance(kind, str) and ERROR_TYPE.fullmatch(kind) else None
-        attempt.status = status if isinstance(status, int) else None
-        attempt.code = code if PROVIDER_CODE.fullmatch(code) else None
-        attempt.finished = any(event.get('type') == 'step_finish' for event in events)
-        described = f'error type {attempt.error_type}' if attempt.error_type else 'no error type'
-        if attempt.status is not None:
-            described += f', status {attempt.status}'
-        if attempt.code:
-            described += f', code {attempt.code}'
-        print(f'OpenCode run on {attempt.provider.model} on {attempt.provider.plan} failed with {described}.')
 
     if not os.environ[OPENCODE_GO.secret_variable]:
         raise ValueError(f'{OPENCODE_GO.secret_variable} is empty')
