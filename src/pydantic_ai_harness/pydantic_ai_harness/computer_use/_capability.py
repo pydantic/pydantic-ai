@@ -37,6 +37,7 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -102,6 +103,15 @@ loop, so calls on separate loops don't take turns. A lock goes once no call hold
 
 _RELEASE_TIMEOUT = 5
 """Maximum time spent waiting for the screen, and releasing each mouse button, when a call or a run's end releases."""
+
+# The tool reads the run's messages and model in workflow code; the display work is one durable unit.
+_DURABLE_OPT_OUTS = {
+    'temporal': False,
+    'prefect': False,
+    'render_workflows': False,
+    'aws_lambda': False,
+    'azure_durable_task': False,
+}
 
 
 @dataclass
@@ -353,17 +363,13 @@ async def _perform(
 ) -> tuple[int, str | None, _Steps]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and the steps they took.
 
-    `held` is the buttons pressed before the call, and ends as the ones that may still be pressed. A call that is
-    cancelled releases them all. After an action, the screen settles for `settle_seconds` before a zoom or a screenshot.
+    `held` is the buttons pressed before the call, and ends as the ones that may still be pressed. After an action,
+    the screen settles for `settle_seconds` before a zoom or a screenshot.
     """
     steps = _Steps(display, mapping, settle_seconds)
-    try:
-        for index, action in enumerate(actions):
-            if (error := await _run_one(steps, action, held, last=index == len(actions) - 1)) is not None:
-                return index, error, steps
-    except BaseException:
-        await _release(display, held)
-        raise
+    for index, action in enumerate(actions):
+        if (error := await _run_one(steps, action, held, last=index == len(actions) - 1)) is not None:
+            return index, error, steps
     return len(actions), None, steps
 
 
@@ -477,6 +483,23 @@ async def _display_size(display: Display) -> tuple[int, int]:
         raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
 
 
+def _refuse_checkpointed_calls(ctx: RunContext[Any]) -> None:
+    """Refuse a durable engine that checkpoints the whole `computer` call, such as Absurd.
+
+    On replay the call doesn't run, so the run loses track of the buttons it left pressed and never releases them.
+    """
+    durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
+    if durability is None or not durability.in_durable_context:
+        return
+    spec = durability.engine_spec
+    if 'function' in spec.wrapped_toolset_kinds and spec.tool_config_key not in _DURABLE_OPT_OUTS:
+        raise UserError(
+            f"`ComputerUse` can't run under {spec.engine_name} durable execution, which checkpoints the whole "
+            '`computer` call: on replay the call is skipped, so a mouse button it pressed is never released. '
+            'Use `TemporalDurability` or `PrefectDurability`.'
+        )
+
+
 def _screen_keys(ctx: RunContext[Any], display: Display) -> list[object]:
     """The keys of a screen's locks: its display object's, then its environment's."""
     # One environment's backends share its ref, but two environments may reach one display object, so neither key
@@ -570,14 +593,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             tool_kind=COMPUTER_KIND,
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
-            # The tool reads the run's messages and model in workflow code; the display work is one durable unit.
-            metadata={
-                'temporal': False,
-                'prefect': False,
-                'render_workflows': False,
-                'aws_lambda': False,
-                'azure_durable_task': False,
-            },
+            metadata=_DURABLE_OPT_OUTS,
         )
         return FunctionToolset([tool], id=self.id)
 
@@ -659,6 +675,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
         display = _required_display(ctx)
+        if ctx.workspace.ref is None:
+            # Reading the size creates a fresh environment, so this call also takes the lock of the ref it gets.
+            await _display_size(display)
         # Measured while this call holds the screen, so a call that waited sees the size the one before it left.
         async with _taking_turns(_screen_keys(ctx, display)):
             held = list(plan.held)
@@ -680,6 +699,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 # A call that fails releases every button that may be held, so only a call that succeeds says which are.
                 released, stuck = await _release_for_failure(display, held)
                 return _NotRun(f'{e.message.rstrip(".")}. {released}' if released else e.message, held=stuck)
+            except BaseException:
+                # Cancelled, such as by the tool's timeout, or the environment was lost: released before the next call.
+                await _release(display, held)
+                raise
 
     async def _act_and_look(
         self,
@@ -769,6 +792,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Release the mouse buttons the run still holds however it ends, including a caller leaving it early."""
+        _refuse_checkpointed_calls(ctx)
         run = _RunButtons(ctx.run_id)
         _RUN_BUTTONS.set(run)
         try:

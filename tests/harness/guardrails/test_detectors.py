@@ -920,6 +920,23 @@ class TestForToolResultText:
         assert for_tool_result_text(redact_secrets)(self._info(result)) == GuardrailResult.allow()
 
     @pytest.mark.parametrize('wrapped', [False, True], ids=['list', 'tool-return'])
+    def test_a_secret_file_identifier_blocks_the_result(self, wrapped: bool):
+        """Core shows the model `See file <identifier>.`, and an identifier can't be rewritten."""
+        parts = ['Ran 1 action.', BinaryContent(data=b'png', media_type='image/png', identifier=_OPENAI_KEY)]
+        result = ToolReturn(parts) if wrapped else parts
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.block('A file identifier in the tool result was flagged by a detector.')
+
+    def test_a_detector_verdict_on_a_file_identifier_is_preserved(self):
+        def no_secrets(text: str) -> GuardrailResult:
+            return GuardrailResult.block('no secrets') if 'secret' in text else GuardrailResult.allow()
+
+        result = ['Ran 1 action.', BinaryContent(data=b'png', media_type='image/png', identifier='secret.png')]
+        assert for_tool_result_text(no_secrets)(self._info(result)) == GuardrailResult.block('no secrets')
+
+    @pytest.mark.parametrize('wrapped', [False, True], ids=['list', 'tool-return'])
     def test_text_content_beside_an_image_is_refused(self, wrapped: bool):
         """The model also sees a `TextContent`'s metadata, which the detector does not read."""
         parts = [
