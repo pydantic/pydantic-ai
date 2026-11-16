@@ -8,7 +8,7 @@ specifies (a `424` naming the next `gateway/` model and a state token), and serv
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -21,9 +21,10 @@ from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, ModelFallback
 from pydantic_ai.capabilities._gateway_fallback import GatewayFallback
 from pydantic_ai.durable_exec._utils import reject_serving_wrapper
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 
@@ -208,19 +209,45 @@ async def test_a_hand_back_can_name_the_format_by_the_gateways_id_for_it(allow_m
     assert response.provider_name == 'google-cloud'
 
 
+@dataclass
+class ClosingStream(httpx2.AsyncByteStream):
+    """A response body that records when it's closed."""
+
+    content: bytes
+    closed: bool = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        # One event per chunk, so the consumer can stop reading before the body ends.
+        for event in self.content.split(b'\n\n'):
+            yield event + b'\n\n'
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 async def test_leaving_a_handed_back_stream_early_closes_it(allow_model_requests: None):
-    """A consumer that stops reading the stream of the model the gateway handed the request to leaves cleanly."""
+    """A consumer that stops reading the stream of the model the gateway handed the request to closes its response."""
+    body = ClosingStream(
+        _anthropic_event_stream(
+            {**_anthropic_response(Turn(text='Hello from Claude'), 0), 'model': 'claude-sonnet-4-5'}
+        )
+    )
     gateway = FakeGateway(
         [
             ('/responses', lambda _: hand_back('gateway/anthropic:claude-sonnet-4-5', 'state-1')),
-            ('/v1/messages', lambda request: anthropic_message(request, 'Hello from Claude')),
+            (
+                '/v1/messages',
+                lambda _: httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=body),
+            ),
         ]
     )
 
     async with Agent(gateway.openai_model()).run_stream('Hello') as result:
         # Read one chunk and leave.
         assert await anext(aiter(result.stream_text(debounce_by=None)))
+        assert not body.closed
 
+    assert body.closed
     assert [request.path for request in gateway.seen] == ['/proxy/openai/responses', '/proxy/openai/v1/messages']
 
 
@@ -331,6 +358,27 @@ async def test_a_hand_back_to_a_model_this_install_cant_build_is_the_error(allow
 
     assert exc_info.value.status_code == 424
     assert isinstance(exc_info.value.__cause__, UserError)
+
+
+async def test_fallback_model_candidates_neither_advertise_nor_follow(allow_model_requests: None):
+    """`FallbackModel` is out of scope: its gateway candidates don't say they follow a hand-back, nor follow one.
+
+    `ModelFallback` is the capability to use instead, and it is followed (see above).
+    """
+    gateway = FakeGateway(
+        [
+            ('/responses', lambda _: hand_back('gateway/anthropic:claude-sonnet-4-5', 'state-1')),
+            ('/responses', lambda _: hand_back('gateway/anthropic:claude-sonnet-4-5', 'state-2')),
+        ]
+    )
+
+    with pytest.raises(FallbackExceptionGroup):
+        await Agent(FallbackModel(gateway.openai_model(), gateway.openai_model())).run('Hello')
+
+    assert gateway.seen == [
+        SeenRequest(path='/proxy/openai/responses', fallback_headers={}),
+        SeenRequest(path='/proxy/openai/responses', fallback_headers={}),
+    ]
 
 
 async def test_requests_to_other_providers_neither_advertise_nor_follow(allow_model_requests: None):
