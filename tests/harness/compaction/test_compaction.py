@@ -24,7 +24,14 @@ from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
+    ModelAPIError,
+    ModelRetry,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -2711,7 +2718,7 @@ class _RecordingTier:
 class _FailingTier:
     error: Exception
 
-    async def compact(self, messages: list[ModelMessage], ctx: Any) -> list[ModelMessage]:
+    async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
         raise self.error
 
 
@@ -3903,12 +3910,20 @@ class TestCompactionSpan:
         assert 'compaction.target_unreached' not in _compact_spans(capfire)[0]['attributes']
         assert caplog.messages == []
 
+    @pytest.mark.parametrize(
+        'error',
+        [
+            ModelAPIError('summarizer', 'overloaded'),
+            FallbackExceptionGroup('all models failed', [ModelAPIError('summarizer', 'overloaded')]),
+            UnexpectedModelBehavior('empty summary'),
+        ],
+    )
     async def test_tiered_skips_a_failing_tier_and_records_it(
-        self, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
+        self, error: Exception, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
     ) -> None:
         calls: list[str] = []
         comp: TieredCompaction[None] = TieredCompaction(
-            tiers=[_FailingTier(ModelAPIError('summarizer', 'overloaded')), _RecordingTier('next', calls, drop=4)],
+            tiers=[_FailingTier(error), _RecordingTier('next', calls, drop=4)],
             target_tokens=15,
         )
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
@@ -3918,19 +3933,17 @@ class TestCompactionSpan:
         assert calls == ['next']
         assert result.messages == messages[-1:]
         skipped, tiered = (span['attributes'] for span in _compact_spans(capfire))
-        assert {key: value for key, value in skipped.items() if key.startswith(('compaction.', 'error.'))} == snapshot(
-            {
-                'compaction.strategy': '_FailingTier',
-                'compaction.skipped': 'tier_failed',
-                'error.type': 'pydantic_ai.exceptions.ModelAPIError',
-                'compaction.messages_before': 5,
-                'compaction.tokens_before': 50,
-            }
-        )
+        assert {key: value for key, value in skipped.items() if key.startswith(('compaction.', 'error.'))} == {
+            'compaction.strategy': '_FailingTier',
+            'compaction.skipped': 'tier_failed',
+            'error.type': f'pydantic_ai.exceptions.{type(error).__name__}',
+            'compaction.messages_before': 5,
+            'compaction.tokens_before': 50,
+        }
         assert tiered['compaction.strategy'] == 'TieredCompaction'
-        assert caplog.messages == snapshot(
-            ["`TieredCompaction` skipped its `_FailingTier` tier, which raised: ModelAPIError('overloaded')"]
-        )
+        assert caplog.messages == [
+            f'`TieredCompaction` skipped its `_FailingTier` tier, which raised {type(error).__name__}'
+        ]
 
     async def test_direct_tiered_compact_logs_an_unreachable_target_without_a_span_scope(
         self, caplog: pytest.LogCaptureFixture
@@ -4470,7 +4483,7 @@ class TestReceiptSpanEvent:
 
         @dataclasses.dataclass
         class _FailsAfterCompacting:
-            async def compact(self, messages: list[ModelMessage], ctx: Any) -> list[ModelMessage]:
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
                 await sw.compact(messages, ctx)
                 raise ModelAPIError('m', 'down')
 
@@ -4479,8 +4492,7 @@ class TestReceiptSpanEvent:
         await tiered.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
         span = next(s for s in _compact_spans(capfire) if s['attributes']['compaction.strategy'] == 'TieredCompaction')
-        events: list[dict[str, Any]] = span.get('events') or []
-        assert [e['name'] for e in events if e['name'] == 'compaction.receipt'] == ['compaction.receipt']
+        assert [event['name'] for event in span['events']].count('compaction.receipt') == 1
 
     async def test_receipt_event_carries_handle(self, capfire: CaptureLogfire) -> None:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)

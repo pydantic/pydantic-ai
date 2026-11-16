@@ -240,7 +240,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             record_failed_compaction(
                 ctx, strategy=strategy, skipped='tier_failed', error=error, messages=messages, tokenizer=self.tokenizer
             )
-            _logger.warning('`TieredCompaction` skipped its `%s` tier, which raised: %r', strategy, error)
+            _logger.warning('`TieredCompaction` skipped its `%s` tier, which raised %s', strategy, type(error).__name__)
             return None
         finally:
             reset_receipt_scope(token)
