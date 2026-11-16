@@ -233,7 +233,10 @@ _ASTRAL = re.compile(r'[\U00010000-\U0010ffff]')
 """Code points outside the BMP (emoji, CJK Extension B and later): about three tokens each."""
 
 _ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
-"""A base64 or base64url-like run; `_is_encoded` rules out paths and identifiers."""
+"""A base64 or base64url-like run, counted only when it mixes digits and both cases.
+
+That rules out paths and identifiers, and leaves lowercase hex (hashes, UUIDs) at the prose rate.
+"""
 
 _JSON_PUNCTUATION = '{}[],:"'
 """In compact JSON each costs about a token, and each digit about half of one."""
@@ -247,11 +250,6 @@ _DIGIT_SURCHARGE = 1 / 2 - 1 / CHARS_PER_TOKEN
 _ASTRAL_SURCHARGE = 3 - 1 / CHARS_PER_TOKEN
 
 
-def _is_encoded(run: str) -> bool:
-    chars = set(run)
-    return any(c.isdigit() for c in chars) and any(c.isupper() for c in chars) and any(c.islower() for c in chars)
-
-
 def _dense_surcharge(text: str) -> float:
     """Tokens *text* costs beyond `CHARS_PER_TOKEN`, for content that tokenizes denser than English prose.
 
@@ -262,7 +260,11 @@ def _dense_surcharge(text: str) -> float:
     non_ascii = len(text) - ascii_chars
     cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
     astral = len(text) - len(_ASTRAL.sub('', text)) if non_ascii else 0
-    runs = [run for run in _ENCODED_RUN.findall(text) if _is_encoded(run)]
+    runs = [
+        run
+        for run in _ENCODED_RUN.findall(text)
+        if any(c.isdigit() for c in run) and any(c.isupper() for c in run) and any(c.islower() for c in run)
+    ]
     encoded = sum(map(len, runs))
     surcharge = (
         cjk * _TOKEN_SURCHARGE + astral * _ASTRAL_SURCHARGE + (non_ascii - cjk - astral + encoded) * _DENSE_SURCHARGE

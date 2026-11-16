@@ -2873,40 +2873,38 @@ class TestTieredCompaction:
 
         assert 'Tiered summary.' in _summary_text(result.messages)
 
+    async def test_triggers_for_dense_tool_result_without_a_usage_anchor(self):
+        """Dense tool output crosses the target by the text estimate, with no usage anchor present."""
+        calls: list[str] = []
+        t1 = _RecordingTier('t1', calls, drop=1)
+        cap = TieredCompaction(tiers=[t1], target_tokens=800)
+        # ~87 tokens on the old character baseline, 232 each with the text estimate:
+        # 4 tool returns plus the prompt cross the 800 target only under the new estimate.
+        payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
+        messages: list[ModelMessage] = [
+            _user('hi'),
+            *[_tool_return('tool', f'call-{i}', payload) for i in range(4)],
+        ]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert calls == ['t1']
+        assert len(result.messages) == 4
 
-async def test_tiered_compaction_triggers_for_dense_tool_result_without_a_usage_anchor():
-    """Dense tool output crosses the target by the class-aware estimate, with no usage anchor present."""
-    calls: list[str] = []
-    t1 = _RecordingTier('t1', calls, drop=1)
-    cap = TieredCompaction(tiers=[t1], target_tokens=800)
-    # ~87 tokens on the old character baseline, 232 each with the class-aware estimator:
-    # 4 tool returns plus the prompt cross the 800 target only under the new estimate.
-    payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
-    messages: list[ModelMessage] = [
-        _user('hi'),
-        *[_tool_return('tool', f'call-{i}', payload) for i in range(4)],
-    ]
-    rc = _make_request_context(messages)
-    result = await cap.before_model_request(_make_ctx(rc.messages), rc)
-    assert calls == ['t1']
-    assert len(result.messages) == 4
-
-
-async def test_tiered_compaction_triggers_for_dense_text_after_the_usage_anchor():
-    """A Cyrillic tool result after a 90k anchor crosses a 100k target the 4-chars-per-token count left it under."""
-    calls: list[str] = []
-    cap = TieredCompaction(tiers=[_RecordingTier('t1', calls, drop=1)], target_tokens=100_000)
-    messages: list[ModelMessage] = [
-        _user('hi'),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='fetch', args='{}', tool_call_id='c1')],
-            usage=RequestUsage(input_tokens=89_000, output_tokens=1_000),
-        ),
-        _tool_return('fetch', 'c1', 'Привет, как дела? ' * 2_000),
-    ]
-    rc = _make_request_context(messages)
-    await cap.before_model_request(_make_ctx(rc.messages), rc)
-    assert calls == ['t1']
+    async def test_triggers_for_dense_text_after_the_usage_anchor(self):
+        """A Cyrillic tool result after a 90k anchor crosses a 100k target the 4-chars-per-token count left it under."""
+        calls: list[str] = []
+        cap = TieredCompaction(tiers=[_RecordingTier('t1', calls, drop=1)], target_tokens=100_000)
+        messages: list[ModelMessage] = [
+            _user('hi'),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='fetch', args='{}', tool_call_id='c1')],
+                usage=RequestUsage(input_tokens=89_000, output_tokens=1_000),
+            ),
+            _tool_return('fetch', 'c1', 'Привет, как дела? ' * 2_000),
+        ]
+        rc = _make_request_context(messages)
+        await cap.before_model_request(_make_ctx(rc.messages), rc)
+        assert calls == ['t1']
 
 
 # ---------------------------------------------------------------------------

@@ -180,7 +180,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     """Measure band thresholds in estimated tokens instead of characters."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
+    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to the compaction text estimate."""
 
     store: OverflowStore | WorkspaceOverflowStore | None = None
     """Backend for spilled payloads.
