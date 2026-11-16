@@ -464,8 +464,11 @@ def _snapshot_text(snapshot: DelegationSnapshot) -> str:
     task, elapsed = f'Task {snapshot.task_id} ({snapshot.agent_name})', f'{snapshot.elapsed_seconds:.0f}s'
     if snapshot.status != 'running':
         return f'{task} finished ({snapshot.outcome}) after {elapsed}. Its report is delivered separately.'
-    requests = snapshot.usage.requests
-    lines = [f'{task} has been running for {elapsed}, with {requests} model request{"s" if requests != 1 else ""}.']
+    if snapshot.usage is None:
+        lines = [f'{task} has been running for {elapsed}. Its activity is not visible from here.']
+    else:
+        requests = snapshot.usage.requests
+        lines = [f'{task} has been running for {elapsed}, with {requests} model request{"s" if requests != 1 else ""}.']
     if snapshot.recent_tool_calls:
         lines.append(f'Recent tool calls: {", ".join(snapshot.recent_tool_calls)}')
     if snapshot.latest_text is not None:
@@ -1536,17 +1539,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner: DelegationTasks | None,
         record: DelegationTask | None,
     ) -> None:
+        # Installed only for a record, and a record exists only under the owner that `current` returns.
+        assert owner is not None and record is not None
+        record.messages = child_ctx.messages
+        owner.follow(record)
+
         async def observed() -> AsyncIterable[AgentStreamEvent]:
             async for event in events:
-                # Installed only for a record, and a record exists only under the owner that `current` returns.
-                if owner is not None and record is not None:  # pragma: no branch
-                    record.messages = child_ctx.messages
-                    # The model streaming this request, so an observer can show the child's context usage.
-                    model = child_ctx.model
-                    await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
-                    if self._forward_events:
-                        progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
-                        await owner.publish(record, progress, observe=False)
+                record.messages = child_ctx.messages
+                # The model streaming this request, so an observer can show the child's context usage.
+                model = child_ctx.model
+                await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
+                if self._forward_events:
+                    progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
+                    await owner.publish(record, progress, observe=False)
                 yield event
 
         if self._event_stream_handler is not None:

@@ -636,13 +636,15 @@ class TestSubAgentsTaskControl:
         assert returns[2].endswith('s. Its report is delivered separately.')
 
     async def test_check_task_on_a_task_with_no_response_yet(self) -> None:
-        opened = anyio.Event()
+        started, opened = anyio.Event(), anyio.Event()
 
         async def blocked(messages: list[ModelMessage]) -> ModelResponse:
+            started.set()
             await opened.wait()
             return text('done')
 
-        def check(messages: list[ModelMessage]) -> ModelResponse:
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await started.wait()
             return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
 
         def release(messages: list[ModelMessage]) -> ModelResponse:
@@ -665,9 +667,10 @@ class TestSubAgentsTaskControl:
         assert checked.endswith('s, with 0 model requests.')
 
     async def test_check_task_on_a_resumed_task_shows_only_its_new_run(self) -> None:
-        opened = anyio.Event()
+        started, opened = anyio.Event(), anyio.Event()
 
         async def blocked(messages: list[ModelMessage]) -> ModelResponse:
+            started.set()
             await opened.wait()
             return text('second answer')
 
@@ -675,7 +678,8 @@ class TestSubAgentsTaskControl:
             task_id = task_id_in(tool_returns(messages)[-1])
             return call('delegate_task', agent_name='researcher', task='Again.', resume=task_id, background=True)
 
-        def check(messages: list[ModelMessage]) -> ModelResponse:
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await started.wait()
             return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
 
         def release(messages: list[ModelMessage]) -> ModelResponse:
@@ -727,6 +731,7 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         [snapshot] = snapshots
+        assert snapshot.usage is not None
         assert (snapshot.status, snapshot.usage.requests) == ('running', 1)
         # Text next to the output tool call is not the result.
         assert (snapshot.latest_text, snapshot.recent_tool_calls) == ('Done looking.' if structured else None, [])
@@ -754,7 +759,11 @@ class TestSubAgentsTaskControl:
         )
         owner = DelegationTasks()
         owner.records[task.id] = task
+        unseen = owner.snapshot(task.id)
+        assert (unseen.usage, unseen.recent_tool_calls, unseen.latest_text) == (None, [], None)
+        owner.follow(task)
         snapshot = owner.snapshot(task.id)
+        assert snapshot.usage is not None
         assert (snapshot.usage.requests, snapshot.usage.input_tokens, snapshot.usage.output_tokens) == (2, 30, 5)
         assert [call.split('(')[0] for call in snapshot.recent_tool_calls] == [f'tool{i}' for i in range(2, 7)]
         assert snapshot.recent_tool_calls[0] == f'tool2({{"arg":"{"x" * 72}...)'
@@ -1279,6 +1288,34 @@ class TestRemoteSubAgents:
         assert seen[-1] == 'Hurry.'
         assert result.output.endswith('(ok):\nsecond')
         assert len(recorder.of(TaskResumedEvent)) == 1
+
+    async def test_check_task_on_a_remote_task_shows_no_activity(self) -> None:
+        transport = InMemoryTransport()
+        gate = Gate()
+        remote = Agent(scripted(call('pause'), text('done')), name='remote', tools=[gate.pause])
+        worker = SubAgentWorker(agents={'remote': remote}, transport=transport, deps=None)
+
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await gate.entered.wait()
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            gate.opened.set()
+            return text('Waiting.')
+
+        parent, _ = remote_parent(
+            transport,
+            call('delegate_task', agent_name='remote', task='Work.', background=True),
+            check,
+            release,
+            text('Done.'),
+        )
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                result = await parent.run('Go.')
+        checked = tool_returns(result.all_messages())[1]
+        assert checked.endswith('s. Its activity is not visible from here.')
+        assert 'model request' not in checked
 
     async def test_a_remote_task_can_be_cancelled_softly_or_by_force(self) -> None:
         transport = InMemoryTransport()

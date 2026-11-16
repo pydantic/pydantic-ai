@@ -87,8 +87,12 @@ class DelegationSnapshot:
     outcome: DelegationOutcome | None
     elapsed_seconds: float
     """Time since the task last started, up to when it finished if it has."""
-    usage: RunUsage
-    """The requests and tokens of the model responses in the task's current run so far."""
+    usage: RunUsage | None
+    """The requests and tokens of the model responses in the task's current run so far; other counts stay `0`.
+
+    `None` when this owner doesn't see the run's history as it streams: before the child's first model request,
+    for a remote or durable task, and once the task settles. Its tool calls and text are then empty too.
+    """
     recent_tool_calls: list[str]
     """The child's last few tool calls other than `ask_parent`, as `name(arguments)` with the arguments cut short."""
     latest_text: str | None
@@ -166,6 +170,15 @@ def _without_result(response: ModelResponse, final: FinalResultEvent | None) -> 
         # Text next to tool calls doesn't end the run: the tools run and the model is asked again.
         return response.parts
     return [part for part in response.parts if not isinstance(part, TextPart)]
+
+
+@dataclass(kw_only=True)
+class _LiveRun:
+    """A task's current run, whose history its owner sees as it streams."""
+
+    run_id: str
+    final: tuple[int, FinalResultEvent] | None = None
+    """The index in the run of the response that streamed a final result, and that event."""
 
 
 @dataclass(kw_only=True)
@@ -367,8 +380,7 @@ class DelegationTasks:
         self._stops: set[str] = set()
         self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
         self._starting: dict[str, int] = {}
-        self._final_results: dict[str, tuple[str, int, FinalResultEvent]] = {}
-        """Each task's latest final result: its run ID, the index in that run of the response, and the event."""
+        self._live: dict[str, _LiveRun] = {}
         self._open = False
 
     @staticmethod
@@ -501,34 +513,48 @@ class DelegationTasks:
         context_window: int | None = None,
     ) -> None:
         """Send correlated activity, and the child's model when known, to the application's observer."""
-        if isinstance(event, FinalResultEvent):
+        if isinstance(event, FinalResultEvent) and (live := self._live.get(record.id)) is not None:
             # The response streaming this event is not in the history yet, so it is the next one.
-            self._final_results[record.id] = (record.run_id, len(_run_responses(record)), event)
+            live.final = (len(_run_responses(record)), event)
         if self.observer is not None:
             await self.observer(
                 DelegationTaskEvent(task=record, event=event, model_name=model_name, context_window=context_window)
             )
 
+    def follow(self, record: DelegationTask) -> None:
+        """Note that this owner sees the history of `record`'s current run as it streams."""
+        live = self._live.get(record.id)
+        # A durable unit of its own can run a copy of the task, whose history this owner doesn't see.
+        if self.records.get(record.id) is record and (live is None or live.run_id != record.run_id):
+            self._live[record.id] = _LiveRun(run_id=record.run_id)
+
     def snapshot(self, task_id: str) -> DelegationSnapshot:
         """A bounded view of what a task is doing, cheap to take repeatedly while it runs.
 
         The child's final result is left out of its tool calls and text, so a snapshot doesn't hold a result
-        before its listeners have processed it. A settled task's history is kept in its saved file only, so
-        its snapshot has no activity.
+        before its listeners have processed it.
         """
         record = self.records[task_id]
+        live = self._live.get(task_id)
+        if live is None or live.run_id != record.run_id:
+            return self._snapshot(record, None, [])
         responses = _run_responses(record)
         usage = RunUsage(requests=len(responses))
         for response in responses:
             usage.incr(response.usage)
-        final = self._final_results.get(task_id)
         parts = [
             part
             for index, response in enumerate(responses)
             for part in _without_result(
-                response, final[2] if final is not None and final[:2] == (record.run_id, index) else None
+                response, live.final[1] if live.final is not None and live.final[0] == index else None
             )
         ]
+        return self._snapshot(record, usage, parts)
+
+    @staticmethod
+    def _snapshot(
+        record: DelegationTask, usage: RunUsage | None, parts: Sequence[ModelResponsePart]
+    ) -> DelegationSnapshot:
         # A question's arguments are left out: `pending_question` holds it as listeners rewrote it.
         calls = [part for part in parts if isinstance(part, ToolCallPart) and part.tool_name != ASK_PARENT_TOOL_NAME]
         texts = [part.content for part in parts if isinstance(part, TextPart)]
@@ -793,6 +819,7 @@ class DelegationTasks:
                     except Exception:
                         logging.getLogger(__name__).exception('Task completion observer failed for %s', record.id)
                 self._release(record)
+                self._live.pop(record.id, None)
                 self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         return f'Task {record.id} ({record.outcome}):\n{record.output}'
 
