@@ -1,6 +1,6 @@
 # Pydantic AI vs Pi
 
-Pi is a TypeScript coding agent from Earendil Works: a terminal agent you extend with hooks, skills and packages, or embed through `createAgentSession`. In Pydantic AI, a [coding agent](https://pydantic.dev/docs/ai/harness/coder/) is one [configuration](../capabilities/overview.md) of a general [`Agent`][pydantic_ai.Agent], and the [skills](https://pydantic.dev/docs/ai/harness/skills/), [sandbox](https://pydantic.dev/docs/ai/harness/#execution-environments) and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) are each a capability you can swap.
+Pi is a TypeScript coding agent from Earendil Works: a terminal agent you extend with hooks, skills and packages, or embed through `createAgentSession`. In Pydantic AI, a [coding agent](https://pydantic.dev/docs/ai/harness/coder/) is one [configuration](../capabilities/overview.md) of a general [`Agent`][pydantic_ai.Agent], and the [skills](https://pydantic.dev/docs/ai/harness/skills/), [sandbox](../workspace.md#supported-workspaces) and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) are each a capability you can swap.
 
 Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
 
@@ -33,7 +33,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes (`tool_call` hook) | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | No | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Code sandboxes | No | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ

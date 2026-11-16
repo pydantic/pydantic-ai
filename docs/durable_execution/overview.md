@@ -40,4 +40,4 @@ Third-party runtime authors can use the stable [durable execution backend builde
 to integrate another engine without importing Pydantic AI internals.
 
 Harness workspace capabilities such as `Coder`, `Shell`, and `FileSystem` also run inside a durable agent; the
-[workspace guide](../workspace.md#durable-execution) shows how, and what works on each engine.
+[workspace guide](../workspace.md#durable-execution) shows how.
