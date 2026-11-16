@@ -7,7 +7,9 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_clai2.config.api_keys import set_api_key
 from pydantic_clai2.plugins.menus import SettingsMenu
-from pydantic_clai2.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, run_flow, shown
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
+from pydantic_clai2.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, shown
+from pydantic_clai2.ui.menus.footer_menu import FOOTER_SETTING, footer_settings_menu
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.tool_calls_preview import tool_calls_preview
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
@@ -87,12 +89,19 @@ class SettingsSource:
 
 def settings_menu(context: CommandContext, *, keys: Collection[str] = (), title: str = 'Settings') -> SettingsMenu:
     """`/set`'s rows as a declared menu, which the web UI shows; `keys` narrows it, as `/theme` and `/spinner` do."""
-    return SettingsMenu(source=SettingsSource(context, keys=keys, title=title))
+    return SettingsMenu(
+        source=SettingsSource(context, keys=keys, title=title),
+        menus={FOOTER_SETTING: lambda: footer_settings_menu(context)},
+    )
 
 
 async def open_settings_menu(context: CommandContext, *, run: Callable[[FieldMenu], list[str]] | None = None) -> str:
     """Show the menu in a thread; edits save and apply as they happen."""
-    messages = await run_worker(lambda: (run or run_flow)(FieldMenu(SettingsSource(context))))
+    messages = (
+        await run_worker(lambda: run(FieldMenu(SettingsSource(context))))
+        if run is not None
+        else await run_settings_menu(settings_menu(context))
+    )
     return '\n'.join(messages) or 'No changes.'
 
 

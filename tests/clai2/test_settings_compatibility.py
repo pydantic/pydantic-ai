@@ -333,6 +333,51 @@ def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
     assert SettingsStore(path).load().task_models is True
 
 
+@pytest.mark.parametrize('layout', [[], ['activity', 'assistant_age', 'model']])
+def test_footer_layout_survives_a_build_without_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: list[str]
+) -> None:
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test"'))
+    store = SettingsStore(path)
+    defaults: list[str] = [
+        'model',
+        'workspace',
+        'context',
+        'output',
+        'cost',
+        'activity',
+        'plugins',
+        'updates',
+        'live',
+        'queued',
+    ]
+    assert store.load().footer_fields == defaults
+    assert store.overrides() == {'model': 'test'}
+    config_command(store, ['set', 'display.footer_fields', json.dumps(layout)])
+    assert SettingsStore(path).load().footer_fields == layout
+
+    older = {key: name for key, name in SETTING_FIELDS.items() if key != 'display.footer_fields'}
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_clai2.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', older)
+        store = SettingsStore(path)
+        assert store.load().footer_fields == defaults
+        assert store.overrides() == {'model': 'test'}
+        config_command(store, ['set', 'display.thinking', 'false'])
+        assert not SettingsStore(path).load().thinking
+        config_command(store, ['reset', 'display.thinking'])
+    reopened = SettingsStore(path)
+    assert reopened.load().footer_fields == layout
+    assert reopened.overrides() == {'model': 'test', 'display.footer_fields': layout}
+    reopened.reset('display.footer_fields')
+    assert SettingsStore(path).load().footer_fields == defaults
+    assert SettingsStore(path).overrides() == {'model': 'test'}
+
+
 @pytest.mark.parametrize('value_json', ['false', 'true'])
 async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, value_json: str) -> None:
     path = tmp_path / 'config.db'

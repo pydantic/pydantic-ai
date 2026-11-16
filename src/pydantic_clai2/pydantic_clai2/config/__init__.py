@@ -16,6 +16,21 @@ STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
+FooterField = Literal[
+    'model',
+    'workspace',
+    'context',
+    'output',
+    'cost',
+    'activity',
+    'plugins',
+    'updates',
+    'live',
+    'queued',
+    'assistant_age',
+]
+FOOTER_FIELDS: tuple[FooterField, ...] = get_args(FooterField)
+DEFAULT_FOOTER_FIELDS: tuple[FooterField, ...] = tuple(name for name in FOOTER_FIELDS if name != 'assistant_age')
 PermissionMode = Literal['full', 'auto', 'read-only']
 """harness `PermissionMode`, spelled out so reading settings imports no harness code."""
 PERMISSION_MODES: tuple[PermissionMode, ...] = get_args(PermissionMode)
@@ -119,6 +134,13 @@ class Settings(BaseModel):
         min_length=1,
         description='Working animation; /spinner previews the choices. An unknown name shows working.',
     )
+    footer_fields: list[FooterField] = Field(
+        default=list(DEFAULT_FOOTER_FIELDS),
+        description=(
+            'Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. '
+            'Use /set to configure the layout or reset it. assistant_age is off by default.'
+        ),
+    )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     task_models: bool = Field(
         default=True,
@@ -164,6 +186,14 @@ class Settings(BaseModel):
         description='Confirmed removal on exit: absolute Git common directory -> argv.',
     )
 
+    @field_validator('footer_fields')
+    @classmethod
+    def validate_footer_fields(cls, value: list[FooterField]) -> list[FooterField]:
+        """One occurrence per visible field; omitted fields are hidden."""
+        if len(value) != len(set(value)):
+            raise ValueError('Footer fields must be unique')
+        return value
+
     @field_validator('worktree_remove_commands')
     @classmethod
     def validate_worktree_remove_commands(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -207,6 +237,7 @@ SETTING_FIELDS = {
     'display.task_models': 'task_models',
     'display.theme': 'theme',
     'display.spinner': 'spinner',
+    'display.footer_fields': 'footer_fields',
     'display.splash': 'splash',
     'display.tool_calls': 'tool_calls',
     'display.tool_output': 'tool_output',

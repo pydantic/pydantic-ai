@@ -87,14 +87,16 @@ def test_row_shows_the_subagent_then_restores_the_main_run() -> None:
     assert status.text() == (
         'Explore [abcd1234] | context: 8k/200k tokens | ~0 streamed tokens | running: grep | plugin'
     )
-    assert status.toolbar()[:2] == [(INFO, 'Explore [abcd1234]'), (MUTED, ' | context: ')]
+    assert status.toolbar()[0] == (INFO, 'Explore [abcd1234]')
+    assert (MUTED, 'context: ') in status.toolbar()
     assert ''.join(text for _, text in status.toolbar()) == status.text()
     child.model = 'child-model'
     assert status.text().startswith('Explore [abcd1234]: child-model | context: ')
     assert ''.join(text for _, text in status.toolbar()) == status.text()
     shown.clear()
     assert status.text().startswith('main | /srv/app | context: 30k/? tokens')
-    assert status.toolbar()[0] == (MUTED, 'main | /srv/app | context: ')
+    assert status.toolbar()[0] == (MUTED, 'main')
+    assert (MUTED, '/srv/app') in status.toolbar()
 
 
 async def test_foreground_delegation_takes_the_row_until_it_settles(tmp_path: Path) -> None:

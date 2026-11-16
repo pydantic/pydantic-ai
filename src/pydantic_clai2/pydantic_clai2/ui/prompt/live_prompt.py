@@ -74,6 +74,7 @@ class LivePrompt:
         spinner: Callable[[], Spinner] = lambda: BUILTIN_SPINNERS[DEFAULT_SPINNER],
         panel: Callable[[str], Sequence[str]] = lambda _: (),
         queue_changed: Callable[[], None] = lambda: None,
+        queue_in_toolbar: Callable[[], bool] | None = None,
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -99,6 +100,7 @@ class LivePrompt:
         self.spinner = spinner
         self.panel = panel
         self.queue_changed = queue_changed
+        self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
         """Whether Ctrl+Enter steers, as Alt+Enter does; otherwise it is Enter."""
         self.notice = ''
@@ -615,7 +617,7 @@ class LivePrompt:
                 for style, text in self.toolbar()
             )
         )
-        if self.queued_messages:
+        if self.queued_messages and (self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())):
             footer += f' | queued: {len(self.queued_messages)}'
         return footer
 
