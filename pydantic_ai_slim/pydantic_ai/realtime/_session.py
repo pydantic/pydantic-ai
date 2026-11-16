@@ -123,6 +123,7 @@ from ._core import (
     ToolRoundsOver,
     TranscriptOverdue,
     UsageCounted,
+    tool_call_part,
 )
 from ._instrumentation import (
     SessionInstrumentation,
@@ -775,6 +776,8 @@ class RealtimeSession:
             (model_request_parameters or ModelRequestParameters()).function_tools
         )
         # The `tool_kind` of each of those tools that has one, which the core promotes calls to their typed part with.
+        # Deliberately shared with the core by reference and updated in place by `_reveal_tools`, so a call to a tool
+        # revealed mid-session is promoted too: don't copy it on either side.
         self._tool_kinds: dict[str, ToolPartKind] = _tool_kinds(self._advertised_tools)
         self._warned_undelivered_reveal = False
         self._wrap_event_stream = wrap_event_stream
@@ -2913,7 +2916,10 @@ class RealtimeSession:
         result = ToolResult(
             tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None, failed=failed
         )
-        await self._send_frame(*((update,) if update is not None else ()), result)
+        if update is not None:
+            await self._send_frame(update, result)
+        else:
+            await self._send_frame(result)
 
     async def _send_failed_result(
         self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
@@ -3182,10 +3188,7 @@ class RealtimeSession:
         tool_run_step = self._tool_run_step
         # Promoted to its typed part as the core records it (see `SessionCore`), so a `load_capability` call names the
         # capability it loads.
-        call_part = ToolCallPart.narrow_type(
-            ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id),
-            tool_kind=self._tool_kinds.get(event.tool_name),
-        )
+        call_part = tool_call_part(event, self._tool_kinds)
         mode = self._tool_manager.get_parallel_execution_mode()
         is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
         # `parallel_ordered_events` keeps calls concurrent but hands their result events to the

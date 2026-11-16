@@ -446,6 +446,17 @@ class Owed:
     """Which exchange it was owed in; `ExchangeAbandoned` starts the next."""
 
 
+def tool_call_part(event: ToolCall, tool_kinds: Mapping[str, ToolPartKind]) -> ToolCallPart:
+    """The history part for a tool call, promoted to its typed subclass by its tool's `tool_kind`, as the graph does.
+
+    Shared by the core, which records the call, and the session, which runs it, so both build the same part.
+    """
+    return ToolCallPart.narrow_type(
+        ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id),
+        tool_kind=tool_kinds.get(event.tool_name),
+    )
+
+
 class SessionCore:
     """The session's conversation state; see the module docstring."""
 
@@ -963,10 +974,7 @@ class SessionCore:
             return
         if not self._speech_spans_calls:
             self._close_part(response)
-        call = ToolCallPart.narrow_type(
-            ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id),
-            tool_kind=self._tool_kinds.get(event.tool_name),
-        )
+        call = tool_call_part(event, self._tool_kinds)
         response.parts.append(call)
         index = self._take_index()
         self._effects.extend([PartStartEvent(index=index, part=call), PartEndEvent(index=index, part=call)])

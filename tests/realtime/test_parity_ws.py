@@ -39,7 +39,13 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModel, RealtimeModelSettings, RealtimeSession, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import (
+    RealtimeEvent,
+    RealtimeModel,
+    RealtimeModelSettings,
+    RealtimeSession,
+    RealtimeTurnCompleteEvent,
+)
 from pydantic_ai.toolsets import FunctionToolset
 
 from ..conftest import try_import
@@ -674,7 +680,7 @@ async def test_capability_tool_reveal_parity(
 
     async with agent.realtime(model).session() as session:
         await session.send('What will the weather be in Paris tomorrow?')
-        events: list[Any] = []
+        events: list[RealtimeEvent] = []
         answered = False
         with anyio.fail_after(60):
             async for event in session:  # pragma: no branch
