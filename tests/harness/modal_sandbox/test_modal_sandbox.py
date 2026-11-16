@@ -537,7 +537,11 @@ def test_working_dir_must_be_an_absolute_posix_path(working_dir: str) -> None:
 
 
 async def test_creation_settings_reach_the_sandbox(fake_modal: FakeModal) -> None:
-    capability = ModalSandbox(sandbox_timeout=10, idle_timeout=2, working_dir='/work', env={'A': '1'})
+    policy: Any = object()
+    capability = ModalSandbox(
+        sandbox_timeout=10, idle_timeout=2, working_dir='/work', env={'A': '1'}, outbound_policy=policy
+    )
+    assert 'outbound_policy' not in repr(capability)
     backend = capability.get_workspace(RunContext(deps=None, model=TestModel(), usage=RunUsage()), ref=None)
     assert isinstance(backend, ModalSandboxBackend)
     await backend.get_sandbox()
@@ -548,6 +552,7 @@ async def test_creation_settings_reach_the_sandbox(fake_modal: FakeModal) -> Non
         '/work',
         {'A': '1'},
     )
+    assert created['outbound_policy'] is policy
 
 
 def test_workdir_is_a_deprecated_alias_of_working_dir() -> None:

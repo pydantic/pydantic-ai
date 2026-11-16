@@ -254,6 +254,35 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder(), hooks])
 ```
 
+## Give commands a credential they cannot read
+
+`outbound_policy` takes a `modal.experimental.OutboundPolicy`, passed to `Sandbox.create` unchanged. Modal's proxy, outside the sandbox, sets its headers on every request to the named domain and replaces any header of that name the request carried. Here `gh` and `git push` act as the token's owner, while `echo $GH_TOKEN` in the sandbox prints only `placeholder`:
+
+```python {test="skip"}
+import base64
+
+import modal.experimental
+
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+token = '...'  # a GitHub token, such as the output of `gh auth token`
+basic = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+policy = (
+    modal.experimental.OutboundPolicy()
+    .with_header_replacement(domain='github.com', headers={'Authorization': f'Basic {basic}'})  # git over HTTPS
+    .with_header_replacement(domain='api.github.com', headers={'Authorization': f'token {token}'})  # gh
+    .with_header_replacement(domain='uploads.github.com', headers={'Authorization': f'token {token}'})
+)
+sandbox = ModalSandbox(
+    env={'GH_TOKEN': 'placeholder'},  # `gh` sends a token only when one is set; the proxy replaces it
+    outbound_policy=policy,
+)
+```
+
+Modal marks this API experimental. The proxy sets the headers only on HTTP/1.1 requests, so a remote such as `git@github.com:owner/repo.git` gets no credential: use the `https://` URL. The agent can still use the token for anything it allows, on any repository it reaches. Name only domains you trust not to send request headers back in a response, or a command can read the value there. Modal refuses a policy alongside `block_network` or `outbound_domain_allowlist`.
+
+The policy applies only to a sandbox `ModalSandbox` creates; an attached sandbox, by ref or `ModalSandboxBackend(sandbox=...)`, keeps the one it was created with. To change it on a running sandbox, such as to rotate the token, call `_experimental_update_outbound_policy(policy)` on `await backend.get_sandbox()`. It replaces the whole policy, and works only on a sandbox created with one. To keep the token out of your own process too, save it as a named Modal secret, pass `secret=modal.Secret.from_name(name)` to `with_header_replacement`, and write `$KEY` in the header value; Modal refuses an ephemeral `Secret.from_dict` here.
+
 ## Configuration
 
 | Option | What it does |
@@ -266,6 +295,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
 | `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
+| `outbound_policy` | A `modal.experimental.OutboundPolicy` for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Give commands a credential they cannot read](#give-commands-a-credential-they-cannot-read). A spec cannot set it. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 
 Modal runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.

@@ -658,6 +658,7 @@ class FakeModal:
             idle_timeout: int | None = None,
             workdir: str | None = None,
             env: dict[str, str | None] | None = None,
+            _experimental_outbound_policy: object = None,
             client: object = None,
         ) -> FakeSandbox:
             control.clients.append(client)
@@ -672,6 +673,7 @@ class FakeModal:
                     'env': env,
                     'timeout': timeout,
                     'idle_timeout': idle_timeout,
+                    'outbound_policy': _experimental_outbound_policy,
                 }
             )
             control.owned_creates += 1
