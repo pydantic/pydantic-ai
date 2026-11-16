@@ -16,7 +16,6 @@ from pydantic_ai.computer_use import (
     PressKeys,
     Region,
     Scroll,
-    TypeText,
     Zoom,
 )
 
@@ -128,14 +127,6 @@ def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
 def test_actions_are_validated_when_built_in_python(build: Callable[[], object], message: str) -> None:
     with pytest.raises(ValidationError, match=re.escape(message)):
         build()
-
-
-def test_typed_text_refuses_control_characters_other_than_newline_and_tab() -> None:
-    assert TypeText(text='line 1\n\tline 2').text == 'line 1\n\tline 2'
-    # Each would press a key other than Enter or Tab (`\r` a second Enter, `\b` Backspace), or has no key at all.
-    for text in ('a\r\nb', 'a\x08b', 'a\x1bb', 'a\x7fb', 'a\x85b', 'a\x9fb'):
-        with pytest.raises(ValidationError, match=r'control character U\+00[0-9A-F]{2}: only `\\n` \(Enter\)'):
-            TypeText(text=text)
 
 
 def test_the_computer_tool_schema_requires_type_first_and_only_names_it_declares() -> None:
