@@ -4,7 +4,6 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
-import logging
 import os
 import re
 import secrets
@@ -17,7 +16,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache
-from importlib.metadata import version
 from pathlib import Path
 from time import monotonic
 from types import ModuleType
@@ -30,7 +28,6 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
 from coverage import Coverage
-from packaging.version import Version
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -61,6 +58,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -159,7 +157,6 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
-    from dbos import DBOSConfig
     from pluggy import Result
 
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -175,9 +172,6 @@ if TYPE_CHECKING:
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
-
-    class _DBOS2Config(DBOSConfig, total=False):
-        run_admin_server: bool
 
 else:
     from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
@@ -724,8 +718,20 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+)
+
+
+# Third-party functions that do only blocking setup, as (file, function): any blocking call below one
+# is allowed. Exempted whole rather than call by call, so a dependency changing which file call it
+# makes inside does not fail the suite.
+BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
+    # The agent-sandbox SDK loads the in-cluster or kubeconfig credentials once per client, on first
+    # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
+    # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
+    ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
 )
 
 
@@ -761,6 +767,9 @@ def _configure_blockbuster(
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
+    for path, setup_function in BLOCKBUSTER_LIBRARY_SETUP:
+        for function in bb.functions.values():
+            function.can_block_in(path, setup_function)
     local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
     local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
     for filename, functions in local_files:
@@ -813,45 +822,6 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
-
-
-def detach_dbos_logging() -> None:
-    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
-
-    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
-    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
-    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
-    later test in the same process runs a Temporal workflow.
-    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
-    https://github.com/dbos-inc/dbos-transact-py/issues/871
-    """
-    from dbos import _logger as dbos_logger_module
-    from opentelemetry.sdk._logs import LoggingHandler
-
-    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
-    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
-    with suppress(ImportError):
-        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
-
-        handler_types += (InstrumentationLoggingHandler,)
-
-    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
-            logger.removeHandler(handler)
-        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
-            logger.removeFilter(log_filter)
-
-
-def without_admin_server(config: DBOSConfig) -> DBOSConfig:
-    """Set `run_admin_server` to `False` on DBOS 2.x, which otherwise starts an admin server on port 3001.
-
-    DBOS 3.x has neither the admin server nor the key, so there this returns `config` unchanged.
-    Drop it once the `dbos` extra requires 3.0.
-    """
-    if Version(version('dbos')) >= Version('3'):
-        return config
-    dbos_2_config: _DBOS2Config = {**config, 'run_admin_server': False}
-    return dbos_2_config
 
 
 @pytest.fixture
@@ -1029,6 +999,29 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
     id (or pin the clock) must not see each other's."""
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
+@pytest.fixture
+def restore_native_tool_types() -> Iterator[None]:
+    """Restore `NATIVE_TOOL_TYPES` after the test, which defines native tool types that register for the process."""
+    registered = dict(NATIVE_TOOL_TYPES)
+    yield
+    NATIVE_TOOL_TYPES.clear()
+    NATIVE_TOOL_TYPES.update(registered)
+
+
+class _NoSchema:
+    """A type pydantic can't build a schema for."""
+
+
+@pytest.fixture
+def native_tool_type_without_schema(restore_native_tool_types: None) -> None:
+    """Register a native tool type with a field pydantic can't build a schema for, which fails the native tool union."""
+
+    @dataclass(kw_only=True)
+    class NoSchemaTool(AbstractNativeTool):
+        kind: str = 'no_schema'
+        value: _NoSchema = field(default_factory=_NoSchema)
 
 
 try:

@@ -216,8 +216,11 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
     GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
     GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.TOO_MANY_TOOL_CALLS.value: 'error',
     GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
     GoogleFinishReason.NO_IMAGE.value: 'error',
+    GoogleFinishReason.IMAGE_RECITATION.value: 'content_filter',
+    GoogleFinishReason.IMAGE_OTHER.value: None,
     'MODEL_ARMOR': 'content_filter',
 }
 
@@ -1776,7 +1779,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         parts = candidate.content.parts
         if not parts:
-            return  # pragma: no cover
+            return
 
         if not self._has_tool_invocations:
             self._has_tool_invocations = _has_native_tool_invocations(parts)
@@ -1920,7 +1923,7 @@ class GeminiStreamedResponse(StreamedResponse):
     def _map_inline_data(
         self, inline_data: Blob, thought: bool | None, provider_details: dict[str, Any] | None
     ) -> Iterator[ModelResponseStreamEvent]:
-        if thought:  # pragma: no cover
+        if thought:
             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
             # > The model generates up to two interim images to test composition and logic. The last image within Thinking is also the final rendered image.
             # We currently don't expose these image thoughts as they can't be represented with `ThinkingPart`
@@ -2332,16 +2335,24 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
     if part.tool_response:
         return _map_tool_response(part.tool_response, provider_name)
     if inline_data := part.inline_data:
-        data = inline_data.data
-        mime_type = inline_data.mime_type
-        assert data and mime_type, 'Inline data must have data and mime type'
-        content = BinaryContent(data=data, media_type=mime_type)
-        return FilePart(content=BinaryContent.narrow_type(content))
+        return _map_inline_data_part(inline_data, part.thought)
     if _is_signature_only_part(part):
         # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
         # show, and both backends reject them when replayed ("Invalid thought signature").
         return None
     raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
+
+
+def _map_inline_data_part(inline_data: Blob, thought: bool | None) -> FilePart | None:
+    """Map an inline file, or return `None` for an interim image the model produced while thinking."""
+    if thought:
+        # See the thought-image comment in `GeminiStreamedResponse._map_inline_data`.
+        return None
+    data = inline_data.data
+    mime_type = inline_data.mime_type
+    assert data and mime_type, 'Inline data must have data and mime type'
+    content = BinaryContent(data=data, media_type=mime_type)
+    return FilePart(content=BinaryContent.narrow_type(content))
 
 
 def _character_index(text: str, byte_index: int) -> int | None:
