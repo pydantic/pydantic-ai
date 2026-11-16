@@ -177,6 +177,7 @@ async def test_a_cancelled_hold_lets_go_of_what_it_pressed(fake_daytona: FakeDay
     ('action', 'sent'),
     [
         pytest.param(TypeText(text='a' * 4_001), f'type {"a" * 2_000}', id='type'),
+        pytest.param(Scroll(x=1, y=2, direction='down', amount=1_001), 'scroll 1 2 down 500 modifiers=[]', id='scroll'),
         pytest.param(Click(x=1, y=2), 'click 1 2 left clicks=1 modifiers=[]', id='click'),
     ],
 )

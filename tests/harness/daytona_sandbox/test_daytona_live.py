@@ -343,6 +343,10 @@ class TestLiveDaytonaDesktop:
         assert await display.display_size() == (1280, 800)
         await check_display_contract(display)
 
+    async def test_commands_see_the_desktop(self, backend: WorkspaceBackend) -> None:
+        """Shell commands get `DISPLAY`, so programs they start open on the desktop."""
+        assert (await backend.run('echo "$DISPLAY"', shell=True)).stdout == ':0\n'
+
     async def test_modifiers_are_held_around_clicks_and_scrolls(self, backend: WorkspaceBackend) -> None:
         """Validates the mapping the fake assumes: Daytona holds a click's or scroll's modifiers around it, and `cmd`,
         which `super` maps to, is `Super_L`."""
