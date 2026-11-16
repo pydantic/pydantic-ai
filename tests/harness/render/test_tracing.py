@@ -5,9 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import inspect
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -16,12 +14,13 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from render.workflows import TaskContext, TaskDefinition, Workflows
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.render import RenderWorkflows
+from tests.harness.conftest import Instrumented
 
-from .conftest import RecordingTaskContext, json_round_trip
+from .conftest import P, R, RecordingTaskContext, json_round_trip
 
 
 @pytest.mark.parametrize('instrumentation', ['disabled', 'agent', 'global', 'model'])
@@ -117,19 +116,19 @@ async def test_wire_tracer_flag_uses_only_worker_configuration(instrumented: boo
 class WorkerTaskContext(RecordingTaskContext):
     """Run each child task in a fresh context, as a worker process does, so nothing leaks in from the workflow."""
 
-    async def run(self, task: TaskDefinition[Any, Any], *args: Any, **kwargs: Any) -> Any:
+    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
         self.task_names.append(task.name)
 
-        async def run_task() -> Any:
+        async def run_task() -> R:
             result = task.func(self, *json_round_trip(args), **json_round_trip(kwargs))
-            return await result if inspect.isawaitable(result) else result
+            if inspect.isawaitable(result):
+                return await result
+            return result
 
         return json_round_trip(await asyncio.create_task(run_task(), context=contextvars.Context()))
 
 
-async def test_child_workspace_calls_are_traced_on_the_worker(
-    tmp_path: Path, instrumented: Callable[[bool], tuple[Instrumentation, Any]]
-) -> None:
+async def test_child_workspace_calls_are_traced_on_the_worker(tmp_path: Path, instrumented: Instrumented) -> None:
     tracing, exporter = instrumented(False)
     model = TestModel(call_tools=['look'])
     runtime = RenderWorkflows[None](Workflows(), models={'plain': model})
