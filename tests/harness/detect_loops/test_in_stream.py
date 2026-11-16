@@ -301,7 +301,7 @@ class TestDetectLoops:
     async def test_short_repetition_is_not_a_loop(self):
         loops, detector = _collect()
         # A long run of a short unit, like a divider or a row of zeros, repeats a unit shorter than `min_period`.
-        script = _script(['=' * 50] * 20 + ['0, '] * 300)
+        script = _script(['=' * 50] * 50 + ['0, '] * 700)
 
         await _agent(script, detector).run('Draw a table', event_stream_handler=_drain)
 
@@ -354,11 +354,11 @@ class TestDetectLoops:
             action='error',
         )
         calls = [_args('{"path": "a.txt"}', index=index, name='read_file') for index in range(6)]
-        script = _script(calls, [*(_thinking(LOOP) for _ in range(30)), *([LOOP] * 30)])
+        script = _script(calls, [*(_thinking(LOOP) for _ in range(40)), *([LOOP] * 40)])
 
         result = await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
-        assert result.output == LOOP * 30
+        assert result.output == LOOP * 40
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)
