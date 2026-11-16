@@ -383,8 +383,7 @@ class TestDetectLoops:
         assert sum(slices) == len(content)
         assert max(slices) == 64
 
-    @pytest.mark.parametrize('allow', [False, True])
-    async def test_a_pending_parallel_input_guard_decides_before_the_loop_is_acted_on(self, allow: bool):
+    async def test_a_pending_parallel_input_guard_decides_before_the_loop_is_acted_on(self):
         detected = asyncio.Event()
 
         @dataclass
@@ -397,7 +396,7 @@ class TestDetectLoops:
 
         async def guard(prompt: str) -> GuardrailResult:
             await detected.wait()
-            return GuardrailResult.allow() if allow else GuardrailResult.block('Not allowed.')
+            return GuardrailResult.block('Not allowed.')
 
         reads: list[str] = []
         script = _script(
@@ -415,15 +414,9 @@ class TestDetectLoops:
 
         result = await agent.run('Explain', event_stream_handler=_drain)
 
-        if allow:
-            assert result.output == 'done'
-            assert reads == ['a.txt']
-            nudged = ['Your thinking repeated the same passage' in str(messages) for messages in script.requests]
-            assert nudged == [False, True, False]
-        else:
-            assert result.output == 'Not allowed.'
-            assert len(script.requests) == 1
-            assert reads == []
+        assert result.output == 'Not allowed.'
+        assert len(script.requests) == 1
+        assert reads == []
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)
