@@ -145,7 +145,7 @@ What a run recorded lives in memory, in the instance `for_run` creates for that 
 
 ## Telemetry
 
-Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, so it shows in the run's trace next to the model request it changed. It's a no-op unless the agent is [instrumented](../logfire.md).
+Each detection emits a zero-duration `loop detected` span, so it shows in the run's trace next to the model request it changed. It's a no-op unless the agent is [instrumented](../logfire.md).
 
 | Attribute | Value |
 |---|---|
