@@ -1121,6 +1121,7 @@ class TestAdvisorNativeOrLocal:
         assert toolset is not None
         assert (research.id, toolset.id) == ('research_advisor', 'research_advisor')
         assert ResearchAdvisor('test', id='custom').id == 'custom'
+        assert ResearchAdvisor('test', id='advisor').id == 'advisor'
         assert ResearchAdvisor.from_spec('test').id == 'research_advisor'
 
         agent = Agent(

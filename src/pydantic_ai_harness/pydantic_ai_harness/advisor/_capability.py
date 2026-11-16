@@ -181,7 +181,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         max_tokens: int | None = None,
         caching: Literal['5m', '1h'] | None = None,
         forward_history: bool = False,
-        id: str | None = 'advisor',
+        id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
         # TODO(harness 1.0, #12997): remove the deprecated `mode` parameter, its docstring entry and the block
@@ -211,7 +211,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             max_tokens: Maximum output tokens for each consultation.
             caching: Prompt-cache TTL for the native advisor's transcript.
             forward_history: Whether local consultations receive the executor's message history.
-            id: The capability id. Left at `'advisor'`, a subclass's own class-level `id` is kept.
+            id: The capability id. Defaults to the class-level `id`: `'advisor'`, or a subclass's own.
             defer_loading: Whether to make this an on-demand capability, whose tools the model loads by `id`.
             description: The capability description.
             mode: Deprecated: use `native` and `local`. Combined with a non-default `native` or
@@ -220,7 +220,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         if local is None:
             # `None` and `True` build the same tool; stating `True` makes them merge the same way too.
             local = True
-        if id == 'advisor':
+        if id is None:
             # A subclass that sets its own class-level `id` kept it before `id` was a parameter.
             id = type(self).id
         # TODO(harness 1.0, #12997): remove this deprecated `mode` mapping.
@@ -298,7 +298,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         max_tokens: int | None = None,
         caching: Literal['5m', '1h'] | None = None,
         forward_history: bool = False,
-        id: str | None = 'advisor',
+        id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
         # TODO(harness 1.0, #12997): remove the deprecated `mode` spec field, its docstring mention
