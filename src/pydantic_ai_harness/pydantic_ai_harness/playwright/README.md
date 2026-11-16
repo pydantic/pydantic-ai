@@ -178,8 +178,8 @@ not raised to abort the agent run.
 | `auto_install_chromium` | `False` | Fetch Chromium automatically when the binary is missing. |
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
 | `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
-| `cdp_url_factory` | `None` | Async function returning a CDP endpoint on the first browser tool call, once per run. Mutually exclusive with `cdp_url`; unavailable in specs. |
-| `cdp_context` | `'new'` | Create an isolated context, or use `'existing'` to reuse the connected browser's default context and open tabs. Requires a CDP endpoint. |
+| `cdp_url_factory` | `None` | Call an async function on first browser use and reuse its returned CDP endpoint for the run. Cannot be combined with `cdp_url` or used in specs. |
+| `cdp_context` | `'new'` | Choose `'new'` for an isolated context or `'existing'` for the default context's sign-ins and tabs. Only `'existing'` requires a CDP endpoint and excludes `storage_state`. |
 
 ## Two of them
 
@@ -308,11 +308,12 @@ def provider_browser(endpoint: CdpUrlFactory) -> PlaywrightBrowser[None]:
 ```
 
 The factory is not called at agent construction, run start, or tool discovery.
-Its result is cached for that run, including connection retries; the factory is
-called again for a later run. It uses `navigation_timeout_ms`. If provisioning
-fails or times out before returning an endpoint, the factory must handle any
-provider resources it created and ambiguous provisioning results. Pydantic does
-not own the provider API or its retry policy.
+Its returned endpoint is cached for that run, including connection retries; calls
+that raise or time out are not cached. The factory is called again for a later
+run. `navigation_timeout_ms` limits each factory call. If provisioning fails or
+times out before returning an endpoint, the factory must handle any provider
+resources it created and ambiguous provisioning results. Pydantic does not own
+the provider API or its retry policy.
 
 `storage_state` cannot be combined with `'existing'`: the context already has
 its state. The agent inherits that context's signed-in accounts, open pages, and

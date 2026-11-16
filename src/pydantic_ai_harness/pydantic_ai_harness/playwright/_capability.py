@@ -244,12 +244,14 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
     cdp_url_factory: CdpUrlFactory | None = field(default=None, repr=False)
-    """Resolve a CDP endpoint on the first browser tool call, once per run.
+    """Call an async function for a CDP endpoint on first browser use.
 
-    Mutually exclusive with `cdp_url`. The async factory can create or resume a
-    managed browser; the caller owns its provider-side lifetime. Factory execution
-    uses the navigation timeout. Once resolved, the endpoint is reused on retries
-    rather than calling a provisioning factory again. Not available in specs.
+    The function can create or resume a managed browser; the caller owns its
+    provider-side lifetime. `navigation_timeout_ms` limits each factory call.
+    A returned endpoint is reused for the rest of the run, including connection
+    retries. Calls that raise or time out are not cached.
+
+    Cannot be combined with `cdp_url` or supplied through a serializable spec.
     """
 
     cdp_context: Literal['new', 'existing'] = 'new'

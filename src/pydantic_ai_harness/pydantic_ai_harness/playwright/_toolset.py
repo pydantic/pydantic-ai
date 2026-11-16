@@ -1023,7 +1023,7 @@ class _FailedRequest(Protocol):
 
 
 CdpUrlFactory = Callable[[], Awaitable[str]]
-"""Obtain a CDP endpoint lazily, once per browser session, without exposing it to the model."""
+"""Return a CDP endpoint asynchronously when a browser tool needs to connect."""
 
 
 class PlaywrightBrowserSession:
