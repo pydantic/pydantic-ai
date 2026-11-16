@@ -45,6 +45,8 @@ Set `BOXD_API_KEY` to an API key from `boxd auth keys create`; each key belongs 
 
 ## Quick start
 
+<span id="choose-the-tools"></span>
+
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
@@ -62,6 +64,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **It has a public HTTPS address** that serves the port its code listens on, and can reach the internet. See [Security model](#security-model).
 
 ## Continue in the same machine
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same machine, waking or starting it if needed:
 
@@ -215,6 +219,8 @@ Destroy each machine when you are done; the copy isn't tied to the original.
 `client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new machine.
 
 ## Limits
+
+<span id="what-a-timeout-stops"></span>
 
 - boxd ends a command that prints nothing for 30 minutes, even with `timeout=None`, raising `WorkspaceTimeoutError`. Have long builds print progress.
 - A timeout or cancellation stops the command's process group, not the machine.

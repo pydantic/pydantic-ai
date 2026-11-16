@@ -32,6 +32,8 @@ flowchart TB
 
 ## Install
 
+<span id="platforms"></span>
+
 uv:
 
 ```bash
@@ -47,6 +49,8 @@ pip install "pydantic-ai-harness[coder,boxlite,anthropic]"
 The `boxlite` extra installs [BoxLite's Python SDK](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python), which runs VMs in your process, with no daemon, on Python 3.14 or older: macOS 14 or newer on Apple silicon, or Linux on x86_64 or aarch64 with glibc 2.28 or newer, where the user running the agent needs read and write access to `/dev/kvm`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start
+
+<span id="choose-the-tools"></span>
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -66,6 +70,8 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 - **One process at a time can use BoxLite's home directory** (`~/.boxlite`, or `BOXLITE_HOME`). Another process gets `WorkspaceUnavailableError` until the first one exits.
 
 ## Continue in the same box
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same box, booting it again if stopped:
 
@@ -214,6 +220,8 @@ Whoever passes a ref runs commands in the box it names, and BoxLite can open any
 | `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. |
 
 ## Limits
+
+<span id="how-commands-run"></span>
 
 - On an unsupported platform, or Python 3.15, importing `pydantic_ai_harness.boxlite_sandbox` raises `ImportError`. A host that can't run VMs raises `WorkspaceUnavailableError` on first use; on Linux, check `ls -l /dev/kvm` first.
 - On Ubuntu 24.04, AppArmor stops BoxLite's VM engine from starting until you install `bubblewrap` and the AppArmor profile from BoxLite's [troubleshooting guide](https://github.com/boxlite-ai/boxlite/blob/main/docs/guides/troubleshooting.md).

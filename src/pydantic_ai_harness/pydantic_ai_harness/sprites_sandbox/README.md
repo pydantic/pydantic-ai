@@ -43,6 +43,8 @@ Set `SPRITE_TOKEN` to your Sprites API token. The examples also use `Coder` and 
 
 ## Quick start
 
+<span id="choose-the-tools"></span>
+
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
@@ -60,6 +62,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **A new Sprite has git, Python and Node.js** ([preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/)), but not pytest or `rg`. Install what your project needs once and reuse the Sprite by its ref; for faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep`.
 
 ## Continue in the same Sprite
+
+<span id="continue-in-the-same-sandbox"></span><span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same Sprite:
 
@@ -169,6 +173,8 @@ You pay for compute while a Sprite is active and for storage until you delete it
 `client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; `runtime` only shapes a new Sprite.
 
 ## Limits
+
+<span id="what-a-timeout-stops"></span>
 
 - Unix permissions don't restrict the `sprite` user: a file with mode `000` is still readable. Don't rely on them to keep tools out of a path.
 - Stopping a command on a timeout or cancellation is best effort; its children may keep running. If unsure, inspect or delete the Sprite.

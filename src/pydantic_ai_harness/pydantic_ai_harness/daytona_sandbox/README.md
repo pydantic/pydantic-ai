@@ -43,6 +43,8 @@ Set `DAYTONA_API_KEY` to an API key from your Daytona dashboard. The examples al
 
 ## Quick start
 
+<span id="choose-the-tools"></span>
+
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
@@ -59,6 +61,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **The default snapshot has git, Python and `rg`**, but not your project's dependencies. Build a Daytona snapshot with them and pass `snapshot='my-snapshot'`, or install them [before the run](#prepare-a-sandbox-before-the-run). An unknown snapshot fails on first use with `WorkspaceUnavailableError`.
 
 ## Continue in the same sandbox
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same sandbox, starting it again if Daytona stopped it:
 
@@ -170,6 +174,8 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C or a killed wo
 `client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new sandbox.
 
 ## Limits
+
+<span id="what-a-timeout-stops"></span>
 
 - A timeout or cancellation stops the command, not the sandbox. If Daytona doesn't confirm the stop, the command may still be running; inspect or delete the sandbox. `WorkspaceTimeoutError` carries the last 4 KiB of each stream.
 - Output is collected when the command exits, so output a background child writes afterwards is lost. Redirect it to a file; `Shell.start_command` does this for you.

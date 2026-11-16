@@ -96,6 +96,8 @@ For stronger isolation, set `runtimeClassName` (gVisor or Kata) on the pod templ
 
 ## Quick start
 
+<span id="choose-the-tools"></span>
+
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
@@ -114,6 +116,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **Files are lost if the pod is lost.** When a node fails, agent-sandbox starts a new pod that keeps only what the template puts on a persistent volume; the template above uses `emptyDir`.
 
 ## Continue in the same sandbox
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same sandbox:
 
@@ -257,6 +261,8 @@ sandbox = KubernetesSandbox(
 `connection`, `working_dir` and `env` also apply when you reattach; the other options only shape a new claim.
 
 ## Limits
+
+<span id="how-commands-run"></span><span id="what-a-timeout-stops"></span>
 
 - Claiming or reattaching gives up with `TimeoutError` after 190 seconds; a claim that times out is deleted.
 - A timeout or cancellation kills the command's process group, not the sandbox. A job that detaches with `setsid` may keep running.

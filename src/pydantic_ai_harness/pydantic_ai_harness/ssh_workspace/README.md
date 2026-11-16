@@ -30,6 +30,8 @@ flowchart TB
 
 ## Install
 
+<span id="platforms"></span>
+
 uv:
 
 ```bash
@@ -69,6 +71,8 @@ For a single run, pass `workspace=SSHWorkspaceBackend('dev@build-box')` to `agen
 
 ## Continue in the same workspace
 
+<span id="reattach-later"></span>
+
 The host's files stay where they are between runs, so any run with the same `SSHWorkspace` works in the same directory. The ref is `WorkspaceRef(provider='ssh', id='dev@build-box:/srv/app')`, available from construction. `SSHWorkspace` only accepts a ref to its own host and directory, and raises `ValueError` for any other, so a ref in the message history can't point it at another machine. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#continuing-in-the-same-workspace) covers how runs find their workspace.
 
 ## Logging in
@@ -86,6 +90,8 @@ Passwords aren't supported. `ssh` runs with `BatchMode=yes`, so a host that asks
 `env=` values travel inside the script `ssh` sends, which this machine passes to a local `sh` as arguments, so while a command runs they are visible in process listings (`ps`) to other users on this machine, and on the host too when `ssh` doesn't forward its input (`-n` or `-f` in `ssh_args`, or `StdinNull` in your SSH configuration). Don't put secrets in `env=` on a shared machine: keep them in a file only the remote user can read, or in the remote user's login environment.
 
 ## Limits
+
+<span id="how-commands-run"></span>
 
 - The machine running the agent must be Linux or macOS, like [`LocalWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#platforms); on Windows, constructing `SSHWorkspace` raises `NotImplementedError`. The host needs a POSIX `sh` and the usual file utilities.
 - A command can be as long as the host allows one program argument to be, 128 KiB on Linux. If `ssh` doesn't forward its input (see [Security](#security)), a long command full of quotes can be too long to start.

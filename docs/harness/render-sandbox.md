@@ -21,6 +21,8 @@ Set `RENDER_API_KEY` to a [Render API key](https://render.com/docs/api#1-create-
 
 ## Quick start
 
+<span id="choose-the-tools"></span>
+
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
@@ -39,6 +41,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **The image needs `python3`.** Render's default image has it.
 
 ## Continue in the same sandbox
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same sandbox:
 
@@ -158,6 +162,8 @@ New sandbox ids are logged at INFO. A connection failure during creation can lea
 
 ## Limits
 
+<span id="what-a-timeout-stops"></span>
+
 - Sandbox setup timeouts raise `TimeoutError`; missing sandboxes and rejected access raise `WorkspaceUnavailableError`.
 - Render allows 100 API requests a minute. A rate-limited request raises the SDK's `RateLimitError` and is not retried.
 - A command and its environment must fit in about 110 KB. Write larger content with the file tools.
@@ -167,7 +173,7 @@ New sandbox ids are logged at INFO. A connection failure during creation can lea
 
 ## Durable execution
 
-`RenderSandbox` composes with [`RenderWorkflows`](render-workflows.md): model and tool tasks share one sandbox. The `render` extra covers both; set the Render variables on every worker. A retried root task runs the agent again, so terminate the sandbox from the task that runs the agent, as in [Clean up](#clean-up).
+<span id="render-workflows"></span>`RenderSandbox` composes with [`RenderWorkflows`](render-workflows.md): model and tool tasks share one sandbox. The `render` extra covers both; set the Render variables on every worker. A retried root task runs the agent again, so terminate the sandbox from the task that runs the agent, as in [Clean up](#clean-up).
 
 ## Telemetry
 

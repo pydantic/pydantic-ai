@@ -33,6 +33,8 @@ Complete agent stacks as regular combined capabilities: one import gives you a w
 
 ### Workspaces
 
+<span id="execution-environments"></span>
+
 Where the agent runs commands and keeps files: this machine, a container, or a sandbox. [Compare them](../workspace.md#supported-workspaces).
 
 | Capability | Package | What it does |

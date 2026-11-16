@@ -48,6 +48,8 @@ This saves your Modal credentials; in CI, set `MODAL_TOKEN_ID` and `MODAL_TOKEN_
 
 ## Quick start
 
+<span id="choose-the-tools"></span>
+
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
@@ -67,6 +69,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **It can reach the internet**, and the model can read every `env` value. For network restrictions such as Modal's `block_network`, create the `modal.Sandbox` yourself and [pass it to the run](#continue-in-the-same-sandbox).
 
 ## Continue in the same sandbox
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same sandbox:
 
@@ -226,6 +230,8 @@ agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersMo
 
 ## Limits
 
+<span id="what-a-timeout-stops"></span>
+
 - A timeout or cancellation stops the command's process group, not the sandbox. Custom images need util-linux's `setsid` for that; without it, the command's children keep running.
 - If stopping a command fails, it may keep running; keep the ref so you can terminate the sandbox.
 - A sandbox terminated mid-command raises `WorkspaceUnavailableError`; a command killed in a live sandbox returns exit 137.
@@ -241,6 +247,8 @@ Add `TemporalDurability()` next to `ModalSandbox()` and install the `temporal` e
 `ModalSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 ## Upgrading from the previous `ModalSandbox`
+
+<span id="migration-table"></span><span id="what-changed-in-the-lifecycle"></span>
 
 The previous `ModalSandbox` registered its own `run_command`, `read_file`, `write_file` and `list_directory` tools and terminated its sandbox when the run ended. Now it only supplies the sandbox, so add `Coder()`, or `Shell()` and `FileSystem()`. Old arguments still construct, with a `HarnessDeprecationWarning` that names the replacement, and are ignored (`sandbox_id` still attaches). Removed imports fail with an error that names the replacement.
 

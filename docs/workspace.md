@@ -6,6 +6,8 @@ so the same tools work in any of them, and you switch by changing one capability
 
 ## Give an agent a workspace
 
+<span id="give-an-agent-an-environment"></span>
+
 ```python {title="workspace_agent.py" dunder_name="not_main"}
 import asyncio
 
@@ -55,6 +57,8 @@ tools that work in whatever workspace the run has.
 
 ## Run it in a sandbox
 
+<span id="move-it-into-a-sandbox"></span>
+
 `LocalWorkspace` runs the model's commands on your machine, as you. To run them somewhere isolated, swap
 it for a sandbox. Your tools, such as the `execute` tool above or `Coder` here, now run there:
 
@@ -71,6 +75,8 @@ The sandbox is created the first time the run uses it, and keeps running after t
 it or its provider stops it; see [Cleaning up](#cleaning-up).
 
 ## Supported workspaces {#supported-workspaces}
+
+<span id="harness-workspace-capabilities"></span>
 
 `LocalWorkspace` and `WindowsWorkspace` come with `pydantic-ai`; the rest come with
 [Pydantic AI Harness](harness/index.md), each behind its own install extra.
@@ -93,13 +99,13 @@ it or its provider stops it; see [Cleaning up](#cleaning-up).
 | [SSH Workspace](harness/ssh-workspace.md) | Another machine, over your `ssh` client | No, commands run as your SSH user there | SSH access |
 | [Bubblewrapped Workspace](harness/bubblewrap-sandbox.md) | Wraps another workspace and runs its commands in Linux `bwrap` | Best effort, not a security boundary | Linux with `bwrap` on that host |
 
-Other packages implement the same interface:
-[`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) by [Vstorm](https://vstorm.co/)
-provides workspaces backed by Kubernetes pods, Docker, Daytona, a `sandboxd` service that holds the
+<span id="third-party-workspaces"></span>Other packages implement the same interface:
+[`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend), a community package by
+[Vstorm](https://vstorm.co/), provides workspaces backed by Kubernetes pods, Docker, Daytona, a `sandboxd` service that holds the
 Docker socket for you, and in-memory documents you keep in your own database. To list a package here,
 open a pull request.
 
-For anything else, [write a backend](workspace-custom.md#writing-a-backend): one class that runs a
+<span id="writing-a-backend"></span><span id="resolving-symlinks"></span><span id="checking-a-backend"></span><span id="supplying-a-workspace-from-a-capability"></span><span id="workspace-authority"></span><span id="files-you-didnt-write"></span><span id="authority-by-path"></span><span id="path-authority"></span>For anything else, [write a backend](workspace-custom.md#writing-a-backend): one class that runs a
 command, plus a test suite that checks it behaves like the others.
 
 ## Your machine or a sandbox
@@ -306,7 +312,7 @@ A run uses the first of these that applies:
 [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for the agent's capability to attach to, or a live
 workspace or backend, such as `result.workspace` or `ctx.workspace`, used as is.
 
-To move to a new provider without breaking old conversations, list both: capabilities are asked in order,
+To move to a new directory or provider without breaking old conversations, list both: capabilities are asked in order,
 and only the one that recognizes a reference attaches to it. New conversations use the first; conversations
 that started in the second continue there.
 
@@ -366,7 +372,8 @@ delegation.
 - A workspace call can run again if a worker dies during it. Timeouts, output-limit failures, read-only
   refusals and a lost environment are not retried. Other errors, such as `FileNotFoundError`, follow the
   engine's retry policy, which on Temporal retries without limit by default: raise `ModelRetry` from them,
-  or set `maximum_attempts`.
+  or set `maximum_attempts` on the
+  [retry policy](durable_execution/temporal.md#activity-configuration).
 - On Temporal, a command must finish within its activity's `start_to_close_timeout`, 60 seconds by
   default, whatever its own `timeout`. Raise it for a tool with
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. Workspace calls from workflow code use
@@ -411,6 +418,8 @@ A tool that builds paths or shell commands itself can read
 [`ctx.workspace.paths`][pydantic_ai.workspaces.Workspace.paths] (`posixpath` or `ntpath`).
 
 ## Limits
+
+<span id="security-choices"></span><span id="timeouts-and-clocks"></span>
 
 - A run has one workspace.
 - A local command whose combined output passes 10 MiB raises `WorkspaceOutputLimitError`, with the first

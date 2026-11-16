@@ -40,6 +40,8 @@ Set `E2B_API_KEY` to your E2B API key. The examples also use `Coder` and an Anth
 
 ## Quick start
 
+<span id="choose-the-tools"></span>
+
 ```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
@@ -57,6 +59,8 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **The default template has Python and git**, but not your project's dependencies or ripgrep. Bake them into an E2B [template](https://e2b.dev/docs/template/quickstart) and pass `template='my-template'`, or install them [before the run](#prepare-a-sandbox-before-the-run).
 
 ## Continue in the same sandbox
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same sandbox, resuming it if paused:
 
@@ -223,6 +227,8 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 `template` and `allow_internet_access` only shape a new sandbox; the other options also apply when you reattach, and `destroy` uses `client`.
 
 ## Limits
+
+<span id="what-a-timeout-stops"></span>
 
 - E2B's file service runs as root, so Unix permissions don't restrict file tools. Commands run as `user`.
 - Concurrent writes to one path can interleave, and a reader can see a partial file. Write to separate paths.

@@ -51,6 +51,8 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 
 ## Continue in the same sandbox
 
+<span id="reattach-later"></span>
+
 Pass the message history, and the next run works in the same sandbox:
 
 ```python {names="defined"}
@@ -191,6 +193,8 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
 
 ## Limits
+
+<span id="how-commands-run"></span>
 
 - Each command takes about a fifth of a second, and file operations run as commands, so a large file takes several seconds per MiB. Keep large data out of the workspace or fetch it from inside the sandbox.
 - Creating the sandbox, including pulling the image, isn't bounded by a command's `timeout`.

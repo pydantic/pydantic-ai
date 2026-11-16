@@ -30,6 +30,8 @@ flowchart TB
 
 ## Install
 
+<span id="platforms"></span>
+
 ```bash
 pip/uv-add "pydantic-ai-harness[coder,anthropic]"
 ```
@@ -37,6 +39,8 @@ pip/uv-add "pydantic-ai-harness[coder,anthropic]"
 The capability runs the `docker` CLI already on your machine, so it needs no extra of its own. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start
+
+<span id="choose-the-tools"></span>
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -56,6 +60,8 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 - **The image's entrypoint doesn't run**, so a service the image would start on boot isn't running; start it with a command.
 
 ## Continue in the same container
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same container, starting it if stopped:
 
@@ -152,6 +158,8 @@ A new container gets `--pids-limit 2048`, so a runaway fork loop can't exhaust t
 
 ## Use Podman or a remote Docker host
 
+<span id="use-a-remote-docker-host"></span>
+
 Pass `executable='podman'` to use Podman.
 
 The capability uses whichever daemon your `docker` CLI points at. To run containers on another host, point the CLI there before the agent starts:
@@ -188,6 +196,8 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
 
 ## Limits
+
+<span id="how-commands-run"></span>
 
 - The machine running the agent must be Linux or macOS, like [`LocalWorkspace`](../workspace.md#platforms); on Windows, a run raises `NotImplementedError`.
 - Creating or starting the container, including pulling the image, isn't bounded by a command's `timeout`.

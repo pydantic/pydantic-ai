@@ -28,6 +28,8 @@ flowchart TB
 
 ## Install
 
+<span id="platforms"></span>
+
 uv:
 
 ```bash
@@ -43,6 +45,8 @@ pip install "pydantic-ai-harness[coder,smol,anthropic]"
 The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), which runs VMs on this machine: macOS on Apple silicon, or Linux on x86_64 or aarch64 with glibc 2.34 or newer, where the user running the agent needs read and write access to `/dev/kvm`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start
+
+<span id="choose-the-tools"></span>
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -61,6 +65,8 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 - **Without an `image`, the VM runs smolvm's own Alpine Linux**, which has BusyBox but no Python, git or ripgrep. An `image` is any OCI image with a POSIX `/bin/sh`; smolvm pulls it the first time.
 
 ## Continue in the same VM
+
+<span id="reattach-later"></span>
 
 Pass the message history, and the next run works in the same VM:
 
@@ -174,6 +180,8 @@ Whoever passes a ref runs commands in the VM it names, and smolmachines can open
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM. The agent's commands can read these, so leave out secrets it shouldn't see. |
 
 ## Limits
+
+<span id="how-commands-run"></span>
 
 - On an unsupported platform, importing `pydantic_ai_harness.smol_sandbox` raises `ImportError`. A host that can't run VMs, such as Linux without `/dev/kvm` access, raises `WorkspaceUnavailableError` on first use; check with `smol.local_availability()`.
 - Files move 64 KiB per command, so a file of several MiB takes seconds to read or write. Images need the usual file utilities, which BusyBox has.
