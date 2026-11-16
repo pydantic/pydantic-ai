@@ -161,6 +161,18 @@ class TestStreamGuardrail:
         assert texts == ['[redacted]']
         assert result.output == 'leaks SSN here'
 
+    async def test_run_stream_raises_a_block_but_streams_text_a_replace_did_not_reach(self):
+        blocking = Agent(TestModel(custom_output_text='hi'), capabilities=[StreamGuardrail(guard=lambda part: False)])
+        with pytest.raises(OutputBlocked):
+            async with blocking.run_stream('hello'):
+                pass  # pragma: no cover
+
+        redacting = Agent(
+            TestModel(custom_output_text='leaks SSN here'), capabilities=[StreamGuardrail(guard=_redact_ssn)]
+        )
+        async with redacting.run_stream('hello') as result:
+            assert [text async for text in result.stream_text(debounce_by=None)] == ['leaks SSN here']
+
     async def test_process_event_stream_sees_events_before_the_guard(self):
         texts: list[str] = []
 

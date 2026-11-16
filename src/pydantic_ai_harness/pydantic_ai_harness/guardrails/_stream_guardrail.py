@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import assert_never
 
 from typing_extensions import TypeIs
@@ -45,8 +46,8 @@ def _is_part(value: object) -> TypeIs[StreamGuardrailPart]:
     return isinstance(value, StreamGuardrailPart)
 
 
-def _replacement_check(part: StreamGuardrailPart) -> Callable[[object, int], StreamGuardrailPart]:
-    def check(replacement: object, position: int) -> StreamGuardrailPart:
+def _replacement_check(part: StreamGuardrailPart) -> Callable[[object, int], None]:
+    def check(replacement: object, position: int) -> None:
         if isinstance(part, ToolCallPart):
             raise UserError(
                 f'A StreamGuardrail guard cannot return GuardrailResult.replace() for a tool call; guard at position '
@@ -57,7 +58,6 @@ def _replacement_check(part: StreamGuardrailPart) -> Callable[[object, int], Str
                 f'GuardrailResult.replace() for a StreamGuardrail must provide a {type(part).__name__} to replace '
                 f'the streamed one; guard at position {position} returned {type(replacement).__name__}.'
             )
-        return replacement
 
     return check
 
@@ -205,10 +205,11 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
     The guard screens the run's event stream: `run_stream_events()`, the `event_stream_handler`
     argument to a run, `node.stream()` under `iter()`, and UI adapters. A `ProcessEventStream`
     capability and an `on_event` hook see each event before the guard, so they are not screened.
-    `run_stream()` reads the accumulated response, so its `stream_text()`, `stream_output()` and
-    `stream_response()` are not screened either. A replacement changes only what the event stream
-    carries, not the message history or the run's output: pair it with `OutputGuardrail` and
-    `ToolGuardrail` for those. The guard runs on the live stream, so it is not a durable operation.
+    Under `run_stream()` the guard still runs, so a `block` raises, but `stream_text()`,
+    `stream_output()` and `stream_response()` read the accumulated response, which a `replace`
+    does not reach. A replacement changes only what the event stream carries, not the message
+    history or the run's output: pair it with `OutputGuardrail` and `ToolGuardrail` for those. The
+    guard runs on the live stream, so it is not a durable operation.
     """
 
     guard: StreamGuardrailFunc[AgentDepsT] | Sequence[StreamGuardrailFunc[AgentDepsT]]
@@ -233,11 +234,7 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         """Hold each screened part's events until the guard has decided on the complete part."""
-
-        async def screen(index: int, part: StreamGuardrailPart, held: list[AgentStreamEvent]) -> list[AgentStreamEvent]:
-            return await self._screen(ctx, index, part, held)
-
-        hold = _Hold(screen)
+        hold = _Hold(partial(self._screen, ctx))
         async for event in stream:
             for released in await hold.feed(event):
                 yield released
@@ -248,16 +245,16 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], index: int, part: StreamGuardrailPart, held: list[AgentStreamEvent]
     ) -> list[AgentStreamEvent]:
         """Run the guard chain on the complete `part` at `index`, returning the `held` events to release."""
-        check = _replacement_check(part)
         verdict, position = await evaluate_all(
-            as_guards(self.guard, capability='StreamGuardrail'), ctx, part, check_replacement=check
+            as_guards(self.guard, capability='StreamGuardrail'), ctx, part, check_replacement=_replacement_check(part)
         )
         match verdict.action:
             case 'allow':
                 return held
             case 'replace':
+                assert _is_part(verdict.replacement)
                 trace_redaction(ctx, direction='stream', replacement=verdict.replacement)
-                return _replace_part(held, index, check(verdict.replacement, position))
+                return _replace_part(held, index, verdict.replacement)
             case 'block':
                 message = verdict.message or _DEFAULT_BLOCK_MESSAGE
                 trace_block(ctx, direction='stream', message=message)

@@ -180,8 +180,9 @@ Key parameters:
   a run's `event_stream_handler` argument or a UI adapter; `ProcessEventStream` and `on_event`
   see raw events. Adds the part's generation time to its first chunk; a tool call is held until
   the model response ends.
-  `run_stream()`'s `stream_text()`/`stream_output()` and the run's history and output are not
-  changed; pair with `OutputGuardrail`/`ToolGuardrail` for those.
+  Under `run_stream()` a `block` still raises, but a `replace` does not reach `stream_text()`/
+  `stream_output()`, and the run's history and output are not changed; pair with
+  `OutputGuardrail`/`ToolGuardrail` for those.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
   guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
   to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
