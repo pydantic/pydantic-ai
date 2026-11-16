@@ -231,7 +231,8 @@ Shell(secret_env={'DEPLOY_TOKEN': 'tok-...'})
 
 Masking replaces exact occurrences of each value in what the tools return. It guards against a
 secret printed by accident, not against a command that transforms it (`base64`, `rev`, `cut`, JSON
-escaping) or splits it between stdout and stderr, including one the model writes to reveal it. A
+escaping) or splits it between stdout and stderr. That includes a command the model writes on purpose
+to reveal it. A
 short or common value, such as `1` or `true`, is masked everywhere it appears. A command can also
 put a secret where the model reads it unmasked, such as a file or a `shell` log it opens with a
 file tool, and the `shell` tool's events carry raw output. Empty values are not masked.
