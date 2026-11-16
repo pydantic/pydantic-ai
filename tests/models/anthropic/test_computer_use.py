@@ -768,6 +768,16 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [(False, ['OK', 'image']), (False, ['Ran 2 actions.'])],
             id='zoom-without-the-screen',
         ),
+        # A hook put an image of its own before the result: the screen is still the last item, and the image goes
+        # beside it.
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [BinaryImage(data=b'picture', media_type='image/png'), 'Ran 2 actions.', _PNG],
+            {'performed': 2},
+            [(False, ['OK']), (False, ['OK', 'image', 'Ran 2 actions.', 'image'])],
+            id='an-image-before-the-result',
+        ),
         # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
         pytest.param(
             _CLICK_TYPE,
