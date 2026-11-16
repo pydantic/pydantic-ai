@@ -65,6 +65,13 @@ def test_renamed_modules_are_not_underscore_prefixed() -> None:
         assert not path.with_name(f'_{path.name}').exists(), module
 
 
+def test_naming_conventions() -> None:
+    """Modules have no leading underscore and exception variables are named `exc`, as #13604 restored."""
+    root = Path(pydantic_clai2.__file__).parent
+    assert [path for path in root.rglob('_*.py') if not path.name.startswith('__')] == []
+    assert [path for path in root.rglob('*.py') if ' as error:' in path.read_text(encoding='utf-8')] == []
+
+
 def test_splash_broken_stream_and_replaced_output(monkeypatch: pytest.MonkeyPatch) -> None:
     class Terminal(io.StringIO):
         def isatty(self) -> bool:

@@ -18,7 +18,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, wrap
+from pydantic_ai._framing import neutralize_tags, second_model_prompt, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
@@ -57,7 +57,9 @@ class Relevance(BaseModel):
 def _state(chunk: Chunk) -> str:
     """What the judge sees: the snippet, framed as data with where it lives, so its text cannot pose as instructions."""
     lines = f'{chunk.line}-{chunk.end_line}'
-    return wrap(TOOL_RESULT_TAG, chunk.text, name='snippet', path=chunk.path, lines=lines, symbol=chunk.symbol)
+    # The plain `<tool_result>` data tag, not core's prefixed conversation frame: the judge reads one snippet, with no
+    # application text around it that the prefix would set the frame apart from.
+    return wrap('tool_result', chunk.text, name='snippet', path=chunk.path, lines=lines, symbol=chunk.symbol)
 
 
 def _instructions(query: str) -> str:
@@ -140,7 +142,8 @@ async def judge(
             try:
                 claim_request(ctx)
                 try:
-                    result = await agent.run(_state(chunk), usage=ctx.usage, usage_limits=limits)
+                    with second_model_prompt():
+                        result = await agent.run(_state(chunk), usage=ctx.usage, usage_limits=limits)
                 finally:
                     ctx.usage.requests -= 1  # the nested run counted its own request
                 scores[index] = result.output.score

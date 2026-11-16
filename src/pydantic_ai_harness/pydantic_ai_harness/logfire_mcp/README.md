@@ -4,7 +4,24 @@ Let an agent query Logfire telemetry and manage Logfire projects. `LogfireMCP` g
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Inside your agent, the LogfireMCP capability connects to Logfire's hosted MCP server, US region by default or EU with LOGFIRE_EU_MCP_URL, sending the API key as a bearer token. The model sees the server's tools under the logfire_ prefix, such as logfire_query_run. The capability also adds guidance to the agent's instructions: the current UTC hour, that queries cover a short time window, that links are made only when asked, and the logfire_ prefix.](https://pydantic.dev/docs/ai/img/harness/logfire-mcp.svg)
+```mermaid
+flowchart TB
+    accTitle: Logfire MCP: query traces and telemetry through Logfire's MCP server
+    accDescr: Inside your agent, the model calls LogfireMCP tools such as logfire_query_run and gets their results. The capability adds guidance to the instructions: the current UTC hour, a short query window and links only if asked. Your auth function gives it a token for each run, and it sends tools/call with a Bearer token to the Logfire MCP server, US by default, or EU or self-hosted.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        logfire["LogfireMCP()<br/>logfire_query_run,<br/>logfire_&lt;tool&gt;"]:::capability
+        guidance["current UTC hour,<br/>short query window,<br/>links only if asked"]:::capability
+    end
+    server["Logfire MCP server<br/>US by default, or EU<br/>or self-hosted"]:::external
+    model <-->|"tool call, result"| logfire
+    auth -->|"token for each run"| logfire
+    logfire -->|"adds to the instructions"| guidance
+    logfire <-->|"tools/call, Bearer token"| server
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install and connect
 

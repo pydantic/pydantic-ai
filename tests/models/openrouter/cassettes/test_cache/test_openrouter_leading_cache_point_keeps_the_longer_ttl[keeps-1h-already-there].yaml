@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -44,7 +44,9 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -60,9 +62,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905543-VyP2Z4F1qDyvJyubTU89
+        id: gen-1793763659-M0aDsWqOHwhsffbIXpjP
         object: chat.completion
-        created: 1792905543
+        created: 1793763659
         model: anthropic/claude-sonnet-5.5
         provider: Anthropic
         system_fingerprint: null
@@ -74,25 +76,25 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: Done
+            content: done
             refusal: null
             reasoning: |+
-              No report was actually provided earlier, but the user is now just asking for the single word "done" as a reply. Since they're explicitly requesting that exact word, I'll comply with it.
+              I'm going to reply with just the word "done," since that's the instruction in front of me. There's no incident report to deal with, so that's the whole response.
 
             reasoning_details:
             - type: reasoning.text
               text: |+
-                No report was actually provided earlier, but the user is now just asking for the single word "done" as a reply. Since they're explicitly requesting that exact word, I'll comply with it.
+                I'm going to reply with just the word "done," since that's the instruction in front of me. There's no incident report to deal with, so that's the whole response.
 
               format: anthropic-claude-v1
               index: 0
               signature: >-
-                CAQS6AgKEAgTGAI4AUIIdGhpbmtpbmcSDPtl8vI9gwO1j0KgMBoM/OxcnUsQG5Bc5qctIjBn75dyJyfnowaIGnjMYWmqvd7xv7eZye3CFBY3Vbo8fZzkpJn6oqSZlKaUp9kkZ7IqhQhVXVIU9Rf6GvX2bGl750J6Iw3sxOiQSk++4vQLYfDppTddrq9v9r6TpxAP13gzoo4Xn9gTAJdeIlC65CCVqktWGg3vsgtD1J7qLU7V+1u31JDV3ZEEYk75OIJ1Mrf0ASsj+x3Sl5/PsuoSeS2b1SiBh26GjBv9LVdwGUf2P2HJvCVy8SUQ4m4aOcE5vy6aWEVpyF8VHIVjZe4ivcOBcnnhmcBaGf55wDU1QM5LNC7tPAh5TLLj6vjqqgqB5q7jWUD18zKsHH40+idGfTIAHm08Ydhx5WxOeIeokEwB8GiUBd1md85Xlvu/kxS5pFakwOkDi7begL9gBd0x5LQ+wIEiYgKLYtzDgIGVUNGUIkaTDrg5P5BWMWl2XyYkd8wlh4EOyJll3G31EUBYFsKn+YaeM/FoZi0KHlj+1QBXXeRNy7meSp5Qjl7KOveXIutIo++2GlAztmfet/3qlLdKrTunl+5r5aaobuqtS0HibAbx2zZYugrOeUabDOaj/Mj6/Q8xJ5CuoUAGXh4shOEIFqoyifjaJFHllbzBh59T7Be7u6WaGxaEKZkLyw7vNq0zuhfp6ChQtxDNcEbYSbF/DKi/HSbuk5OJz10/TTDoibt8GHdCzvNYALHsW5h/3ar0qTDIJ49GrG+4CXHFXybNZfUTMyw7/qC39LrsqpPz/+XErRnxaUzoQJhiAJ7NPKae4aRUAF4A8pFCNRMD1o8JNOkJO08pdDV9O1zRsTUUpMibfLZNq9R29oKkVDncuBtJ5OrQExcAIRbT5SPykZjvrfM3p0gwauiYiWNtYVt1/9cWzrl9hFSZRbiCS9jLc/XOg8ZcbF8LD+2RYt53sPygkjzdYdlaTVmUWJrLkRTR41iJy9QgliW5F6oxnjXWTlauwShELq+WVGLCyFGQk8U3lFSQfB89XqnAF6LDXXj5BwpjO53KTRrYSrgQkB1nL9UjgLVJfhXk3sJ4mNfokfxxoEFkoD1BRr3NljcqOrB0nJEIZPwDsHmW6g/5nPvtp+PKA6LlefA0Xzk7IWxP/IvrSuJQeHWakOD0B43GhEsIE3PspQ56fqSIlRERe1mtP1+NxN0lgr53knZ3dAffvMuxAGdcUKRHGvoEp1gORcZvgLO5SzuRoH7F/s8fdPW02m5N2+ZE/mGYXz+q3b+uBgw8MHAo4RQai/NamJv4UiDnTLX9fgIeco6t4tsZSFBgoosBa4hkbdBd5bqNBZhfePUIMLoUF+ym/cnmrLQIoomFyRFnTgMxY5ujMcqmlTZJ1pEg0BR+kQEc/Ff81niQQuJqJWcXOeR+E+2wEec1NBR32wcBGWKj7d45FMtAkciBHO0E4a6HTvnBrl2DRDSeu91j0Dzx5ey5wCgYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
+                CAQSxAYKEAgTGAI4AUIIdGhpbmtpbmcSDJhRZQsteCJHPRKJxxoMugXVbhjbWAELD3NYIjClpPSg+06YHaF2rSHBcGGSWv+6JDce93UTJruH3CHH0rHjGmmUi6N9QwGEBSsbbCwq4QVqkFtpramUpZMXESA+LJNghcVJ1WwxQLgsoJ7QjGeEhe8WN8SydBjEWpyDdKKyAuEv3Sr7WOn//SfQyriEat1t3uC7F4BCkVnsDbX3kjZp4KlhKG96kGphUwYuzt/ACDeIC9AmCBsmUSGFaH70+8vD6kAP6F2/IXWza6mTUQU//DSctlbDYemg/Azc8VD0Uq+DefcMgJz1C0OgudW1qeg4TrTMzDvujyXuGMgQjJzOaqT3Ia/+2cDTRN76VIPq8FM9lTjubfHBnaXUJy4t0TIXHAC42T1sOfMOvrQ8G98XZCagL7oBqSvqKnzd4L3En0c3VeoDFk4Zis7mBjhiypcHT6DoaIWpOnNTjq8XtslOF5reNYhNh6Ki2TppuqdKqkuxUD+e1IeSMBOCGGR+ktCFzBN2WCLFKty4Yr1vum7slvIXDn18tgMsDRHxNO5b4X/FxIwIpvX4YpzjGvH4o1eSDHfPsoqZd+cKWP6peX/ykNsE9qBJYU2uCFgT8egyj8kPw/aDH+PJUv9/A/VWadP9kmzydGBFd4aZok20br2ScPEnE7jCNaXC8DieJNied7ZWroFxJxcXZMnQwVKDVggY3/Tcqf++ZmADBlmUFoGU8+ZfTGccG3bvs9E2waS0QXqe0O2QW39bBGC2dUwSr6F3HzEHEUh+8+2y/1NCUta7t4DuJJD2ODLfU6XjpjpbdnBgTDNpN9FLklRbsJt1mkx2jazdUYnLyrfKF6OK3jAwhZeT1y3GnsnTzQlCOi13+srj0mHp+emOsAkCnFYqVf1l/NYlqzWhHckF/wDQrR+KMCEOkwnAT0lbXH+QQcAfguL0LxNK1od0kNRlj+2KfEmbJsyJqdf+WkNChENhbgphKHX05lNIkJ1G2muzLbw/Oh7R1ncCGHLP9yLzxSj74mdmWJM+0tfv5P+dxjY9RedqtNwS8kacB//nubm7Ix9sG5gOpLOODl+DGe6IGhVsTd2g/xgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
         usage:
           prompt_tokens: 40
-          completion_tokens: 146
-          total_tokens: 186
-          cost: 0.00154
+          completion_tokens: 50
+          total_tokens: 90
+          cost: 0.00058
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -100,11 +102,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.00154
+            upstream_inference_cost: 0.00058
             upstream_inference_prompt_cost: 0.00008
-            upstream_inference_completions_cost: 0.00146
+            upstream_inference_completions_cost: 0.0005
           completion_tokens_details:
-            reasoning_tokens: 142
+            reasoning_tokens: 47
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:19:07.642052+00:00
+  recorded_at: 2026-11-04T03:41:01.591767+00:00

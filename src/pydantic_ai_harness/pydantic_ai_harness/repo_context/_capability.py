@@ -27,8 +27,8 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import SupportsCommands, SupportsRealpath, Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, innermost_backend, require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileEditedEvent, FileReadEvent, FileWrittenEvent
-from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
+from pydantic_ai_harness.file_system import DirectoryListedEvent, FileEditedEvent, FileReadEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     context_file_label,
@@ -68,7 +68,7 @@ _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
 _TRAVERSAL_DEPRECATION = (
     '`RepoContext.traversal_tool_names` and `RepoContext.traversal_path_arg` are deprecated. '
     'Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`. '
-    'Hosts can emit these events by importing them from `pydantic_ai_harness.filesystem`. '
+    'Hosts can emit these events by importing them from `pydantic_ai_harness.file_system`. '
     'The customized tool-sniffing fallback remains active for this configuration.'
 )
 
