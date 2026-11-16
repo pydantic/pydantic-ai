@@ -362,9 +362,10 @@ agent = Agent(
 
 Swap `TemporalDurability` for `DBOSDurability` or `PrefectDurability` and nothing else in the agent changes;
 the [engine guides](durable_execution/overview.md) show where each run starts. Tools use `ctx.workspace` as
-in a plain run, and harness tools such as `Coder`, `Shell` and `FileSystem` work on all three engines, with
-the [Temporal limits](durable_execution/temporal.md#harness-workspace-capabilities) on live events and
-delegation.
+in a plain run, and harness tools such as `Coder`, `Shell` and `FileSystem` work on all three engines,
+background jobs, sticky `cd` and [`FileChangeRequestedEvent`](harness/filesystem.md#events) approval
+included, with the [Temporal limits](durable_execution/temporal.md#harness-workspace-capabilities) on live
+events and delegation.
 
 - A durable run creates or attaches its environment when it starts, even if no tool uses it, and retries,
   replays and recovery reattach to it. If a worker dies after creating a sandbox but before that is
@@ -378,6 +379,12 @@ delegation.
   default, whatever its own `timeout`. Raise it for a tool with
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. Workspace calls from workflow code use
   `activity_config`; if you set it, keep a `start_to_close_timeout` in it.
+- A sticky `cd` is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the run,
+  so a new worker continues in the same directory. Commands in one run that change directory at the same
+  time can overwrite each other's state.
+- A retried `start_command` reattaches to its job instead of starting a second process. If a launch failed
+  partway, the retry reports a pending launch; once the process has stopped, remove its files under
+  `.pydantic-ai-harness/shell/`.
 - On DBOS, tool calls in a run with a workspace run one at a time, so their steps replay in order.
 - `workspace=` passes only the reference; each step rebuilds the workspace from the agent's capability.
   Put policy on that capability, such as `LocalWorkspace(..., read_only=True)`: a `ReadOnlyWorkspace(...)`

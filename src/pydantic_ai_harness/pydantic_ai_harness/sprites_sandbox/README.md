@@ -186,6 +186,60 @@ You pay for compute while a Sprite is active and for storage until you delete it
 
 Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `SpritesSandbox()`; [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes. If the connection drops after a command started but before it finished, the command may have run, so it raises a non-retryable error rather than running again.
 
+A shared client is created at module import so activities on this worker reuse it. Close it when the worker stops. Run a Temporal dev server on `localhost:7233` first.
+
+```python
+import asyncio
+import os
+import uuid
+
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+# The provider SDK must not be re-imported inside Temporal's restricted workflow sandbox.
+with workflow.unsafe.imports_passed_through():
+    from sprites import AsyncSpritesClient
+
+CLIENT = AsyncSpritesClient(token=os.environ['SPRITE_TOKEN'])
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    name='sprites_coder',
+    capabilities=[SpritesSandbox(client=CLIENT), Coder(), TemporalDurability()],
+)
+
+
+@workflow.defn
+class SandboxWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await agent.run(prompt)).output
+
+
+async def main() -> None:
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+    async with CLIENT:
+        async with Worker(client, task_queue='sandbox', workflows=[SandboxWorkflow]):
+            print(
+                await client.execute_workflow(
+                    SandboxWorkflow.run,
+                    'Use the shell tool to run pwd.',
+                    id=f'sandbox-{uuid.uuid4()}', task_queue='sandbox',
+                )
+            )
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
 ## Telemetry
 
 `SpritesSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
