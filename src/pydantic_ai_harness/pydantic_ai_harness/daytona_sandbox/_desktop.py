@@ -254,6 +254,8 @@ class DaytonaDesktop:
         if any(ord(character) > 0xFFFF for character in text):
             raise UnsupportedActionError("Daytona's desktop cannot type characters beyond U+FFFF, such as most emoji.")
         keyboard = self._computer_use().keyboard
+        # As Daytona does per request, so a `\r\n` split across two requests isn't typed as two Enters.
+        text = text.replace('\r\n', '\n')
         for start in range(0, len(text), _TYPED_PER_REQUEST):
             part = text[start : start + _TYPED_PER_REQUEST]
             await _send_input(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
