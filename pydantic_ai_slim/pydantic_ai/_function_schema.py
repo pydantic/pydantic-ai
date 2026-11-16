@@ -99,7 +99,7 @@ class FunctionSchema:
             )
             for alias in GenerateJsonSchema().generate(field_schema).get('properties', {}):
                 # A property named after a parameter's Python name keeps naming it when it is also another parameter's
-                # alias. Pydantic accepts that clash and validation gives both the value; remapping or rejecting it
+                # alias. Pydantic accepts that clash and `validator` gives both the value; remapping or rejecting it
                 # would change runs that succeed: https://github.com/pydantic/pydantic-ai/issues/13438
                 if alias not in self.parameter_fields:
                     parameter_names[alias] = name

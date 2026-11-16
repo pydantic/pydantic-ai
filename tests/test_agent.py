@@ -2479,11 +2479,11 @@ def text_alias_named_like_hidden_arg_positional_only(
 
 
 def test_output_type_text_output_function_alias_named_like_hidden_arg():
-    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, by design.
+    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, deliberately.
 
     The JSON schema property `b` is the str arg's alias and also the hidden arg's Python name, and a property named
-    after a parameter's Python name keeps naming that parameter. Pydantic accepts that clash and validation gives both
-    args the value; remapping or rejecting it would change runs that succeed, see
+    after a parameter's Python name keeps naming that parameter. Pydantic accepts that clash, and tool and `ToolOutput`
+    validation gives both args the value; remapping or rejecting it would change runs that succeed, see
     https://github.com/pydantic/pydantic-ai/issues/13438. So the str arg keeps its default, and the call fails when it
     has none or is positional-only.
     Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
