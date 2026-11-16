@@ -74,7 +74,7 @@ Functions can be added as tools in four different ways:
 
 The `add_function()` and `add_tool()` methods can also be used from a tool function to dynamically register new tools during a run to be available in future run steps.
 
-A toolset stores its own copy of each [`Tool`][pydantic_ai.tools.Tool] instance it's given, with the toolset's defaults applied. The same `Tool` can be added to several toolsets and agents, and changing it after adding it doesn't change what a toolset lists.
+A toolset stores its own copy of each [`Tool`][pydantic_ai.tools.Tool] instance it's given, with the toolset's defaults applied. The same `Tool` can be added to several toolsets and agents, and setting its attributes after adding it doesn't change what a toolset lists.
 
 ```python {title="function_toolset.py"}
 from datetime import datetime
