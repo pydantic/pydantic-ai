@@ -57,7 +57,7 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
     reset_receipt_scope,
 )
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness.file_system import READ_FILE_KIND
 
 if TYPE_CHECKING:
     from opentelemetry.util.types import AttributeValue

@@ -248,6 +248,10 @@ boxd = "2026-10-27T23:56:00Z"
 # TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 render = "2026-10-30T01:06:03Z"
+# k8s-agent-sandbox 1.0.11 is the `kubernetes` extra's floor: the release the backend is verified against.
+# TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 # durabletask and durabletask-azuremanaged 1.13.0 are the floors for the `azure-durable-task` extra
 # of pydantic-ai-harness: they are the first releases that close a dispatch's orchestrator generator.
 # TODO(adtyavrdhn): Remove after 2026-11-09 22:34 UTC, then run `uv lock` and
@@ -411,6 +415,7 @@ include = [
     ".github/scripts/douwebot_opencode_result.py",
     ".github/scripts/test_douwebot_opencode_run.py",
     ".github/scripts/test_douwebot_opencode_result.py",
+    ".github/scripts/category_classify_opencode.py",
 ]
 
 [tool.ruff.lint]
@@ -604,6 +609,7 @@ markers = [
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
+    "kubernetes_live: claims real pods on the kind cluster from `cluster/up.sh`; needs Docker, kind and kubectl",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
@@ -642,13 +648,6 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
-    # TODO(v3): Require `dbos>=3.4.0` and drop `SnapshotStepReservation`, the fallback for
-    # `DBOS.reserve_step` in `pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py`.
-    # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
-    # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
-    # TODO(v3): Require `dbos>=2.31.0` and drop this filter.
-    # https://github.com/dbos-inc/dbos-transact-py/pull/822
-    "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     # Fixed upstream in 0.4.0: https://github.com/voyage-ai/voyageai-python/pull/60 — drop when we bump past 0.3.7.
     "ignore: Core Pydantic V1 functionality:UserWarning",
@@ -705,6 +704,7 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/mcp_server.py",  # MCP test server; mostly run over stdio, where coverage doesn't follow, and each test calls only some of its tools
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
@@ -724,6 +724,8 @@ source = [
     ".",
     "/home/runner/work/pydantic-ai/pydantic-ai",
     "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai",
+    # The `test-windows-workspace` job.
+    "D:\\a\\pydantic-ai\\pydantic-ai",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report

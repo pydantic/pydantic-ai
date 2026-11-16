@@ -9,7 +9,24 @@ Notice when an agent repeats the same actions without making progress, and inter
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![DetectLoops records each response in after_model_request and checks the run in before_model_request. Here the model called read_file(path='missing.txt') three times and got the same error each time, a repeated_result loop. With action='nudge', the default, a system prompt telling the model to change its approach joins the next request; with action='error', LoopDetectedError ends the run.](../img/harness/detect-loops.svg)
+```mermaid
+flowchart TB
+    accTitle: Detect Loops: interrupt an agent that repeats itself
+    accDescr: The model calls your tool, and the tool result and the next request pass through DetectLoops, which checks whether the same call gave the same result 3 times. If no, the request goes on to the model. If yes, with action='nudge' a system prompt joins the next request to the model, and with action='error' LoopDetectedError ends the run.
+    model(["model"])
+    tool["your tool"]
+    detect["DetectLoops()<br/>same call, same result,<br/>3 times?"]:::capability
+    nudge["system prompt joins<br/>the next request"]:::capability
+    error["LoopDetectedError<br/>ends the run"]:::blocked
+    model -->|"tool call"| tool
+    tool -->|"tool result, next request"| detect
+    detect -->|"no"| model
+    detect -->|"yes, action='nudge'"| nudge
+    nudge --> model
+    detect -.-x|"yes, action='error'"| error
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Usage
 
