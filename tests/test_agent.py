@@ -2466,12 +2466,26 @@ def text_alias_named_like_hidden_arg(
     return f'text={text} b={b}'
 
 
+def text_alias_named_like_hidden_arg_without_default(
+    text: Annotated[str, Field(alias='b')], b: SkipJsonSchema[str] = 'hidden'
+) -> str:
+    return f'text={text} b={b}'  # pragma: no cover
+
+
+def text_alias_named_like_hidden_arg_positional_only(
+    text: Annotated[str, Field(alias='b')] = 'default', /, b: SkipJsonSchema[str] = 'hidden'
+) -> str:
+    return f'text={text} b={b}'  # pragma: no cover
+
+
 def test_output_type_text_output_function_alias_named_like_hidden_arg():
-    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, a known gap.
+    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, deliberately.
 
     The JSON schema property `b` is the str arg's alias and also the hidden arg's Python name, and a property named
-    after a parameter's Python name keeps naming that parameter. https://github.com/pydantic/pydantic-ai/issues/13438
-    tracks the gap.
+    after a parameter's Python name names only that parameter, though tool and `ToolOutput` validation give both args
+    the value. Pydantic accepts the clash, and remapping or rejecting it would change runs that succeed, see
+    https://github.com/pydantic/pydantic-ai/issues/13438. So the str arg keeps its default, and the call fails when it
+    has none or is positional-only.
     Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
     """
 
@@ -2480,6 +2494,14 @@ def test_output_type_text_output_function_alias_named_like_hidden_arg():
 
     agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg))
     assert agent.run_sync('hi').output == 'text=default b=hello'
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg_without_default))
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'text'"):
+        agent.run_sync('hi')
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg_positional_only))
+    with pytest.raises(KeyError, match="'text'"):
+        agent.run_sync('hi')
 
 
 def test_output_type_handoff_to_agent():
