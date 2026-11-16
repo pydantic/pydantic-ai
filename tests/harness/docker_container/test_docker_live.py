@@ -219,10 +219,15 @@ class TestLiveDockerDesktop:
     async def test_a_cancelled_action_lets_go_of_what_it_pressed(self, backend: DockerContainerBackend) -> None:
         display = await _xev_window(backend)
         path = (Point(x=200, y=200), Point(x=600, y=400)) * 20
-        with anyio.move_on_after(1):
-            await display.act(Drag(path=path, modifiers=('shift',)))
-        with anyio.move_on_after(1):
-            await display.act(HoldKeys(keys=('ctrl', 'a'), seconds=20))
+        # Each is cancelled once `xev` logged its press, however slow the daemon.
+        for action, press in [
+            (Drag(path=path, modifiers=('shift',)), ('ButtonPress', '1')),
+            (HoldKeys(keys=('ctrl', 'a'), seconds=20), ('KeyPress', 'a')),
+        ]:
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(display.act, action)
+                await _xev_events(backend, lambda events: _logged(events, *press) == 1)
+                tasks.cancel_scope.cancel()
         # The keys are let go of last, Control_L after `a`.
         logged = await _xev_events(backend, lambda events: _logged(events, 'KeyRelease', 'Control_L') == 1)
         events = [(kind, detail) for kind, detail, _ in logged if kind != 'MotionNotify']
