@@ -656,6 +656,24 @@ class TestErrorsAndFilesystem:
         await DaytonaSandboxBackend().get_sandbox()
         assert fake_daytona.create_params[0].labels == {'created-by': 'pydantic-ai'}
 
+    async def test_secrets_pass_through(self, fake_daytona: FakeDaytona) -> None:
+        await started(secrets={'GH_TOKEN': 'github-token'})
+        assert fake_daytona.create_params[0].secrets == {'GH_TOKEN': 'github-token'}
+        # Only the Secret's name is sent; the variable is not set as a plain environment variable.
+        assert fake_daytona.create_params[0].env_vars is None
+
+    def test_secrets_of_the_wrong_shape_are_refused(self) -> None:
+        with pytest.raises(TypeError, match=r'^`secrets` maps environment variable names to Secret names'):
+            DaytonaSandboxBackend(secrets=['GH_TOKEN'])  # pyright: ignore[reportArgumentType]
+
+    def test_a_secret_shadowed_by_env_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r'^GH_TOKEN cannot be in both `env` and `secrets`$'):
+            DaytonaSandboxBackend(secrets={'GH_TOKEN': 'github-token'}, env={'GH_TOKEN': 'x'})
+
+    async def test_no_secrets_by_default(self, fake_daytona: FakeDaytona) -> None:
+        await DaytonaSandboxBackend().get_sandbox()
+        assert fake_daytona.create_params[0].secrets is None
+
     async def test_refused_creation_names_the_provider_and_the_sdk_message(self, fake_daytona: FakeDaytona) -> None:
         fake_daytona.create_error = DaytonaNotFoundError("Snapshot 'nope' not found", status_code=404)
         with pytest.raises(
