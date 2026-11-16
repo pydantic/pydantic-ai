@@ -218,14 +218,9 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 # Retrying cannot repair persisted request bytes or worker-side decoding.
                 return permanent_error('invalid-request', exc)
 
-            ctx = operation_run_context(params)
-            assert ctx is not None, 'every installed operation carries a run context'
             try:
                 # Workspace calls trace like the task's tools, with its rebuilt run context's tracer.
-                with (
-                    self._runtime.activate(context),
-                    run_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content),
-                ):
+                with self._runtime.activate(context), run_telemetry_scope(operation_run_context(params)):
                     value = await operation.handler(params)
             except RenderProtocolError as exc:
                 return permanent_error('invalid-result', exc)
