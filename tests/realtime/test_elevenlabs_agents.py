@@ -76,7 +76,7 @@ from pydantic_ai.realtime.lifecycle import (
 from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, IsStr, try_import
 from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
@@ -2838,13 +2838,21 @@ async def test_a_replys_parallel_tool_calls_are_one_response(ended_by: str, monk
     ws.hold_open = ended_by in ('quiet', 'next-frame')
     frames = connection.frames()
     seen: list[Any] = []
+    last: RealtimeFrame = []
     while not any(isinstance(event, ResponseEnded) for event in seen):
-        seen += await anext(frames)
+        last = await anext(frames)
+        seen += last
     started = [event for event in seen if isinstance(event, ResponseStarted)]
     ended = [event for event in seen if isinstance(event, ResponseEnded)]
     calls = [event.tool_call_id for event in seen if isinstance(event, ToolCall)]
     assert (len(started), calls) == (1, ['call_1', 'call_2'])
     assert [(event.status, event.finish_reason) for event in ended] == [('completed', 'tool_call')]
+    if ended_by == 'malformed-frame':
+        # Any frame but another call ends them, by its type alone: the malformed one does, and reports its payload.
+        error = last[-1]
+        assert isinstance(error, RealtimeSessionErrorEvent)
+        assert error.recoverable
+        assert error.message.startswith('Failed to parse ElevenLabs Agents event')
 
 
 async def test_fire_and_forget_tool_calls_never_send_a_result() -> None:
@@ -3585,16 +3593,21 @@ async def test_a_dropped_connection_loses_the_response_under_way() -> None:
     )
 
 
-async def test_a_malformed_frame_leaves_no_reply_open_to_merge_into() -> None:
-    # A frame whose payload fails validation is a recoverable error. When it comes as a reply's audio is finishing,
-    # the reply still ends, so the next one is a response of its own, after the user's words.
+_MALFORMED_VOICED = {'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}}
+"""A `context_usage` frame whose payload fails validation: a recoverable error, which still ends the reply it comes
+with."""
+
+
+async def test_a_malformed_frame_still_ends_the_reply_its_type_ends() -> None:
+    # What a frame ends follows from its type alone, so the reply ends with the malformed frame as with a well-formed
+    # one, and the next reply is a response of its own, after the user's words.
     connection, ws = _connection()
     frames = await _frames(
         connection,
         ws,
         [
             _agent_response('Hi.'),
-            {'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}},
+            _MALFORMED_VOICED,
             {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Again.'}},
             {
                 'type': 'agent_response',
@@ -3603,23 +3616,76 @@ async def test_a_malformed_frame_leaves_no_reply_open_to_merge_into() -> None:
             _VOICED,
         ],
     )
-    events = [event for frame in frames for event in frame]
-    turns = [
-        (type(event).__name__, event.response_id if isinstance(event, (ResponseStarted, ResponseEnded)) else event.text)
-        for event in events
-        if isinstance(event, (ResponseStarted, ResponseEnded, InputTranscript, OutputTranscript))
-    ]
-    assert turns == [
-        ('ResponseStarted', 'pydantic_ai_response_1'),
-        ('OutputTranscript', 'Hi.'),
-        ('ResponseEnded', 'pydantic_ai_response_1'),
-        ('InputTranscript', 'Again.'),
-        ('ResponseStarted', 'pydantic_ai_response_2'),
-        ('OutputTranscript', 'Done.'),
-        ('ResponseEnded', 'pydantic_ai_response_2'),
-    ]
-    [error] = [event for event in events if isinstance(event, RealtimeSessionErrorEvent)]
-    assert error.recoverable
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                OutputTranscript(text='Hi.', is_final=True, item_id='resp_1'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                RealtimeSessionErrorEvent(
+                    message=IsStr(
+                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _ContextUsageEvent\n.*',
+                        regex_flags=re.DOTALL,
+                    )
+                ),
+            ],
+            [
+                UserTurnStarted(turn_id='pydantic_ai_user_turn_1'),
+                UserTurnEnded(turn_id='pydantic_ai_user_turn_1'),
+                InputTranscript(text='Again.', is_final=True),
+            ],
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_2',
+                    basis='inferred',
+                    user_turn_id='pydantic_ai_user_turn_1',
+                    provider_id=False,
+                ),
+                OutputTranscript(text='Done.', is_final=True, item_id='resp_2'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_2', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_2',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
+            ],
+        ]
+    )
+
+    # The reply is over before the connection drops, so it isn't lost with it.
+    connection, ws = _connection()
+    assert await _frames(connection, ws, [_agent_response('Hi.'), _MALFORMED_VOICED]) == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                OutputTranscript(text='Hi.', is_final=True, item_id='resp_1'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                RealtimeSessionErrorEvent(
+                    message=IsStr(
+                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _ContextUsageEvent\n.*',
+                        regex_flags=re.DOTALL,
+                    )
+                ),
+            ],
+        ]
+    )
 
 
 async def test_the_greeting_answers_no_microphone_audio() -> None:
