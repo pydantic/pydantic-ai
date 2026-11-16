@@ -9,7 +9,7 @@ from __future__ import annotations
 import importlib
 import os
 from collections.abc import AsyncIterable
-from typing import Any
+from typing import TypeGuard
 
 import pytest
 from inline_snapshot import snapshot
@@ -94,6 +94,10 @@ def _objects(body: dict[str, JsonValue], key: str) -> list[dict[str, JsonValue]]
     value = body[key]
     assert isinstance(value, list)
     return [item for item in value if isinstance(item, dict)]
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
 
 
 def _items(body: dict[str, JsonValue], type: str) -> list[dict[str, JsonValue]]:
@@ -893,9 +897,15 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
 
     @hooks.on.after_tool_execute
     async def add_picture(
-        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: Any
-    ) -> Any:
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: ToolReturn,
+    ) -> ToolReturn:
         # As an app might add an image of its own to the result, before the screenshot.
+        assert _is_object_list(result.return_value)
         return ToolReturn([picture, *result.return_value], metadata=result.metadata)
 
     agent = Agent(
