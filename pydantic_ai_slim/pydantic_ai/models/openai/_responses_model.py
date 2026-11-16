@@ -871,11 +871,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if instructions_override is not None:
             instructions = instructions_override
-        # The endpoint refuses a `computer_call_output` unless the computer tool is enabled, and the SDK's method
-        # takes no `tools`.
-        computer_tools = (
-            {'tools': [{'type': 'computer'}]} if self._native_computer_name(model_request_parameters) else None
-        )
+        # The endpoint refuses a `computer_call_output` unless the computer tool is enabled, even once the request no
+        # longer uses the native tool, and the SDK's method takes no `tools`.
+        holds_computer_output = any(item.get('type') == 'computer_call_output' for item in openai_messages)
+        computer_tools = {'tools': [{'type': 'computer'}]} if holds_computer_output else None
 
         try:
             with map_decode_errors(self.model_name):

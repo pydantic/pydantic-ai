@@ -105,10 +105,14 @@ def _done() -> resp.Response:
 COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)
 
 
+@pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out'])
 async def test_compacting_response_scoped_computer_call_ids_enables_the_computer_tool(
-    allow_model_requests: None,
+    allow_model_requests: None, native: bool
 ) -> None:
-    """A call ID stored qualified with its response is restored before the compact request."""
+    """A call ID stored qualified with its response is restored before the compact request.
+
+    A history that holds the native call's output enables the tool even after the request opted out of it.
+    """
     profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'), profile=profile)
     call = ToolCallPart(
@@ -154,9 +158,10 @@ async def test_compacting_response_scoped_computer_call_ids_enables_the_computer
         ModelRequestContext(
             model=model,
             messages=with_history_digests(history),
-            model_settings=None,
+            # The server holds the call, so its output goes as a `computer_call_output` whatever the request uses.
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
             model_request_parameters=ModelRequestParameters(
-                function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True
+                function_tools=[computer], native_tools=[COMPUTER_TOOL] if native else [], allow_text_output=True
             ),
         )
     )
