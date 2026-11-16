@@ -3017,7 +3017,10 @@ async def test_dbos_durability_model_error_retry_after_outside_workflow_code_fai
 
 
 def test_dbos_retry_after_uses_dbos_step_defaults() -> None:
-    """The step defaults the `retry_after` wait is worked out with are DBOS's own."""
+    """The step defaults the `retry_after` wait is worked out with are DBOS's own.
+
+    Not a VCR test: it compares module constants with DBOS's step defaults and makes no request.
+    """
     assert (
         DEFAULT_STEP_OPTIONS.get('interval_seconds'),
         DEFAULT_STEP_OPTIONS.get('backoff_rate'),
