@@ -52,10 +52,10 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     PrintCapture,
     SandboxLimit,
-    crashed_worker_limit,
-    exceeded_sandbox_limit,
     in_temporal_workflow,
     is_sandbox_panic,
+    runtime_error_kind,
+    worker_error_kind,
 )
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -376,14 +376,11 @@ def _budget_terminal_result(
 
 def _worker_crash_result(
     *,
-    span: Span,
     crash: MontyCrashedError,
     budget_exhausted: bool,
     max_agent_calls: int,
     completed_dispatches: list[_CompletedDispatch],
 ) -> dict[str, object]:
-    sandbox_limit = crashed_worker_limit(crash)
-    _record_failure(span, 'crashed' if sandbox_limit is None else 'resource_limit', sandbox_limit)
     if budget_exhausted:
         return _budget_terminal_result(
             max_agent_calls=max_agent_calls,
@@ -852,8 +849,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             _record_failure(span, 'syntax')
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
-            sandbox_limit = exceeded_sandbox_limit(e)
-            _record_failure(span, 'runtime' if sandbox_limit is None else 'resource_limit', sandbox_limit)
+            error_kind, sandbox_limit = runtime_error_kind(e)
+            _record_failure(span, error_kind, sandbox_limit)
             if budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
@@ -872,8 +869,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
+            error_kind, sandbox_limit = worker_error_kind(e)
+            _record_failure(span, error_kind, sandbox_limit)
             return _worker_crash_result(
-                span=span,
                 crash=e,
                 budget_exhausted=budget_exhausted,
                 max_agent_calls=self.max_agent_calls,

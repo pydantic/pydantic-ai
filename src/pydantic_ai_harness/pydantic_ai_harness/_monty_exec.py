@@ -20,11 +20,11 @@ import asyncio
 import inspect
 import re
 import sys
-from collections.abc import Awaitable, Callable, Container, Coroutine
+from collections.abc import Awaitable, Callable, Container, Coroutine, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Literal, TypeVar
+from typing import Any, Final, Literal, TypeVar, overload
 
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
@@ -48,6 +48,7 @@ try:
         ExternalSettledResult,
         MontyComplete,
         MontyCrashedError,
+        MontyDisconnectError,
         MontyRefusedError,
         MontyRuntimeError,
         OsFunction,
@@ -242,7 +243,7 @@ SandboxLimit = Literal['max_duration_secs', 'max_memory', 'max_suspensions']
 # started-call summary both read this table. `test_every_resource_limit_reports_started_calls_when_exhausted`
 # exhausts each limit and checks the summary survives, so a limit added without an entry here, or a
 # Monty reword, fails there rather than silently disabling recognition.
-SANDBOX_LIMIT_MARKERS: dict[SandboxLimit, str] = {
+SANDBOX_LIMIT_MARKERS: Final[Mapping[SandboxLimit, str]] = {
     'max_duration_secs': 'time limit exceeded',
     'max_memory': 'memory limit exceeded',
     'max_suspensions': 'suspension limit ',
@@ -264,12 +265,13 @@ def exceeded_sandbox_limit(error: MontyRuntimeError) -> SandboxLimit | None:
     """
     message = error.display(format='msg')
     exception = error.exception()
+    error_traceback = error.traceback()
     # Monty's time-limit wording is read first, so a message naming both limits is never `max_memory` by wording.
     mentions_time_limit = SANDBOX_LIMIT_MARKERS['max_duration_secs'] in message
-    if not error.traceback() and mentions_time_limit:
+    if not error_traceback and mentions_time_limit:
         return 'max_duration_secs'
     mentions_memory_limit = SANDBOX_LIMIT_MARKERS['max_memory'] in message and not mentions_time_limit
-    if isinstance(exception, MemoryError) and (not error.traceback() or mentions_memory_limit):
+    if isinstance(exception, MemoryError) and (not error_traceback or mentions_memory_limit):
         return 'max_memory'
     suspension_message = rf'{re.escape(SANDBOX_LIMIT_MARKERS["max_suspensions"])}[0-9]+ exceeded'
     if isinstance(exception, RuntimeError) and re.fullmatch(suspension_message, message):
@@ -277,13 +279,42 @@ def exceeded_sandbox_limit(error: MontyRuntimeError) -> SandboxLimit | None:
     return None
 
 
-def crashed_worker_limit(error: MontyCrashedError) -> SandboxLimit | None:
-    """The limit a dead sandbox worker was stopped at, or `None` when it crashed on its own.
+RuntimeErrorKind = Literal['runtime', 'resource_limit']
+WorkerErrorKind = Literal['crashed', 'disconnected', 'resource_limit']
+
+
+def runtime_error_kind(error: MontyRuntimeError) -> tuple[RuntimeErrorKind, SandboxLimit | None]:
+    """Classify a Monty runtime error and return its sandbox limit, if any."""
+    limit = exceeded_sandbox_limit(error)
+    return ('runtime' if limit is None else 'resource_limit', limit)
+
+
+@overload
+def worker_error_kind(error: MontyCrashedError) -> tuple[Literal['crashed', 'resource_limit'], SandboxLimit | None]: ...
+
+
+@overload
+def worker_error_kind(
+    error: MontyDisconnectError,
+) -> tuple[Literal['disconnected', 'resource_limit'], SandboxLimit | None]: ...
+
+
+@overload
+def worker_error_kind(
+    error: MontyCrashedError | MontyDisconnectError,
+) -> tuple[WorkerErrorKind, SandboxLimit | None]: ...
+
+
+def worker_error_kind(error: MontyCrashedError | MontyDisconnectError) -> tuple[WorkerErrorKind, SandboxLimit | None]:
+    """Classify a dead or disconnected sandbox worker and return its limit, if any.
 
     A worker the pool's watchdog killed for elapsed time reports `timed_out`; that watchdog backstops
     `max_duration_secs`, so the code ran too long rather than crashing the worker.
     """
-    return 'max_duration_secs' if error.timed_out else None
+    if isinstance(error, MontyDisconnectError):
+        # A remote worker's turn deadline is `max_duration_secs` plus transport slack.
+        return ('resource_limit', 'max_duration_secs') if error.cause == 'turn_timeout' else ('disconnected', None)
+    return ('resource_limit', 'max_duration_secs') if error.timed_out else ('crashed', None)
 
 
 def is_sandbox_panic(exc: BaseException) -> bool:

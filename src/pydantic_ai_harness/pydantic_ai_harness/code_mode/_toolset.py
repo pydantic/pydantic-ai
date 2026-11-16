@@ -73,10 +73,10 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     PrintCapture,
     SandboxLimit,
-    crashed_worker_limit,
-    exceeded_sandbox_limit,
     in_temporal_workflow,
     is_sandbox_panic,
+    runtime_error_kind,
+    worker_error_kind,
 )
 from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
@@ -216,7 +216,7 @@ def _mentions_sandbox_limit(error: MontyRuntimeError) -> SandboxLimit | None:
 
 # A runtime error at one of these limits resets the session: a timeout stops the snippet mid-step, and
 # Monty does not guarantee heap integrity after a memory limit fires.
-_SESSION_RESETTING_LIMITS: tuple[SandboxLimit, ...] = ('max_duration_secs', 'max_memory')
+_SESSION_RESETTING_LIMITS: tuple[Literal['max_duration_secs', 'max_memory'], ...] = ('max_duration_secs', 'max_memory')
 
 
 async def reset_session(run_state: MontyRunState, *, snippet_ran: bool) -> bool:
@@ -691,14 +691,6 @@ class RunCodeFailure:
     """
     limit: SandboxLimit | None = None
     """The sandbox limit that stopped the code, when `kind` is `'resource_limit'`."""
-
-
-def _worker_limit(error: MontyCrashedError | MontyDisconnectError) -> SandboxLimit | None:
-    """The limit the sandbox stopped the code at, rather than crashing or dropping it, or `None`."""
-    if isinstance(error, MontyCrashedError):
-        return crashed_worker_limit(error)
-    # A remote worker's turn deadline is `max_duration_secs` plus transport slack.
-    return 'max_duration_secs' if error.cause == 'turn_timeout' else None
 
 
 @dataclass
@@ -1356,7 +1348,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Record an uncaught runtime error, resetting the session after a limit that leaves it unusable."""
         # The snippet ran, so a session kept after its error holds what it defined.
         run_state.has_executed_feed = True
-        sandbox_limit = exceeded_sandbox_limit(error)
+        error_kind, sandbox_limit = runtime_error_kind(error)
         if sandbox_limit in _SESSION_RESETTING_LIMITS:
             session_reset = await reset_session(run_state, snippet_ran=True)
             reset_advice = self._runtime_reset_advice(sandbox_limit)
@@ -1365,30 +1357,32 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             reset_advice = ''
         # Raises a nested call's `UsageLimitExceeded` instead, which leaves this failure unrecorded.
         retry = _runtime_failure_retry(error, execution, limit=sandbox_limit, reset_advice=reset_advice)
-        execution.failure = RunCodeFailure(
-            'runtime' if sandbox_limit is None else 'resource_limit', session_reset=session_reset, limit=sandbox_limit
-        )
+        execution.failure = RunCodeFailure(error_kind, session_reset=session_reset, limit=sandbox_limit)
         return retry
 
     @staticmethod
-    def _runtime_reset_advice(limit: SandboxLimit) -> str:
+    def _runtime_reset_advice(limit: Literal['max_duration_secs', 'max_memory']) -> str:
         """What the retry tells the model after a runtime limit reset its session."""
         if limit == 'max_duration_secs':
             advice = _TIME_LIMIT_MESSAGE
         else:
-            advice = (
-                'The sandbox ran out of memory and the session was reset. '
-                'Re-run any imports, recreate any state you need, and use less memory: '
-                'process smaller batches, avoid large intermediate values, and print less output.'
-            )
+            advice = {
+                'max_memory': (
+                    'The sandbox ran out of memory and the session was reset. '
+                    'Re-run any imports, recreate any state you need, and use less memory: '
+                    'process smaller batches, avoid large intermediate values, and print less output.'
+                )
+            }[limit]
         return f'\n\n{advice}'
 
     @staticmethod
     def _worker_failure_message(error: MontyCrashedError | MontyDisconnectError) -> str:
-        if _worker_limit(error) is not None:
+        error_kind, _ = worker_error_kind(error)
+        if error_kind == 'resource_limit':
             return _TIME_LIMIT_MESSAGE
-        if isinstance(error, MontyCrashedError):
+        if error_kind == 'crashed':
             return 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
+        assert isinstance(error, MontyDisconnectError)
         if error.cause in ('session_timeout', 'idle_timeout'):
             return (
                 'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
@@ -1429,11 +1423,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # type-checked session.
                 session_reset = await reset_session(run_state, snippet_ran=True)
                 _raise_usage_limit_exceeded(execution)
-                limit = _worker_limit(error)
-                if limit is not None:
-                    kind = 'resource_limit'
-                else:
-                    kind = 'crashed' if isinstance(error, MontyCrashedError) else 'disconnected'
+                kind, limit = worker_error_kind(error)
                 execution.failure = RunCodeFailure(kind, session_reset=session_reset, limit=limit)
                 return ModelRetry(f'{self._worker_failure_message(error)}{_started_calls_note(execution)}')
             case Exception():

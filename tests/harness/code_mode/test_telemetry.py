@@ -216,7 +216,7 @@ class TestRunCodeFailureTelemetry:
             ),
             pytest.param(
                 ('x = 0\nwhile True:\n    x += 1',),
-                CodeMode[object](resource_limits={'max_duration_secs': 0.2}),
+                CodeMode[object](resource_limits={'max_duration_secs': 0.01}),
                 # The first snippet ran, so the reset loses `x` even though no earlier snippet ran.
                 [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_secs')],
                 id='max_duration_secs-in-the-first-snippet',
@@ -271,6 +271,7 @@ class TestRunCodeFailureTelemetry:
         """The second snippet fails, so the reset discards the state the first one left."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', DisconnectError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyDisconnectError', DisconnectError)
 
         async def fail(self: object, feed_start: object) -> object:
             raise error
