@@ -3594,15 +3594,17 @@ async def test_a_dropped_connection_loses_the_response_under_way() -> None:
 
 
 @pytest.mark.parametrize(
-    'malformed',
+    'malformed, payload_model',
     [
-        {'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}},
-        {'type': 'agent_response', 'agent_response_event': {'event_id': 2}},
-        {'type': 'user_transcript', 'user_transcription_event': {}},
+        ({'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}}, '_ContextUsageEvent'),
+        ({'type': 'agent_response', 'agent_response_event': {'event_id': 2}}, '_AgentResponseEvent'),
+        ({'type': 'user_transcript', 'user_transcription_event': {}}, '_UserTranscriptEvent'),
     ],
     ids=['context-usage', 'agent-response', 'user-transcript'],
 )
-async def test_a_malformed_frame_still_ends_the_reply_its_type_ends(malformed: dict[str, Any]) -> None:
+async def test_a_malformed_frame_still_ends_the_reply_its_type_ends(
+    malformed: dict[str, Any], payload_model: str
+) -> None:
     # What a frame ends follows from its type alone, so the reply ends with a malformed frame as with a well-formed
     # one, which is a recoverable error, and the next reply is a response of its own, after the user's words.
     connection, ws = _connection()
@@ -3635,7 +3637,7 @@ async def test_a_malformed_frame_still_ends_the_reply_its_type_ends(malformed: d
                 ),
                 RealtimeSessionErrorEvent(
                     message=IsStr(
-                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _\w+Event\n.*',
+                        regex=rf'Failed to parse ElevenLabs Agents event: 1 validation error for {payload_model}\n.*',
                         regex_flags=re.DOTALL,
                     )
                 ),
@@ -3683,7 +3685,7 @@ async def test_a_malformed_frame_still_ends_the_reply_its_type_ends(malformed: d
                 ),
                 RealtimeSessionErrorEvent(
                     message=IsStr(
-                        regex=r'Failed to parse ElevenLabs Agents event: 1 validation error for _\w+Event\n.*',
+                        regex=rf'Failed to parse ElevenLabs Agents event: 1 validation error for {payload_model}\n.*',
                         regex_flags=re.DOTALL,
                     )
                 ),
