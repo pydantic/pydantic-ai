@@ -132,9 +132,11 @@ class Shell(AbstractCapability[AgentDepsT]):
     secret_env: Mapping[str, str] | None = field(default=None, kw_only=True, repr=False)
     """Secrets added to every command's environment, like `env`, and masked in what the tools return.
 
-    Each value is replaced with `[REDACTED:<name>]` in tool results and retry or failure messages before the model
-    sees them. `denied_env_patterns` does not filter these. Log files, which the model can read with other tools,
-    and the persistent `shell` tool's events hold the raw output.
+    Exact occurrences of each value are replaced with `[REDACTED:<name>]` in tool results and retry or failure
+    messages before the model sees them. This guards against a secret printed by accident, not against a command
+    that transforms or splits it, and a short or common value is masked everywhere it appears.
+    `denied_env_patterns` does not filter these. Log files, which the model can read with other tools, and the
+    persistent `shell` tool's events hold the raw output.
     """
 
     tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES

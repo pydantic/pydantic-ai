@@ -121,7 +121,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._denied_env_patterns = list(denied_env_patterns)
         self._secret_env = dict(secret_env) if secret_env is not None else None
         self._secrets = [(value, f'[REDACTED:{name}]') for name, value in (secret_env or {}).items() if value]
-        self._secret_bytes = [os.fsencode(value) for value, _ in self._secrets]
+        self._secret_bytes = [value.encode() for value, _ in self._secrets]
         self._tools = tuple(tools)
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
@@ -221,9 +221,9 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         try:
             result = await super().call_tool(name, tool_args, ctx, tool)
         except (ModelRetry, ToolFailed) as exc:
-            if not self._secrets:
+            if (masked := self._redact(exc.message)) == exc.message:
                 raise
-            raise type(exc)(self._redact(exc.message)) from None
+            raise type(exc)(masked) from None
         if not isinstance(result, str):
             return result
         return truncate_tail(self._redact(result), self._max_output_chars)

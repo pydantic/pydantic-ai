@@ -2452,9 +2452,10 @@ class TestShellSecretEnv:
                 await _call_shell_tool(ts, shell_dir, 'check_command', command_id='0' * 32)
         assert exc_info.value.message == 'refused [REDACTED:TMP_TOKEN]'
 
-    async def test_retry_message_unchanged_without_secrets(self, shell_dir: Path) -> None:
-        with pytest.raises(ModelRetry, match='Interactive commands are not allowed'):
-            await _call_shell_tool(_shell_toolset(shell_dir), shell_dir, 'run_command', command='vi x')
+    async def test_retry_message_without_a_secret_is_unchanged(self, shell_dir: Path) -> None:
+        with pytest.raises(ModelRetry, match='Interactive commands are not allowed') as exc_info:
+            await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command='vi x')
+        assert isinstance(exc_info.value.__cause__, PermissionError)
 
     def test_secret_env_is_added_unfiltered(self, shell_dir: Path) -> None:
         ts = _secret_toolset(env={'FOO': 'bar', 'TMP_X': 'drop'}, denied_env_patterns=['TMP_*'])

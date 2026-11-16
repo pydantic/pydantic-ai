@@ -229,9 +229,12 @@ from pydantic_ai_harness import Shell
 Shell(secret_env={'DEPLOY_TOKEN': 'tok-...'})
 ```
 
-Masking covers what the tools return. A command can still put a secret where the model reads it
-unmasked, such as a file or a `shell` log it opens with a file tool, and the `shell` tool's
-events carry raw output. Empty values are not masked.
+Masking replaces exact occurrences of each value in what the tools return. It guards against a
+secret printed by accident, not against a command that transforms it (`base64`, `rev`, `cut`, JSON
+escaping) or splits it between stdout and stderr, including one the model writes to reveal it. A
+short or common value, such as `1` or `true`, is masked everywhere it appears. A command can also
+put a secret where the model reads it unmasked, such as a file or a `shell` log it opens with a
+file tool, and the `shell` tool's events carry raw output. Empty values are not masked.
 
 None of these is a security boundary: with `LocalWorkspace`, a command can still read
 your process's environment and your files. Use a sandbox for untrusted commands.
