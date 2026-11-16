@@ -89,6 +89,9 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     await workspace.act(Click(x=3, y=4))
 
     assert docker.xvfb_starts == 1
+    # Kept up when its last client exits, and listening on neither TCP nor the host-shared abstract socket.
+    xvfb_args = (docker.bin_dir / 'xvfb-starts').read_text()
+    assert '-nolisten tcp -nolisten local' in xvfb_args and '-noreset' in xvfb_args
     assert docker.xdotool_calls[-1] == ':1 mousemove 3 4 click --repeat 1 1'
 
 
