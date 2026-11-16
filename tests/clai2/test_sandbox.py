@@ -913,8 +913,8 @@ class TestE2B:
             'allow_public_traffic': False,
         }
         await e2b.create(github=None)
-        # No rules to replace a stand-in, so none is set.
-        assert fake_e2b.create_calls[-1].network is None
+        # No GitHub rules and no stand-in, but outside traffic is still refused.
+        assert fake_e2b.create_calls[-1].network == {'allow_public_traffic': False}
         assert fake_e2b.create_calls[-1].envs == SANDBOX_ENV
         reopened = e2b.reopen(ref)
         assert reopened.ref == ref

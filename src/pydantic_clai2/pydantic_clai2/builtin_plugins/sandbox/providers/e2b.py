@@ -4,8 +4,8 @@ The token is in the rules as written, so E2B holds it until the sandbox is delet
 is paused, rules and all. Until then, anyone with an API key for the E2B team can read the rules; an E2B secret
 would let them use the token just the same, from a sandbox of their own, and would outlive this one.
 
-Network rules make the sandbox's URLs public unless they say otherwise (`allow_public_traffic`), so these say
-otherwise: a server started in the sandbox answers only requests that carry its access token.
+E2B makes the sandbox's URLs public unless told otherwise (`allow_public_traffic`), so every sandbox, with or
+without a GitHub login, is told otherwise: a server started in it answers only requests that carry its access token.
 """
 
 import shlex
@@ -56,14 +56,11 @@ class E2BProvider:
         from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
         env: Mapping[str, str] = SANDBOX_ENV
-        network: SandboxNetworkOpts | None = None
+        network: SandboxNetworkOpts = {'allow_public_traffic': False}
         if github is not None:
-            network = {
-                'rules': {
-                    host: [{'transform': {'headers': {'Authorization': github.authorization(host)}}}]
-                    for host in GITHUB_HOSTS
-                },
-                'allow_public_traffic': False,
+            network['rules'] = {
+                host: [{'transform': {'headers': {'Authorization': github.authorization(host)}}}]
+                for host in GITHUB_HOSTS
             }
             env = {**env, 'GH_TOKEN': 'placeholder'}  # `gh` sends a header only with a token set; the proxy replaces it
         # E2B keeps `env` on the sandbox, so commands after a reopen get it too.
