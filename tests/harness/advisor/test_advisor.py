@@ -425,6 +425,79 @@ class TestAdvisor:
 
         assert advisor_calls == 2
 
+    @pytest.mark.parametrize('mode', ['auto', 'native'])
+    async def test_callable_max_uses_sends_the_native_advisor_what_is_left(
+        self, mode: Literal['auto', 'native']
+    ) -> None:
+        seen: list[ModelRequestParameters] = []
+
+        def executor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            _ProviderFunctionModel('anthropic', executor, supports_advisor=True),
+            deps_type=int,
+            capabilities=[Advisor('anthropic:claude-opus-4-8', mode=mode, max_uses=lambda ctx: 3 - ctx.deps)],
+        )
+
+        for used in range(4):
+            await agent.run('Review this plan.', deps=used)
+
+        assert [request.native_tools for request in seen] == [
+            [AdvisorTool(model='claude-opus-4-8', max_uses=3)],
+            [AdvisorTool(model='claude-opus-4-8', max_uses=2)],
+            [AdvisorTool(model='claude-opus-4-8', max_uses=1)],
+            [],
+        ]
+        assert [tool.name for tool in seen[-1].function_tools] == (['advisor'] if mode == 'auto' else [])
+
+    async def test_callable_max_uses_bounds_local_consultations_across_runs(self) -> None:
+        @dataclass
+        class Budget:
+            used: int = 0
+
+        advisor_calls = 0
+        tool_returns: list[object] = []
+
+        def advisor_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal advisor_calls
+            advisor_calls += 1
+            return ModelResponse(parts=[TextPart('advice')])
+
+        def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if not _has_tool_return(messages):
+                return ModelResponse(
+                    parts=[ToolCallPart('advisor', {'prompt': f'q{i}'}, tool_call_id=f'advisor-{i}') for i in range(3)]
+                )
+            tool_returns.extend(part.content for part in messages[-1].parts if isinstance(part, ToolReturnPart))
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(executor),
+            deps_type=Budget,
+            capabilities=[
+                Advisor(_ProviderFunctionModel('anthropic', advisor_model), max_uses=lambda ctx: 3 - ctx.deps.used)
+            ],
+        )
+        budget = Budget(used=2)
+
+        await agent.run('Ask three times.', deps=budget)
+        budget.used += advisor_calls
+        await agent.run('Ask again.', deps=budget)
+
+        assert advisor_calls == 1
+        assert tool_returns == snapshot(
+            [
+                'advice',
+                'Advisor consultation limit reached for this model request. Continue without further advice.',
+                'Advisor consultation limit reached for this model request. Continue without further advice.',
+                'Advisor consultation limit reached for this model request. Continue without further advice.',
+                'Advisor consultation limit reached for this model request. Continue without further advice.',
+                'Advisor consultation limit reached for this model request. Continue without further advice.',
+            ]
+        )
+
     async def test_openrouter_max_uses_selects_local_fallback(self) -> None:
         seen: list[ModelRequestParameters] = []
 
