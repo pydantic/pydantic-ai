@@ -6,7 +6,6 @@ import asyncio
 import re
 import threading
 import uuid
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,7 +14,6 @@ import pytest
 import smol
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -30,6 +28,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend, _backend
+from tests.harness.conftest import Instrumented
 
 from .._tool_calls import call_tools
 from .fake_smol import FakeMachine, FakeSmol, FakeVM
@@ -370,7 +369,7 @@ async def test_failed_creation_can_retry(fake_smol: FakeSmol, working_dir: str) 
 async def test_a_failed_creation_span_names_the_vm(
     fake_smol: FakeSmol,
     working_dir: str,
-    instrumented: Callable[[bool], tuple[Instrumentation, Any]],
+    instrumented: Instrumented,
 ) -> None:
     """The backend drops the VM's ref when creating it fails, but the `workspace create` span keeps it."""
     tracing, exporter = instrumented(False)
@@ -383,7 +382,7 @@ async def test_a_failed_creation_span_names_the_vm(
     )
 
     @agent.tool
-    async def look(ctx: RunContext[Any]) -> str:
+    async def look(ctx: RunContext[object]) -> str:
         with pytest.raises(smol.SmolError, match='image pull failed'):
             await ctx.workspace.exists('notes.txt')
         assert ctx.workspace.ref is None

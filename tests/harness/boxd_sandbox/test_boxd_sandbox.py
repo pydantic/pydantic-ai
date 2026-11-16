@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +13,6 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -30,6 +28,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.shell import Shell
+from tests.harness.conftest import Instrumented
 
 from .._tool_calls import call_tools
 from .fake_boxd import FakeBoxd, wait_until_gone
@@ -203,9 +202,7 @@ async def test_continuing_the_history_attaches_to_the_same_machine(host: FakeBox
     assert second.workspace.ref == first.workspace.ref
 
 
-async def test_the_machines_lifecycle_is_traced(
-    host: FakeBoxd, instrumented: Callable[[bool], tuple[Instrumentation, Any]]
-) -> None:
+async def test_the_machines_lifecycle_is_traced(host: FakeBoxd, instrumented: Instrumented) -> None:
     """Creating, reattaching to and destroying the machine each get a span, under the call or tool that needed it."""
     tracing, exporter = instrumented(False)
     sandbox = BoxdSandbox[None]()
