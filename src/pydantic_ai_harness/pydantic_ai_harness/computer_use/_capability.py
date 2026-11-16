@@ -101,9 +101,6 @@ _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakVa
 turns a whole call at a time, so one's clicks never land between another's. A lock can't wake a waiter on another event
 loop, so calls on separate loops don't take turns. A lock goes once no call holds or waits for it."""
 
-_HOLDERS: dict[object, str | None] = {}
-"""The run holding a mouse button on each screen, by the keys of its locks. While one does, other runs only look."""
-
 _RELEASE_TIMEOUT = 5
 """Maximum time spent waiting for the screen, and releasing each mouse button, when a call or a run's end releases."""
 
@@ -118,6 +115,8 @@ class _RunButtons:
 
     run_id: str | None
     held: list[MouseButton] = field(default_factory=list[MouseButton])
+    sure: bool = True
+    """Whether `held` is exactly the buttons pressed, rather than every button a call that failed may have left so."""
 
 
 _RUN_BUTTONS: ContextVar[_RunButtons | None] = ContextVar('_RUN_BUTTONS', default=None)
@@ -160,8 +159,6 @@ _READ_ONLY = (
     'position and wait. No action ran.'
 )
 
-_ANOTHER_HOLDS = 'Another agent is holding a mouse button on this screen; try again after it lets go.'
-
 _INTERRUPTED = (
     'The call was interrupted before it finished, so some of its actions may have run. Take a screenshot before '
     'acting again.'
@@ -183,6 +180,10 @@ class _Plan:
     model_name: str
     held: list[MouseButton]
     """The mouse buttons the run's earlier calls left pressed."""
+    keeps_held: bool
+    unsure: bool
+    """Whether `held` may name buttons that aren't pressed, so the call releases them before it acts."""
+    """Whether buttons left pressed stay pressed for the run's end to release, rather than the call's end."""
 
 
 @dataclass
@@ -444,44 +445,6 @@ async def _release(display: Display, held: list[MouseButton]) -> None:
             held.remove(button)
 
 
-def _held_buttons(messages: Sequence[ModelMessage], run_id: str | None) -> list[MouseButton]:
-    """The mouse buttons the run's `computer` calls left pressed, replayed from its messages.
-
-    A call that returned ran all its actions, or failed partway and released every button. A failed call leaves them as
-    they were: it was refused before acting, or releasing failed.
-    """
-    calls: dict[str, ComputerCallPart] = {}
-    held: list[MouseButton] = []
-    for message in messages:
-        for part in message.parts:
-            if isinstance(part, ComputerCallPart):
-                calls[part.tool_call_id] = part
-            elif (
-                isinstance(part, ComputerReturnPart)
-                and message.run_id == run_id
-                and part.outcome == 'success'
-                and (result := part.result) is not None
-                and (call := calls.get(part.tool_call_id)) is not None
-            ):
-                held = _held_after(call.actions or [], result, held)
-    return held
-
-
-def _held_after(
-    actions: list[ComputerToolAction], result: ComputerResult, held: list[MouseButton]
-) -> list[MouseButton]:
-    """The buttons pressed after a call that returned `result`, with `held` pressed before it."""
-    if 'error' in result:
-        return []  # it failed partway and released them
-    held = list(held)
-    for action in actions:
-        if isinstance(action, MouseDown) and action.button not in held:
-            held.append(action.button)
-        elif isinstance(action, MouseUp) and action.button in held:
-            held.remove(action.button)
-    return held
-
-
 def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
     """The size of the latest screenshot the model saw, from its result's metadata or, without it, the image."""
     for message in reversed(messages):
@@ -555,7 +518,7 @@ async def _display_size(display: Display) -> tuple[int, int]:
 
 
 def _screen_keys(ctx: RunContext[Any], display: Display) -> list[object]:
-    """The keys of a screen's locks and holder: its display object's, then its environment's."""
+    """The keys of a screen's locks: its display object's, then its environment's."""
     # One environment's backends share its ref, but two environments may reach one display object, so neither key
     # alone finds every call on a screen.
     token = anyio.lowlevel.current_token()
@@ -563,15 +526,6 @@ def _screen_keys(ctx: RunContext[Any], display: Display) -> list[object]:
     if (ref := ctx.workspace.ref) is not None:
         keys.append((token, 'ref', ref))
     return keys
-
-
-def _set_holder(keys: list[object], run_id: str | None, holds: bool) -> None:
-    """Record whether the run holds a mouse button on the screen with these keys."""
-    for key in keys:
-        if holds:
-            _HOLDERS[key] = run_id
-        elif key in _HOLDERS and _HOLDERS[key] == run_id:
-            del _HOLDERS[key]
 
 
 @asynccontextmanager
@@ -691,38 +645,50 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
             limit=_min_limit(made_limit, _model_limit(ctx.model)),
             model_name=ctx.model.model_name,
-            held=list(run.held) if run else _held_buttons(ctx.messages, ctx.run_id),
+            held=list(run.held) if run else [],
+            keeps_held=run is not None,
+            unsure=run is not None and not run.sure,
         )
-        if not ctx.in_durable_context:
-            # Run here, so an error keeps its traceback.
-            outcome = await self._run_on_display(ctx, actions, plan)
-        else:
-            try:
-                outcome = await self._on_display(ctx, actions, plan)
-            except UserError:
-                # A configuration error, such as a model the engine doesn't know, isn't the call failing.
-                raise
-            except Exception as e:
-                # The unit failed, timed out or lost its worker, after any number of actions.
-                raise ToolFailed(_INTERRUPTED) from e
-            if isinstance(outcome, _NotRun):
-                raise outcome.error()
-        result: ComputerResult = outcome.metadata
+        if run is not None:
+            # A press can take effect in a call that then fails, so until it returns, the run's end releases them all.
+            pressing: list[MouseButton] = [action.button for action in actions if isinstance(action, MouseDown)]
+            run.held, run.sure = list(dict.fromkeys(plan.held + pressing)), False
+        tool_return, held = await self._call(ctx, actions, plan)
+        result: ComputerResult = tool_return.metadata
         size = result.get('screenshot_size')
         assert size is not None  # a call that returns has taken its screenshot
         width, height = size  # a list once a durable unit's result has been through JSON
         result['screenshot_size'] = (width, height)
         if run is not None:
-            run.held = _held_after(actions, result, plan.held)
+            run.held, run.sure = held, True
         # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
         await ctx.emit(ActionsPerformedEvent(result=result))
+        return tool_return
+
+    async def _call(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
+    ) -> tuple[ToolReturn, list[MouseButton]]:
+        """Run the call on the display: here, or as a durable unit in a durable run."""
+        if not ctx.in_durable_context:
+            # Run here, so an error keeps its traceback.
+            return await self._run_on_display(ctx, actions, plan)
+        try:
+            outcome = await self._on_display(ctx, actions, plan)
+        except UserError:
+            # A configuration error, such as a model the engine doesn't know, isn't the call failing.
+            raise
+        except Exception as e:
+            # The unit failed, timed out or lost its worker, after any number of actions.
+            raise ToolFailed(_INTERRUPTED) from e
+        if isinstance(outcome, _NotRun):
+            raise outcome.error()
         return outcome
 
     @durable_operation('call')
     async def _on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> ToolReturn | _NotRun:
-        """Everything a call does on the display, as one durable unit."""
+    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
+        """Everything a call does on the display, as one durable unit: its result and the buttons still pressed."""
         try:
             return await self._run_on_display(ctx, actions, plan)
         except (ToolFailed, WorkspaceUnavailableError, UserError) as e:
@@ -730,15 +696,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     async def _run_on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> ToolReturn:
+    ) -> tuple[ToolReturn, list[MouseButton]]:
         display = _required_display(ctx)
-        keys = _screen_keys(ctx, display)
         # Measured while this call holds the screen, so a call that waited sees the size the one before it left.
-        async with _taking_turns(keys):
-            if any(_HOLDERS.get(key, ctx.run_id) != ctx.run_id for key in keys) and any(
-                action.type not in _OBSERVING_ACTIONS for action in actions
-            ):
-                raise ToolFailed(_ANOTHER_HOLDS)
+        async with _taking_turns(_screen_keys(ctx, display)):
             # Also starts a display that stopped, before anything acts.
             size = await _display_size(display)
             # The call ends with a screenshot at the screen's size, so a screen the model can't see ends the run
@@ -751,10 +712,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 raise ToolFailed(refused)
             pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
             held = list(plan.held)
-            try:
-                return await self._act_and_look(display, pixels, mapping, plan, held)
-            finally:
-                _set_holder(keys, ctx.run_id, bool(held))
+            if plan.unsure:
+                # Released first, so the result reports only the buttons this call knows are pressed.
+                await _release(display, held)
+            return await self._act_and_look(display, pixels, mapping, plan, held), held
 
     async def _act_and_look(
         self,
@@ -765,6 +726,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         held: list[MouseButton],
     ) -> ToolReturn:
         performed, error, outputs = await _perform(display, actions, mapping, self.settle_seconds, held)
+        if not plan.keeps_held:
+            # Loaded mid-run with `defer_loading=True`, after `wrap_run` was chosen, so no run's end releases them.
+            await _release(display, held)
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
@@ -848,12 +812,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         finally:
             await self._release_held(ctx, run.held)
 
-    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        if _run_buttons(ctx) is None:
-            # Loaded mid-run with `defer_loading=True`, after `wrap_run` was chosen.
-            await self._release_held(ctx, _held_buttons(result.all_messages(), ctx.run_id))
-        return result
-
     async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
         if held:
             with anyio.CancelScope(shield=True):
@@ -862,15 +820,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     @durable_operation('release')
     async def _release_on_display(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
         display = _required_display(ctx)
-        keys = _screen_keys(ctx, display)
         try:
             with anyio.move_on_after(_RELEASE_TIMEOUT):
-                async with _taking_turns(keys):
+                async with _taking_turns(_screen_keys(ctx, display)):
                     await _release(display, held)
         except WorkspaceUnavailableError:
             pass  # the environment is gone, and its buttons with it
-        finally:
-            _set_holder(keys, ctx.run_id, False)
 
     async def prepare_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
