@@ -12,7 +12,7 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 - `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
   emoji.
 - `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
-  scroll lock and media keys (`unsupported key "print"`), and the desktop keeps working.
+  scroll lock and media keys (`unsupported key "printscreen"`), and the desktop keeps working.
 - The mouse has no `back` or `forward` button (`unsupported mouse button "back"`).
 - Its keypad digits are `num0` to `num9`, which follow Num Lock, and Num Lock is `num_lock`. Its other keypad names
   type other keys (`num_plus` types `n`), and the display refuses `menu`.
