@@ -96,12 +96,12 @@ def command_span(step: Step) -> AbstractContextManager[Span]:
     )
 
 
-def set_command(telemetry: RunTelemetry | None, span: Span, command: WorkspaceCommand) -> None:
+def set_command(span: Span, command: WorkspaceCommand) -> None:
     """Record `command` on a `workspace run` span, only when the run captures content."""
     if isinstance(command, str):
-        set_content_attribute(telemetry, span, 'process.command_line', command)
+        set_content_attribute(current_run_telemetry(), span, 'process.command_line', command)
     else:
-        set_content_attribute(telemetry, span, 'process.command_args', list(command))
+        set_content_attribute(current_run_telemetry(), span, 'process.command_args', list(command))
 
 
 @contextmanager

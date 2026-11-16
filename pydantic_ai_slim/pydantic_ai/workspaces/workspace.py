@@ -558,7 +558,7 @@ class Workspace(WorkspaceBackend):
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
         with self._operation('run') as span:
-            set_command(current_run_telemetry(), span, command)
+            set_command(span, command)
             result = await backend.run(command, shell=shell, env=env, timeout=timeout)
             span.set_attribute('process.exit.code', result.exit_code)
             return result
