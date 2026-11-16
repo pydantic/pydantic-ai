@@ -12,7 +12,7 @@ from pydantic_ai.computer_use import Point, Region
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 
 from ._png import PNG_SIGNATURE
-from .computer_use import DisplayAction, UnsupportedActionError
+from .computer_use import Display, DisplayAction, SupportsCursorPosition, SupportsZoom, UnsupportedActionError
 
 T = TypeVar('T')
 
@@ -35,14 +35,8 @@ def png_from_base64(encoded: str | None, source: str) -> bytes:
     return data
 
 
-class DisplayDriver(Protocol):
+class DisplayDriver(Display, SupportsZoom, SupportsCursorPosition, Protocol):
     """Drives one running display, such as an X server through commands or a provider's API."""
-
-    async def display_size(self) -> tuple[int, int]: ...
-    async def screenshot(self) -> bytes: ...
-    async def act(self, action: DisplayAction) -> None: ...
-    async def zoom(self, region: Region) -> bytes: ...
-    async def cursor_position(self) -> Point: ...
 
 
 class LazyDisplay:
