@@ -112,7 +112,7 @@ class TestStepPersistenceSessionMigration:
         assert moved is not None
         assert moved.messages == result.all_messages()
 
-    async def test_move_heads_copies_every_head_and_resumes(self, tmp_path: Path) -> None:
+    async def test_move_heads_copies_every_head_under_the_scope(self, tmp_path: Path) -> None:
         agent = Agent(TestModel())
         heads = SqliteConversationStore(database=tmp_path / 'sessions.db')
         runs = {name: await agent.run(name) for name in ('one', 'two')}
@@ -120,10 +120,20 @@ class TestStepPersistenceSessionMigration:
             await heads.save(summary=ConversationSummary(id=name, workspace='.'), messages=result.all_messages())
         conversations = InMemoryConversationStore()
 
-        await _call('move_heads', heads, conversations)
-        await _call('move_heads', heads, conversations)
+        await _call('move_heads', heads, conversations, scope='user-1')
+        await _call('move_heads', heads, conversations, scope='user-1')
 
         for name, result in runs.items():
-            moved = await conversations.load(name)
+            assert await conversations.load(name, scope='user-2') is None
+            moved = await conversations.load(name, scope='user-1')
             assert moved is not None
             assert moved.messages == result.all_messages()
+
+        moved = await conversations.load('one', scope='user-1')
+        assert moved is not None
+        continued = await agent.run('and again', conversation=moved)
+        await conversations.save(continued, scope='user-1')
+        reloaded = await conversations.load('one', scope='user-1')
+        assert reloaded is not None
+        assert reloaded.messages == continued.all_messages()
+        assert len(reloaded.messages) > len(runs['one'].all_messages())
