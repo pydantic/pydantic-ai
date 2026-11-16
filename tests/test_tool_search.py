@@ -93,6 +93,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from .cassette_utils import request_json
 from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
 from .function_model_prefix import TOOLS_CHANGE_MID_RUN
+from .models.conftest import content_blocks
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -6327,10 +6328,10 @@ _DISCOVERED_METRICS: ToolSearchReturnContent = {'discovered_tools': [{'name': 'g
 _OPENAI_SERVER_SEARCH: dict[str, str | None] = {'call_id': None, 'execution': 'server', 'status': 'completed'}
 
 
-def _openai_search_call(call_id: str) -> NativeToolSearchCallPart:
+def _openai_search_call(call_id: str, *, query: str | None = None) -> NativeToolSearchCallPart:
     return NativeToolSearchCallPart(
         provider_name='openai',
-        args={'queries': [call_id]},
+        args={'queries': [query or call_id]},
         tool_call_id=call_id,
         id=call_id,
         provider_details=_OPENAI_SERVER_SEARCH,
@@ -6795,48 +6796,68 @@ def test_rejects_unpaired_tool_calls_provider_profile_wins() -> None:
     assert model.profile.get('rejects_unpaired_tool_calls') is False
 
 
+# `_OPENAI_OUTPUT_ID_HISTORY` as a conversation a user could have had. Anthropic's content filter refused a live
+# request with the placeholder queries and a canned reply (`reasoning_extraction`).
+_LIVE_OPENAI_OUTPUT_ID_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Which tool can report our revenue numbers?')]),
+    ModelResponse(
+        parts=[
+            _openai_search_call('tsc_1', query='revenue report'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2', query='quarterly metrics'),
+            _openai_search_output('tso_2'),
+            TextPart("`get_metrics` reports this quarter's revenue metrics."),
+        ],
+        provider_name='openai',
+    ),
+]
+
+
+@pytest.mark.vcr
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_fallback_sends_openai_output_ids_to_anthropic_paired(allow_model_requests: None) -> None:
-    """Old OpenAI search history reaches Anthropic under `FallbackModel` with each result on its call, reveal kept.
+async def test_live_fallback_sends_openai_output_ids_to_anthropic_paired(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Anthropic accepts old OpenAI search history under `FallbackModel`, with each result on its call.
 
     Anthropic rejected the translated `tool_result` blocks, which named the output items `tso_1` and
-    `tso_2` rather than a `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). Rendered
-    through a mock client: there is no Anthropic recording of this history, and
-    `test_live_tool_search_handoff_openai_to_anthropic` already records Anthropic accepting this pair shape.
+    `tso_2` rather than a `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). The cassette
+    matches a request without its body, so the blocks the request carries are pinned from the wire.
     """
-    mock_client = MockAnthropic.create_mock(
-        completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
-    )
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(FallbackModel(model), toolsets=[_METRICS_TOOLSET])
+    provider = AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
+    agent = Agent(FallbackModel(AnthropicModel('claude-sonnet-5-5', provider=provider)), toolsets=[_METRICS_TOOLSET])
 
-    await agent.run('and for Q3?', message_history=_OPENAI_OUTPUT_ID_HISTORY)
+    result = await agent.run("Thanks, that's all I needed.", message_history=_LIVE_OPENAI_OUTPUT_ID_HISTORY)
 
-    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
-    assert [
-        block
-        for message in messages
-        if isinstance(message['content'], list)
-        for block in message['content']
-        if block['type'] in ('tool_use', 'tool_result')
-    ] == snapshot(
-        [
-            {'id': 'tsc_1', 'type': 'tool_use', 'name': 'search_tools', 'input': {'queries': ['tsc_1']}},
-            {
-                'tool_use_id': 'tsc_1',
-                'type': 'tool_result',
-                'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
-                'is_error': False,
-            },
-            {'id': 'tsc_2', 'type': 'tool_use', 'name': 'search_tools', 'input': {'queries': ['tsc_2']}},
-            {
-                'tool_use_id': 'tsc_2',
-                'type': 'tool_result',
-                'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
-                'is_error': False,
-            },
-        ]
+    body = request_capture.body('/v1/messages')
+    assert {kind: content_blocks(body, kind) for kind in ('tool_use', 'tool_result')} == snapshot(
+        {
+            'tool_use': [
+                {'id': 'tsc_1', 'type': 'tool_use', 'name': 'search_tools', 'input': {'queries': ['revenue report']}},
+                {
+                    'id': 'tsc_2',
+                    'type': 'tool_use',
+                    'name': 'search_tools',
+                    'input': {'queries': ['quarterly metrics']},
+                },
+            ],
+            'tool_result': [
+                {
+                    'tool_use_id': 'tsc_1',
+                    'type': 'tool_result',
+                    'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
+                    'is_error': False,
+                },
+                {
+                    'tool_use_id': 'tsc_2',
+                    'type': 'tool_result',
+                    'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
+                    'is_error': False,
+                },
+            ],
+        }
     )
+    assert result.output == snapshot("You're welcome! If you want the numbers, I can pull them with `get_metrics`.")
 
 
 def _wire_tool_exchange(body: dict[str, JsonValue]) -> list[tuple[str, str]]:
