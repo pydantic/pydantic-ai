@@ -740,7 +740,7 @@ def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
 result = agent.run_sync('add 5 and 3', deps=100)
 assert isinstance(result.output, DeferredToolRequests)
 # The validated args are ready for the user to approve
-print(result.output.approvals[0].args)
+print(result.output.validated_args[result.output.approvals[0].tool_call_id])
 #> {'x': 0, 'y': 0}
 ```
 

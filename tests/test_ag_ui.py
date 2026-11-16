@@ -20,6 +20,7 @@ from dirty_equals import IsJson, IsPartialDict
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import (
+    AgentRunResultEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -10107,6 +10108,57 @@ async def test_run_finished_interrupt_outcome_carries_metadata() -> None:
     run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
     interrupt = run_finished['outcome']['interrupts'][0]
     assert interrupt['metadata'] == snapshot({'risk': 'high', 'scope': 'filesystem'})
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_shows_validated_args() -> None:
+    """The interrupt's `message` shows the arguments the tool will receive, not the ones the model sent."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env", "force": "false"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str, force: bool) -> str:  # pragma: no cover
+        # Body never runs: the test asserts the pending approval's interrupt.
+        return f'deleted {path}'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot('Approve delete_file({"path":".env","force":false})?')
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_without_validated_args() -> None:
+    """A request without `validated_args`, such as one built by hand, shows the model's arguments.
+
+    Not a run through the adapter: every request a run builds carries its validated arguments.
+    """
+
+    async def event_generator():
+        yield AgentRunResultEvent(
+            result=AgentRunResult(
+                output=DeferredToolRequests(
+                    approvals=[ToolCallPart('delete_file', '{"path": ".env"}', tool_call_id='call_0')]
+                )
+            )
+        )
+
+    run_input = create_input(UserMessage(id='m1', content='delete .env'))
+    event_stream = AGUIEventStream(run_input, ag_ui_version=_INTERRUPTS_AG_UI_VERSION)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot('Approve delete_file({"path":".env"})?')
 
 
 @pytestmark_interrupts

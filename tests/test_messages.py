@@ -1363,6 +1363,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                     }
                 ],
                 'metadata': {'call_1': {'foo': 'bar'}},
+                'validated_args': {},
             },
             'event_kind': 'deferred_tool_requests',
         }

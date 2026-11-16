@@ -1625,7 +1625,8 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
     )
 
     assert result.output == DeferredToolRequests(
-        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+        validated_args={'call-1': {'query': 'runtime'}},
     )
 
 

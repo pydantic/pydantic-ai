@@ -2991,6 +2991,7 @@ class TestAfterToolValidateOnDeferral:
                     ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
                 ],
                 metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'args_validator'}},
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         )
         assert cap.seen == snapshot([{'x': 0}])
@@ -3338,6 +3339,7 @@ class TestToolHookDeferrals:
             DeferredToolRequests(
                 calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
                 metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'after_tool_validate'}},
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         )
 

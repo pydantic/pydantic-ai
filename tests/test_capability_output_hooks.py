@@ -4939,7 +4939,9 @@ async def test_deferred_tool_handler_ignores_cross_category_ids():
     result = await agent.run('go')
 
     assert calls == 1
-    assert result.output == DeferredToolRequests(calls=[ToolCallPart('external_tool', {}, tool_call_id='call_1')])
+    assert result.output == DeferredToolRequests(
+        calls=[ToolCallPart('external_tool', {}, tool_call_id='call_1')], validated_args={'call_1': {}}
+    )
 
 
 def test_deferred_tool_requests_build_results_approve_all():

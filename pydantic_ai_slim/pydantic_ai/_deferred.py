@@ -18,6 +18,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Field, StrictBool, Tag
+from pydantic_core import to_jsonable_python
 
 from . import _utils
 from .exceptions import ModelRetry, ToolFailed, UserError
@@ -54,6 +55,19 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
+    validated_args: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    """The arguments each deferred tool call's tool will receive, keyed by `tool_call_id`.
+
+    The [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] in `calls` and `approvals` hold the arguments
+    as the model sent them. These are the same arguments once validated against the tool's schema and
+    passed through any [tool validation hooks](../hooks.md#tool-validation-hooks): values coerced, keys the
+    schema doesn't accept dropped, and any rewrite by a hook such as `after_tool_validate` applied. They are
+    keyed by the tool's Python parameter names and stored in their JSON-compatible form, so they survive
+    serialization unchanged.
+
+    When an approved call resumes, its recorded arguments are validated again, so a validation hook whose
+    output isn't determined by its input can give the tool different arguments than these.
+    """
     # Internal, not part of the public API: read a call's kind with `kind()`. The calls in `calls` that are
     # questions, keyed by `tool_call_id`. Serialized as `_kinds` only when there are any, so a
     # `DeferredToolRequests` stored, journaled or recorded in telemetry keeps its questions, and one
@@ -135,9 +149,21 @@ class DeferredToolRequests:
             calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
             approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
+            validated_args={k: v for k, v in self.validated_args.items() if k not in resolved_ids},
             _kinds={k: v for k, v in self._kinds.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
+
+
+def jsonable_validated_args(validated_args: dict[str, Any] | None) -> dict[str, Any]:
+    """A deferred call's validated arguments in the form [`DeferredToolRequests.validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args] holds them.
+
+    A value Pydantic can't serialize is stored as its `str()`, so one tool parameter can't make the
+    whole `DeferredToolRequests` unserializable.
+    """
+    # Only a call whose arguments validated can be deferred, and a function tool's validated arguments are a dict.
+    assert validated_args is not None
+    return to_jsonable_python(validated_args, serialize_unknown=True)
 
 
 @dataclass(kw_only=True)

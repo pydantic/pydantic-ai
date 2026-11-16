@@ -19,10 +19,11 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import BaseModel, ConfigDict, StrictBool, ValidationError
 from pydantic.alias_generators import to_camel
 from pydantic.json_schema import WithJsonSchema
+from pydantic_core import to_json
 
 from ...exceptions import UserError
 from ...messages import ToolCallPart
-from ...tools import DeferredToolApprovalResult, GenerateToolJsonSchema, ToolApproved, ToolDenied
+from ...tools import DeferredToolApprovalResult, DeferredToolRequests, GenerateToolJsonSchema, ToolApproved, ToolDenied
 from ._utils import INTERRUPT_ID_PREFIX
 
 if TYPE_CHECKING:
@@ -125,24 +126,28 @@ for _property in _RESUME_RESPONSE_SCHEMA['properties'].values():
     _property.pop('default', None)
 
 
-def approval_to_interrupt(call: ToolCallPart, metadata: dict[str, dict[str, Any]]) -> Interrupt:
-    """Build an AG-UI `Interrupt` from a pending approval `ToolCallPart` (outbound).
+def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) -> Interrupt:
+    """Build an AG-UI `Interrupt` from a pending approval `ToolCallPart` in `requests` (outbound).
 
+    The `message` shows the arguments the tool will receive, from `requests.validated_args`, and
+    the model's arguments only for a request that doesn't carry them, such as one built by hand.
     The `response_schema` describes the shape clients must put in `ResumeEntry.payload`;
     it is generated from `_ResumePayload`, the same model that validates the payload on
     resume. `editedArgs`, when present, replaces the proposed `ToolCallPart.args`
     (see `ToolApproved.override_args`).
     """
+    validated_args = requests.validated_args.get(call.tool_call_id)
+    args = call.args_as_json_str() if validated_args is None else to_json(validated_args).decode()
     return Interrupt(
         id=f'{INTERRUPT_ID_PREFIX}{call.tool_call_id}',
         reason='tool_call',
         tool_call_id=call.tool_call_id,
-        message=f'Approve {call.tool_name}({call.args_as_json_str()})?',
+        message=f'Approve {call.tool_name}({args})?',
         # Copied per interrupt: pydantic only rebuilds the outer dict for a `dict[str, Any]`
         # field, so sharing the constant would let a consumer mutating one interrupt's schema
         # alter every other interrupt's in the same process.
         response_schema=deepcopy(_RESUME_RESPONSE_SCHEMA),
-        metadata=metadata.get(call.tool_call_id),
+        metadata=requests.metadata.get(call.tool_call_id),
     )
 
 
