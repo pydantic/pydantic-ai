@@ -328,15 +328,15 @@ On 0.x, each Harness release ships alongside the Pydantic AI release with the sa
 
 ### After 1.0
 
-From 1.0, the Harness follows the rules of Pydantic AI's [version policy](../version-policy.md): no intentional breaking changes in minor releases, and deprecated functionality is not removed until the next major version. The changes that policy does not consider breaking, such as bug fixes for code that relied on undocumented behavior, OpenTelemetry span attributes, and `__repr__` output, are not breaking for the Harness either. Neither is a change that follows a third-party service or SDK a capability integrates with, when that service removes or changes what the capability relied on. ACP, the one experimental capability, is excluded until it graduates.
+From 1.0, the Harness follows the rules of Pydantic AI's [version policy](../version-policy.md): no intentional breaking changes in minor releases, and deprecated functionality is not removed until the next major version. The changes that policy does not consider breaking, such as bug fixes for code that relied on undocumented behavior, OpenTelemetry span attributes, and `__repr__` output, are not breaking for the Harness either. Neither is a change that follows a third-party service or SDK a capability integrates with, when that service removes or changes what the capability relied on. Capabilities marked experimental on their page (currently [ACP](acp.md)) are excluded until they graduate.
 
 A capability's behavior includes what it sends to the model, so stability covers more than signatures:
 
 - **Defaults**: a minor release does not change a default in a way that changes what an existing agent does, such as enabling a tool, lowering a limit, or switching a fallback. New behavior arrives behind a new parameter, and a default changes only in a major release.
-- **Tools**: tool names and argument schemas end up in message history that you may store and replay, so a minor release can add optional arguments but does not rename or remove a tool or an argument.
+- **Stored history**: tool names, argument schemas, and the other records a capability writes into message history and reads back on later runs, such as metadata keys and framing tags, persist in histories that you may store and resume. A minor release can add optional tool arguments but does not rename or remove a tool, an argument, or a record a capability relies on.
 - **Prompt text**: the wording of instructions, tool descriptions, and other text a capability sends to the model can change in a minor release, since improving how models use a capability is part of maintaining it. Release notes list these changes. Where a capability accepts its own instructions or descriptions as parameters, passing them keeps your wording fixed.
 
-From 1.0, Harness version numbers no longer mirror Pydantic AI's: a Harness major release does not require a Pydantic AI major release or the reverse. Every Harness release still pins the exact `pydantic-ai-slim` release it was tested with.
+From 1.0, Harness version numbers no longer mirror Pydantic AI's, and a Harness major release does not require a Pydantic AI major release. Every Harness release still pins the exact `pydantic-ai-slim` release it was tested with, and moving that pin to a new Pydantic AI major version is itself a Harness major release, so upgrading the Harness within a major version does not cross a Pydantic AI major. The pin is listed in the package metadata on PyPI, and the release notes name the Pydantic AI release each Harness release ships with.
 
 ## Further reading
 
