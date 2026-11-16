@@ -17,6 +17,9 @@ ALL = '*'
 DEFAULT = 'default'
 """The profile meaning the account without a profile alone, even when `accounts.pool` pools plain names."""
 
+KEY_NAME = r'^[A-Z_][A-Z0-9_]*$'
+"""Every `/keys` label, which a profile's or model's `api_key` names; it also rejects most pasted tokens."""
+
 
 def check_name(value: str, *, kind: str) -> str:
     """Profile and chain names share one short, file-name-safe format."""

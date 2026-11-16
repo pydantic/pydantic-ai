@@ -1436,7 +1436,11 @@ async def test_anthropic_message_cache_breakpoint_stays_ahead_of_a_downgraded_re
 async def test_bedrock_cache_messages_stay_ahead_of_a_downgraded_request_scoped_frame(
     bedrock_provider: BedrockProvider,
 ) -> None:
-    """The next request doesn't send the frame, so a cache point behind it would write a cache entry nothing reads."""
+    """The next request doesn't send the frame, so a cache point behind it would write a cache entry nothing reads.
+
+    A unit test of the message mapping because the claim is about the bytes of two consecutive requests, which a single
+    recorded exchange can't show.
+    """
     model = BedrockConverseModel('global.anthropic.claude-opus-5-5', provider=bedrock_provider)
 
     async def wire(messages: list[ModelMessage]) -> list[Any]:

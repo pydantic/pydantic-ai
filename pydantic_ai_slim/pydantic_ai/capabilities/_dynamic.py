@@ -92,7 +92,8 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
     async def _resolve_capability(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
-        capability = self.capability_func(ctx)
+        # The factory is this capability's code, so what it enqueues is held to this capability's authority.
+        capability = self.capability_func(ctx._attributed_to(self))  # pyright: ignore[reportPrivateUsage]
         if inspect.isawaitable(capability):
             capability = await capability
         if capability is None:

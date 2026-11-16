@@ -3,13 +3,13 @@ from __future__ import annotations
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Self, TypeAlias, get_args
 
 from pydantic import ValidationError
-from typing_extensions import deprecated
+from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import _utils
 from pydantic_ai._instructions import (
@@ -25,8 +25,10 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     Authority,
     CapabilityInstructionSource,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
+    UserContent,
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.tools import (
@@ -59,6 +61,19 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+
+class _RunIdInputs(TypedDict):
+    prompt: str | Sequence[UserContent] | None
+    messages: list[ModelMessage]
+    message_history_ids: list[tuple[str | None, str | None]]
+    conversation_id: str | None
+    deps: object
+    metadata: dict[str, object] | None
+
+
+_RunIdInputsFactory: TypeAlias = Callable[[], _RunIdInputs]
+
 
 # --- Handler type aliases for use in hook method signatures ---
 # These make it easier to write correct type annotations when subclassing AbstractCapability.
@@ -219,10 +234,12 @@ class _CapabilityAuthority:
     than this is stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] naming this capability
     and this authority instead, so it reaches the model with no more than that. It only ever lowers a part's
     authority: `'user'` puts what the capability says in the user's turn, labelled as attached on the user's behalf,
-    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose content you don't
-    fully control, such as one built from a plugin or another team's code: as a class attribute of a subclass, or as a
-    field of the capability's own. To lower one instance, use
-    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority].
+    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose mid-conversation
+    content you don't fully control, such as one built from a plugin or another team's code: as a class attribute of
+    a subclass, or as a field of the capability's own. To lower one instance, use
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
+    capability sends mid-conversation, including its tools' `ToolReturn.content`. It doesn't cap the capability's
+    instructions, its tool names and descriptions, or its tools' return values: review or leave those out yourself.
 
     For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
     default authority of the workspace's files. A file another capability reads through a workspace carries the
@@ -576,9 +593,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """Return a copy of this capability whose enqueued parts carry no more than `authority`.
 
         Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability]
-        class attribute lowers every instance of a class: for example, one MCP server you don't control at `'none'`
-        while the others keep `'operator'`. It only ever lowers: asking for more authority than the capability
-        already has leaves it where it is.
+        class attribute lowers every instance of a class: for example, one plugin's capability at `'none'` while
+        another instance of its class keeps `'operator'`. It only ever lowers: asking for more authority than the
+        capability already has leaves it where it is. Like the class attribute, it covers what the capability sends
+        mid-conversation, not its instructions or tool definitions: for an MCP server you don't trust, also pass
+        `include_instructions=False`.
         """
         return _utils.replace_no_init(self, _authority_ceiling=_lower_authority(self._effective_authority, authority))
 
@@ -608,8 +627,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         return resolved.with_authority(ceiling)
 
     async def _for_run_keeping_authority(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        """`for_run`, keeping the authority `with_authority` lowered this instance to."""
-        return self._keep_authority(await self.for_run(ctx))
+        """`for_run`, keeping the authority `with_authority` lowered this instance to.
+
+        `for_run` gets a context attributed to this capability, so what it enqueues is held to the same authority.
+        """
+        return self._keep_authority(await self.for_run(ctx._attributed_to(self)))  # pyright: ignore[reportPrivateUsage]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -682,7 +704,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
     def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
         """Attribute one instruction recipe to this capability."""
-        return sourced_instruction(instruction, CapabilityInstructionSource(self.id) if self.id is not None else None)
+        sourced = sourced_instruction(
+            instruction, CapabilityInstructionSource(self.id) if self.id is not None else None
+        )
+        return replace(sourced, owner=self)
 
     def _attribute_container_instructions(
         self,
@@ -744,6 +769,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         `run_id` it had the first time. When several capabilities return one, the one listed last wins.
         """
         return None
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        """Resolve a bootstrap identity without changing the public no-argument extension point."""
+        return self.get_default_run_id()
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.
