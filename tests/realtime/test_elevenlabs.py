@@ -27,7 +27,14 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import RealtimeSession as _RealtimeSession, WebRTCSession
-from pydantic_ai.realtime._lifecycle import InputAdded, InputLost, ResponseEnded, ResponseStarted, ToolCallsAbandoned
+from pydantic_ai.realtime._lifecycle import (
+    InputAdded,
+    InputLost,
+    LifecycleEvent,
+    ResponseEnded,
+    ResponseStarted,
+    ToolCallsAbandoned,
+)
 from pydantic_ai.realtime.codec import OutputTranscript, ResponseDone, SessionUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -597,51 +604,59 @@ async def _eleven_session(runner: Any) -> AsyncGenerator[tuple[PushWebSocket, _R
             consumer.cancel()
 
 
-async def test_tool_calls_abandoned_by_a_later_response() -> None:
+@pytest.mark.parametrize('readable', [pytest.param(True, id='readable'), pytest.param(False, id='unreadable')])
+async def test_tool_calls_abandoned_by_a_later_response(readable: bool) -> None:
     """A reply to the user that starts before a tool call's result is in makes ElevenLabs give up on that call.
 
     Its result never reaches the model, and a `response.create` after it goes unanswered, so the connection
     doesn't ask for one: the result's input is settled as lost instead of leaving `wait_for_reply()` waiting.
+    A `response.done` the connection can't read ends the calling response all the same.
     """
+    first_done = done('resp_1') if readable else {'type': 'response.done', 'response': 'garbled'}
+    first_end: list[LifecycleEvent | str] = (
+        [
+            'SessionUsage',
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+        ]
+        if readable
+        else [ResponseEnded(response_id='resp_1', status='lost'), 'RealtimeSessionErrorEvent']
+    )
     ws = FakeWebSocket(
         frames(
             created('resp_1'),
             _call('resp_1', 'call_1'),
-            done('resp_1'),
+            first_done,
             user_message_added(),
             created('resp_2'),
             done('resp_2'),
             tool_output_added('call_1'),
         )
     )
-    conn = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn = ElevenLabsRealtimeConnection(ws)  # pyright: ignore[reportArgumentType]
     events = aiter(lifecycle_events(conn))
-    taken = [describe(await anext(events)) for _ in range(10)]
+    taken = [describe(await anext(events)) for _ in range(len(first_end) + 7)]
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))
     rest = [describe(event) async for event in events]
 
-    assert taken + rest == snapshot(
-        [
-            ResponseStarted(response_id='resp_1'),
-            'ToolCall',
-            'SessionUsage',
-            'ResponseDone',
-            ResponseEnded(
-                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
-            ),
-            ToolCallsAbandoned(tool_call_ids=('call_1',)),
-            'RealtimeSessionErrorEvent',
-            ResponseStarted(response_id='resp_2'),
-            'SessionUsage',
-            'ResponseDone',
-            ResponseEnded(
-                response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
-            ),
-            InputAdded(input_id=0),
-            InputLost(input_ids=(0,)),
-            'RealtimeSessionErrorEvent',
-        ]
-    )
+    assert taken + rest == [
+        ResponseStarted(response_id='resp_1'),
+        'ToolCall',
+        *first_end,
+        ToolCallsAbandoned(tool_call_ids=('call_1',)),
+        'RealtimeSessionErrorEvent',
+        ResponseStarted(response_id='resp_2'),
+        'SessionUsage',
+        'ResponseDone',
+        ResponseEnded(
+            response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+        ),
+        InputAdded(input_id=0),
+        InputLost(input_ids=(0,)),
+        'RealtimeSessionErrorEvent',
+    ]
     assert [json.loads(sent)['type'] for sent in ws.sent] == snapshot(['conversation.item.create'])
 
 
