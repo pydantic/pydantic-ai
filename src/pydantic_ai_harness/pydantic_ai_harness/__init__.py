@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
-    from .coder import Coder
+    from .coder import BenchmarkInstructions, Coder
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
-    from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
+    from .file_system import READ_ONLY_TOOL_NAMES, FileSystem
     from .grain import Grain
     from .guardrails import (
         GuardrailError,
@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     )
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
+    from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
+    from .peers import Peers
     from .permissions import Permissions
     from .pgtask import PGTaskDurability
     from .pixeltable import Pixeltable
@@ -82,12 +84,12 @@ if TYPE_CHECKING:
     from .skills import Skills
     from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
-    from .spend import SpendLimits
+    from .spend_limits import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
     from .stackone import StackOne
     from .step_persistence import StepPersistence
-    from .subagents import SubAgent, SubAgents
+    from .sub_agents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
@@ -103,6 +105,7 @@ __all__ = [
     'AskUser',
     'AzureDurableTaskDurability',
     'BackgroundTools',
+    'BenchmarkInstructions',
     'BoxdSandbox',
     'BoxdSandboxBackend',
     'BoxLiteSandbox',
@@ -142,6 +145,8 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'KeenableSearch',
+    'KubernetesSandbox',
+    'KubernetesSandboxBackend',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -157,6 +162,7 @@ __all__ = [
     'OutputGuardrail',
     'OutputGuardrailFunc',
     'PGTaskDurability',
+    'Peers',
     'Permissions',
     'Pixeltable',
     'Planning',
@@ -209,6 +215,7 @@ _LAZY_EXPORTS = {
     'AskUser': 'ask_user',
     'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
+    'BenchmarkInstructions': 'coder',
     'BoxdSandbox': 'boxd_sandbox',
     'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
@@ -238,7 +245,7 @@ _LAZY_EXPORTS = {
     'ExaAgent': 'exa',
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
-    'FileSystem': 'filesystem',
+    'FileSystem': 'file_system',
     'Grain': 'grain',
     'GuardrailError': 'guardrails',
     'GuardrailResult': 'guardrails',
@@ -247,6 +254,8 @@ _LAZY_EXPORTS = {
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
     'KeenableSearch': 'keenable',
+    'KubernetesSandbox': 'kubernetes_sandbox',
+    'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -261,6 +270,7 @@ _LAZY_EXPORTS = {
     'OutputGuardrail': 'guardrails',
     'OutputGuardrailFunc': 'guardrails',
     'PGTaskDurability': 'pgtask',
+    'Peers': 'peers',
     'Permissions': 'permissions',
     'Pixeltable': 'pixeltable',
     'Planning': 'planning',
@@ -268,7 +278,7 @@ _LAZY_EXPORTS = {
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
-    'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'READ_ONLY_TOOL_NAMES': 'file_system',
     'RefineOutput': 'refine_output',
     'RelevanceCompaction': 'compaction',
     'RenderSandbox': 'render_sandbox',
@@ -283,15 +293,15 @@ _LAZY_EXPORTS = {
     'SmartSearch': 'smart_search',
     'SmolSandbox': 'smol_sandbox',
     'SmolSandboxBackend': 'smol_sandbox',
-    'SpendLimits': 'spend',
+    'SpendLimits': 'spend_limits',
     'SpritesSandbox': 'sprites_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspace': 'ssh_workspace',
     'SSHWorkspaceBackend': 'ssh_workspace',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
-    'SubAgent': 'subagents',
-    'SubAgents': 'subagents',
+    'SubAgent': 'sub_agents',
+    'SubAgents': 'sub_agents',
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',

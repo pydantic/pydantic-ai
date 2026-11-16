@@ -58,7 +58,7 @@ from pydantic_ai_harness.guardrails._capability import (
 )
 from pydantic_ai_harness.guardrails._shared import takes_ctx
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTask,
     DelegationTasks,

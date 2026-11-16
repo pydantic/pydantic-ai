@@ -56,9 +56,9 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 from pydantic_ai_harness.experimental.acp import (
-    AcpSession,
-    AcpSessionConfig,
-    AcpTerminalToolset,
+    ACPSession,
+    ACPSessionConfig,
+    ACPTerminalToolset,
     InMemorySessionStore,
     PydanticAIACPAgent,
     ToolCallPresentation,
@@ -87,7 +87,7 @@ from pydantic_ai_harness.experimental.acp._serialize import (
     chunk_text,
 )
 from pydantic_ai_harness.experimental.acp._session import SessionState
-from pydantic_ai_harness.filesystem import FileSystemToolset, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileSystemToolset, FileWrittenEvent
 from tests.harness.experimental.acp._acp_clients import (
     RecordingClient,
     RecordingClientBase,
@@ -252,11 +252,11 @@ class _PerRunApprovalCapability(AbstractCapability[None]):
         )
 
 
-def _for_run_approval_session(executed: list[str]) -> Callable[[AcpSession], AcpSessionConfig[None]]:
+def _for_run_approval_session(executed: list[str]) -> Callable[[ACPSession], ACPSessionConfig[None]]:
     """A `session_config` handing the adapter a capability that builds its approval tool per run."""
 
-    def session_config(_session: AcpSession) -> AcpSessionConfig[None]:
-        return AcpSessionConfig(deps=None, capabilities=[_PerRunApprovalCapability(executed)])
+    def session_config(_session: ACPSession) -> ACPSessionConfig[None]:
+        return ACPSessionConfig(deps=None, capabilities=[_PerRunApprovalCapability(executed)])
 
     return session_config
 
@@ -394,19 +394,19 @@ def _workspace_agent() -> Agent[_Workspace, str]:
 
 class TestSessionConfig:
     def test_config_is_an_immutable_value(self) -> None:
-        first = AcpSessionConfig(deps=_Workspace(cwd='/x'))
-        second = AcpSessionConfig(deps=_Workspace(cwd='/x'))
+        first = ACPSessionConfig(deps=_Workspace(cwd='/x'))
+        second = ACPSessionConfig(deps=_Workspace(cwd='/x'))
         assert first == second  # dataclass value equality
         assert first.toolsets is None  # documented default
         with pytest.raises(FrozenInstanceError):
             first.deps = _Workspace(cwd='/y')  # pyright: ignore[reportAttributeAccessIssue]  # frozen
 
     async def test_factory_receives_setup_and_supplies_deps(self) -> None:
-        seen: list[AcpSession] = []
+        seen: list[ACPSession] = []
 
-        def make(session: AcpSession) -> AcpSessionConfig[_Workspace]:
+        def make(session: ACPSession) -> ACPSessionConfig[_Workspace]:
             seen.append(session)
-            return AcpSessionConfig(deps=_Workspace(cwd=session.cwd))
+            return ACPSessionConfig(deps=_Workspace(cwd=session.cwd))
 
         # The factory's per-session deps must override this constructor fallback.
         adapter = PydanticAIACPAgent(_workspace_agent(), deps=_Workspace(cwd='/fallback'), session_config=make)
@@ -445,7 +445,7 @@ class TestSessionConfig:
         # during initialize, so an embedder whose session_config connects them must say so.
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
             Agent(TestModel()),
-            session_config=lambda _session: AcpSessionConfig(deps=None),
+            session_config=lambda _session: ACPSessionConfig(deps=None),
             mcp_capabilities=schema.McpCapabilities(http=True, sse=True),
         )
         capabilities = (await adapter.initialize(protocol_version=1)).agent_capabilities
@@ -468,7 +468,7 @@ class TestSessionConfig:
         adapter = PydanticAIACPAgent(
             _workspace_agent(),
             deps=_Workspace(cwd='/fallback'),
-            session_config=lambda s: AcpSessionConfig(deps=_Workspace(cwd=s.cwd)),
+            session_config=lambda s: ACPSessionConfig(deps=_Workspace(cwd=s.cwd)),
         )
         client = FakeClient()
         adapter.on_connect(client)
@@ -482,8 +482,8 @@ class TestSessionConfig:
         assert [raw_output for _id, _status, raw_output in client.tool_completions()] == ['/a', '/b']
 
     async def test_async_factory_is_awaited(self) -> None:
-        async def make(session: AcpSession) -> AcpSessionConfig[_Workspace]:
-            return AcpSessionConfig(deps=_Workspace(cwd=session.cwd))
+        async def make(session: ACPSession) -> ACPSessionConfig[_Workspace]:
+            return ACPSessionConfig(deps=_Workspace(cwd=session.cwd))
 
         adapter = PydanticAIACPAgent(_workspace_agent(), deps=_Workspace(cwd='/fallback'), session_config=make)
         client = FakeClient()
@@ -504,7 +504,7 @@ class TestSessionConfig:
             return 'from-extra'
 
         adapter = PydanticAIACPAgent(
-            Agent(TestModel()), session_config=lambda _s: AcpSessionConfig(deps=None, toolsets=[extra])
+            Agent(TestModel()), session_config=lambda _s: ACPSessionConfig(deps=None, toolsets=[extra])
         )
         client = FakeClient()
         adapter.on_connect(client)
@@ -525,7 +525,7 @@ class TestSessionConfig:
         client = FakeClient()
         backend = LocalWorkspaceBackend(working_dir=tmp_path)
         adapter = PydanticAIACPAgent(
-            agent, session_config=lambda _session: AcpSessionConfig(deps=None, workspace=backend)
+            agent, session_config=lambda _session: ACPSessionConfig(deps=None, workspace=backend)
         )
         adapter.on_connect(client)
         await adapter.initialize(protocol_version=1)
@@ -1517,7 +1517,7 @@ class TestPermission:
     async def test_external_tool_calls_are_rejected(self) -> None:
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel()))
         requests = DeferredToolRequests(calls=[ToolCallPart(tool_name='run_remote', tool_call_id='c1')])
-        state = SessionState(session_id='sid', config=AcpSessionConfig(deps=None), cwd='.')
+        state = SessionState(session_id='sid', config=ACPSessionConfig(deps=None), cwd='.')
         turn = _TurnState(conn=FakeClient(), session_id='sid', cwd='.', approval_names=frozenset())
         with pytest.raises(RequestError) as exc:
             await adapter._resolve_approvals(turn, state, requests)  # pyright: ignore[reportPrivateUsage]
@@ -1531,7 +1531,7 @@ class TestPermission:
         # `in_progress`.
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(_approval_agent([]))
-        config: AcpSessionConfig[None] = AcpSessionConfig(deps=None, toolsets=[CombinedToolset([])])
+        config: ACPSessionConfig[None] = ACPSessionConfig(deps=None, toolsets=[CombinedToolset([])])
 
         names, plain = adapter._scan_approval_names(config)  # pyright: ignore[reportPrivateUsage]
 
@@ -1644,9 +1644,9 @@ class TestCancellation:
         # regardless, so the late-learned terminal must still be killed and released.
         client = RecordingClient(block_create=True)
         agent = Agent(TestModel(call_tools=['run_command']))
-        toolset = AcpTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
+        toolset = ACPTerminalToolset[None](client=client, session_id='sid', cwd='/ws')
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
-            agent, session_config=lambda _session: AcpSessionConfig(deps=None, toolsets=[toolset])
+            agent, session_config=lambda _session: ACPSessionConfig(deps=None, toolsets=[toolset])
         )
         adapter.on_connect(client)
         await adapter.initialize(protocol_version=1)
@@ -2105,7 +2105,7 @@ class TestEntryPoints:
         await run_acp_stdio(
             _workspace_agent(),
             deps=_Workspace(cwd='/fallback'),
-            session_config=lambda s: AcpSessionConfig(deps=_Workspace(cwd=s.cwd)),
+            session_config=lambda s: ACPSessionConfig(deps=_Workspace(cwd=s.cwd)),
             permission_policy=lambda call: call.tool_name,
         )
 
@@ -2329,11 +2329,11 @@ class TestEntryPoints:
                 1: DeltaToolCall(name='run_command', json_args=json.dumps({'command': 'echo hi'})),
             }
 
-        def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+        def session_config(session: ACPSession) -> ACPSessionConfig[None]:
             capabilities = [
                 capability for capability in (acp_filesystem(session), acp_terminal(session)) if capability is not None
             ]
-            return AcpSessionConfig(deps=None, capabilities=capabilities)
+            return ACPSessionConfig(deps=None, capabilities=capabilities)
 
         adapter = PydanticAIACPAgent(Agent(FunctionModel(stream_function=stream)), session_config=session_config)
         client = RecordingClient(files={'notes.txt': 'hello'}, output='hi')
@@ -2660,8 +2660,8 @@ class TestWorkspaceRooting:
         write = DeltaToolCall(name='write_file', json_args=json.dumps({'path': 'note.txt', 'content': 'hi'}))
         agent = Agent(_calls_tool_each_turn(write))  # the agent itself has no filesystem tools
 
-        def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-            return AcpSessionConfig(
+        def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+            return ACPSessionConfig(
                 deps=None,
                 capabilities=[FileSystem[None](root_dir=session.cwd)],
                 workspace=LocalWorkspaceBackend(session.cwd),
@@ -2697,8 +2697,8 @@ class TestWorkspaceRooting:
         async def record(ctx: RunContext[None], event: FileWrittenEvent) -> None:
             seen.append(event)
 
-        def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-            return AcpSessionConfig(
+        def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+            return ACPSessionConfig(
                 deps=None,
                 capabilities=[FileSystem[None](root_dir=session.cwd), hooks],
                 workspace=LocalWorkspaceBackend(session.cwd),

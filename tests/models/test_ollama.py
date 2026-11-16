@@ -20,14 +20,19 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput
+from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
+    from openai.types.chat import ChatCompletionMessage
+
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.ollama import OllamaProvider
+
+    from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -136,6 +141,26 @@ def test_ollama_provider_name_routes_through_ollama_model(monkeypatch: pytest.Mo
     agent = Agent('ollama:gpt-oss:20b')
     assert isinstance(agent.model, OllamaModel)
     assert agent.model.profile.get('supports_json_schema_output', False) is False
+
+
+@pytest.mark.parametrize('model_name', ['gpt-oss:20b', 'some-unknown-model'])
+async def test_ollama_max_tokens_sent_as_max_tokens(allow_model_requests: None, model_name: str) -> None:
+    """The `max_tokens` setting goes out as `max_tokens`, the only output limit Ollama's chat endpoint reads.
+
+    Ollama silently ignores `max_completion_tokens`. A model without a known profile still gets the provider
+    overlay, so it routes the setting the same way. This is not a VCR test because the default cassette
+    matchers ignore the request body: a request that sent `max_completion_tokens` would still replay
+    against a recording.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='world', role='assistant')))
+    model = OllamaModel(model_name, provider=OllamaProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=ModelSettings(max_tokens=20))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 20
+    assert 'max_completion_tokens' not in kwargs
 
 
 # ---------- VCR integration tests against live Ollama ----------

@@ -46,8 +46,6 @@ from _pytest.mark import ParameterSet
 from pytest_examples import CodeExample, find_examples
 from ruff.__main__ import find_ruff_bin
 
-from pydantic_ai import _framing
-
 _ROOT = Path(__file__).parents[2]
 _HARNESS = 'pydantic_ai_harness'
 
@@ -74,11 +72,11 @@ def test_durable_guidance_lives_in_the_workspace_guide() -> None:
     assert '.pydantic-ai-harness/shell/run-state/' in guide
     temporal = (_ROOT / 'docs/durable_execution/temporal.md').read_text()
     assert 'agent_folders=None' in temporal and 'start_to_close_timeout=timedelta(minutes=30)' in temporal
-    for name in ('coder', 'filesystem', 'shell'):
+    for name, module in (('coder', 'coder'), ('filesystem', 'file_system'), ('shell', 'shell')):
         for page, link in (
             (f'docs/harness/{name}.md', '(../workspace.md#durable-execution)'),
             (
-                f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md',
+                f'src/pydantic_ai_harness/pydantic_ai_harness/{module}/README.md',
                 '/core-concepts/workspace/#durable-execution)',
             ),
         ):
@@ -90,8 +88,8 @@ def test_durable_guidance_lives_in_the_workspace_guide() -> None:
 
 
 def test_remote_search_and_shell_output_guidance() -> None:
-    for name in ('coder', 'filesystem'):
-        for page in (f'docs/harness/{name}.md', f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md'):
+    for name, module in (('coder', 'coder'), ('filesystem', 'file_system')):
+        for page in (f'docs/harness/{name}.md', f'src/pydantic_ai_harness/pydantic_ai_harness/{module}/README.md'):
             text = (_ROOT / page).read_text()
             assert 'cat' in text and 'rg' in text and 'filesystem-only' in text
     for page in ('docs/harness/shell.md', 'src/pydantic_ai_harness/pydantic_ai_harness/shell/README.md'):
@@ -172,12 +170,9 @@ def _doc_snippets() -> Iterable[ParameterSet]:
 
 
 @pytest.mark.parametrize('example', list(_doc_snippets()))
-def test_doc_snippet_valid(example: CodeExample, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_doc_snippet_valid(example: CodeExample) -> None:
     if example.prefix_settings().get('test', '').startswith('skip'):
         pytest.skip('illustrative signature block; not runnable Python')
-    # A harness module a snippet imports registers its framing tags at module level, as on a fresh import: don't warn
-    # that registration came after other tests escaped text (same as `tests/test_examples.py`).
-    monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
     problem = _snippet_problem(example.source)
     assert problem is None, (
         f'{example.path}:{example.start_line} {problem}. '
