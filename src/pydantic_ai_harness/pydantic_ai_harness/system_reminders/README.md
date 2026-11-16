@@ -192,8 +192,8 @@ Without a durability engine, generation runs directly in all three cases, with t
 
 [Trajectory Judge](../trajectory_judge/) also has a second model read the run and adds its text to the conversation, framed the same way: a fixed note in system voice and the generated text as data on the user channel. They differ in what that model is asked and when its text is added:
 
-- `LLMReminder` restates the goal on every firing, whether or not the run has drifted. It's generated before the request it goes out with, so each firing adds that model call's latency, and it reads a compact transcript of the goal and recent messages.
-- `TrajectoryJudge` asks whether the run is on track and adds nothing to the history when it is. Outside durable execution it runs alongside the agent, so it adds no latency, and it reads the latest `window` tokens, tool calls and results included.
+- `LLMReminder` restates the goal on every firing, whether or not the run has drifted. It's generated before the request it goes out with, so each firing adds that model call's latency, and it reads a compact transcript of the goal and recent messages. On error it sends `GoalReanchor` text instead.
+- `TrajectoryJudge` asks whether the run is on track and adds nothing to the history when it is. Outside durable execution it runs alongside the agent, so it adds no latency, and it reads the latest `window` tokens, tool calls and results included. An evaluation error is raised on the run, so give it an `agent` with a fallback model if it should degrade instead.
 
 Use `LLMReminder` for a regular, model-written refresher of the goal, and `TrajectoryJudge` to correct a run only when it goes off course. For plain goal re-anchoring with no model call, use `GoalReanchor`.
 
