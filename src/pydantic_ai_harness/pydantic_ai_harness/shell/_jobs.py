@@ -533,8 +533,9 @@ def _occurrences(data: AnyStr, secret: AnyStr, number: int, start: int) -> Itera
 
 def past_secrets(data: AnyStr, cut: int, secrets: Sequence[AnyStr]) -> int:
     """`cut`, moved past the end of every occurrence of a secret in `data` that spans it, or that a move makes span."""
-    # By start, so a span the cut moves into is still ahead of it.
+    # By start, so a span the cut moves into is still ahead of it, and none after one that starts at the cut is.
     for start, negative_length, _ in secret_spans(data, secrets, cut):
-        if start < cut < start - negative_length:
-            cut = start - negative_length
+        if start >= cut:
+            break
+        cut = max(cut, start - negative_length)
     return cut
