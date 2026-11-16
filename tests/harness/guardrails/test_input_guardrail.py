@@ -58,7 +58,7 @@ from pydantic_ai_harness.guardrails._capability import (
 )
 from pydantic_ai_harness.guardrails._shared import takes_ctx
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTask,
     DelegationTasks,
@@ -646,7 +646,7 @@ class TestInputGuardrailRedaction:
 
         def guard(prompt: str) -> bool | GuardrailResult:
             guard_calls.append(prompt)
-            if prompt.startswith('<tool_result'):
+            if prompt.startswith('<pyai:tool_result'):
                 return GuardrailResult.replace('[redacted]')
             return True
 
@@ -661,7 +661,8 @@ class TestInputGuardrailRedaction:
                 and item.metadata.get('origin') == 'pydantic-ai-harness.background_tools.result.v1'
             ]
             if completions:
-                model_completions.append((completions[-1].content, completions[-1].metadata))
+                metadata = {key: value for key, value in completions[-1].metadata.items() if key != '__pydantic_ai__'}
+                model_completions.append((completions[-1].content, metadata))
                 return ModelResponse(parts=[TextPart('done')])
             return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
 
@@ -671,7 +672,7 @@ class TestInputGuardrailRedaction:
         async def lookup() -> str:
             return 'answer'
 
-        completion = '<tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</tool_result>'
+        completion = '<pyai:tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</pyai:tool_result>'
         first = await agent.run('go')
         assert first.output == 'done'
         assert guard_calls == ['go']

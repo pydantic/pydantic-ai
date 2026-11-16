@@ -106,6 +106,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -532,6 +533,7 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     # OpenAI
     'global.openai.gpt-6.1-sol',
+    'global.openai.gpt-6.1-terra',
     'global.openai.gpt-6-luna',
     'global.openai.gpt-6-astra',
     'global.openai.gpt-5.6-sol',
@@ -862,6 +864,8 @@ class BedrockConverseModel(Model[BaseClient]):
 
     # The Converse API has no audio content block.
     _unsupported_file_inputs = frozenset({'audio'})
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {
@@ -970,6 +974,18 @@ class BedrockConverseModel(Model[BaseClient]):
         if self.profile.get('bedrock_thinking_variant') == 'anthropic':
             return 'anthropic'
         return super().canonical_system
+
+    @property
+    def _canonical_system_stamp(self) -> str | None:
+        """Also stamp `'bedrock'` on responses from models with the `openai_responses` thinking variant.
+
+        Their encrypted reasoning would otherwise be accepted by name by a Claude model on Bedrock, which can't
+        verify it. Other responses are stamped only when their canonical system differs from `system`, so one from a
+        model the name doesn't identify, which may be Claude, stays acceptable to Claude models by name.
+        """
+        if self.profile.get('bedrock_thinking_variant') == 'openai_responses':
+            return self.canonical_system
+        return super()._canonical_system_stamp
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
@@ -1093,6 +1109,7 @@ class BedrockConverseModel(Model[BaseClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
+        prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)
@@ -1969,7 +1986,7 @@ class BedrockConverseModel(Model[BaseClient]):
             content.append({'reasoningContent': reasoning_content})
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and part.content:
                 content.append({'text': thinking_text})
             elif part.content:
                 # A redacted block arrives with its reasoning stripped (`content=''`), and

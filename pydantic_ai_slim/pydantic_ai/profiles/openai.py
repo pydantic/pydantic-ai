@@ -464,12 +464,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`NativeOutput`][pydantic_ai.output.NativeOutput] becomes available on the Responses API alone."""
 
     openai_responses_tool_call_ids_are_response_scoped: bool
-    """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
+    """Deprecated: use [`tool_call_ids_are_response_scoped`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] instead.
 
-    When enabled, response IDs are incorporated into tool call IDs as responses are ingested so
-    normalized message history keeps the history-wide uniqueness required by Pydantic AI. The qualified
-    `response_id:tool_call_id` form is restored to the original provider tool call ID when history is
-    replayed.
+    Translated (with a deprecation warning) whenever profiles are merged; an explicit
+    `tool_call_ids_are_response_scoped` in the same profile wins.
     """
 
     openai_responses_supports_interleaved_function_calls: bool
@@ -698,6 +696,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
+    if model_name.startswith('gpt-oss'):
+        # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter and Bedrock Converse,
+        # render `<system>` blocks, and gpt-oss keeps to its system prompt more reliably once told what they mean, so
+        # it gets the announcement from the first request (see the field's docstring). Here rather than in
+        # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
+        profile['default_framing_announcement'] = 'always'
     return profile
 
 

@@ -80,6 +80,33 @@ agent = Agent(model)
 ...
 ```
 
+## Service tier
+
+Groq supports controlling the [service tier](https://console.groq.com/docs/service-tiers) to trade off throughput and reliability.
+You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`groq_service_tier`][pydantic_ai.models.groq.GroqModelSettings.groq_service_tier] field. `groq_service_tier` takes precedence over the unified field when both are set, and accepts Groq's native values (`'auto'`, `'on_demand'`, `'flex'` or `'performance'`).
+
+The unified field maps as follows for Groq:
+
+- `'auto'`: passed through as `'auto'`, so Groq picks the best tier available to you.
+- `'default'`: maps to `'on_demand'`, Groq's standard tier.
+- `'flex'`: passed through as `'flex'`. Flex requests [fail fast with a 498 error](https://console.groq.com/docs/flex-processing) when flex capacity is unavailable.
+- `'priority'`: not part of Groq's tier model and silently ignored.
+
+Groq's enterprise `'performance'` tier is only reachable through `groq_service_tier`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.groq import GroqModelSettings
+
+agent = Agent(
+    'groq:llama-3.3-70b-versatile',
+    model_settings=GroqModelSettings(service_tier='flex'),
+)
+...
+```
+
+The tier that served a non-streamed request is stored in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['service_tier']`.
+
 ## SDK retries {#sdk-retries}
 
 The `AsyncGroq` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, like the OpenAI client it is modelled on. Pass `groq_client=AsyncGroq(max_retries=0)` to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.

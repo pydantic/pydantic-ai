@@ -38,6 +38,7 @@ from typing import Literal
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai._framework_frame import framework_frame_text
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
@@ -116,7 +117,8 @@ def _history(case: Case) -> list[ModelMessage]:
         messages.append(ModelRequest(parts=[UserPromptPart(content=question)]))
         rendered = None if case.block is None else case.block.format(reasoning=reasoning)
         if rendered is not None and case.channel == 'user':
-            messages.append(ModelRequest(parts=[UserPromptPart(content=rendered)]))
+            # Marked as the framework's own frame, as `AnthropicModel` renders it, so it gets no lookalike note.
+            messages.append(ModelRequest(parts=[UserPromptPart(content=[framework_frame_text(rendered)])]))
         parts: list[TextPart] = []
         if rendered is not None and case.channel == 'assistant':
             parts.append(TextPart(content=rendered))

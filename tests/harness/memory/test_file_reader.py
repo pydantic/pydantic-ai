@@ -1,4 +1,4 @@
-"""`read_memory` steps aside for `FileSystem`'s `read_file` when a `FileStore` is in the run's workspace."""
+"""`read_memory` steps aside for `FileSystem`'s `read_file` when a `FileMemoryStore` is in the run's workspace."""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.memory import FileStore, InMemoryStore, Memory, MemoryStore
+from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness.memory import FileMemoryStore, InMemoryMemoryStore, Memory, MemoryStore
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.realtime_connections import InferredConnection
 
@@ -74,7 +74,7 @@ class TestReaderStepsAside:
         notes.write_text('the deploy key rotates on Mondays\n')
         recorder, output = await _run(
             tmp_path,
-            Memory(store=FileStore('.agent-memory')),
+            Memory(store=FileMemoryStore('.agent-memory')),
             FileSystem(),
             call=ToolCallPart('read_file', {'path': '.agent-memory/main/notes.md'}),
         )
@@ -84,7 +84,7 @@ class TestReaderStepsAside:
 
     async def test_prefixed_read_file_replaces_read_memory(self, tmp_path: Path) -> None:
         recorder, _ = await _run(
-            tmp_path, Memory(store=FileStore('.agent-memory')), PrefixTools(FileSystem(), prefix='repo')
+            tmp_path, Memory(store=FileMemoryStore('.agent-memory')), PrefixTools(FileSystem(), prefix='repo')
         )
         assert all('read_memory' not in tools and 'repo_read_file' in tools for tools in recorder.offered)
 
@@ -92,7 +92,7 @@ class TestReaderStepsAside:
         notebook = tmp_path / '.agent-memory' / 'main' / 'MEMORY.md'
         notebook.parent.mkdir(parents=True)
         notebook.write_text('\n'.join(f'- fact {i}' for i in range(10)) + '\n')
-        recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory'), max_lines=2), FileSystem())
+        recorder, _ = await _run(tmp_path, Memory(store=FileMemoryStore('.agent-memory'), max_lines=2), FileSystem())
         assert any(
             'use read_file(path=".agent-memory/main/MEMORY.md") for the full notebook' in text
             for text in recorder.user_text
@@ -100,7 +100,7 @@ class TestReaderStepsAside:
 
     async def test_store_resolver_returning_a_run_workspace_file_store(self, tmp_path: Path) -> None:
         def resolve(ctx: RunContext[None]) -> MemoryStore:
-            return FileStore('.agent-memory')
+            return FileMemoryStore('.agent-memory')
 
         notebook = tmp_path / '.agent-memory' / 'tenant-a' / 'main' / 'MEMORY.md'
         notebook.parent.mkdir(parents=True)
@@ -113,23 +113,23 @@ class TestReaderStepsAside:
 class TestGuidanceStaysStatic:
     def test_guidance_is_static_for_every_store(self) -> None:
         def resolve(ctx: RunContext[None]) -> MemoryStore:
-            return FileStore('.agent-memory')  # pragma: no cover
+            return FileMemoryStore('.agent-memory')  # pragma: no cover
 
-        default = Memory[None](store=InMemoryStore()).get_instructions()
+        default = Memory[None](store=InMemoryMemoryStore()).get_instructions()
         assert isinstance(default, str)
-        assert Memory[None](store=FileStore('.agent-memory')).get_instructions() == default
+        assert Memory[None](store=FileMemoryStore('.agent-memory')).get_instructions() == default
         assert Memory[None](store_resolver=resolve).get_instructions() == default
 
     async def test_file_system_adds_only_the_directory_block(self, tmp_path: Path) -> None:
-        without, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')))
-        with_file_system, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')), FileSystem())
+        without, _ = await _run(tmp_path, Memory(store=FileMemoryStore('.agent-memory')))
+        with_file_system, _ = await _run(tmp_path, Memory(store=FileMemoryStore('.agent-memory')), FileSystem())
         assert without.instructions[0] is not None
         directory = 'Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.'
         assert directory not in without.instructions[0]
         [instructions] = with_file_system.instructions
         assert instructions is not None
         assert instructions.startswith(without.instructions[0])
-        assert '<context id="toolset:memory:directory">\n' + directory in instructions
+        assert '<pyai:context id="toolset:memory:directory">\n' + directory in instructions
 
 
 class TestReaderKept:
@@ -137,16 +137,18 @@ class TestReaderKept:
         notebook = tmp_path / '.agent-memory' / 'main' / 'MEMORY.md'
         notebook.parent.mkdir(parents=True)
         notebook.write_text('- a fact\n')
-        recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')))
+        recorder, _ = await _run(tmp_path, Memory(store=FileMemoryStore('.agent-memory')))
         assert all('read_memory' in tools for tools in recorder.offered)
         assert recorder.user_text and not any('in the workspace.' in text for text in recorder.user_text)
 
     async def test_without_injection(self, tmp_path: Path) -> None:
-        recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory'), inject_memory=False), FileSystem())
+        recorder, _ = await _run(
+            tmp_path, Memory(store=FileMemoryStore('.agent-memory'), inject_memory=False), FileSystem()
+        )
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
 
     async def test_when_the_guidance_leaves_no_room_for_the_snapshot(self, tmp_path: Path) -> None:
-        recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory'), max_tokens=100), FileSystem())
+        recorder, _ = await _run(tmp_path, Memory(store=FileMemoryStore('.agent-memory'), max_tokens=100), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
 
     @pytest.mark.parametrize('store_kind', ['own_workspace', 'in_memory', 'outside_working_dir'])
@@ -157,11 +159,11 @@ class TestReaderKept:
         work.mkdir()
         store: MemoryStore
         if store_kind == 'own_workspace':
-            store = FileStore('.', workspace=LocalWorkspaceBackend(elsewhere))
+            store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(elsewhere))
         elif store_kind == 'in_memory':
-            store = InMemoryStore()
+            store = InMemoryMemoryStore()
         else:
-            store = FileStore('../elsewhere')
+            store = FileMemoryStore('../elsewhere')
         recorder, _ = await _run(work, Memory(store=store), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
 
@@ -183,7 +185,7 @@ class TestDirectoryBlock:
         agent = Agent(
             FunctionModel(respond),
             deps_type=type(None),
-            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Memory(store=FileStore('.agent-memory'))],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Memory(store=FileMemoryStore('.agent-memory'))],
         )
         await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('go')])])
 
@@ -206,7 +208,10 @@ class TestDirectoryBlock:
             return ModelResponse(parts=[TextPart('done')])
 
         memory = Memory(
-            store=FileStore('.agent-memory'), namespace='acme', description='Long-term memory.', defer_loading=True
+            store=FileMemoryStore('.agent-memory'),
+            namespace='acme',
+            description='Long-term memory.',
+            defer_loading=True,
         )
         agent = Agent(
             FunctionModel(respond),
@@ -238,9 +243,9 @@ class TestSeveralFileMemories:
             capabilities=[
                 LocalWorkspace(tmp_path),
                 FileSystem(),
-                Memory(store=FileStore('.agent-memory'), heading='Personal notes'),
+                Memory(store=FileMemoryStore('.agent-memory'), heading='Personal notes'),
                 Memory(
-                    store=FileStore('.agent-memory'), agent_name='org', heading='Org notes', id='org_memory'
+                    store=FileMemoryStore('.agent-memory'), agent_name='org', heading='Org notes', id='org_memory'
                 ).prefix_tools('org'),
             ],
         )
@@ -250,9 +255,12 @@ class TestSeveralFileMemories:
         assert len(instructions) == 2
         assert instructions[0] == instructions[1]
         assert instructions[0] is not None
-        assert '<context id="toolset:memory:directory">\nMemory files are in `.agent-memory/main/`' in instructions[0]
         assert (
-            '<context id="toolset:org_memory:directory">\nMemory files are in `.agent-memory/org/`' in instructions[0]
+            '<pyai:context id="toolset:memory:directory">\nMemory files are in `.agent-memory/main/`' in instructions[0]
+        )
+        assert (
+            '<pyai:context id="toolset:org_memory:directory">\nMemory files are in `.agent-memory/org/`'
+            in instructions[0]
         )
 
 
@@ -276,7 +284,11 @@ class TestDirectoryBlockShape:
         agent = Agent(
             FunctionModel(respond),
             deps_type=type(None),
-            capabilities=[LocalWorkspace(tmp_path), Toolset(late_reader), Memory(store=FileStore('.agent-memory'))],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Toolset(late_reader),
+                Memory(store=FileMemoryStore('.agent-memory')),
+            ],
         )
         await agent.run('go')
 
@@ -307,7 +319,7 @@ class TestDirectoryBlockShape:
         # The file reader is only offered after the load.
         late_reader = file_tools.filtered(lambda ctx, tool_def: ctx.run_step > 2 or tool_def.name != 'read_file')
         memory = Memory(
-            store=FileStore('.agent-memory'), id='memory', description='Long-term memory.', defer_loading=True
+            store=FileMemoryStore('.agent-memory'), id='memory', description='Long-term memory.', defer_loading=True
         )
         agent = Agent(
             FunctionModel(respond),
@@ -322,7 +334,7 @@ class TestDirectoryBlockShape:
         notebook = tmp_path / '.agent-memory' / 'main' / 'MEMORY.md'
         notebook.parent.mkdir(parents=True)
         notebook.write_text('x' * 5_000)
-        memory = Memory(store=FileStore('.agent-memory'), max_tokens=400)
+        memory = Memory(store=FileMemoryStore('.agent-memory'), max_tokens=400)
         recorder, _ = await _run(tmp_path, memory, FileSystem())
 
         [instructions] = recorder.instructions
@@ -337,7 +349,7 @@ class TestDirectoryBlockShape:
 
     async def test_reader_guidance_that_does_not_fit_keeps_read_memory(self, tmp_path: Path) -> None:
         # Room for the guidance but not the guidance and the directory sentence together.
-        memory = Memory(store=FileStore('.agent-memory'), guidance='', max_tokens=20)
+        memory = Memory(store=FileMemoryStore('.agent-memory'), guidance='', max_tokens=20)
         recorder, _ = await _run(tmp_path, memory, FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
         assert recorder.instructions[0] is None or 'Memory files are in' not in recorder.instructions[0]
@@ -385,7 +397,7 @@ class TestRealtime:
         # The `directory` block is always there, empty here: a session sends instructions once, so it's not
         # asked to append, which a realtime session would warn about.
         model = _RecordingRealtimeModel()
-        agent = Agent(capabilities=[Memory(store=InMemoryStore())])
+        agent = Agent(capabilities=[Memory(store=InMemoryMemoryStore())])
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
