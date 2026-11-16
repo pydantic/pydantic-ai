@@ -3437,33 +3437,29 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
         for target in instruction_targets:
             _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
-        settings_targets = _history_recording_targets(ctx, messages)
-        settings_starts = [len(target.parts) for target in settings_targets]
+        settings_starts = [len(target.parts) for target in recording_targets]
         effort = _record_model_settings_changes(
-            ctx, request_context.model, request_context.model_settings, messages, settings_targets
+            ctx, request_context.model, request_context.model_settings, messages, recording_targets
         )
-        if len(settings_targets) == len(recording_targets) and all(
-            settings_target is target for settings_target, target in zip(settings_targets, recording_targets)
-        ):
-            self._step_recording = _StepRecording(
-                messages=messages,
-                targets=recording_targets,
-                instruction_targets=instruction_targets,
-                starts=starts,
-                instructions=[instructions_before[id(target)] for target in [*recording_targets, *instruction_targets]],
-                # Compared by value, as a hook may return the parts it was given in a new list.
-                parameters=hook_parameters
-                if hook_parameters.instruction_parts == self._step_request_instruction_parts
-                else None,
-                loaded_parts=self._step_loaded_parts,
-                resolved_loaded_parts=resolved_loaded_parts,
-                loaded_capability_ids=loaded_capability_ids,
-                instruction_records=instruction_records,
-                settings_records=[target.parts[start:] for target, start in zip(settings_targets, settings_starts)],
-                resolved=self._step_instruction_parts,
-                sent=request_context.model_request_parameters.instruction_parts,
-                effort=effort,
-            )
+        self._step_recording = _StepRecording(
+            messages=messages,
+            targets=recording_targets,
+            instruction_targets=instruction_targets,
+            starts=starts,
+            instructions=[instructions_before[id(target)] for target in [*recording_targets, *instruction_targets]],
+            # Compared by value, as a hook may return the parts it was given in a new list.
+            parameters=hook_parameters
+            if hook_parameters.instruction_parts == self._step_request_instruction_parts
+            else None,
+            loaded_parts=self._step_loaded_parts,
+            resolved_loaded_parts=resolved_loaded_parts,
+            loaded_capability_ids=loaded_capability_ids,
+            instruction_records=instruction_records,
+            settings_records=[target.parts[start:] for target, start in zip(recording_targets, settings_starts)],
+            resolved=self._step_instruction_parts,
+            sent=request_context.model_request_parameters.instruction_parts,
+            effort=effort,
+        )
 
     async def _prepare_for_attempt_model(
         self,

@@ -466,6 +466,60 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     assert _scheduled_activity_count(history) == 2
 
 
+def _echo_sent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(f'{info.instructions} {(info.model_settings or {}).get("temperature")}')])
+
+
+def _per_model_instructions(ctx: RunContext[None]) -> str:
+    return f'You are {ctx.model.model_name}.'
+
+
+def _per_model_settings(ctx: RunContext[None]) -> ModelSettings:
+    return {'temperature': 0.9 if ctx.model.model_name == 'per_model_target' else 0.1}
+
+
+per_model_fallback_durable_agent = Agent(
+    FunctionModel(_failing_model_fn, model_name='failing'),
+    name='durability_per_model_fallback_agent',
+    instructions=_per_model_instructions,
+    model_settings=_per_model_settings,
+    capabilities=[
+        ModelFallback('per_model_target'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'per_model_target': FunctionModel(_echo_sent_fn, model_name='per_model_target')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class PerModelFallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, str | None]:
+        result = await per_model_fallback_durable_agent.run(prompt)
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        return result.output, request.instructions
+
+
+async def test_durability_fallback_resolves_instructions_and_settings_for_the_candidate(client: Client):
+    """In workflow code, the instructions and settings are resolved again for the model `ModelFallback` moves to."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PerModelFallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(per_model_fallback_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            PerModelFallbackDurableAgentWorkflow.run,
+            args=['hello'],
+            id=PerModelFallbackDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == ('You are per_model_target. 0.9', 'You are per_model_target.')
+
+
 def _sticky_target_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
         return ModelResponse(parts=[ToolCallPart('sticky_noop')])
