@@ -257,10 +257,14 @@ async def test_vllm_provider_native_output_injects_schema(allow_model_requests: 
         [
             {
                 'role': 'system',
-                'content': "\nAlways respond with a JSON object that's compatible with this schema:\n\n"
-                '{"properties": {"city": {"type": "string"}}, "required": ["city"], '
-                '"title": "CityLocation", "type": "object"}\n\n'
-                "Don't include any text or Markdown fencing before or after.\n",
+                'content': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}}, "required": ["city"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+""",
             },
             {'role': 'user', 'content': 'What is the capital of France?'},
         ]

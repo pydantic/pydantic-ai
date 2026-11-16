@@ -24,7 +24,12 @@ with try_import() as imports_successful:
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.realtime import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent, TurnDetection
+    from pydantic_ai.realtime import (
+        RealtimeSessionErrorEvent,
+        RealtimeSessionReconnectEvent,
+        TurnDetection,
+        azure as rt_azure,
+    )
     from pydantic_ai.realtime.azure import (
         AzureEndOfUtteranceDetection,
         AzureRealtimeConnection,
@@ -535,12 +540,21 @@ def test_voice_live_temperature_dropped_while_reasoning(
         config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
         assert config['temperature'] == 0.5
     else:
-        with pytest.warns(UserWarning, match='`azure_voice_live_temperature` is not supported while') as record:
+        with pytest.warns(UserWarning) as record:
             config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
         assert 'temperature' not in config
-        # Only a model that can turn reasoning off is pointed at `thinking=False`.
-        remedy = 'Set `thinking=False`' if model_name == 'gpt-5.2' else 'cannot turn reasoning off'
-        assert remedy in str(record[0].message)
+        # Only a model that can turn reasoning off is pointed at `thinking=False`. The one warning names the module
+        # that raises it.
+        remedy = (
+            'Set `thinking=False` to use it.' if model_name == 'gpt-5.2' else 'This model cannot turn reasoning off.'
+        )
+        assert [(str(warning.message), warning.filename) for warning in record] == [
+            (
+                f'`azure_voice_live_temperature` is not supported while {model_name!r} is reasoning, '
+                f'so it will be ignored. {remedy}',
+                rt_azure.__file__,
+            )
+        ]
 
 
 @pytest.mark.parametrize(

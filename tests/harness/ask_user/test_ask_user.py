@@ -26,7 +26,6 @@ from pydantic_ai.capabilities import (
     HandleDeferredToolCalls,
     Instrumentation,
     PrefixTools,
-    RequestInput,
     on_event,
 )
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
@@ -83,7 +82,7 @@ from pydantic_ai_harness.ask_user import (
     check_response,
 )
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 
 def question(header: str = 'Approach', *, multi_select: bool = False, labels: Sequence[str] = ('A', 'B')) -> Question:
@@ -787,7 +786,7 @@ class TestRunStream:
 
 
 class TestComposition:
-    async def test_ask_user_answers_its_questions_before_request_input_is_asked(self) -> None:
+    async def test_ask_user_answers_its_questions_before_a_handler_that_takes_a_token_is_asked(self) -> None:
         asked: list[DeferredToolRequests] = []
 
         def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
@@ -796,7 +795,7 @@ class TestComposition:
         agent = Agent(
             calling(raw_questions()),
             deps_type=type(None),
-            capabilities=[RequestInput[None](ask), AskUser(answerer=ScriptedAnswerer())],
+            capabilities=[HandleDeferredToolCalls[None](ask), AskUser(answerer=ScriptedAnswerer())],
         )
         result = await agent.run('go')
 
@@ -927,7 +926,7 @@ class TestComposition:
             capabilities=[
                 AskUser(answerer=first, id=None),
                 PrefixTools(AskUser(answerer=second, id='later_ask_user'), prefix='later'),
-                RequestInput[None](ask),
+                HandleDeferredToolCalls[None](ask),
             ],
         )
 
@@ -940,8 +939,8 @@ class TestComposition:
         assert first.requests[0].id != second.requests[0].id
         assert asked == [['foreign']]
 
-    async def test_without_an_answerer_request_input_gets_the_question(self) -> None:
-        """One inbox: `RequestInput` sees the question, marked as one, and answers it like any deferred call."""
+    async def test_without_an_answerer_a_handler_that_takes_a_token_gets_the_question(self) -> None:
+        """One inbox: the handler sees the question, marked as one, and answers it like any deferred call."""
         kinds: list[str] = []
 
         def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
@@ -959,7 +958,7 @@ class TestComposition:
         agent = Agent(
             calling(raw_questions()),
             deps_type=type(None),
-            capabilities=[AskUser(answerer=None), RequestInput[None](ask)],
+            capabilities=[AskUser(answerer=None), HandleDeferredToolCalls[None](ask)],
         )
         result = await agent.run('go')
 
@@ -1334,7 +1333,8 @@ class TestAnswerNotes:
         compacted = await compact_now(
             SummarizingCompaction(
                 max_messages=3,
-                keep_messages=2,
+                # Leave room for the note copy: with two slots the newer 'next' turn displaces it.
+                keep_messages=3,
                 preserve_first_user_message=False,
                 keep_user_messages=keep_user_messages,
                 bridge_prefix=False,

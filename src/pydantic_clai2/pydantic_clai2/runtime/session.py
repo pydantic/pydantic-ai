@@ -30,6 +30,7 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
     ModelFallback,
     ResolveModelId,
+    WindowsWorkspace,
     WrapperCapability,
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
@@ -54,7 +55,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteSessionStore,
     ensure_inactive,
 )
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
@@ -133,7 +134,7 @@ FamilyDefaults = Callable[[str], ModelSettings | None]
 
 
 def supports_local_workspace() -> bool:
-    """Whether CLAI can give runs a `LocalWorkspace` on this platform; it has none on Windows."""
+    """Whether CLAI can give runs a `LocalWorkspace` on this platform; on Windows, it gives them a `WindowsWorkspace`."""
     return sys.platform != 'win32'
 
 
@@ -210,6 +211,11 @@ class _LocalFallback(LocalWorkspace[DepsT]):
         finally:
             self._asking = False
         return None if other is not None else super().get_workspace(ctx, ref=ref)
+
+
+@dataclass
+class _WindowsFallback(_LocalFallback[DepsT], WindowsWorkspace[DepsT]):
+    """`_LocalFallback` on Windows."""
 
 
 def _requested_model(ctx: RunContext[DepsT]) -> str:
@@ -365,18 +371,24 @@ def _command_env() -> dict[str, str]:
 def local_workspace(
     configured: Sequence[AgentCapability[DepsT]], directory: str | Path
 ) -> AgentCapability[DepsT] | None:
-    """The `LocalWorkspace` at `directory` that CLAI adds beside `configured`; `None` when it adds none.
+    """The workspace at `directory` that CLAI adds beside `configured`; `None` when it adds none.
 
-    None is added on platforms without a local workspace, or when a capability loaded up front supplies
-    the workspace, such as a sandbox. When only a capability function might, the local one defers to it.
+    That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows. None is added when a capability loaded
+    up front supplies the workspace, such as a sandbox. When only a capability function might, the local
+    one defers to it.
     """
-    if not supports_local_workspace() or _supplies_workspace(configured, include_dynamic=False):
+    if _supplies_workspace(configured, include_dynamic=False):
         return None
+    local, fallback_type = (
+        (LocalWorkspace[DepsT], _LocalFallback[DepsT])
+        if supports_local_workspace()
+        else (WindowsWorkspace[DepsT], _WindowsFallback[DepsT])
+    )
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
-        fallback = _LocalFallback[DepsT](directory, env=_command_env(), id=None)
+        fallback = fallback_type(directory, env=_command_env(), id=None)
         return DynamicCapability[DepsT](lambda ctx: fallback)
-    return LocalWorkspace[DepsT](directory, env=_command_env())
+    return local(directory, env=_command_env())
 
 
 def interrupted_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -468,7 +480,8 @@ def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> 
     """
     response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
     ref = response.workspace_ref if response is not None else None
-    return ref is not None and ref.provider == 'local' and ref != WorkspaceRef(provider='local', id=workspace)
+    local = 'local' if supports_local_workspace() else 'windows'
+    return ref is not None and ref.provider == local and ref != WorkspaceRef(provider=local, id=workspace)
 
 
 def _report_context_usage(messages: Sequence[ModelMessage], report: Callable[[int], None]) -> None:
