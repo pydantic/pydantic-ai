@@ -16,11 +16,14 @@ from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
-def content_list(value: object) -> list[UserContent] | None:
-    """`value` if it is a list of strings and media, such as text beside a screenshot, as a tool can return.
+def scanned_value(value: object) -> str | list[UserContent] | None:
+    """`value` if it is a string or a list of strings and media, such as text beside a screenshot.
 
-    `TextContent` is left out: the model also sees its `metadata`, which a detector does not read.
+    These are the tool results a detector reads. `TextContent` is left out of a list: the model
+    also sees its `metadata`, which a detector does not read.
     """
+    if isinstance(value, str):
+        return value
     if not isinstance(value, list):
         return None
     parts: list[UserContent] = []
@@ -31,8 +34,10 @@ def content_list(value: object) -> list[UserContent] | None:
     return parts
 
 
-def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailResult | None, str | None]:
-    """Run `detector` over one text part of `ToolReturn.content`.
+def _detect_text(
+    detector: TextDetector, text: str, what: str = 'tool content'
+) -> tuple[GuardrailResult | None, str | None]:
+    """Run `detector` over one string, `what` naming it in the error for a non-text replacement.
 
     Returns a terminal verdict, or the replacement text -- `None` when the part is left alone.
     """
@@ -43,7 +48,7 @@ def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailRe
         return None, None
     replacement = verdict.replacement
     if not isinstance(replacement, str):
-        raise UserError('A text detector used with for_tool_result_text() must replace tool content with text.')
+        raise UserError(f'A text detector used with for_tool_result_text() must replace {what} with text.')
     return None, replacement
 
 
@@ -106,7 +111,7 @@ def _detect_text_run(
         if not isinstance(part, str | TextContent):
             continue
         original = _text_of(part)
-        verdict, replacement = _detect_content_text(detector, original)
+        verdict, replacement = _detect_text(detector, original)
         if verdict is not None:
             return verdict, run, False
         replaced |= replacement is not None
@@ -115,7 +120,7 @@ def _detect_text_run(
         originals.append(original)
         texts.append(original if replacement is None else replacement)
     if len(texts) > 1:
-        verdict, joined = _detect_content_text(detector, ''.join(originals))
+        verdict, joined = _detect_text(detector, ''.join(originals))
         if verdict is not None:
             return verdict, run, False
         if joined is not None and joined != ''.join(texts):
@@ -144,7 +149,7 @@ def detect_tool_return_content(
     `None` when no part was redacted, so the caller keeps the original shape.
     """
     if isinstance(content, str):
-        return _detect_content_text(detector, content)
+        return _detect_text(detector, content)
     if content is None:
         return None, None
     rewritten: list[UserContent] = []
@@ -173,11 +178,6 @@ def is_tool_return(value: object) -> TypeGuard[ToolReturn[object]]:
     return isinstance(value, ToolReturn)
 
 
-def checked_value(value: object) -> str | list[UserContent] | None:
-    """`value` if it is a string or a list of content parts, the `ToolReturn.return_value`s a detector reads."""
-    return value if isinstance(value, str) else content_list(value)
-
-
 def detect_return_value(
     detector: TextDetector, value: str | list[UserContent]
 ) -> tuple[GuardrailResult | None, str | list[UserContent] | None]:
@@ -186,21 +186,6 @@ def detect_return_value(
     Returns a terminal verdict, or the replacement -- `None` when nothing was redacted.
     """
     if isinstance(value, str):
-        verdict = detector(value)
-        if verdict.action not in ('allow', 'replace'):
-            return verdict, None
-        if verdict.action == 'allow':
-            return None, None
-        if not isinstance(verdict.replacement, str):
-            raise UserError('A text detector used with for_tool_result_text() must replace a tool result with text.')
-        return None, verdict.replacement
+        return _detect_text(detector, value, 'a tool result')
     verdict, rewritten = detect_tool_return_content(detector, value)
     return verdict, None if rewritten is None else list(rewritten)
-
-
-def detect_content_list_result(detector: TextDetector, result: list[UserContent]) -> GuardrailResult:
-    """Run `detector` over a result made of content parts, such as text beside a screenshot, keeping the images."""
-    verdict, rewritten = detect_return_value(detector, result)
-    if verdict is not None:
-        return verdict
-    return GuardrailResult.allow() if rewritten is None else GuardrailResult.replace(rewritten)
