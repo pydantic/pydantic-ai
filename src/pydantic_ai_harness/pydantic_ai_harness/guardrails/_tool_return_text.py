@@ -85,6 +85,10 @@ def _detect_text_run(
     leave the rest of the value exposed while the joined pass reported the span clean. It
     can hide a terminal verdict the same way.
 
+    A list `return_value` comes through here too, although the model sees it as a JSON array
+    rather than one string. It is scanned joined on purpose, since a model can rejoin the
+    elements, and a match across elements redacts them as one span.
+
     The span keeps its parts when sanitizing them one by one already produced the text that
     sanitizing the whole span produces. Then the boundaries carry nothing, and each part
     keeps its own metadata. When the two differ, something is only reachable across a
@@ -182,6 +186,8 @@ def detect_return_value(
     detector: TextDetector, value: str | list[UserContent]
 ) -> tuple[GuardrailResult | None, str | list[UserContent] | None]:
     """Run `detector` over a tool result's string, or the text of its content parts, keeping images.
+
+    A list is scanned like `ToolReturn.content`, adjacent strings joined, though the model sees a JSON array.
 
     Returns a terminal verdict, or the replacement -- `None` when nothing was redacted.
     """
