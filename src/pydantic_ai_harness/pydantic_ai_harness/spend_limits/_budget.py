@@ -285,7 +285,7 @@ class Ceilings(NamedTuple):
     tokens: int | None
 
     @property
-    def enforce(self) -> bool:
+    def enforces(self) -> bool:
         """Whether either ceiling is set, so the reading can refuse a request."""
         return self.usd is not None or self.tokens is not None
 

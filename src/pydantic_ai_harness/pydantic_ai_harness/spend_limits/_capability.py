@@ -279,7 +279,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         """Refuse the request if any budget with a ceiling is already spent."""
         resolved = [(budget, key, resolve_ceilings(budget, ctx)) for budget, key in await self._keyed(ctx)]
-        enforcing = [entry for entry in resolved if entry[2].enforce]
+        enforcing = [entry for entry in resolved if entry[2].enforces]
         read = await self._read(list(dict.fromkeys(key for _, key, _ in enforcing)))
         for budget, key, limits in enforcing:
             self._check(budget, limits, read[key], ctx)

@@ -597,6 +597,7 @@ class TestResolvedCeiling:
 
         with pytest.raises(SpendLimitExceeded, match='used 1100 of 1000 tokens'):
             await _gate(guard, ctx=_run_ctx(deps=account))
+        assert (await guard.status(_run_ctx(deps=account)))[0].token_limit == 1000
 
     async def test_none_means_no_ceiling_for_that_partition(self):
         guard = SpendLimits(budgets=[_account_budget(warn_at=0.5)], price=lambda r: Decimal('6'))
