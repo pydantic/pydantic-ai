@@ -136,7 +136,28 @@ model that it changes nothing.
 
 With `defer_loading=True`, a run starts before the capability loads, so these checks, and the writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
 
-`creation.load_active(workspace)` makes the same checks against `workspace` before it loads anything. It checks only the workspace it is given, so give it the one the run uses: as in the example above, configure the workspace with `agent.run(..., workspace=...)` rather than a `LocalWorkspace` capability, and pass the same object to both. For a `directory` outside the working directory, that workspace names it: `AuthorityWorkspace(Workspace(LocalWorkspaceBackend('./project')), authority='operator', path_authority={'/var/lib/my-app/authored': 'operator'})`, which refuses a `~` path in `path_authority`. `creation.store.load_active()` has no workspace to ask, so it runs the code it finds: call it only on a directory you would run yourself. The checks also only look at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
+`creation.load_active(workspace)` makes the same checks against `workspace` before it loads anything. It checks only the workspace it is given, so pass the one the run uses: configure the workspace with `agent.run(..., workspace=...)` rather than a `LocalWorkspace` capability, and pass the same object to both. For a `directory` outside the working directory, name it in an `AuthorityWorkspace`, whose `path_authority` refuses `~` paths:
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness import CapabilityCreation
+
+workspace = AuthorityWorkspace(
+    Workspace(LocalWorkspaceBackend('./project')),
+    authority='operator',
+    path_authority={'/var/lib/my-app/authored': 'operator'},
+)
+creation = CapabilityCreation(directory=Path('/var/lib/my-app/authored'))
+agent = Agent('{{ anthropic:medium }}', capabilities=[creation])
+
+extra = await creation.load_active(workspace)
+result = await agent.run('Continue the task.', capabilities=extra, workspace=workspace)
+```
+
+`creation.store.load_active()` has no workspace to ask, so it runs the code it finds: call it only on a directory you would run yourself. The checks also only look at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 
