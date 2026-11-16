@@ -4,7 +4,22 @@ Let one agent coordinate a whole team of sub-agents by writing a small Python sc
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
-![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](https://pydantic.dev/docs/ai/img/harness/dynamic-workflow.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Dynamic Workflow: coordinate sub-agents with one script
+    accDescr: The orchestrator model calls run_workflow with one Python script, and the DynamicWorkflow capability runs it in the Monty sandbox. The capability starts two reviewer sub-agent runs in parallel, one for auth.py and one for parser.py, and their two reports stay in the sandbox. It passes both reports to a summarizer run and returns only the summary to the orchestrator model.
+    participant model as orchestrator model
+    participant cap as DynamicWorkflow()<br/>Monty sandbox
+    participant agents as sub-agent runs
+    model->>cap: run_workflow,<br/>one Python script
+    cap->>agents: reviewer, auth.py
+    cap->>agents: reviewer, parser.py,<br/>in parallel
+    agents-->>cap: two reports
+    Note over cap: both reports stay here
+    cap->>agents: summarizer,<br/>both reports
+    agents-->>cap: summary
+    cap-->>model: summary only
+```
 
 ## The idea
 
@@ -31,7 +46,7 @@ sub-agents.
 The harness has two delegation capabilities. They trade in the same currency, named and isolated
 sub-agent runs, but they work at different altitudes:
 
-- [`SubAgents`](../subagents/README.md) exposes one `delegate_task(agent_name, task)` tool. Each
+- [`SubAgents`](../sub_agents/README.md) exposes one `delegate_task(agent_name, task)` tool. Each
   delegation is its own tool call and its own model turn. It is the right fit when delegations are
   occasional, or when each result needs the parent's judgment before the next one.
 - `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops
@@ -444,7 +459,8 @@ The script runs in Monty, a subset of Python:
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
-- `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
+- `asyncio.gather(...)` runs sub-agents concurrently (one at a time under
+  [DBOS](#running-under-other-durable-engines)) with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
 Before a script runs, it is statically type-checked against the sub-agent signatures. An ordinary,
@@ -468,6 +484,24 @@ sub-agent whose model requests should run as activities, then register every age
 and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
+
+## Running under other durable engines
+
+`DBOSDurability` numbers steps in the order they start, so the steps of concurrent sub-agents would
+interleave by timing and recovery could replay one sub-agent's results into another call. When
+sub-agents carry it, all of the script's calls run one at a time, so each sub-agent keeps its own step
+checkpoints and recovery replays them into the same call. An `asyncio.gather` over sub-agents then takes the sum of
+their run times rather than the longest.
+
+`AWSLambdaDurability` numbers a context's steps in the order they start too. When sub-agents carry it,
+the calls a script makes before it next waits run as the branches of one Lambda `parallel` operation,
+named after the tool, in the order the script made them. Sub-agents still run concurrently. Each
+branch has a child context of its own, whose step IDs derive from the branch's position, so a
+sub-agent's model requests and tool calls keep their own checkpoints. A branch's output is checkpointed
+with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
+branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
+
+Under other engines, sub-agents run concurrently.
 
 ## API
 
@@ -500,7 +534,7 @@ WorkflowAgent(
 
 - [Code Mode](../code_mode/README.md), the same sandbox, calling the agent's own tools instead of
   sub-agents.
-- [SubAgents](../subagents/README.md), one-delegation-per-tool-call sub-agents, without the
+- [SubAgents](../sub_agents/README.md), one-delegation-per-tool-call sub-agents, without the
   scripted choreography.
 - [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic),
   the mechanism this applies to sub-agents.

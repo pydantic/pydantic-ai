@@ -11,7 +11,23 @@ description: "Re-inject reminders into a long Pydantic AI agent run on a cadence
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![SystemReminders runs in the before_model_request hook. A Reminder with interval=3 fires on requests 3 and 6. When it fires, the reminder is added at the tail of that request, after the cache breakpoint, so the cached prefix of tools, instructions and conversation is reused. The next request does not show it again.](../img/harness/system-reminders.svg)
+```mermaid
+flowchart TB
+    accTitle: System Reminders: restate guidance late in a long run
+    accDescr: The agent loop fills each model request with a cached prefix of tools, instructions and conversation. Before each request, the SystemReminders capability runs in before_model_request, and a Reminder(interval=3) adds a reminder on requests 3 and 6. The reminder sits at the tail of the request, after the cache breakpoint, for that request only, and the request goes to the model.
+    loop["agent loop"]
+    cap["SystemReminders()<br/>before_model_request"]:::capability
+    subgraph request["Model request"]
+        prefix["cached prefix<br/>tools, instructions,<br/>conversation"]
+        tail["reminder at the tail,<br/>after cache breakpoint,<br/>this request only"]:::capability
+    end
+    model(["model"])
+    loop --> prefix
+    loop -->|"before each request"| cap
+    cap -.->|"Reminder(interval=3):<br/>on requests 3 and 6"| tail
+    request --> model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 

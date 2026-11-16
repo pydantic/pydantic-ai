@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`GoogleThinkingLevel` gains `'XHIGH'`, Gemini 4 Hydrogen's new thinking level. Every value it accepted before is still accepted; only an exhaustive match on the alias sees a new member.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13299"
+}

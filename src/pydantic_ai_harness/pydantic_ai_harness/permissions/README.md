@@ -26,7 +26,7 @@ A call that asks raises [`ApprovalRequired`](https://pydantic.dev/docs/ai/tools-
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,

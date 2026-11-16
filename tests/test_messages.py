@@ -95,6 +95,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from tests.models.conftest import items_serialized_differently_inside_a_list
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
@@ -3218,6 +3219,26 @@ def test_tool_return_part_model_response_str_and_user_content():
         ]
     )
 
+    # Items beside a file keep the JSON form they have without one: structured values stay JSON values in the
+    # array rather than strings holding their JSON text, and a value whose JSON form is a string stays that string.
+    items = [{'temp': 20}, 3, None, [1, 2], 'sunny', datetime(2026, 1, 1, 12, 0)]
+    assert ToolReturnPart(tool_name='t', content=items, tool_call_id='c7').model_response_str() == snapshot(
+        '[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00"]'
+    )
+    text, _ = ToolReturnPart(
+        tool_name='t', content=[*items, img], tool_call_id='c7'
+    ).model_response_str_and_user_content()
+    assert text == snapshot('[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00","See file d5a901."]')
+
+    # Each item beside a file is serialized as it is alone: with its own settings, its keys as it dumps them, and no
+    # extra nesting level against the serializer's depth limit.
+    for item in items_serialized_differently_inside_a_list():
+        alone = ToolReturnPart(tool_name='t', content=item, tool_call_id='c8').model_response_str()
+        text, _ = ToolReturnPart(
+            tool_name='t', content=[item, img], tool_call_id='c8'
+        ).model_response_str_and_user_content()
+        assert text == f'[{alone},"See file d5a901."]'
+
 
 def test_args_as_dict_valid_json():
     """args_as_dict should return parsed dict for valid JSON args."""
@@ -3265,6 +3286,44 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
     part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
     with pytest.raises(AssertionError):
         part.args_as_dict(raise_if_invalid=True)
+
+
+@pytest.mark.subprocess(reason='`-O` strips `assert` statements only when it starts the interpreter')
+def test_args_as_dict_rejects_non_dict_json_under_optimization():
+    """Non-object JSON stays invalid when `python -O` strips `assert` statements."""
+    # Uses no `assert`, which `-O` strips from this script too.
+    script = """
+import json
+import sys
+
+from pydantic_ai.messages import ToolCallPart
+
+results = {}
+for raw in ['[1, 2, 3]', '"text"', '1', 'null']:
+    part = ToolCallPart(tool_name='test_tool', args=raw)
+    try:
+        part.args_as_dict(raise_if_invalid=True)
+        raised = None
+    except Exception as e:
+        raised = type(e).__name__
+    results[raw] = {'args_as_dict': part.args_as_dict(), 'raise_if_invalid': raised}
+print(json.dumps({'optimize': sys.flags.optimize, 'results': results}))
+"""
+    result = subprocess.run(
+        [sys.executable, '-O', '-c', script],
+        capture_output=True,
+        text=True,
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        'optimize': 1,
+        'results': {
+            raw: {'args_as_dict': {INVALID_JSON_KEY: raw}, 'raise_if_invalid': 'AssertionError'}
+            for raw in ['[1, 2, 3]', '"text"', '1', 'null']
+        },
+    }
 
 
 def test_args_as_json_str_valid_json_canonical():

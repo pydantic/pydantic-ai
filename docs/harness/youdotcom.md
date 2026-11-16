@@ -15,7 +15,31 @@ single lookup cannot settle.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls tools from two capabilities. YouSearch adds web_search, which returns the top ten hits with excerpts, and get_page, which returns one page as markdown capped at 10,000 characters. YouResearch adds answer, research and finance_research, which return cited answers. Each tool calls one method of the You.com API. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds YouSource records for your app. Authentication, billing and permission errors stop the run; other failures come back as a retry.](../img/harness/youdotcom.svg)
+```mermaid
+flowchart TB
+    accTitle: You.com: search and page reads, plus cited research
+    accDescr: In your agent, instructions tell the model to search wide, read pages in full and cite URLs. The model calls web_search and get_page of YouSearch and answer, research and finance_research of YouResearch, and gets each return_value. Both call the You.com API with the key YDC_API_KEY and can pass metadata['sources'] to your app, and a 401, 402 or 403 from the API stops the run.
+    subgraph agent["Your agent"]
+        guide["instructions<br/>search wide, read pages<br/>in full, cite URLs"]:::capability
+        model(["model"])
+        search["YouSearch()<br/>web_search, get_page"]:::capability
+        research["YouResearch()<br/>answer, research,<br/>finance_research"]:::capability
+    end
+    api["You.com API<br/>key: YDC_API_KEY"]:::external
+    app["your app"]
+    stopped["the run stops"]:::blocked
+    guide --> model
+    model <-->|"tool call, return_value"| search
+    model <-->|"tool call, return_value"| research
+    search <--> api
+    research <--> api
+    search -.->|"metadata['sources']"| app
+    research -.->|"metadata['sources']"| app
+    api -.-x|"401, 402, 403"| stopped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
