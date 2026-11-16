@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
 
 import pytest
@@ -28,6 +29,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import (
     AgentInfo,
     DeltaThinkingCalls,
@@ -37,6 +39,8 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, StreamGuardrail
@@ -77,6 +81,31 @@ def _describe(event: AgentStreamEvent | AgentRunResultEvent[str]) -> str:
     if isinstance(event, PartDeltaEvent):
         return f'PartDeltaEvent {event.index}'
     return type(event).__name__
+
+
+class _RealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'  # pragma: no cover
+
+    @property
+    def system(self) -> str:
+        return 'fake'  # pragma: no cover
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile()
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[RealtimeConnection]:  # pragma: no cover
+        raise NotImplementedError
+        yield
 
 
 def _redact_ssn(part: StreamGuardrailPart) -> GuardrailResult:
@@ -371,6 +400,12 @@ class TestStreamGuardrail:
         )
         with pytest.raises(UserError, match='StreamGuardrail cannot run under durable execution'):
             await agent.run('hello')
+
+    async def test_refuses_a_realtime_session(self):
+        agent = Agent(TestModel(), capabilities=[StreamGuardrail(guard=lambda part: True)])
+        with pytest.raises(UserError, match='StreamGuardrail cannot run in a realtime session'):
+            async with agent.realtime(_RealtimeModel()).session():
+                pass  # pragma: no cover
 
     async def test_a_blocked_tool_call_span_names_the_tool(self):
         exporter = InMemorySpanExporter()

@@ -215,7 +215,8 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
     Adding it makes `run()` and `run_sync()` stream every model request, so the guard runs even when
     nothing reads the events, and a model that cannot stream fails. It raises `UserError` under
     durable execution, where the model request streams its events to the durability's own handler
-    before any capability wraps them.
+    before any capability wraps them, and in a realtime session, whose single event stream would
+    stay held from the first tool call until the session closes.
     """
 
     guard: StreamGuardrailFunc[AgentDepsT] | Sequence[StreamGuardrailFunc[AgentDepsT]]
@@ -233,6 +234,20 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         """Sit outermost (inside `Instrumentation`) so the guard screens what every other capability streams."""
         return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Refuse a run whose events the guard cannot hold back, before any model stream opens."""
+        if in_durable_context(ctx):
+            raise UserError(
+                'StreamGuardrail cannot run under durable execution: the durable model request streams its events '
+                "to the durability's event stream handler before any capability wraps them, so they would not be "
+                'screened.'
+            )
+        if ctx.realtime:
+            raise UserError(
+                'StreamGuardrail cannot run in a realtime session: its event stream lasts the whole session, so a '
+                'held tool call would hold back every later event until the session closes.'
+            )
+
     async def wrap_run_event_stream(
         self,
         ctx: RunContext[AgentDepsT],
@@ -240,12 +255,6 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         """Hold each screened part's events until the guard has decided on the complete part."""
-        if in_durable_context(ctx):
-            raise UserError(
-                'StreamGuardrail cannot run under durable execution: the durable model request streams its events '
-                "to the durability's event stream handler before any capability wraps them, so they would not be "
-                'screened.'
-            )
         hold = _Hold(partial(self._screen, ctx))
         async for event in stream:
             for released in await hold.feed(event):

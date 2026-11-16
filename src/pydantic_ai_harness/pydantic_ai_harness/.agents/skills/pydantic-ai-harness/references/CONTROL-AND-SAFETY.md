@@ -182,7 +182,8 @@ Key parameters:
   the model response ends.
   `run_stream()`'s `stream_text()`/`stream_output()` are not screened (a `block` still raises), and
   the run's history and output are not changed; pair with `OutputGuardrail`/`ToolGuardrail` for
-  those. Makes `run()` stream every request; raises `UserError` under durable execution.
+  those. Makes `run()` stream every request; raises `UserError` under durable execution and in a
+  realtime session.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
   guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
   to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
