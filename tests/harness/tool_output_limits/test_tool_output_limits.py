@@ -1463,7 +1463,7 @@ class TestAgentIntegration:
 
 
 async def test_dense_tool_output_obeys_token_budget():
-    """over_tokens=True measures with the shared estimator: dense output hits a band a character count would miss."""
+    """over_tokens=True prices base64 densely: 232 estimated tokens, where 4 characters per token gave 87."""
     payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
     cap: ToolOutputLimits[object] = ToolOutputLimits(
         bands=[Band(over=200, action=Truncate(max_chars=50))], over_tokens=True
