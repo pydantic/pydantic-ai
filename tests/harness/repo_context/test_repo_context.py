@@ -1835,6 +1835,17 @@ class TestPinAcceptedFiles:
 
         assert await pinned.authority_of('AGENTS.md') == 'none'
 
+    async def test_a_file_replaced_by_a_directory_or_under_a_file_is_capped(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        (tmp_path / 'AGENTS.md').mkdir()
+        _write(tmp_path / '.agents/skills/review', 'not a directory')
+        accepted = {'AGENTS.md': '0' * 64, '.agents/skills/review/SKILL.md': '0' * 64}
+
+        pinned = await pin_accepted_files(workspace, accepted)
+        assert await pinned.authority_of('AGENTS.md') == 'none'
+        assert await pinned.authority_of('.agents/skills/review/SKILL.md') == 'none'
+
     async def test_a_lower_workspace_level_is_kept(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'Use tabs.')
         workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
