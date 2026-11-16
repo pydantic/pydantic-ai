@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,19 +13,16 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic_monty import AsyncSnapshot, MontyComplete
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    PartDeltaEvent,
     PartStartEvent,
     TextPart,
     ToolCallPart,
-    ToolCallPartDelta,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -33,9 +30,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness._monty_exec import MontyExecutor
-from pydantic_ai_harness.code_mode import CodeMode
-from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
+from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
+
+# Patched to make a feed fail outside the snippet the way a dead worker or a host-binding bug does.
+MONTY_EXECUTOR_RUN = 'pydantic_ai_harness._monty_exec.MontyExecutor.run'
 
 
 def instrumented() -> tuple[Instrumentation, InMemorySpanExporter]:
@@ -54,23 +52,33 @@ def code_mode_attributes(exporter: InMemorySpanExporter) -> list[tuple[str, dict
     return [(name, attributes) for name, attributes in found if attributes]
 
 
-def run_code_snippets(*snippets: str) -> FunctionModel:
-    """A model that sends each snippet to `run_code` in turn, then answers."""
+def run_code_snippets(*snippets: str, before_sending: Callable[[int], None] | None = None) -> FunctionModel:
+    """A model that sends each snippet to `run_code` in turn, then answers.
+
+    `before_sending` is called with each snippet's index just before the model sends it.
+    """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         sent = len(messages) // 2
         if sent == len(snippets):
             return ModelResponse(parts=[TextPart('done')])
+        if before_sending is not None:
+            before_sending(sent)
         return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': snippets[sent]})])
 
     return FunctionModel(respond)
 
 
 async def failure_attributes(
-    *snippets: str, capability: CodeMode[object] | None = None
+    *snippets: str,
+    capability: CodeMode[object] | None = None,
+    before_sending: Callable[[int], None] | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     instrumentation, exporter = instrumented()
-    agent = Agent(run_code_snippets(*snippets), capabilities=[capability or CodeMode[object](), instrumentation])
+    agent = Agent(
+        run_code_snippets(*snippets, before_sending=before_sending),
+        capabilities=[capability or CodeMode[object](), instrumentation],
+    )
 
     @agent.tool_plain
     def add(a: int, b: int) -> int:
@@ -98,15 +106,28 @@ class DisconnectError(Exception):
     cause: str | None
 
 
-async def diverged_prefix_attributes(original: str, rewritten: str) -> list[tuple[str, dict[str, Any]]]:
-    """Stream `original` to an eager `run_code` call, then dispatch it as `rewritten`, which drops the fed prefix."""
+async def diverged_prefix_attributes(
+    original: str, rewritten: str, *, ready: Callable[[], Any], sync_code: str, capability: CodeMode[None]
+) -> list[tuple[str, dict[str, Any]]]:
+    """Stream `original` to an eager `run_code` call, let its statements run, then dispatch it as `rewritten`.
+
+    `original`'s last fed statement calls `ready`, which must set the event the helper waits on, and
+    then fails in that same statement. A second `run_code` call in the response (`sync_code`) is
+    never fed eagerly, and its dispatch waits for the first call's in-flight statement, so
+    dispatching it before the first call guarantees the failing statement finished first.
+    """
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer('test')
-    capability = CodeMode[None](eager=True)
-    root = capability.get_wrapper_toolset(FunctionToolset[None]())
-    assert root is not None
+    started = asyncio.Event()
+
+    async def ready_tool() -> Any:
+        started.set()
+        return ready()
+
+    root = capability.get_wrapper_toolset(FunctionToolset[None](tools=[Tool(ready_tool, name='ready')]))
+    assert isinstance(root, CodeModeToolset)
     ctx = RunContext[None](
         deps=None,
         model=TestModel(),
@@ -123,22 +144,21 @@ async def diverged_prefix_attributes(original: str, rewritten: str) -> list[tupl
         assert manager.tools is not None
         run_code = manager.tools['run_code']
         toolset = run_code.toolset
-        assert isinstance(toolset, EagerCodeModeToolset)
+        assert isinstance(toolset, CodeModeToolset)
 
-        async def observe(*events: PartStartEvent | PartDeltaEvent) -> None:
-            async def stream() -> AsyncIterator[PartStartEvent | PartDeltaEvent]:
-                for event in events:
-                    yield event
+        async def stream() -> AsyncIterator[PartStartEvent]:
+            yield PartStartEvent(index=0, part=ToolCallPart('run_code', {'code': original}, tool_call_id='c1'))
+            yield PartStartEvent(index=1, part=ToolCallPart('run_code', {'code': sync_code}, tool_call_id='c2'))
 
-            async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
-                pass
-
-        part = ToolCallPart(tool_name='run_code', args={'code': original}, tool_call_id='c1')
-        await observe(PartStartEvent(index=0, part=part))
-        await asyncio.gather(*toolset.execution.pumps)
-        await observe(
-            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': rewritten}, tool_call_id='c1'))
-        )
+        async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
+            pass
+        await asyncio.wait_for(started.wait(), timeout=5)
+        # Dispatched outside any span, so its own outcome is not recorded.
+        sync_ctx = dataclasses.replace(ctx, tool_call_id='c2', tool_name='run_code')
+        try:
+            await toolset.call_tool('run_code', {'code': sync_code}, sync_ctx, run_code)
+        except ModelRetry:
+            pass
 
         exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code')
         with (
@@ -195,6 +215,13 @@ class TestRunCodeFailureTelemetry:
                 id='max_memory',
             ),
             pytest.param(
+                ('x = 0\nwhile True:\n    x += 1',),
+                CodeMode[object](resource_limits={'max_duration_secs': 0.2}),
+                # The first snippet ran, so the reset loses `x` even though no earlier snippet ran.
+                [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_secs')],
+                id='max_duration_secs-in-the-first-snippet',
+            ),
+            pytest.param(
                 ('await add(a=1, b=2)',),
                 CodeMode[object](resource_limits={'max_suspensions': 1}),
                 [run_code_span(error_kind='resource_limit', session_reset=False, limit='max_suspensions')],
@@ -244,31 +271,29 @@ class TestRunCodeFailureTelemetry:
         """The second snippet fails, so the reset discards the state the first one left."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', DisconnectError)
-        original_run = MontyExecutor.run
-        feeds: list[None] = []
 
-        async def fail_second_feed(
-            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
-        ) -> MontyComplete:
-            feeds.append(None)
-            if len(feeds) == 1:
-                return await original_run(self, feed_start)
+        async def fail(self: object, feed_start: object) -> object:
             raise error
 
-        monkeypatch.setattr(MontyExecutor, 'run', fail_second_feed)
+        def fail_the_second_snippet(index: int) -> None:
+            if index == 1:
+                monkeypatch.setattr(MONTY_EXECUTOR_RUN, fail)
 
-        assert await failure_attributes('x = 1', '1 + 1') == [
+        assert await failure_attributes('x = 1', '1 + 1', before_sending=fail_the_second_snippet) == [
             run_code_span(),
             run_code_span(session_reset=True, **expected),
         ]
 
-    async def test_a_failure_before_any_code_ran_discards_no_executed_state(self, monkeypatch: pytest.MonkeyPatch):
-        async def fail(self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> MontyComplete:
-            raise RuntimeError('host binding failed')
+    async def test_a_worker_crash_in_the_first_snippet_resets_the_state_it_built(self, monkeypatch: pytest.MonkeyPatch):
+        """No earlier snippet ran, but the crashed snippet had started, so what it defined is lost."""
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
 
-        monkeypatch.setattr(MontyExecutor, 'run', fail)
+        async def crash(self: object, feed_start: object) -> object:
+            raise CrashedError(timed_out=False)
 
-        assert await failure_attributes('1 + 1') == [run_code_span(error_kind='host', session_reset=False)]
+        monkeypatch.setattr(MONTY_EXECUTOR_RUN, crash)
+
+        assert await failure_attributes('x = 1') == [run_code_span(error_kind='crashed', session_reset=True)]
 
     async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(self):
         """Eager execution runs statements before `run_code`'s span opens; the failure still lands on that span."""
@@ -295,25 +320,36 @@ class TestRunCodeFailureTelemetry:
 
     async def test_a_diverged_prefix_records_the_failed_statement_and_the_restart(self):
         """The failure kept the session, but the restart discards the one `x = 1` ran in."""
-        assert await diverged_prefix_attributes('x = 1\nboom = 1 // 0\n"unused"\n', 'y = 2\ny') == [
-            run_code_span(error_kind='runtime', session_reset=True)
-        ]
+        assert await diverged_prefix_attributes(
+            'x = 1\nboom = await ready() // 0\n"unused"\n',
+            'y = 2\ny',
+            ready=lambda: 1,
+            sync_code='None',
+            capability=CodeMode[None](eager=True),
+        ) == [run_code_span(error_kind='runtime', session_reset=True)]
 
-    async def test_a_diverged_prefix_keeps_the_reset_a_failure_already_made(self, monkeypatch: pytest.MonkeyPatch):
-        """The host failure discards the session first, so the restart finds nothing left to discard."""
-        original_run = MontyExecutor.run
-        feeds: list[None] = []
+    async def test_a_diverged_prefix_keeps_the_reset_a_failure_already_made(self):
+        """The time limit resets the session first, so the restart finds nothing left to discard.
 
-        async def fail_second_feed(
-            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
-        ) -> MontyComplete:
-            feeds.append(None)
-            if len(feeds) == 1:
-                return await original_run(self, feed_start)
-            raise RuntimeError('host binding failed')
+        The second call's snippet fails its type check, which leaves the fresh session without run code.
+        """
+        assert await diverged_prefix_attributes(
+            'x = 1\nif await ready():\n    while True:\n        pass\n"unused"\n',
+            'y = 2\ny',
+            ready=lambda: True,
+            sync_code='undefined_name',
+            capability=CodeMode[None](eager=True, resource_limits={'max_duration_secs': 0.2}),
+        ) == [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_secs')]
 
-        monkeypatch.setattr(MontyExecutor, 'run', fail_second_feed)
+    async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = Agent(run_code_snippets('1 / 0'), capabilities=[CodeMode[object]()])
 
-        assert await diverged_prefix_attributes('x = 1\n1 + 1\n"unused"\n', 'y = 2\ny') == [
-            run_code_span(error_kind='host', session_reset=True)
+        with provider.get_tracer('app').start_as_current_span('app request'):
+            await agent.run('go')
+
+        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
+            ('app request', {})
         ]

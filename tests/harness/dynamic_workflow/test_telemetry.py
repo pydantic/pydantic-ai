@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,7 +9,6 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic_monty import AsyncSnapshot, MontyComplete
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
@@ -18,7 +16,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 
 
@@ -112,10 +109,10 @@ class TestDynamicWorkflowTelemetry:
     ):
         monkeypatch.setattr('pydantic_ai_harness.dynamic_workflow._toolset.MontyCrashedError', CrashedError)
 
-        async def fail(self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> MontyComplete:
+        async def fail(self: object, feed_start: object) -> object:
             raise error
 
-        monkeypatch.setattr(MontyExecutor, 'run', fail)
+        monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', fail)
 
         assert await workflow_attributes('1 + 1') == [
             ('execute_tool run_workflow', {**expected, 'dynamic_workflow.budget_exhausted': False})
@@ -134,4 +131,18 @@ class TestDynamicWorkflowTelemetry:
 
         assert await workflow_attributes(code, max_agent_calls=1) == [
             ('execute_tool run_workflow', {'dynamic_workflow.budget_exhausted': True})
+        ]
+
+    async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        sub = Agent(TestModel(custom_output_text='ok'), name='sub')
+        agent = Agent(run_workflow_once('1 / 0'), capabilities=[DynamicWorkflow[object](agents=[sub])])
+
+        with provider.get_tracer('app').start_as_current_span('app request'):
+            await agent.run('go')
+
+        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
+            ('app request', {})
         ]

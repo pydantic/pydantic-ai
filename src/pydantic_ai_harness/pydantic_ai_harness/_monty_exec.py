@@ -237,6 +237,17 @@ class PendingCall:
 SandboxLimit = Literal['max_duration_secs', 'max_memory', 'max_suspensions']
 """A Monty resource limit that can stop a snippet, named by its `ResourceLimits` key."""
 
+# The wording Monty reports when each limit trips. Monty offers no typed marker for a limit, so its
+# phrasing is load-bearing here and nowhere else: `exceeded_sandbox_limit` and code mode's
+# started-call summary both read this table. `test_every_resource_limit_reports_started_calls_when_exhausted`
+# exhausts each limit and checks the summary survives, so a limit added without an entry here, or a
+# Monty reword, fails there rather than silently disabling recognition.
+SANDBOX_LIMIT_MARKERS: dict[SandboxLimit, str] = {
+    'max_duration_secs': 'time limit exceeded',
+    'max_memory': 'memory limit exceeded',
+    'max_suspensions': 'suspension limit ',
+}
+
 
 def exceeded_sandbox_limit(error: MontyRuntimeError) -> SandboxLimit | None:
     """The Monty resource limit that stopped the code with `error`, or `None` when the code failed on its own.
@@ -254,13 +265,14 @@ def exceeded_sandbox_limit(error: MontyRuntimeError) -> SandboxLimit | None:
     message = error.display(format='msg')
     exception = error.exception()
     # Monty's time-limit wording is read first, so a message naming both limits is never `max_memory` by wording.
-    mentions_time_limit = 'time limit exceeded' in message
+    mentions_time_limit = SANDBOX_LIMIT_MARKERS['max_duration_secs'] in message
     if not error.traceback() and mentions_time_limit:
         return 'max_duration_secs'
-    mentions_memory_limit = 'memory limit exceeded' in message and not mentions_time_limit
+    mentions_memory_limit = SANDBOX_LIMIT_MARKERS['max_memory'] in message and not mentions_time_limit
     if isinstance(exception, MemoryError) and (not error.traceback() or mentions_memory_limit):
         return 'max_memory'
-    if isinstance(exception, RuntimeError) and re.fullmatch(r'suspension limit [0-9]+ exceeded', message):
+    suspension_message = rf'{re.escape(SANDBOX_LIMIT_MARKERS["max_suspensions"])}[0-9]+ exceeded'
+    if isinstance(exception, RuntimeError) and re.fullmatch(suspension_message, message):
         return 'max_suspensions'
     return None
 
