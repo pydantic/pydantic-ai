@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -50,8 +51,8 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     request, that request is made the last: it keeps the tool definitions with `tool_choice='none'`, so
     the cached tools and instructions still match, and gets a request-scoped system prompt asking the
     model to answer now. The prompt's `metadata` holds the `'origin'`
-    `'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it, which tells a
-    wrapped-up answer from a finished one.
+    `'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it, which
+    [`wrapped_up_by`][pydantic_ai_harness.wrap_up_at_limits.wrapped_up_by] reads back.
 
     ```python
     from pydantic_ai import Agent
@@ -127,6 +128,16 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         settings = ModelSettings(**(request_context.model_settings or {}))
         settings['tool_choice'] = 'none'
         return replace(request_context, model_settings=settings)
+
+
+def wrapped_up_by(messages: Sequence[ModelMessage]) -> LimitName | None:
+    """The limit that made `WrapUpAtLimits` cut a run short, given the run's `new_messages()`, or `None`."""
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, SystemPromptPart) and part.metadata and part.metadata.get('origin') == _ORIGIN:
+                    return part.metadata['limit']
+    return None
 
 
 def _run_responses(messages: list[ModelMessage], run_id: str | None) -> list[ModelResponse]:

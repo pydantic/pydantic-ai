@@ -45,29 +45,25 @@ When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for one
 | `tool_calls_limit` | The request after the tool-call budget is used up, or after a batch of tool calls that would go over it |
 | `input_tokens_limit`, `output_tokens_limit`, `total_tokens_limit` | The first request after which a final request is projected to go over the limit |
 
-- A batch of tool calls that would go over `tool_calls_limit` is all or none, as without the capability: none of its calls run. Each is answered with `NOT_EXECUTED` under its original `tool_call_id`, so the model sees which calls didn't happen. These answers don't go through core's tool pipeline: no `FunctionToolCallEvent` or `FunctionToolResultEvent` is emitted for them and tool hooks don't see them, so a UI that waits for a call's result event shows them as pending. Both the calls and their answers are in the message history.
+- A batch of tool calls that would go over `tool_calls_limit` is all or none, as without the capability: none of its calls run. Each is answered with `NOT_EXECUTED` under its original `tool_call_id`, so the model sees which calls didn't happen. These answers don't go through core's tool pipeline: no `FunctionToolCallEvent` or `FunctionToolResultEvent` is emitted for them and tool hooks don't see them, so a UI that waits for a call's result event shows them as pending. Both the calls and their answers are in the message history. Routing them through the pipeline needs a core change ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
 - Token use is projected from this run's responses. Input and total tokens are assumed to grow on each further request by as much as the last response grew over the one before, plus the final prompt; output tokens to be at most the largest response's. A final request that uses more than projected still raises `UsageLimitExceeded`.
-- `cost_limit` isn't projected, and raises as before.
+- `cost_limit` and `per_request_input_tokens_limit` aren't projected, and raise as before.
 - A model that still calls tools on the final request has them answered with `NOT_EXECUTED` when the tool-call budget is used up, and run as usual otherwise. The next request is made the last again, or raises `UsageLimitExceeded` when no request is left.
 - A batch you stream yourself with `node.stream()` under `Agent.iter()` runs before the capability can answer it, so one over `tool_calls_limit` raises as before. Under `Agent.run_stream()`, a response whose text or output arrives before its tool calls ends the stream there, and core runs or checks those calls as before. A run resumed with [deferred tool results](../deferred-tools.md) is checked by core as before too.
 
 ## Telling a wrapped-up answer from a finished one
 
-The final prompt is a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] whose `metadata` holds `'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it, a [`LimitName`][pydantic_ai_harness.wrap_up_at_limits.LimitName]:
+The final prompt is a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] whose `metadata` holds `'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it. `wrapped_up_by()` reads it back as a [`LimitName`][pydantic_ai_harness.wrap_up_at_limits.LimitName]:
 
 ```python
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
-from pydantic_ai_harness.wrap_up_at_limits import LimitName
+from pydantic_ai import AgentRunResult
+from pydantic_ai_harness.wrap_up_at_limits import wrapped_up_by
 
 
-def wrapped_up_by(messages: list[ModelMessage]) -> LimitName | None:
-    """The limit that cut the run short, given `result.new_messages()`."""
-    for message in messages:
-        for part in message.parts if isinstance(message, ModelRequest) else ():
-            metadata = part.metadata if isinstance(part, SystemPromptPart) else None
-            if metadata and metadata.get('origin') == 'pydantic-ai-harness.wrap_up_at_limits.v1':
-                return metadata['limit']
-    return None
+def report(result: AgentRunResult[str]) -> str:
+    if limit := wrapped_up_by(result.new_messages()):
+        return f'{result.output}\n\n(cut short by `{limit}`)'
+    return result.output
 ```
 
 ## Durable execution
@@ -89,7 +85,7 @@ The spans carry no tool names, arguments or prompt text. The final request itsel
 
 - [`WarnNearLimits`](compaction.md#warnnearlimits-warn-instead-of-rewrite) warns the model as limits approach. `WrapUpAtLimits` acts on the last request. Use both to have the model wind down first.
 - It decides on the usage when its hook runs. List it after capabilities that spend from the run's usage before a request, such as `SummarizingCompaction`, so it sees what they spent.
-- [Compaction](compaction.md) still runs on the final request. A strategy that makes a model request of its own, such as `SummarizingCompaction`, has no request left there and raises `UsageLimitExceeded`; wrap it in `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded))` with a strategy that makes no model requests.
+- [Compaction](compaction.md) still runs on the final request. A strategy that makes a model request of its own, such as `SummarizingCompaction`, has no request left there and raises `UsageLimitExceeded`; wrap it in `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded))` with a strategy that makes no model requests. Skipping compaction on the final request needs a core ordering hook ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
 - In [Subagents](subagents.md), pass it in `shared_capabilities` so a sub-agent that reaches its budget returns its wrapped-up answer to the parent.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/wrap_up_at_limits/).
@@ -97,6 +93,8 @@ See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_
 ## API reference
 
 ::: pydantic_ai_harness.WrapUpAtLimits
+
+::: pydantic_ai_harness.wrap_up_at_limits.wrapped_up_by
 
 ::: pydantic_ai_harness.wrap_up_at_limits.LimitName
 

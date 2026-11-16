@@ -30,7 +30,7 @@ from pydantic_ai.settings import ToolChoice
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import WrapUpAtLimits
-from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, NOT_EXECUTED
+from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, NOT_EXECUTED, wrapped_up_by
 from pydantic_graph import End
 
 from ._messages import ORIGIN, wrap_ups
@@ -90,6 +90,7 @@ class TestWrapUpAtLimits:
 
         assert result.output == 'what I found so far'
         assert result.usage.requests == 3
+        assert wrapped_up_by(result.new_messages()) == 'request_limit'
         assert sorted(looked_up) == ['a1', 'a2', 'b1', 'b2']
         assert wrap_ups(result.new_messages()) == [
             (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'request_limit'})
@@ -253,6 +254,7 @@ class TestWrapUpAtLimits:
             result = await agent.run('Research', usage_limits=limits)
             assert result.output == 'done'
             assert wrap_ups(result.new_messages()) == []
+            assert wrapped_up_by(result.new_messages()) is None
 
     @pytest.mark.moves_cache_prefix(reason="with tool output, `tool_choice='none'` sends only the output tools")
     # With `tool_calls_limit`, the output call is checked against the used-up budget and must not count toward it.
