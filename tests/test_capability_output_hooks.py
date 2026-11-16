@@ -4898,6 +4898,7 @@ def test_deferred_tool_requests_remaining_cross_category_ids_do_not_resolve():
         approvals=[approval],
         calls=[call],
         metadata={'approval_1': {'kind': 'approval'}, 'call_1': {'kind': 'call'}},
+        validated_args={'approval_1': {}, 'call_1': {}},
     )
 
     mis_keyed = DeferredToolResults(approvals={'call_1': True}, calls={'approval_1': 'result'})
@@ -4908,7 +4909,7 @@ def test_deferred_tool_requests_remaining_cross_category_ids_do_not_resolve():
 
     approval_only = DeferredToolResults(approvals={'approval_1': True})
     assert requests.remaining(approval_only) == DeferredToolRequests(
-        calls=[call], metadata={'call_1': {'kind': 'call'}}
+        calls=[call], metadata={'call_1': {'kind': 'call'}}, validated_args={'call_1': {}}
     )
 
 
