@@ -169,6 +169,10 @@ carry outside text. The label stays valid across pushes; the check reads who app
 Both workflows run default-branch `publish_pr_review_checks.py` for this: `trusted` in PR Bots,
 `gate` in `PR Review Checks`. Keep them on that one check, so both trust the same users.
 
+A run that Dependabot starts gets Dependabot's secrets, not the Actions secrets these jobs use, so
+the labelling jobs and `PR Review Checks` skip it. After each Dependabot push, a maintainer removes
+and reapplies `trusted:ci-run`. Until then the head has no `PR Review Checks` status.
+
 The review and report labels check their own sender instead. `douwebot`,
 `douwebot:review-agent-config`, `trigger:docs-preview` and `trigger:ci-duration-report` each require
 the sender's `write` or `admin` permission. The triage role, below write, can apply labels.
@@ -187,11 +191,12 @@ triggers on that event.
 fork PR's `pull_request` run never gets. So the guard runs every 10 minutes from the default branch
 instead. `pr_guard_sweep.py` finds each open PR with an opened, reopened, ready-for-review or edited
 event since 5 minutes before the last successful sweep started. It runs `pr_guard.sh` once per PR,
-as the user behind the author's latest such event, or else the latest event. A bot that rewrites
-the description right after the author opens the PR therefore cannot earn the trusted-actor bypass
-for the opening. A failed sweep leaves the next sweep to read the same events again, at most 3 hours
-back. When no sweep succeeds for longer than that, the guard never judges the older events. A close
-lands up to one interval after its event, later when GitHub delays the schedule.
+as the user behind the author's latest such event, or else the latest event. Every description edit
+counts, not only the latest. A bot that rewrites the description right after the author opens the PR
+therefore cannot earn the trusted-actor bypass for the opening. A failed sweep leaves the next sweep
+to read the same events again, at most 3 hours back. When no sweep succeeds for longer than that,
+the guard never judges the older events. A close lands up to one interval after its event, later
+when GitHub delays the schedule.
 
 # `Protect .github` keeps external changes out of this directory
 

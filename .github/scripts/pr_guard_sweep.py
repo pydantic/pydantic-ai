@@ -39,9 +39,8 @@ query($q: String!, $since: DateTime!, $endCursor: String) {
         createdAt
         authorAssociation
         baseRefName
-        lastEditedAt
         author { __typename login }
-        editor { __typename login }
+        userContentEdits(last: 20) { nodes { editedAt editor { __typename login } } }
         timelineItems(
           since: $since
           last: 20
@@ -83,6 +82,17 @@ class _Timeline(BaseModel):
     nodes: list[TimelineEvent]
 
 
+class BodyEdit(BaseModel):
+    """One edit of the description; the oldest is the original description."""
+
+    editedAt: datetime
+    editor: Actor | None
+
+
+class _BodyEdits(BaseModel):
+    nodes: list[BodyEdit]
+
+
 class PullRequest(BaseModel):
     """What `pr_guard.sh` reads about one pull request, and the events it reacts to."""
 
@@ -92,9 +102,8 @@ class PullRequest(BaseModel):
     createdAt: datetime
     authorAssociation: str
     baseRefName: str
-    lastEditedAt: datetime | None
     author: Actor | None
-    editor: Actor | None
+    userContentEdits: _BodyEdits
     timelineItems: _Timeline
 
 
@@ -149,9 +158,11 @@ def deciding_event(pull: PullRequest, since: datetime) -> TimelineEvent | None:
     rewriting the description, does not exempt the author's own. Otherwise the latest event decides, and
     the guard's trusted-actor bypass judges its actor.
     """
-    events = [*pull.timelineItems.nodes, TimelineEvent(createdAt=pull.createdAt, actor=pull.author)]
-    if pull.lastEditedAt is not None:
-        events.append(TimelineEvent(createdAt=pull.lastEditedAt, actor=pull.editor))
+    events = [
+        *pull.timelineItems.nodes,
+        TimelineEvent(createdAt=pull.createdAt, actor=pull.author),
+        *(TimelineEvent(createdAt=edit.editedAt, actor=edit.editor) for edit in pull.userContentEdits.nodes),
+    ]
     recent = [event for event in events if event.createdAt >= since]
     by_author = [event for event in recent if pull.author is None or event.actor == pull.author]
     return max(by_author or recent, key=lambda event: event.createdAt, default=None)

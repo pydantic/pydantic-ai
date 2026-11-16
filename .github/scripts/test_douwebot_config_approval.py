@@ -247,7 +247,8 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
         f"!cancelled() && needs.prior-findings.outputs.review_url == '' && {same_repository} && {review_requested}"
     )
     assert jobs['trust']['if'] == (
-        f"{same_repository} && (github.event.action == 'opened' || github.event.action == 'synchronize' "
+        f"{same_repository} && github.actor != 'dependabot[bot]' "
+        "&& (github.event.action == 'opened' || github.event.action == 'synchronize' "
         "|| github.event.action == 'edited' "
         "|| (github.event.action == 'labeled' && github.event.label.name == 'trusted:ci-run'))"
     )

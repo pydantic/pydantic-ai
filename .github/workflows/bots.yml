@@ -16,11 +16,12 @@ concurrency:
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
-  # The same trust decision as the `PR Review Checks` gate, from default-branch code.
+  # The same trust decision as the `PR Review Checks` gate, from default-branch code. A run Dependabot
+  # starts gets Dependabot's secrets, not the Actions secrets these jobs use, so it labels nothing.
   trust:
     name: Trusted Pull Request
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
       && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'
       || (github.event.action == 'labeled' && github.event.label.name == 'trusted:ci-run'))
     runs-on: ubuntu-latest
@@ -111,8 +112,8 @@ jobs:
   # Labels a pull request that changes a core definition the durable engines depend on
   # (`scripts/durable_exec_contract.json`), and unlabels it once a later push no longer does.
   # Nothing here checks out or runs the pull request's files: the classifier and the manifest are
-  # fetched at the pull request's base commit, and the classifier reads the pull request's files
-  # through the API and only parses them.
+  # fetched from the default branch, the pull request's base commit is only compared, and the
+  # classifier reads the pull request's files through the API and only parses them.
   durable-exec-label:
     name: Durable-Exec Review Label
     needs: trust
@@ -129,6 +130,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           LABEL: needs-durable-exec-review
@@ -138,7 +140,7 @@ jobs:
           GATE="$RUNNER_TEMP/durable-exec-gate"
           mkdir -p "$GATE/scripts"
           for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
-            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" > "$GATE/$path"
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${TRUSTED_REF}" > "$GATE/$path"
           done
           # `-I` keeps the fetched directory off `sys.path`; the classifier validates its arguments.
           TOUCHED=$(python3 -I "$GATE/scripts/durable_exec_contract.py" --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA")
@@ -487,7 +489,7 @@ jobs:
       #     not recover them. The action's own install is best-effort; the step
       #     below installs bubblewrap first from pinned packages.
       # See https://gh.io/securely-using-pull_request_target.
-      - name: Checkout base ref (trusted; owns the workspace root)
+      - name: Checkout default branch (trusted; owns the workspace root)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -508,7 +510,7 @@ jobs:
         name: Check for modified config files
         if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         # Backstop to the checkout split above, which is the primary defence: the
-        # base ref owns the workspace root, so the head's config is no longer the
+        # default branch owns the workspace root, so the head's config is no longer the
         # project config. This still runs because `--add-dir pr-head` may let some
         # of that tree autoload anyway, and because the gather step reads guidance
         # files by path.
@@ -569,12 +571,12 @@ jobs:
         # the untrusted tree, which `PR_HEAD_DIR` points the script's git commands
         # at. Fetch the script itself from the base repo, never from the head.
         run: |
-          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${TRUSTED_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
           bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 
@@ -817,7 +819,7 @@ jobs:
     steps:
       - *douwebot-request-guard
 
-      - name: Checkout base ref
+      - name: Checkout default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -837,12 +839,12 @@ jobs:
 
       - name: Gather PR context
         run: |
-          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${TRUSTED_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
           bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 

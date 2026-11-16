@@ -489,6 +489,7 @@ if the head changes, capture the new SHA and restart the loop.
      When the status reads "Awaiting maintainer", the author lacks write access.
      Ask a maintainer to apply `trusted:ci-run`; the label also covers later pushes and starts the PR Bots labels.
      A fork PR gets no `PR Review Checks` status: recreate it as a same-repository PR.
+     A Dependabot push gets none either: a maintainer removes and reapplies `trusted:ci-run`.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.

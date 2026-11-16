@@ -24,7 +24,7 @@ def _at(minutes_ago: int) -> str:
 def _pull(
     *,
     created: int = 10,
-    edited: tuple[int, dict[str, str]] | None = None,
+    edited: list[tuple[int, dict[str, str]]] | None = None,
     timeline: list[tuple[int, dict[str, str] | None]] | None = None,
     author: dict[str, str] | None = CONTRIBUTOR,
 ) -> PullRequest:
@@ -36,9 +36,8 @@ def _pull(
             'createdAt': _at(created),
             'authorAssociation': 'CONTRIBUTOR',
             'baseRefName': 'main',
-            'lastEditedAt': _at(edited[0]) if edited else None,
             'author': author,
-            'editor': edited[1] if edited else None,
+            'userContentEdits': {'nodes': [{'editedAt': _at(ago), 'editor': editor} for ago, editor in edited or []]},
             'timelineItems': {'nodes': [{'createdAt': _at(ago), 'actor': actor} for ago, actor in timeline or []]},
         }
     )
@@ -46,14 +45,22 @@ def _pull(
 
 def test_a_bot_editing_the_description_does_not_hide_the_opening() -> None:
     """The author's opening is judged even when a bot's later edit would claim the trusted-actor bypass."""
-    event = deciding_event(_pull(created=10, edited=(5, DESCRIPTION_BOT)), SINCE)
+    event = deciding_event(_pull(created=10, edited=[(5, DESCRIPTION_BOT)]), SINCE)
     assert event is not None
     assert guard_env(_pull(), event)['GITHUB_EVENT_SENDER_LOGIN'] == 'contributor'
 
 
+def test_a_bot_rewriting_the_description_does_not_hide_the_authors_edit() -> None:
+    """Every description edit counts, not only the latest, so the author's own edit is still judged."""
+    pull = _pull(created=600, edited=[(8, CONTRIBUTOR), (4, DESCRIPTION_BOT)])
+    event = deciding_event(pull, SINCE)
+    assert event is not None
+    assert guard_env(pull, event)['GITHUB_EVENT_SENDER_LOGIN'] == 'contributor'
+
+
 def test_a_maintainer_acting_alone_is_judged_as_the_one_who_acted() -> None:
     """With no event of the author's, the latest actor decides, so a maintainer's reopen keeps its bypass."""
-    pull = _pull(created=600, edited=(400, CONTRIBUTOR), timeline=[(12, DESCRIPTION_BOT), (3, MAINTAINER)])
+    pull = _pull(created=600, edited=[(400, CONTRIBUTOR)], timeline=[(12, DESCRIPTION_BOT), (3, MAINTAINER)])
     event = deciding_event(pull, SINCE)
     assert event is not None
     assert guard_env(pull, event)['GITHUB_EVENT_SENDER_LOGIN'] == 'maintainer'
@@ -61,7 +68,7 @@ def test_a_maintainer_acting_alone_is_judged_as_the_one_who_acted() -> None:
 
 def test_a_pull_request_with_nothing_new_is_skipped() -> None:
     """An update the guard never reacted to, such as a push or a comment, starts no check."""
-    assert deciding_event(_pull(created=600, edited=(300, CONTRIBUTOR)), SINCE) is None
+    assert deciding_event(_pull(created=600, edited=[(300, CONTRIBUTOR)]), SINCE) is None
 
 
 def test_a_deleted_author_is_judged_as_acting_on_their_own_pull_request() -> None:
