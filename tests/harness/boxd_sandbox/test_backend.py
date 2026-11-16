@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import boxd
@@ -92,14 +92,14 @@ class TestCreate:
         assert caplog.messages == [f'Created boxd machine {machine.id} ({machine.name})']
 
     @pytest.mark.parametrize(
-        ('options', 'size'),
-        [({}, {}), ({'vcpu': 2}, {'size': '2x8'})],
+        ('vcpu', 'size'),
+        [(None, {}), (2, {'size': '2x8'})],
         ids=['default-size', 'vcpu'],
     )
     async def test_secrets_go_in_the_machine_spec(
-        self, host: FakeBoxd, options: dict[str, Any], size: dict[str, str]
+        self, host: FakeBoxd, vcpu: Literal[2] | None, size: dict[str, str]
     ) -> None:
-        await BoxdSandboxBackend(secrets=['GH_TOKEN'], **options).run(['true'])
+        await BoxdSandboxBackend(secrets=['GH_TOKEN'], vcpu=vcpu).run(['true'])
         machine = host.only
         # The spec carries isolation and size, so they are not passed beside it.
         assert machine.create_kwargs['isolated'] is False
