@@ -26,7 +26,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutEr
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job
+from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job, past_secrets, secret_spans
 from pydantic_ai_harness.shell._limits import (
     file_limit_status,
     limited_script,
@@ -120,9 +120,10 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._env = dict(env) if env is not None else None
         self._denied_env_patterns = list(denied_env_patterns)
         self._secret_env = dict(secret_env) if secret_env is not None else None
-        self._secrets = [(value, f'[REDACTED:{name}]') for name, value in (secret_env or {}).items() if value]
-        self._secret_bytes = [value.encode() for value, _ in self._secrets]
-        self._longest_secret = max((len(value) for value, _ in self._secrets), default=0)
+        secrets = {name: value for name, value in (secret_env or {}).items() if value}
+        self._secret_values = list(secrets.values())
+        self._secret_masks = [f'[REDACTED:{name}]' for name in secrets]
+        self._secret_bytes = [value.encode() for value in self._secret_values]
         self._tools = tuple(tools)
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
@@ -227,11 +228,23 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             raise type(exc)(masked) from None
         if not isinstance(result, str):
             return result
-        if self._secrets:
-            # Enough of the end for the kept tail even if every character starts a secret, plus room for one the
-            # slice splits, so masking costs no more than the output it returns.
-            result = self._redact(result[-(self._max_output_chars + 2) * self._longest_secret :])
+        if self._secret_values:
+            result = self._redact_tail(result)
         return truncate_tail(result, self._max_output_chars)
+
+    def _redact_tail(self, text: str) -> str:
+        """`text` masked, or as much of its end as the output cap needs, so masking a large output costs little.
+
+        The end starts after any secret it would split. It grows while masking leaves it no longer than the cap,
+        as a run of overlapping secrets masks to one span, so the cap still sees all it would keep.
+        """
+        window = (self._max_output_chars + 1) * max(map(len, self._secret_values))
+        while True:
+            start = past_secrets(text, max(0, len(text) - window), self._secret_values)
+            masked = self._redact(text[start:])
+            if not start or len(masked) > self._max_output_chars:
+                return masked
+            window *= 2
 
     def _redact(self, text: str) -> str:
         """`text` with every occurrence of a secret masked; overlapping occurrences form one masked span.
@@ -239,16 +252,11 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         Spans are found in the original text, so masking one secret cannot leave part of another that overlaps it.
         At a shared start, the longest span names the mask.
         """
-        spans = sorted(
-            (match.start(), -len(value), mask)
-            for value, mask in self._secrets
-            for match in re.finditer(f'(?={re.escape(value)})', text)
-        )
         parts: list[str] = []
         end = 0
-        for start, negative_length, mask in spans:
+        for start, negative_length, number in secret_spans(text, self._secret_values):
             if start >= end:
-                parts += [text[end:start], mask]
+                parts += [text[end:start], self._secret_masks[number]]
             end = max(end, start - negative_length)
         return ''.join(parts) + text[end:]
 

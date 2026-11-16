@@ -2401,6 +2401,12 @@ class TestShellSecretEnv:
         assert output.endswith('[REDACTED:Q]')
         assert 'q' not in output
 
+    async def test_capped_output_masks_a_chain_of_overlapping_secrets_whole(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'TOKEN': _SECRET, 'JOIN': 'abcsk-'}, max_output_chars=100)
+        command = 'printf "hello "; for i in $(seq 1000); do printf %s "$TOKEN"; done; echo'
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command=command)
+        assert output == '[stdout]\nhello [REDACTED:TOKEN]\n'
+
     async def test_persistent_tail_does_not_split_a_secret(self, tmp_path: Path) -> None:
         # One line, so the tail keeps the line it cuts: 16,003 bytes after the secret's first three.
         output = await call_tool(

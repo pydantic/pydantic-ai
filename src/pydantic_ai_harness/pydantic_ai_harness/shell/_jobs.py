@@ -19,6 +19,7 @@ import shlex
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import AnyStr
 
 import anyio
 
@@ -513,16 +514,24 @@ class Job:
             pass
 
 
-def past_secrets(data: bytes, cut: int, secrets: Sequence[bytes]) -> int:
-    """`cut`, moved past the end of every occurrence of a secret in `data` that spans it, or that a move makes span."""
-    spans: list[tuple[int, int]] = []
-    for secret in secrets:
-        index = data.find(secret, max(0, cut - len(secret) + 1))
+def secret_spans(data: AnyStr, secrets: Sequence[AnyStr], start: int = 0) -> list[tuple[int, int, int]]:
+    """Every occurrence of a secret in `data` that ends after `start`, overlapping ones included.
+
+    Each is `(start, -length, index in secrets)`, sorted by start and, at a shared start, longest first.
+    """
+    spans: list[tuple[int, int, int]] = []
+    for number, secret in enumerate(secrets):
+        index = data.find(secret, max(0, start - len(secret) + 1))
         while index != -1:
-            spans.append((index, index + len(secret)))
+            spans.append((index, -len(secret), number))
             index = data.find(secret, index + 1)
+    return sorted(spans)
+
+
+def past_secrets(data: AnyStr, cut: int, secrets: Sequence[AnyStr]) -> int:
+    """`cut`, moved past the end of every occurrence of a secret in `data` that spans it, or that a move makes span."""
     # By start, so a span the cut moves into is still ahead of it.
-    for start, end in sorted(spans):
-        if start < cut < end:
-            cut = end
+    for start, negative_length, _ in secret_spans(data, secrets, cut):
+        if start < cut < start - negative_length:
+            cut = start - negative_length
     return cut
