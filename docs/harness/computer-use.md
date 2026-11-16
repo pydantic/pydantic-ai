@@ -110,7 +110,8 @@ Some models only take screenshots up to a size, set by
 `computer_use_screenshot_max_pixels` in their profile. `ComputerUse` sends screenshots at the screen's size, so a
 larger screen stops the run with an error naming the largest size that fits. A 1280x800 screen fits every model.
 
-GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 clicked within a pixel up to 2560x1440 and missed by hundreds of pixels at 3840x2160, while GPT-5.4 already missed one target by 40 pixels at 2560x1440. Keep the screen at or below 2560x1440 for GPT-5.5 and 1920x1200 for GPT-5.4.
+GPT-5.5 clicks accurately up to 2560x1440 and GPT-5.4 up to 2048x1280; larger screens make them miss. Keep the screen at
+or below those sizes.
 
 ## When something goes wrong
 
