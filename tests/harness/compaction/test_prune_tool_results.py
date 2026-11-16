@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -85,12 +85,12 @@ class TestPruneToolResults:
         assert _returns(script.seen[1])['g1'] == JUNK
         assert _returns(script.seen[2]) == {
             'g1': PRUNED,
-            'p1': 'Pruned: the result will be replaced with your summary before your next turn.',
+            'p1': 'Pruned: the result was replaced with your summary.',
         }
         assert _returns(result.all_messages())['g1'] == PRUNED
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
-    async def test_runs_before_automatic_compaction(self) -> None:
+    async def test_automatic_compaction_sees_the_pruned_history(self) -> None:
         @dataclass
         class Recorder(ClearToolResults[None]):
             seen: list[str] = field(default_factory=list[str])
@@ -105,6 +105,36 @@ class TestPruneToolResults:
         await _agent(script, recorder, PruneToolResults()).run('find the TODOs')
 
         assert recorder.seen == [JUNK, PRUNED]
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_survives_a_run_paused_for_approval(self) -> None:
+        deploy_call = ToolCallPart('deploy', {}, tool_call_id='d1')
+        script = Script([GREP, ModelResponse(parts=[*_prune('g1').parts, deploy_call]), DONE])
+        agent = Agent(
+            script.model(),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[PruneToolResults()],
+        )
+
+        @agent.tool_plain
+        def grep(pattern: str) -> str:
+            """Search the repository."""
+            return JUNK
+
+        @agent.tool_plain(requires_approval=True)
+        def deploy() -> str:
+            """Deploy the app."""
+            return 'deployed'
+
+        paused = await agent.run('find the TODOs')
+        assert isinstance(paused.output, DeferredToolRequests)
+
+        await agent.run(
+            message_history=paused.all_messages(), deferred_tool_results=DeferredToolResults(approvals={'d1': True})
+        )
+
+        assert _returns(script.seen[2])['g1'] == PRUNED
 
     async def test_refuses_a_result_from_an_earlier_step(self) -> None:
         look = ModelResponse(parts=[ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g2')])
@@ -165,5 +195,5 @@ async def test_span_marks_the_prune_model_requested(capfire: CaptureLogfire) -> 
     attributes = span['attributes']
     assert attributes['compaction.strategy'] == 'PruneToolResults'
     assert attributes['compaction.model_requested'] is True
-    assert attributes['compaction.messages_before'] == attributes['compaction.messages_after'] == 5
+    assert attributes['compaction.messages_before'] == attributes['compaction.messages_after'] == 4
     assert attributes['compaction.tokens_after'] < attributes['compaction.tokens_before']

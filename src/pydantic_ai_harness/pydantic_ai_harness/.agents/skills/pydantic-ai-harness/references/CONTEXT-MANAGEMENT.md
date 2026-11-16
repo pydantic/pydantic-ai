@@ -246,12 +246,11 @@ agent = Agent(
 ### `PruneToolResults`
 
 `PruneToolResults(placeholder='[tool result pruned]')`: adds a `prune_tool_result(tool_call_id, summary)`
-tool. Before the next model request, the named result's content becomes `placeholder` plus the
-summary, persisted in history. Only results the latest response answered can be pruned; an unknown
-or older ID, a typed result `ClearToolResults` also keeps, or a summary not shorter than the result
-is refused in the tool return. It orders itself before the automatic compaction capabilities and
-`CompactOnRequest`, so their `compact` sees the pruned history; their token triggers anchor on the
-latest response's usage, which still counts the result until the next response. The span gets
+tool. Once a call is accepted, the named result's content becomes `placeholder` plus the summary,
+persisted in history. Only results the latest response answered can be pruned; an unknown or older
+ID, a typed result `ClearToolResults` also keeps, or a summary not shorter than the result is
+refused in the tool return. Token triggers and `ReportContextUsage` anchor on the latest response's
+usage, which still counts the result until the next response. The span gets
 `compaction.model_requested`.
 
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage

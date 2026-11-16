@@ -3,34 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from itertools import islice
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import ToolKind
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
-from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
-from pydantic_ai_harness.compaction._compact_on_request import CompactOnRequest
-from pydantic_ai_harness.compaction._deduplicate_file_reads import DeduplicateFileReads
-from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompaction
-from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
-from pydantic_ai_harness.compaction._shared import (
-    cleared_return,
-    compact_with_span,
-    context_for_request,
-    replace_returns,
-)
-from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
-from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction
-from pydantic_ai_harness.compaction._tiered_compaction import TieredCompaction
+from pydantic_ai_harness.compaction._shared import cleared_return, compact_with_span, replace_returns
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities import ValidatedToolArgs
-    from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.toolsets import AgentToolset
 
 _PRUNE_TOOL_RESULT_KIND = ToolKind('compaction', 'prune_tool_result')
@@ -50,7 +35,7 @@ async def _prune_tool_result(tool_call_id: str, summary: str) -> str:
         summary: What the result contained and anything from it you still need, in a line or two.
     """
     del tool_call_id, summary
-    return 'Pruned: the result will be replaced with your summary before your next turn.'
+    return 'Pruned: the result was replaced with your summary.'
 
 
 @dataclass
@@ -60,16 +45,14 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
     Rule-based clearing keeps the newest results, which is where an unexpectedly large or irrelevant
     result sits right after it arrives. Whether a result is useless is a judgement the model can make
     once it has read it. This capability lets it make that judgement, and replaces the result's content
-    with `placeholder` followed by the model's summary before the next model request of the same run.
+    with `placeholder` followed by the model's summary as soon as the call is accepted.
 
     Only results from the step the model just answered can be pruned, so the edit lands at the end of
     the history and the cached prefix before it is kept. The tool call stays paired with its result,
     and the replacement persists in the run's message history, as `ClearToolResults` does.
 
-    It runs before the automatic compaction capabilities on the same agent, wherever it is listed, so
-    a compaction in the same request works on the pruned history. Their token triggers anchor on the
-    usage of the latest response, which still counts the pruned result, so a prune lowers those
-    estimates from the following request on.
+    Token-based compaction triggers and `ReportContextUsage` anchor on the usage of the latest response,
+    which still counts the pruned result, so a prune lowers their estimates from the following response on.
 
     Example:
         ```python
@@ -88,27 +71,6 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
 
     id: str | None = field(default='prune_tool_results', kw_only=True)
 
-    _pending: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(
-            wraps=[
-                ClampOversizedMessages,
-                ClearToolResults,
-                DeduplicateFileReads,
-                SlidingWindowCompaction,
-                SummarizingCompaction,
-                RelevanceCompaction,
-                TieredCompaction,
-                FallbackCompaction,
-                CompactOnRequest,
-            ]
-        )
-
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> PruneToolResults[AgentDepsT]:
-        """Return a copy with no pending prunes."""
-        return replace(self)
-
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Register the `prune_tool_result` tool."""
         tool = Tool(_prune_tool_result, name='prune_tool_result', tool_kind=_PRUNE_TOOL_RESULT_KIND)
@@ -123,10 +85,10 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
         args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
-        """Accept or refuse a `prune_tool_result` call, answering with the reason when refused.
+        """Replace the result a `prune_tool_result` call names, or answer with the reason it was refused.
 
-        The decision is made here rather than in the tool function: under durable execution the tool
-        can run in an activity that sees neither the message history nor this run's state.
+        This runs in a hook rather than in the tool function: under durable execution the tool can run
+        in an activity that sees neither the message history nor this run's state.
         """
         if tool_def.tool_kind != _PRUNE_TOOL_RESULT_KIND.id:
             return result
@@ -137,32 +99,15 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
             return f'Not pruned: {tool_call_id!r} is not a result from your previous step that can be pruned.'
         if len(content) >= len(str(target.content)):
             return 'Not pruned: the summary is not shorter than the result.'
-        self._pending[tool_call_id] = content
-        return result
-
-    async def before_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        request_context: ModelRequestContext,
-    ) -> ModelRequestContext:
-        """Replace the results the model pruned in the previous step with its summaries."""
-        pending, self._pending = self._pending, {}
-        if not pending:
-            return request_context
         messages: list[ModelMessage] = list(ctx.messages)
 
         async def prune() -> list[ModelMessage]:
-            return replace_returns(messages, pending)
+            return replace_returns(messages, {tool_call_id: content})
 
-        pruned = await compact_with_span(
-            context_for_request(ctx, request_context),
-            strategy='PruneToolResults',
-            messages=messages,
-            compact=prune,
-            model_requested=True,
+        ctx.messages[:] = await compact_with_span(
+            ctx, strategy='PruneToolResults', messages=messages, compact=prune, model_requested=True
         )
-        ctx.messages[:] = pruned
-        return replace(request_context, messages=pruned)
+        return result
 
 
 def _latest_returns(messages: Sequence[ModelMessage]) -> list[ToolReturnPart]:
