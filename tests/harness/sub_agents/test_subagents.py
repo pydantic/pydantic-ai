@@ -872,6 +872,27 @@ Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable o
             ]
         )
 
+    async def test_partial_output_skips_an_answer_still_being_validated(self) -> None:
+        worker = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('unchecked')])), name='worker'
+        )
+
+        @worker.output_validator
+        async def slow(output: str) -> str:
+            await asyncio.sleep(1)
+            return output  # pragma: no cover - cancelled by the timeout
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
     async def test_keep_partial_output_without_text_returns_steering_only(self) -> None:
         async def slow_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             await asyncio.sleep(1)

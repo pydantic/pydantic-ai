@@ -280,7 +280,7 @@ class SubAgent(Generic[AgentDepsT]):
     keep_partial_output: bool = dataclass_field(default=False, kw_only=True)
     """Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response.
     The parent gets it after the steering message, in a `<partial_output>` frame. It has not passed the child's
-    output validation; text from a response the child answered with a retry, such as rejected output, is skipped."""
+    output validation. Only a response the child went on from without a retry counts."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -1648,15 +1648,18 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
 
 def _last_text(messages: Sequence[ModelMessage]) -> str | None:
-    """The text of the last model response that has any, skipping one the run answered with a retry."""
-    retried = False
+    """The text of the last model response the run went on from without a retry.
+
+    A trailing response the run stopped before acting on, such as an answer still being validated, is skipped too.
+    """
+    skip = True
     for message in reversed(messages):
         if isinstance(message, ModelResponse):
-            if message.text and not retried:
+            if message.text and not skip:
                 return message.text
-            retried = False
+            skip = False
         else:
-            retried = any(is_retry(part) for part in message.parts)
+            skip = any(is_retry(part) for part in message.parts)
     return None
 
 
