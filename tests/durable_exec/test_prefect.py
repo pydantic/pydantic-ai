@@ -213,6 +213,7 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
 
 
 def test_durability_codecs() -> None:
@@ -4626,6 +4627,22 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
     assert await run_durable_streams() == snapshot(
         (['hello world'], 'hello world', [PartStartEvent(index=0, part=TextPart(content='hello world'))], 1, 1)
     )
+
+
+async def test_prefect_durability_structured_output_after_preamble_text_in_flow() -> None:
+    """Text streamed before a tool call isn't the final result when the output type is structured.
+
+    The flow replays the task's stream against the parameters the task's model prepared, in which `'auto'` has
+    resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
+    replayed events; one set on the capability runs in the task and would see the live stream.
+    """
+    agents = preamble_text_agents(PrefectDurability)
+
+    @flow
+    async def structured_output_after_preamble_text_flow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
+
+    assert await structured_output_after_preamble_text_flow() == await plain_run_and_stream()
 
 
 async def test_prefect_durability_event_stream_handler() -> None:

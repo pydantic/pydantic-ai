@@ -549,13 +549,33 @@ async def test_gemini_batch_results_dont_delete_a_file_another_project_uploaded_
         # Built lazily, as `errors` only exists when google-genai is installed.
         (lambda: errors.ClientError(429, {'error': {'code': 429, 'status': 'RESOURCE_EXHAUSTED'}}), True),
         (lambda: errors.ServerError(500, {'error': {'code': 500, 'status': 'INTERNAL'}}), False),
+        # What a retrying transport re-raises for the status it gave up on.
+        (
+            lambda: httpx2.HTTPStatusError(
+                'Client error 429',
+                request=httpx2.Request('POST', 'https://generativelanguage.googleapis.com/v1beta/batches'),
+                response=httpx2.Response(429),
+            ),
+            True,
+        ),
+        (
+            lambda: httpx2.HTTPStatusError(
+                'Server error 503',
+                request=httpx2.Request('POST', 'https://generativelanguage.googleapis.com/v1beta/batches'),
+                response=httpx2.Response(503),
+            ),
+            False,
+        ),
     ],
-    ids=['refused', 'server-error'],
+    ids=['refused', 'server-error', 'transport-gave-up-on-refusal', 'transport-gave-up-on-server-error'],
 )
 async def test_gemini_refused_job_deletes_its_input_file(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, make_error: Callable[[], Exception], deleted: bool
 ) -> None:
-    """Nothing reads the file of a job Google refused; after a server error, the job may exist and read it."""
+    """Nothing reads the file of a job Google refused; after a server error, the job may exist and read it.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
     deleted_files = _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_PENDING'})
     error = make_error()
