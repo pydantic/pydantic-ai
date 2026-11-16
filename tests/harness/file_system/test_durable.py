@@ -97,9 +97,8 @@ class ActivityWriteWorkflow(PydanticAIWorkflow):
     __pydantic_ai_agents__ = [_activity_write_agent]
 
     @workflow.run
-    async def run(self, root: str) -> str:
-        result = await _activity_write_agent.run(root + '/note.txt')
-        return result.output
+    async def run(self, root: str) -> None:
+        await _activity_write_agent.run(root + '/note.txt')
 
 
 @pytest.fixture
