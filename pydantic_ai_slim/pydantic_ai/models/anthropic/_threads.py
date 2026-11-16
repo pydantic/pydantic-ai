@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import hashlib
 import hmac
 import json
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -104,18 +105,30 @@ def continue_cache_breakpoints(
     return (requested, applied) if requested else None
 
 
-def may_use_thread(model_settings: AnthropicModelSettings, compaction: BetaCompactionConfigParam | None) -> bool:
+def may_use_thread(
+    model: AnthropicModel, model_settings: AnthropicModelSettings, compaction: BetaCompactionConfigParam | None
+) -> bool:
     """Whether `anthropic_thread` applies to a request.
 
     A compaction request samples no reply, so it never uses one. Nor does a request whose `extra_body` sets `messages`:
-    that replaces the history the thread would be built from.
+    that replaces the history the thread would be built from. Where the model's profile doesn't support threads
+    (`anthropic_supports_message_threads`), the setting is ignored with a warning.
     """
     extra_body = model_settings.get('extra_body')
-    return (
-        bool(model_settings.get('anthropic_thread'))
-        and compaction is None
-        and not (is_str_mapping(extra_body) and 'messages' in extra_body)
+    if (
+        not model_settings.get('anthropic_thread')
+        or compaction is not None
+        or (is_str_mapping(extra_body) and 'messages' in extra_body)
+    ):
+        return False
+    if model.profile.get('anthropic_supports_message_threads', False):
+        return True
+    warnings.warn(
+        f'`anthropic_thread` is not supported on `{type(model.client).__name__}`; the setting will be ignored.',
+        UserWarning,
+        stacklevel=2,
     )
+    return False
 
 
 def with_thread(

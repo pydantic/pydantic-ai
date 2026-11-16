@@ -10,7 +10,7 @@ the tests assert the request bodies the model sent, which a cassette matcher wou
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -41,6 +41,7 @@ from pydantic_ai.messages import sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import MCPServerTool
+from pydantic_ai.profiles import ModelProfile
 
 from ...conftest import RequestCapture, try_import
 from ..conftest import AnthropicModelFactory
@@ -51,12 +52,19 @@ with try_import() as otel_sdk_imports_successful:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropic
+    from anthropic import (
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
 
     from pydantic_ai.models._history_digest import continuation_digest, history_hasher
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.anthropic._threads import thread_digest
-    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -320,6 +328,75 @@ async def test_off_by_default(allow_model_requests: None):
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert 'thread_fingerprint' not in (response.provider_details or {})
+
+
+_CLIENTS: dict[str, Callable[[httpx2.AsyncClient], AsyncAnthropicClient]] = {
+    'api': lambda http_client: AsyncAnthropic(api_key='x', http_client=http_client),
+    'bedrock': lambda http_client: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client),
+    'mantle': lambda http_client: AsyncAnthropicBedrockMantle(
+        api_key='x', aws_region='us-east-1', http_client=http_client
+    ),
+    'vertex': lambda http_client: AsyncAnthropicVertex(
+        project_id='p', region='us-east5', access_token='x', http_client=http_client
+    ),
+    'foundry': lambda http_client: AsyncAnthropicFoundry(
+        api_key='x', base_url='https://example.com/anthropic', http_client=http_client
+    ),
+}
+"""The SDK client for each client name the tests parametrize over, sending through the given HTTP client."""
+
+
+async def _first_request_thread(
+    client_name: str, supported: bool, provider_type: type[AnthropicProvider] = AnthropicProvider
+) -> tuple[object, bool]:
+    """The `thread` the first request on a client sends, and whether it sends the threads beta.
+
+    When the request isn't expected to use a thread, it checks the setting is ignored with a warning.
+    """
+    api = _Api()
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle)) as http_client:
+        client = _CLIENTS[client_name](http_client)
+        agent = Agent(
+            AnthropicModel('claude-sonnet-4-5', provider=provider_type(anthropic_client=client)),
+            model_settings=_SETTINGS,
+        )
+        if supported:
+            await agent.run('Hi')
+        else:
+            with pytest.warns(UserWarning, match=f'`anthropic_thread` is not supported on `{type(client).__name__}`'):
+                await agent.run('Hi')
+
+    [body] = api.bodies
+    # The legacy Bedrock client sends its betas in the body rather than the header.
+    betas = {*api.betas[0].split(','), *body.get('anthropic_beta', [])}
+    return body.get('thread'), _BETA in betas
+
+
+@pytest.mark.parametrize('client_name', ['api', 'bedrock', 'mantle', 'vertex', 'foundry'])
+async def test_thread_by_client(allow_model_requests: None, client_name: str):
+    """Threads are sent where Anthropic offers them, and ignored with a warning on Bedrock and Vertex AI.
+
+    Mocked because these platforms can't be recorded here.
+    """
+    supported = client_name in ('api', 'foundry')
+    expected = ({'type': 'create'}, True) if supported else (None, False)
+    assert await _first_request_thread(client_name, supported) == expected
+
+
+@pytest.mark.parametrize(
+    ('client_name', 'supported'),
+    [pytest.param('api', False, id='api-off'), pytest.param('vertex', True, id='vertex-on')],
+)
+async def test_thread_provider_profile_wins(allow_model_requests: None, client_name: str, supported: bool):
+    """A provider whose profile sets `anthropic_supports_message_threads` wins over the client-class default."""
+
+    class ThreadsProvider(AnthropicProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return AnthropicModelProfile(anthropic_supports_message_threads=supported)
+
+    expected = ({'type': 'create'}, True) if supported else (None, False)
+    assert await _first_request_thread(client_name, supported, ThreadsProvider) == expected
 
 
 async def test_edited_history_starts_a_new_thread(allow_model_requests: None):

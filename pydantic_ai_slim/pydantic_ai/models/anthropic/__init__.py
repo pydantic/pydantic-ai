@@ -537,6 +537,9 @@ _INFERENCE_GEO_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic offers message threads on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic
+# managed) and Microsoft Foundry, not on Bedrock or Vertex AI (Google managed).
+_MESSAGE_THREADS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -733,6 +736,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     leave this off; see
     [Loading untrusted history](../../message-history.md#loading-untrusted-history).
 
+    Threads are available on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and
+    Microsoft Foundry. On Bedrock and Vertex AI, the setting is ignored with a `UserWarning`; see
+    [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads].
     Threads aren't eligible for Zero Data Retention. Defaults to `False`.
     """
 
@@ -1307,6 +1313,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_supports_inference_geo` is on for `AsyncAnthropic` clients and off for the Bedrock, Vertex AI and
         Foundry clients, where the endpoint decides the inference region, unless the provider's profile already sets it.
 
+        `anthropic_supports_message_threads` is on for the `AsyncAnthropic` and Foundry clients and off for the Bedrock
+        and Vertex AI clients, where Anthropic doesn't offer threads, unless the provider's profile already sets it.
+
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
         client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
@@ -1346,6 +1355,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 profile,
                 AnthropicModelProfile(
                     anthropic_supports_inference_geo=not isinstance(client, _INFERENCE_GEO_UNSUPPORTED_CLIENTS)
+                ),
+            )
+        if 'anthropic_supports_message_threads' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    anthropic_supports_message_threads=not isinstance(client, _MESSAGE_THREADS_UNSUPPORTED_CLIENTS)
                 ),
             )
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
@@ -1753,16 +1769,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         on one are settled here, on the request as it would otherwise be sent, so the rest of the request (and the
         prompt cache it reads) stays the same.
 
-        With `thread_record`, the request uses a message thread when `anthropic_thread` is set (see
-        `_first_attempt`), and the record gets the fingerprint to stamp on the response when it did, or when threads
-        don't support the request.
+        With `thread_record`, the request uses a message thread when `anthropic_thread` applies (see `may_use_thread`
+        and `_first_attempt`), and the record gets the fingerprint to stamp on the response when it did, or when
+        threads don't support the request.
         """
+        if thread_record is not None and not may_use_thread(self, model_settings, compaction):
+            thread_record = None
         prepared = await self._prepare_messages_create(
             messages,
             model_settings,
             model_request_parameters,
             compaction=compaction,
-            record_cache_breakpoints_on_send=thread_record is not None and may_use_thread(model_settings, compaction),
+            record_cache_breakpoints_on_send=thread_record is not None,
         )
         anthropic_profile = self.profile
         client = _with_max_retries(self.client, model_settings)
@@ -1783,7 +1801,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         prepared.container, initial_thinking, initial_betas, initial_thinking_override, thread
                     ),
                     thread_record,
-                    compaction,
                 )
             except APIStatusError as error:
                 if (
@@ -1823,9 +1840,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared: _PreparedMessagesCreate,
         send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
         thread_record: ThreadRecord | None,
-        compaction: BetaCompactionConfigParam | None,
     ) -> BetaMessage | AnthropicEventStream:
-        """Send the first attempt of a request, in a message thread when `anthropic_thread` is set.
+        """Send the first attempt of a request, in a message thread when it has a `thread_record`.
 
         In a thread it's a continue request when possible, else a create. A continue request needs the most recent
         response in the history to have been stored in a thread whose fixed fields match this request's. A continue
@@ -1834,9 +1850,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         request with the same fingerprint is sent without a thread straight away. The recovery retries in
         `_messages_create` send no thread, as they change fixed fields, so a response is only stamped with the
         fingerprint of a thread request that succeeded, or of a request threads don't support (see `ThreadRecord`).
-        A compaction request samples no reply, so it never uses a thread.
         """
-        if thread_record is None or not may_use_thread(model_settings, compaction):
+        if thread_record is None:
             return await send(None)
         params = self._messages_create_params(
             messages,
