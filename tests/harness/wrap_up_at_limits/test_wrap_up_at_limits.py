@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ToolChoice
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import WrapUpAtLimits
 from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, NOT_EXECUTED
+from pydantic_graph import End
 
 from ._messages import ORIGIN, wrap_ups
 
@@ -39,11 +42,23 @@ class _Researcher:
             ]
         )
 
+    async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        for index, part in enumerate(self(messages, info).parts):
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {index: DeltaToolCall(part.tool_name, part.args_as_json_str(), tool_call_id=part.tool_call_id)}
+
 
 def _agent(
     model: _Researcher, looked_up: list[str], capability: WrapUpAtLimits[None] | None = None
 ) -> Agent[None, str]:
-    agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[capability or WrapUpAtLimits()])
+    agent = Agent(
+        FunctionModel(model, stream_function=model.stream),
+        deps_type=type(None),
+        capabilities=[capability or WrapUpAtLimits()],
+    )
 
     @agent.tool_plain
     def look_up(topic: str) -> str:
@@ -90,6 +105,56 @@ class TestWrapUpAtLimits:
         assert wrap_ups(result.new_messages()) == [
             (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'tool_calls_limit'})
         ]
+
+    async def test_over_budget_batch_is_answered_under_run_stream(self) -> None:
+        looked_up: list[str] = []
+
+        async with _agent(_Researcher(), looked_up).run_stream(
+            'Research', usage_limits=UsageLimits(tool_calls_limit=3)
+        ) as stream:
+            output = await stream.get_output()
+            messages = stream.all_messages()
+
+        assert output == 'what I found so far'
+        assert sorted(looked_up) == ['a1', 'b1']
+        returns = [
+            (part.tool_call_id, part.content)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert returns == [
+            ('a1', 'notes on a1'),
+            ('b1', 'notes on b1'),
+            ('a2', NOT_EXECUTED),
+            ('b2', NOT_EXECUTED),
+        ]
+
+    async def test_batch_the_caller_streamed_keeps_its_results(self) -> None:
+        looked_up: list[str] = []
+        agent = _agent(_Researcher(), looked_up)
+
+        with capture_run_messages() as messages, pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
+            async with agent.iter('Research', usage_limits=UsageLimits(tool_calls_limit=3)) as run:
+                node = run.next_node
+                while not isinstance(node, End):
+                    if Agent.is_call_tools_node(node):
+                        # Streaming the node runs its tools, so the batch is past the point of being answered instead.
+                        async with node.stream(run.ctx) as events:
+                            async for _ in events:
+                                pass
+                    node = await run.next(node)
+
+        assert sorted(looked_up) == ['a1', 'b1']
+        returns = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert returns == ['notes on a1', 'notes on b1']
 
     async def test_exhausted_tool_calls_wrap_up_the_next_request(self) -> None:
         model = _Researcher()

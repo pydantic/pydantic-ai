@@ -54,7 +54,7 @@ When the run's `UsageLimits` leave room for one more model request but not for a
 - Token use is projected from this run's responses: each further request is assumed to grow by as much as the last response grew over the one before, plus the final prompt. A final request that uses more than projected still raises `UsageLimitExceeded`.
 - `cost_limit` isn't projected, and raises as before.
 - A model that still calls tools on the final request has them answered with `NOT_EXECUTED` when the tool-call budget is used up, and run as usual otherwise. The next request is made the last again, or raises `UsageLimitExceeded` when no request is left.
-- Under `Agent.run_stream()`, which runs a batch of tool calls before the capability can answer it, a batch over `tool_calls_limit` raises as before. A run resumed with [deferred tool results](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) is checked by core as before too.
+- A batch you stream yourself with `node.stream()` under `Agent.iter()` runs before the capability can answer it, so one over `tool_calls_limit` raises as before. A run resumed with [deferred tool results](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) is checked by core as before too.
 
 ## Telling a wrapped-up answer from a finished one
 

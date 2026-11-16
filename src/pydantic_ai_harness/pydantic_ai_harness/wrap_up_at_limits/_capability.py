@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pydantic_ai import CallToolsNode, ModelRequestNode
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult, WrapNodeRunHandler
+from pydantic_ai.capabilities import AbstractCapability, AgentNode
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -49,8 +49,9 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for only one more model
     request, that request is made the last: it keeps the tool definitions with `tool_choice='none'`, so
     the cached tools and instructions still match, and gets a request-scoped system prompt asking the
-    model to answer now. The prompt's `metadata` holds `'origin': 'pydantic-ai-harness.wrap_up_at_limits.v1'` and the
-    `'limit'` that triggered it, which tells a wrapped-up answer from a finished one.
+    model to answer now. The prompt's `metadata` holds the `'origin'`
+    `'pydantic-ai-harness.wrap_up_at_limits.v1'` and the `'limit'` that triggered it, which tells a
+    wrapped-up answer from a finished one.
 
     ```python
     from pydantic_ai import Agent
@@ -63,34 +64,32 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     prompt: str = DEFAULT_WRAP_UP_PROMPT
     """What the model is told on the final request."""
 
-    async def wrap_node_run(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        node: AgentNode[AgentDepsT],
-        handler: WrapNodeRunHandler[AgentDepsT],
-    ) -> NodeResult[AgentDepsT]:
+    async def before_node_run(
+        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]
+    ) -> AgentNode[AgentDepsT]:
         """Answer a tool-call batch that would exceed `tool_calls_limit` as not executed, so the next request wraps up.
 
-        None of the batch's calls run, as with core's own check. With no request left, or when the run resumes
-        with deferred tool results, core decides as usual.
+        None of the batch's calls run, as with core's own check. With no request left, on a run resumed with
+        deferred tool results, or for a node whose tools already ran, core decides as usual.
         """
         limits = ctx.usage_limits
         if (
             not isinstance(node, CallToolsNode)
             or node.tool_call_results is not None
+            # A caller that streamed the node under `Agent.iter()` already ran its tools.
+            or node._wrapped_events_iterator is not None  # pyright: ignore[reportPrivateUsage]
             or limits is None
             or limits.tool_calls_limit is None
             or (limits.request_limit is not None and ctx.usage.requests >= limits.request_limit)
         ):
-            return await handler(node)
+            return node
         calls = node.model_response.tool_calls
         tools = ctx.tools
         function_calls = sum(
             1 for call in calls if (tool := tools.get(call.tool_name)) is None or tool.kind == 'function'
         )
         if ctx.usage.tool_calls + function_calls <= limits.tool_calls_limit:
-            return await handler(node)
+            return node
         parts: list[ModelRequestPart] = [
             ToolReturnPart(
                 call.tool_name,
