@@ -63,13 +63,14 @@ class DeferredToolRequests:
     passed through any [tool validation hooks](../hooks.md#tool-validation-hooks): values coerced, keys the
     schema doesn't accept dropped, and any rewrite by a hook such as `after_tool_validate` applied. They are
     keyed by the tool's Python parameter names and stored in their JSON-compatible form, a nested model's
-    fields under their aliases, so they survive serialization unchanged. They are stored and shown wherever
+    fields under their aliases and `bytes` as base64, so they survive serialization unchanged. They are stored and shown wherever
     the requests are, so a validation hook shouldn't add a value the approver may not see.
 
     When an approved call resumes, its recorded arguments are validated again, so a validation hook whose
     output isn't determined by its input can give the tool different arguments than these.
 
-    A call that [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] ends on because its tool requires
+    A call that [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or
+    [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] ends on because its tool requires
     approval or is external has none: that path doesn't validate the call
     ([#13690](https://github.com/pydantic/pydantic-ai/issues/13690)).
     """
@@ -163,12 +164,12 @@ class DeferredToolRequests:
 def jsonable_validated_args(validated_args: dict[str, Any] | None) -> dict[str, Any]:
     """A deferred call's validated arguments in the form [`DeferredToolRequests.validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args] holds them.
 
-    A value Pydantic can't serialize is stored as its `str()`, so one tool parameter can't make the
-    whole `DeferredToolRequests` unserializable.
+    A value Pydantic can't serialize is stored as its `str()`, and `bytes` as base64, as they needn't be UTF-8,
+    so one tool parameter can't make the whole `DeferredToolRequests` unserializable.
     """
     # Only a call whose arguments validated can be deferred, and a function tool's validated arguments are a dict.
     assert validated_args is not None
-    return to_jsonable_python(validated_args, serialize_unknown=True)
+    return to_jsonable_python(validated_args, serialize_unknown=True, bytes_mode='base64')
 
 
 @dataclass(kw_only=True)

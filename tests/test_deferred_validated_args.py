@@ -208,6 +208,34 @@ async def test_external_call_carries_validated_args():
     )
 
 
+async def test_bytes_are_stored_as_base64():
+    """A `bytes` argument is stored as base64, so one that isn't UTF-8 doesn't stop the call from being deferred.
+
+    The model's JSON arguments only validate to UTF-8 `bytes`, so a validation hook supplies the binary value.
+    """
+
+    class LoadPayload(AbstractCapability[Any]):
+        async def after_tool_validate(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            return {'payload': b'\x89PNG'}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('upload', {'payload': 'image.png'}, tool_call_id='call')])
+
+    agent = Agent(FunctionModel(respond), output_type=[str, DeferredToolRequests], capabilities=[LoadPayload()])
+
+    @agent.tool_plain(requires_approval=True)
+    def upload(payload: bytes) -> str:  # pragma: no cover
+        # Never approved: the test asserts the pending request.
+        return 'uploaded'
+
+    result = await agent.run('go')
+    requests = result.output
+    assert isinstance(requests, DeferredToolRequests)
+    assert requests.validated_args == snapshot({'call': {'payload': 'iVBORw=='}})
+
+
 async def test_unserializable_value_is_stored_as_str():
     """A parameter value Pydantic can't serialize is stored as its `str()`, so the requests stay serializable."""
 
