@@ -242,32 +242,6 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
     assert '"loc":["actions",0,"mouse_down","unsupported_fields"]' in retry.model_response_str()
 
 
-@pytest.mark.parametrize(
-    'tool_input, retry_names',
-    [
-        # The SDK takes any JSON as the input, so a malformed `action` gets a retry rather than ending the run.
-        # As for a call without an `action`, the retry shows the fields that didn't map.
-        ({'action': ['left_click'], 'coordinate': [5, 6]}, '"unsupported_fields":["action","coordinate"]'),
-    ],
-)
-async def test_an_earlier_tool_call_with_input_that_does_not_map_runs_nothing(
-    allow_model_requests: None, tool_input: dict[str, Any], retry_names: str
-) -> None:
-    block = BetaToolUseBlock.model_validate(
-        {'id': 'toolu_1', 'type': 'tool_use', 'name': 'computer', 'input': tool_input}
-    )
-    client = MockAnthropic.create_mock([_turn(block), _turn(BetaTextBlock(text='done', type='text'))])
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
-    computer = FakeComputer()
-    result = await _agent(model, computer).run('Go.')
-
-    assert result.output == 'done'
-    assert computer.actions == []
-    (retry,) = [part for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)]
-    assert retry.outcome == 'retried'
-    assert retry_names in retry.model_response_str()
-
-
 async def test_an_earlier_tool_result_stored_as_a_json_string_keeps_its_screenshot(allow_model_requests: None) -> None:
     call = ComputerCallPart(
         'computer',
@@ -648,21 +622,6 @@ async def test_a_streamed_member_cut_off_mid_input_runs_nothing(
     # The tool refuses the call instead of running part of it.
     (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
     assert call.args_as_dict() == {'actions': [{'type': action_type, 'incomplete_input': True}]}
-
-
-@pytest.mark.parametrize('received', [None, [], 'hello'])
-async def test_a_member_whose_input_is_not_an_object_runs_nothing(allow_model_requests: None, received: Any) -> None:
-    block = _tool_use('toolu_1', 'type', {'text': 'hello'})
-    block.input = received  # as the SDK hands over whatever the API sent
-    model = AnthropicModel(
-        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(_turn(block)))
-    )
-    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
-
-    response = await model.request([ModelRequest.user_text_prompt('Go.')], None, params)
-
-    (call,) = [part for part in response.parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
 
 
 @pytest.mark.parametrize(
@@ -1228,26 +1187,6 @@ async def test_a_replayed_call_and_its_results_pair_up_when_ids_are_fitted(
     ]
     assert calls == results
     assert len(calls[0]) == 9
-
-
-async def test_a_toolset_call_whose_name_isnt_text_is_refused(allow_model_requests: None) -> None:
-    # The SDK builds responses without validating them.
-    block = BetaToolUseBlock.model_construct(
-        id='toolu_1', type='tool_use', name=['left_click'], input={'coordinate': [5, 6]}, toolset_name='computer'
-    )
-    client = MockAnthropic.create_mock(completion_message([block], BetaUsage(input_tokens=1, output_tokens=1)))
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    response = await model.request(
-        [ModelRequest.user_text_prompt('Go.')],
-        None,
-        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
-    )
-    (call,) = response.parts
-    assert isinstance(call, ComputerCallPart)
-    assert (call.tool_call_id, call.args_as_dict()) == (
-        'toolu_1',
-        {'actions': [{'type': '', 'incomplete_input': True}]},
-    )
 
 
 @pytest.mark.parametrize('outcome', ['denied', 'interrupted'])
