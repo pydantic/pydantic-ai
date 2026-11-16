@@ -150,7 +150,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert [r['content'][0]['text'] for r in results] == [
         'OK',
         "Ran 3 of 5 actions. The next one failed: the fake display cannot perform 'hold_key'",
-        "the fake display cannot perform 'hold_key'",
+        'Failed.',
         NOT_EXECUTED,
     ]
     assert all(r['toolset_name'] == 'computer' for r in results)
@@ -177,6 +177,43 @@ async def test_a_failed_calls_text_goes_back_once_on_the_last_member(allow_model
     assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
         (True, [ON_LAST]),
         (True, ['Taking the screenshot failed: scrot: not found']),
+    ]
+
+
+async def test_a_hook_that_redacts_a_failure_redacts_every_member(allow_model_requests: None) -> None:
+    """The error in a result's metadata never reaches Claude: only the content a hook leaves does."""
+
+    async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
+        return ToolReturn(
+            ['Driver error: token-SECRET'], metadata={'performed': 1, 'error': 'Driver error: token-SECRET'}
+        )
+
+    hooks = Hooks[object]()
+
+    @hooks.on.after_tool_execute
+    async def redact(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: object, result: ToolReturn
+    ) -> ToolReturn:
+        return ToolReturn(['Driver error (redacted).'], metadata=result.metadata)
+
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'left_click', {'coordinate': [1, 2]}), _tool_use('toolu_2', 'type', {'text': 'hi'})
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await Agent(
+        model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)], capabilities=[NativeTool(COMPUTER_TOOL), hooks]
+    ).run('Go.')
+
+    _, second = get_mock_chat_completion_kwargs(client)
+    results = second['messages'][-1]['content']
+    assert [(r['is_error'], [block['text'] for block in r['content']]) for r in results] == [
+        (False, ['Driver error (redacted).']),
+        (True, ['Failed.']),
     ]
 
 
@@ -867,7 +904,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             for r in sent
             if not r['is_error']
             for block in r['content']
-            if block['type'] != 'text' or not (block['text'] in ('OK', ON_LAST) or block['text'].startswith('Failed: '))
+            if block['type'] != 'text' or block['text'] not in ('OK', ON_LAST, 'Failed.')
         ]
         expected = [item if isinstance(item, str) else base64.b64encode(item.data).decode() for item in content]
         assert carried == expected
@@ -909,7 +946,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [1, 1],
             ['Action 2 of 2 (type) failed: no keyboard.', _PNG],
             {'performed': 1, 'error': 'no keyboard'},
-            [(False, ['Action 2 of 2 (type) failed: no keyboard.', 'image']), (True, ['no keyboard'])],
+            [(False, ['Action 2 of 2 (type) failed: no keyboard.', 'image']), (True, ['Failed.'])],
             id='recorded-counts',
         ),
         # Nothing ran: the first call carries the result and states its failure in text, as an error can't hold it.
@@ -918,7 +955,7 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
             [1, 1],
             ['Action 1 of 2 (click) failed: no mouse.', _PNG],
             {'performed': 0, 'error': 'no mouse'},
-            [(False, ['Failed: no mouse', 'Action 1 of 2 (click) failed: no mouse.', 'image']), (True, [NOT_EXECUTED])],
+            [(False, ['Failed.', 'Action 1 of 2 (click) failed: no mouse.', 'image']), (True, [NOT_EXECUTED])],
             id='failed-first',
         ),
     ],

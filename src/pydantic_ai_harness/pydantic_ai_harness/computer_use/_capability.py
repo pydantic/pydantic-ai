@@ -224,6 +224,13 @@ class _NotRun:
         return UserError(self.message)
 
 
+def _not_run_error(outcome: _NotRun, run: _RunButtons | None, stray: list[MouseButton]) -> Exception:
+    """The error for a call that didn't run, keeping the buttons a failed call couldn't release for the run's end."""
+    if run is not None and outcome.kind == 'tool':
+        run.stray = [*stray, *outcome.held]
+    return outcome.error()
+
+
 def _model_limit(model: AbstractModel, call: ComputerCallPart | None = None) -> _ScreenshotLimit:
     """The largest screenshot every model that may answer takes, and the one that made `call`, as recorded on it."""
     models = candidate_models(model)
@@ -631,11 +638,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # A call that never reports, such as an interrupted one, may leave any of these pressed for the run's end.
             pressing: list[MouseButton] = [action.button for action in actions if isinstance(action, MouseDown)]
             run.held, run.stray = [], [*stray, *plan.held, *pressing]
-        outcome = await self._call(ctx, actions, plan)
-        if isinstance(outcome, _NotRun):
-            if run is not None and outcome.kind == 'tool':
-                run.stray = [*stray, *outcome.held]
-            raise outcome.error()
+        try:
+            outcome = await self._call(ctx, actions, plan)
+            if isinstance(outcome, _NotRun):
+                raise _not_run_error(outcome, run, stray)
+        except UserError:
+            # Refused before anything acted, so this call's presses never ran.
+            if run is not None:
+                run.stray = [*stray, *plan.held]
+            raise
         tool_return, held = outcome
         result: ComputerResult = tool_return.metadata
         if run is not None:
