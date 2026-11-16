@@ -324,6 +324,8 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
 
 
 def test_durable_flows_from_each_tool_setter_into_the_tool_definition() -> None:
+    """A unit test: `ToolDefinition.durable` never reaches the provider, so a recorded request can't observe it."""
+
     def plain() -> str:
         return 'never called'  # pragma: no cover
 
@@ -357,22 +359,32 @@ async def test_durable_false_runs_a_function_tool_outside_the_durable_unit() -> 
     class KeyedJournalDurability(JournalDurability):
         engine_spec = replace(JournalDurability.engine_spec, tool_config_key='journal')
 
+    ran: list[str] = []
+
     def validate(ctx: RunContext[None], value: int) -> None:
         pass
 
+    def validate_inline(ctx: RunContext[None], value: int) -> None:
+        ran.append('validate_inline')
+
     async def inline(value: int) -> str:
+        ran.append('inline')
         return 'inline'
 
     async def journaled(value: int) -> str:
+        ran.append('journaled')
         return 'journaled'
 
     async def engine_key_wins(value: int) -> str:
+        ran.append('engine_key_wins')
         return 'engine'
 
     async def prepared(value: int) -> str:
+        ran.append('prepared')
         return 'prepared'
 
     async def reset(value: int) -> str:
+        ran.append('reset')
         return 'reset'
 
     async def set_durable(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -381,7 +393,7 @@ async def test_durable_false_runs_a_function_tool_outside_the_durable_unit() -> 
 
     toolset = FunctionToolset(
         tools=[
-            Tool(inline, args_validator=validate, durable=False),
+            Tool(inline, args_validator=validate_inline, durable=False),
             Tool(journaled, args_validator=validate),
             Tool(engine_key_wins, durable=False, metadata={'journal': {}}),
             Tool(prepared),
@@ -406,6 +418,8 @@ async def test_durable_false_runs_a_function_tool_outside_the_durable_unit() -> 
         'agent__function_toolset__functions.call_tool:reset',
         'agent__function_toolset__functions.validate_args',
     ]
+    # The opted-out tools and the opted-out validator ran too, outside the journal.
+    assert sorted(set(ran)) == ['engine_key_wins', 'inline', 'journaled', 'prepared', 'reset', 'validate_inline']
 
 
 async def _async_tool() -> str:
@@ -507,7 +521,9 @@ async def test_runtime_function_toolset_opted_out_with_durable_false_is_allowed(
     agent = Agent[None, str](TestModel(), name='agent', deps_type=type(None), capabilities=[KeyedJournalDurability()])
 
     async def run(
-        durable: bool | None, metadata: dict[str, Any] | None = None, function: Callable[[], Any] = async_tool
+        durable: bool | None,
+        metadata: dict[str, Any] | None = None,
+        function: Callable[[], str | Awaitable[str]] = async_tool,
     ) -> None:
         tool = Tool(function, durable=durable, metadata=metadata)
         await agent.run('Go.', toolsets=[FunctionToolset(tools=[tool])])

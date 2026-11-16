@@ -8410,7 +8410,7 @@ async def _where_it_ran() -> str:
     return 'workflow' if workflow.in_workflow() else 'activity'
 
 
-async def _keep_in_workflow(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+async def _keep_in_workflow(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     # Deterministic, as a `prepare` setting `durable` must be: replay sees the same placement.
     return [replace(tool_def, durable=False) if tool_def.name == 'in_workflow' else tool_def for tool_def in tool_defs]
 
