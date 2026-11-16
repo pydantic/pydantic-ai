@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from pydantic import TypeAdapter
 from typing_extensions import TypeAliasType, TypedDict
 
+from .._utils import decode_duration
+
 if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
@@ -330,14 +332,10 @@ class SpanNode:
 
     def _duration_matches(self, query: SpanQuery) -> bool:
         if (min_duration := query.get('min_duration')) is not None:
-            if not isinstance(min_duration, timedelta):
-                min_duration = timedelta(seconds=min_duration)
-            if self.duration < min_duration:
+            if self.duration < decode_duration(min_duration):
                 return False
         if (max_duration := query.get('max_duration')) is not None:
-            if not isinstance(max_duration, timedelta):
-                max_duration = timedelta(seconds=max_duration)
-            if self.duration > max_duration:
+            if self.duration > decode_duration(max_duration):
                 return False
         return True
 

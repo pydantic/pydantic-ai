@@ -402,7 +402,7 @@ evaluators:
 evaluators:
 - IsInstance: str
 - Contains: "required text"
-- MaxDuration: 2.0
+- MaxDuration: 2.0  # seconds, or an ISO-8601 duration string like PT5S
 ```
 
 The short form passes its value as the first positional argument, so a keyword-only parameter uses the dict form even when it is the only one:
@@ -429,7 +429,7 @@ evaluators:
     minimum: 4
 ```
 
-The short form reads a mapping with string keys as keyword arguments, so a single parameter whose value is such a mapping, like a `dict` or a Pydantic model, uses the dict form too.
+The short form reads a mapping with string keys as keyword arguments, so a value that is such a mapping, like a `dict` or a Pydantic model, goes in the dict form under its parameter's name, as in `Equals: {value: {a: 1}}`.
 
 ### 3. Multiple Parameters (Dict Form)
 

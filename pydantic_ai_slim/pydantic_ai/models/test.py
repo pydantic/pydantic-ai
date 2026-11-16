@@ -1,12 +1,13 @@
 from __future__ import annotations as _annotations
 
 import itertools
+import math
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal, assert_never, cast
+from typing import Any, Literal, TypeVar, assert_never, cast
 
 import pydantic_core
 
@@ -479,6 +480,7 @@ class TestStreamedResponse(StreamedResponse):
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
+_BoundT = TypeVar('_BoundT', int, float)
 
 
 class _JsonSchemaTestData:
@@ -519,6 +521,9 @@ class _JsonSchemaTestData:
             case None:
                 # if there's no type or ref, we can't generate anything
                 return self._char()
+            case [_, *_] as types:
+                # a JSON Schema type list: the seed picks one member, as an `anyOf` does
+                return self._gen_any({**schema, 'type': types[self.seed % len(types)]})
             case 'object':
                 return self._object_gen(schema)
             case 'string':
@@ -597,32 +602,22 @@ class _JsonSchemaTestData:
 
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
-        maximum = schema.get('maximum')
-        minimum = schema.get('minimum')
-        if minimum is not None and maximum == minimum:
-            return minimum
-
-        if maximum is None and (exc_max := schema.get('exclusiveMaximum')) is not None:
-            maximum = exc_max - 1
-
-        if minimum is None and (exc_min := schema.get('exclusiveMinimum')) is not None:
-            minimum = exc_min + 1
+        # Each bound moves to the nearest integer inside it, so fractional bounds still generate integers.
+        minimum = None if (bound := self._finite_bound(schema, 'minimum')) is None else math.ceil(bound)
+        maximum = None if (bound := self._finite_bound(schema, 'maximum')) is None else math.floor(bound)
+        if (exc_min := self._finite_bound(schema, 'exclusiveMinimum')) is not None:
+            minimum = self._tightest_bound(minimum, math.floor(exc_min) + 1, max)
+        if (exc_max := self._finite_bound(schema, 'exclusiveMaximum')) is not None:
+            maximum = self._tightest_bound(maximum, math.ceil(exc_max) - 1, min)
 
         if minimum is not None and maximum is not None:
-            span = maximum - minimum
-            if span == 0:
-                # Exclusive-bound adjustments can collapse a valid narrow range.
+            if minimum == maximum:
                 return minimum
-            if (
-                schema.get('type') == 'integer'
-                and minimum % 1 == 0
-                and maximum % 1 == 0
-                and 'exclusiveMinimum' not in schema
-                and 'exclusiveMaximum' not in schema
-                and span > 0
-            ):
-                minimum = int(minimum)
-                span = int(maximum) - minimum + 1
+            span = maximum - minimum
+            # Only a schema without any exclusive key, even an ignored one, reaches its maximum. Letting exclusive
+            # ranges reach it too would change the values existing snapshots pin for them.
+            if 'exclusiveMinimum' not in schema and 'exclusiveMaximum' not in schema and span > 0:
+                span += 1
             return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
@@ -652,9 +647,21 @@ class _JsonSchemaTestData:
             return float(self.seed)
 
     @staticmethod
+    def _finite_bound(schema: dict[str, Any], key: str) -> float | None:
+        """A JSON Schema bound, or `None` when it is missing, not a number or not finite.
+
+        A draft-4 boolean `exclusiveMinimum` or `exclusiveMaximum` only marks its inclusive bound as exclusive,
+        so it counts as missing too.
+        """
+        bound = schema.get(key)
+        if isinstance(bound, bool) or not isinstance(bound, int | float):
+            return None
+        return bound if isinstance(bound, int) or math.isfinite(bound) else None
+
+    @staticmethod
     def _tightest_bound(
-        bound: float | None, exclusive_bound: float | None, tightest: Callable[[float, float], float]
-    ) -> float | None:
+        bound: _BoundT | None, exclusive_bound: _BoundT | None, tightest: Callable[[_BoundT, _BoundT], _BoundT]
+    ) -> _BoundT | None:
         """The tighter of an inclusive and an exclusive JSON Schema bound, as `tightest` picks it."""
         if exclusive_bound is None:
             return bound
