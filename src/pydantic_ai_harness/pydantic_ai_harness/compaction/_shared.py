@@ -848,6 +848,16 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
     return cutoff
 
 
+def _suffix_sums(values: list[int]) -> list[int]:
+    """Return suffix sums where ``result[i] == sum(values[i:])`` and ``result[len(values)] == 0``."""
+    suffix = [0] * (len(values) + 1)
+    running = 0
+    for i in range(len(values) - 1, -1, -1):
+        running += values[i]
+        suffix[i] = running
+    return suffix
+
+
 def find_token_cutoff(
     messages: list[ModelMessage],
     target_tokens: int,
@@ -860,19 +870,20 @@ def find_token_cutoff(
     estimate. Attached instructions do not count toward this message-content floor. A zero
     target retains the legacy behavior below.
     """
+    tail_tokens: Callable[[int], int]
     if _has_reported_usage(messages):
-        counts = estimate_message_tokens(messages, tokenizer)
-
-        def tail_tokens(start: int) -> int:
-            return sum(counts[start:])
+        suffix = _suffix_sums(estimate_message_tokens(messages, tokenizer))
+        tail_tokens = lambda start: suffix[start]  # noqa: E731
     elif target_tokens > 0:
-
-        def tail_tokens(start: int) -> int:
-            return _count_segments(_collect_message_text(messages[start:]), tokenizer)
+        per_message = _message_segments(messages)
+        if tokenizer is not None:
+            suffix = _suffix_sums([sum(tokenizer(s) for s in segs) for segs in per_message])
+            tail_tokens = lambda start: suffix[start]  # noqa: E731
+        else:
+            suffix_chars = _suffix_sums([sum(len(s) for s in segs) for segs in per_message])
+            tail_tokens = lambda start: suffix_chars[start] // CHARS_PER_TOKEN  # noqa: E731
     else:
-
-        def tail_tokens(start: int) -> int:
-            return estimate_token_count(messages[start:], tokenizer)
+        tail_tokens = lambda start: estimate_token_count(messages[start:], tokenizer)  # noqa: E731
 
     if target_tokens > 0:
         lo, hi = 0, len(messages)

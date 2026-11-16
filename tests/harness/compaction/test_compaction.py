@@ -1756,6 +1756,20 @@ class TestTokenizerParameter:
         remaining = messages[cutoff:]
         assert estimate_token_count(remaining, tokenizer=lambda s: len(s)) <= 15
 
+    def test_find_token_cutoff_tokenizes_each_message_once(self):
+        """find_token_cutoff precomputes suffix counts instead of re-tokenizing on every binary-search step."""
+        messages: list[ModelMessage] = [_user(f'msg-{i}-' + 'x' * 20) for i in range(64)]
+        calls = 0
+
+        def counting_tokenizer(s: str) -> int:
+            nonlocal calls
+            calls += 1
+            return len(s)
+
+        cutoff = find_token_cutoff(messages, 200, tokenizer=counting_tokenizer)
+        assert calls == len(messages)
+        assert cutoff == 56
+
 
 # ---------------------------------------------------------------------------
 # Preserve first user message
