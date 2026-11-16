@@ -368,7 +368,7 @@ def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int
             compression = wav.getcomptype()
             if source_rate != sample_rate:
                 raise UserError(
-                    f'Cannot seed retained audio recorded at {source_rate} Hz into a {provider_name} realtime session '
+                    f'Cannot seed retained audio recorded at {source_rate} Hz into {provider_name} realtime session '
                     f'expecting {sample_rate} Hz. Resample it before passing `message_history`.'
                 )
             if channels != 1 or sample_width != 2 or compression != 'NONE':
