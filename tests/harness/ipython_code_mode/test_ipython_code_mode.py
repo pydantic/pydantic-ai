@@ -515,6 +515,14 @@ def book(*, trip: Trip, travellers: int) -> str:
         with pytest.raises(UserError, match="Tool name 'run_code' is reserved"):
             await agent.run('Hi')
 
+    async def test_a_tool_named_after_a_builtin_is_rejected(self, kernel: IPythonKernel) -> None:
+        def open(path: str) -> str:
+            return path  # pragma: no cover
+
+        agent = Agent(_scripted(), capabilities=[IPythonCodeMode(kernel=kernel)], tools=[Tool(open)])
+        with pytest.raises(UserError, match="Tool name 'open' is a Python builtin"):
+            await agent.run('Hi')
+
     async def test_the_tools_get_the_run_context(self, kernel: IPythonKernel) -> None:
         def whoami(ctx: RunContext[str]) -> str:
             return ctx.deps

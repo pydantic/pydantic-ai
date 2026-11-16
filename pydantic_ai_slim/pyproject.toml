@@ -87,7 +87,9 @@ google = ["google-genai>=2.30.0,<3"]
 anthropic = ["anthropic>=1.15.0"]
 # `xai-sdk>=1.16.0` adds the `image_file_id`/`image_file_ids` arguments to `image.sample()` and
 # `image.sample_batch()`, which carry `UploadedFile` reference images to the image generation API.
-xai = ["xai-sdk>=1.16.0"]
+# 1.21.0 is the first release that allows protobuf 7, which other extras (such as the harness's
+# `kubernetes`) require, so the lowest-versions CI job can still install this floor.
+xai = ["xai-sdk>=1.21.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=3.31.0"]
 # `mistralai>=3.0` is built on `httpx2` only; 3.1.0 adds the `ResourceChunk` and `ResourceLinkChunk` content types `_map_content` imports.
