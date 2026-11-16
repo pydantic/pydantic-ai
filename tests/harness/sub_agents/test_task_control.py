@@ -2451,6 +2451,7 @@ class TestTaskControlEdges:
         # The question itself came whole as its own message.
         assert returns[1].splitlines()[1] == f'  Waiting for an answer to: {question[:80] + "..."!r}'
         assert returns[2].splitlines()[-1] == f'Waiting for an answer to: {question[:80] + "..."!r}'
+        assert 'ask_parent' not in returns[2]
         assert any(question in text_ for text_ in task_texts(result.all_messages()))
 
     def test_a_toolset_without_the_capability_refuses_what_needs_it(self) -> None:

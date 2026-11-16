@@ -61,6 +61,9 @@ def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrap
         return ModelMessagesTypeAdapter.dump_python(messages, mode='json')
 
 
+ASK_PARENT_TOOL_NAME = 'ask_parent'
+"""The tool a delegated run uses to ask the delegating agent a question."""
+
 PREVIEW_CHARS = 80
 RECENT_TOOL_CALLS = 5
 
@@ -82,7 +85,7 @@ class DelegationSnapshot:
     usage: RunUsage
     """The requests and tokens of the model responses in the task's history so far."""
     recent_tool_calls: list[str]
-    """The last few tool calls the child made, as `name(arguments)` with the arguments cut short."""
+    """The child's last few tool calls other than `ask_parent`, as `name(arguments)` with the arguments cut short."""
     latest_text: str | None
     """The child's latest text, cut at `MAX_EVENT_TEXT_CHARS`. For a running task it is not a final result."""
     pending_question: str | None
@@ -128,7 +131,13 @@ class DelegationTask:
         usage = RunUsage(requests=len(responses))
         for response in responses:
             usage.incr(response.usage)
-        calls = [part for response in responses for part in response.parts if isinstance(part, ToolCallPart)]
+        # A question's arguments are left out: `pending_question` holds it as listeners rewrote it.
+        calls = [
+            part
+            for response in responses
+            for part in response.parts
+            if isinstance(part, ToolCallPart) and part.tool_name != ASK_PARENT_TOOL_NAME
+        ]
         texts = [part.content for response in responses for part in response.parts if isinstance(part, TextPart)]
         return DelegationSnapshot(
             task_id=self.id,
