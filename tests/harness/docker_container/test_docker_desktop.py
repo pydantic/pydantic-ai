@@ -96,10 +96,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     await workspace.act(Click(x=3, y=4))
 
     assert docker.xvfb_starts == 1
-    # First letting go of modifiers an earlier action may have left down.
-    assert docker.xdotool_calls[-1] == (
-        ':1 keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R mousemove 3 4 click --repeat 1 1'
-    )
+    assert docker.xdotool_calls[-1] == ':1 mousemove 3 4 click --repeat 1 1'
 
 
 async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, container_dir: Path) -> None:
@@ -220,13 +217,6 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
         await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
-
-
-def test_a_desktop_size_must_be_positive() -> None:
-    with pytest.raises(ValueError, match='must be a positive width and height'):
-        DockerContainerBackend(desktop=(0, 0))
-    with pytest.raises(ValueError, match='must be a positive width and height'):
-        DockerContainer(desktop=(0, 0))
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:

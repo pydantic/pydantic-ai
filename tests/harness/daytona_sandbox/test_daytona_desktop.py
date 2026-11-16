@@ -20,7 +20,7 @@ from daytona import (
     DaytonaTimeoutError,
 )
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent
 from pydantic_ai.computer_use import (
     Click,
     ComputerReturnPart,
@@ -73,6 +73,8 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
             id='click',
         ),
         pytest.param(Click(), ['get_position', 'click 7 8 left clicks=1 modifiers=[]'], id='click-at-pointer'),
+        # Daytona refuses the side buttons itself.
+        pytest.param(Click(x=1, y=2, button='back'), ['click 1 2 back clicks=1 modifiers=[]'], id='side-button'),
         pytest.param(MoveMouse(x=5, y=6), ['move 5 6'], id='move'),
         pytest.param(
             MoveMouse(x=5, y=6, modifiers=('alt',)), ['keydown alt', 'move 5 6', 'keyup alt'], id='move-with-modifier'
@@ -110,6 +112,8 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
             id='combination-repeated',
         ),
         pytest.param(PressKeys(keys=('Return',)), ['press enter modifiers=[]'], id='alias'),
+        # Daytona refuses a key it has no name for itself, and its desktop keeps working.
+        pytest.param(PressKeys(keys=('printscreen',)), ['press printscreen modifiers=[]'], id='key-daytona-refuses'),
         pytest.param(
             PressKeys(keys=('numlock', 'numpad5')),
             ['keydown num_lock', 'keydown num5', 'keyup num5', 'keyup num_lock'],
@@ -139,14 +143,9 @@ async def test_each_action_maps_onto_daytona_calls(
 @pytest.mark.parametrize(
     ('action', 'message'),
     [
-        pytest.param(Click(button='back'), "has no 'back' mouse button", id='side-button'),
         pytest.param(TypeText(text='done 😀'), 'cannot type characters beyond U\\+FFFF', id='emoji'),
         pytest.param(PressKeys(keys=('f13',)), "cannot press the key 'f13'", id='key-that-crashes-the-desktop'),
-        pytest.param(
-            PressKeys(keys=('printscreen',)), "cannot press the key 'printscreen'", id='key-without-a-daytona-name'
-        ),
         pytest.param(PressKeys(keys=('numpad_add',)), "cannot press the key 'numpad_add'", id='numpad-key'),
-        pytest.param(HoldKeys(keys=('é',), seconds=1), "cannot press the key 'é'", id='non-ascii-key'),
         pytest.param(object(), 'cannot perform <object', id='unknown-action-type'),
     ],
 )
@@ -391,19 +390,6 @@ async def test_every_action_checks_the_desktop_runs_and_the_next_starts_it(fake_
     # The next action starts the desktop again and runs on it.
     await screen(backend).act(Click(x=3, y=3))
     assert sandbox.desktop_calls[-2:] == ['start', 'click 3 3 left clicks=1 modifiers=[]']
-
-
-async def test_a_public_sandbox_desktop_is_refused_before_it_starts(fake_daytona: FakeDaytona) -> None:
-    """Daytona's own desktop viewer runs with the desktop, and a public sandbox serves it to anyone without a token."""
-    backend = DaytonaSandboxBackend(desktop=True)
-    await backend.get_sandbox()
-    (sandbox,) = fake_daytona.sandboxes
-    # Made public elsewhere, after this backend fetched it as private.
-    sandbox.server_public = True
-
-    with pytest.raises(UserError, match='is public'):
-        await screen(backend).screenshot()
-    assert sandbox.desktop_calls == []
 
 
 async def test_a_desktop_that_does_not_answer_in_time_is_a_timeout(

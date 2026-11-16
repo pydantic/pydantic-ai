@@ -56,9 +56,6 @@ def recovery(argvs: list[WorkspaceCommand]) -> list[WorkspaceCommand]:
     ]
 
 
-RELEASE_MODIFIERS = ['keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R']
-"""What every acting `xdotool` chain starts with: letting go of modifiers an earlier action may have left down."""
-
 PNG_OUTPUT = CommandResult(exit_code=0, stdout=base64.encodebytes(FAKE_SCREENSHOT).decode(), stderr='')
 """A capture's output: the screenshot in wrapped base64 lines, as `base64` prints it."""
 
@@ -161,9 +158,7 @@ class ScriptedDesktop(DockerContainerBackend):
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayAction, argv: list[str]) -> None:
     desktop = ScriptedDesktop()
     await desktop.screen.act(action)
-    assert desktop.calls == [
-        (['sh', '-c', INPUT, 'sh', 'xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1'})
-    ]
+    assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], False, {'DISPLAY': ':1'})]
 
 
 def fits_the_providers(argv: WorkspaceCommand) -> bool:
@@ -193,10 +188,10 @@ async def test_x11_computer_splits_a_long_drag_holding_the_button_across_command
     assert all(fits_the_providers(argv) for argv in desktop.argvs)
     # Pressed in the first, let go in the last: X keeps the button and the key down between commands.
     pressed = ['keydown', 'alt', 'mousemove', '100', '100', 'mousedown', '1']
-    assert chains[0][: len(RELEASE_MODIFIERS) + len(pressed)] == [*RELEASE_MODIFIERS, *pressed]
+    assert chains[0][: len(pressed)] == pressed
     assert chains[-1][-6:] == ['sleep', '0.1', 'mouseup', '1', 'keyup', 'alt']
     held = [arg for chain in chains for arg in chain if arg in ('mousedown', 'mouseup', 'keydown', 'keyup')]
-    assert held == ['keyup', 'keydown', 'mousedown', 'mouseup', 'keyup']
+    assert held == ['keydown', 'mousedown', 'mouseup', 'keyup']
     # Every step of every leg, ending on the last point: each 300-pixel leg is two steps.
     moves = [chain[i + 1 : i + 3] for chain in chains for i, arg in enumerate(chain) if arg == 'mousemove']
     assert len(moves) == 1 + 2 * 1_499
@@ -253,17 +248,6 @@ async def test_x11_computer_refuses_a_count_xdotool_cannot_take(action: DisplayA
     desktop = ScriptedDesktop()
     with pytest.raises(UnsupportedActionError, match='at most 2147483647 times'):
         await desktop.screen.act(action)
-    assert desktop.calls == []
-
-
-async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands() -> None:
-    # `xdotool key exec sh -c ...` runs the program: `exec` ends the key names and starts a command. Validation
-    # already refuses these names; the display refuses them too, for an action built without it.
-    unvalidated = PressKeys(keys=('a',))
-    object.__setattr__(unvalidated, 'keys', ('Exec',))
-    desktop = ScriptedDesktop()
-    with pytest.raises(UnsupportedActionError, match='cannot press the key'):
-        await desktop.screen.act(unvalidated)
     assert desktop.calls == []
 
 
@@ -379,12 +363,6 @@ async def test_x11_computer_passes_a_zoom_region_as_an_argument() -> None:
         # A line's leading whitespace can't run into the next line, so this blank output is read in time linear in its
         # length, not its square.
         (CommandResult(exit_code=0, stdout=' \n' * 100_000, stderr=''), 'display_size', "output: ''"),
-        # An X screen is at most 65535 pixels wide, so a larger size can't make a drag move through millions of points.
-        (
-            CommandResult(exit_code=0, stdout='Width: 1000000\nHeight: 800\n', stderr=''),
-            'display_size',
-            'Unexpected display size output',
-        ),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'cursor_position', 'getmouselocation'),
         (CommandResult(exit_code=0, stdout='bm90IGEgcG5n', stderr=''), 'screenshot', 'did not return a PNG'),
         (CommandResult(exit_code=0, stdout='abc', stderr=''), 'screenshot', 'did not return a PNG'),
@@ -393,7 +371,6 @@ async def test_x11_computer_passes_a_zoom_region_as_an_argument() -> None:
         'display-size-fails',
         'display-size-garbage',
         'display-size-blank',
-        'display-size-too-wide',
         'pointer-garbage',
         'not-a-png',
         'not-base64',

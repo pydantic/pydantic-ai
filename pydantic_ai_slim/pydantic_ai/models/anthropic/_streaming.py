@@ -45,12 +45,12 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
-from ...exceptions import UnexpectedModelBehavior
+from ...exceptions import ModelAPIError
 from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
-from ._computer import ComputerBatch, NativeComputer, takes_no_input
+from ._computer import ComputerBatch, NativeComputer
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -128,12 +128,14 @@ class AnthropicStreamedResponse(StreamedResponse):
             if (
                 native_computer
                 and not self._ended
+                and not self.cancelled
                 and (self._computer_batch.blocks or native_computer.answers(self._current_block))
             ):
                 # The stream stopped early: a call after the ones that arrived may be missing, and they run as one.
                 # OpenAI doesn't raise here: its computer calls each arrive whole, while these toolset calls are a batch.
-                raise UnexpectedModelBehavior(
-                    'The response ended before Claude finished its computer use calls, so none of them ran.'
+                raise ModelAPIError(
+                    model_name=self.model_name,
+                    message='The response ended before Claude finished its computer use calls, so none of them ran.',
                 )
             for event_ in self._start_computer_batch():
                 yield event_
@@ -430,19 +432,16 @@ class AnthropicStreamedResponse(StreamedResponse):
     def _map_computer_block_stop(
         self, native_computer: NativeComputer, current_block: BetaToolUseBlock
     ) -> Iterator[ModelResponseStreamEvent]:
-        # A member that takes input and streamed none was cut off before it.
-        computer_input_json = ''.join(self._computer_input) or ('{}' if takes_no_input(current_block.name) else '')
+        # Every member streams its input, `{}` when it takes none, so one that streamed nothing was cut off before it.
+        computer_input_json = ''.join(self._computer_input)
         computer_args: Any
         try:
             computer_args = pydantic_core.from_json(computer_input_json)
         except ValueError:
-            # Cut off mid-input, as at `max_tokens`: what parsed is kept to send back, but none of it runs, as a
-            # missing field such as a held key would change what the rest does.
+            # Cut off mid-input, as at `max_tokens`: none of it runs, as a missing field such as a held key would
+            # change what the rest does.
             self._computer_batch.incomplete.add(current_block.id)
-            try:
-                computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
-            except ValueError:  # not even the start of a value, such as `n` of `null`
-                computer_args = {}
+            computer_args = {}
         block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
         batch = self._computer_batch
         if native_computer.is_toolset:
