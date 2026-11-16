@@ -406,10 +406,10 @@ class TestStreamedResponse(StreamedResponse):
             case TextPart():
                 yield from self._map_text_part(index, part)
             case ToolCallPart():
+                self._usage += RequestUsage(output_tokens=_estimate_response_part_tokens(part))
                 # `ToolCallPart` subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a
                 # `TypedDict`, which is structurally a `dict[str, Any]` but pyright keeps
                 # the narrower union here.
-                self._usage += RequestUsage(output_tokens=_estimate_response_part_tokens(part))
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=index,
                     tool_name=part.tool_name,
