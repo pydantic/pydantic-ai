@@ -51,18 +51,20 @@ _TARGETS = 'Measure results against any numeric target the task states.'
 _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 """At `'max'` only: nobody reviews the workspace before the result is used."""
 
-_DELIVER = (
+BENCHMARK_INSTRUCTIONS = (
     'Deliverables may be used outside this workspace, where only the files you were asked to produce are present. '
     'Make them self-contained, with no reliance on other workspace files, caches, or data you did not include, '
-    'and check that they still work when run from a clean directory.'
+    'and check that they still work when run from a clean directory. '
+    'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
 )
+"""Added by `BenchmarkInstructions`: a verifier grades only the requested files, in a clean directory,
+and benchmark data is built so that every field matters."""
 
 _CONFIRM = (
     'Before finishing, go through each requirement and edge case the task states and confirm each one explicitly.'
 )
 
 _EXACT = "Write checks from the task's stated behavior, not your code."
-_EVERY_FIELD = 'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
 _MISREAD = (
     'If inputs seem inconsistent or goals impossible, assume you misread. '
     'Re-read, and try other interpretations before settling.'
@@ -85,12 +87,10 @@ _FINISHING = (
 def _checks(*, measure: bool, cleanup: bool, misread_max: bool) -> str:
     return ' '.join(
         [
-            _DELIVER,
             *([_TARGETS] if measure else []),
             _CONFIRM,
             _MISREAD_MAX if misread_max else _MISREAD,
             _EXACT,
-            _EVERY_FIELD,
             _HEREDOC,
             *([_CLEANUP] if cleanup else []),
         ]

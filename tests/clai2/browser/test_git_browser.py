@@ -15,7 +15,7 @@ from playwright.async_api import Page, expect
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.filesystem import WRITE_FILE_KIND
+from pydantic_ai_harness.file_system import WRITE_FILE_KIND
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_git_actions import PR_URL, Drafter, agents, calls, gh_state, git, repo
 from tests.clai2.test_web import TOKEN

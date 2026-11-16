@@ -33,7 +33,7 @@ from typing import IO, TYPE_CHECKING, Any, Literal, Protocol
 import anyio
 import anyio.lowlevel
 import e2b
-from e2b import CommandExitException, CommandResult, FileType, WriteInfo
+from e2b import CommandExitException, CommandResult, FileType, SandboxNetworkOpts, WriteInfo
 from e2b.exceptions import (
     AuthenticationException,
     FileNotFoundException,
@@ -84,6 +84,7 @@ class FakeCreateCall:
     secure: bool
     allow_internet_access: bool
     lifecycle: dict[str, str] | None
+    network: SandboxNetworkOpts | None = None
 
 
 @dataclass(frozen=True)
@@ -687,10 +688,11 @@ class FakeAsyncSandboxFactory:
         secure: bool = True,
         allow_internet_access: bool = True,
         lifecycle: dict[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
     ) -> FakeSandbox:
         self._control.clients.append(self._client)
         self._control.create_calls.append(
-            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle)
+            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle, network)
         )
         if self._control.create_hangs:
             await anyio.sleep_forever()

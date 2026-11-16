@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.filesystem import WRITE_FILE_KIND, EditFileCallPart, WriteFileCallPart
+from pydantic_ai_harness.file_system import WRITE_FILE_KIND, EditFileCallPart, WriteFileCallPart
 from pydantic_clai2.builtin_plugins.web import changes as changes_module
 from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.runtime.session import STEERING
