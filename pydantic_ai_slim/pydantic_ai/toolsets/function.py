@@ -742,30 +742,42 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         The toolset's `strict` and `include_return_schema` apply to the tool when the tool leaves them unset,
         its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
-        `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none. All of
-        that applies to a copy of the tool, so the tool passed in keeps its own values and the same `Tool` can
-        be added to several toolsets without one toolset's defaults leaking into another's.
+        `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none. `sequential`
+        and `defer_loading` are recorded on the `Tool` itself; the others are applied to a copy, so the tool
+        passed in keeps its own `max_retries`, `strict`, `requires_approval`, `metadata` and
+        `include_return_schema` and adding it to another toolset doesn't carry this one's values there.
 
         Args:
             tool: The tool to add.
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+        # `sequential` and `defer_loading` live on the `Tool` itself, next to the marker that says a toolset
+        # turned them on, so durable execution can list a tool without them where it replays a workflow started
+        # before `FunctionToolset` applied them: a `Tool` another toolset made sequential stays sequential here,
+        # and one this toolset makes sequential is sequential everywhere it's held.
+        if self.sequential and not tool.sequential:
+            tool.sequential = True
+            tool._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        if self._defer_loading and not tool.defer_loading:
+            tool.defer_loading = True
+            tool._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        # The rest are per-toolset, so they go on a copy: the `Tool` the caller holds keeps its own values and
+        # adding it to another toolset doesn't carry this toolset's `max_retries`, `strict`, `requires_approval`,
+        # `metadata` or `include_return_schema` there.
         added = replace(tool)
+        # `replace` builds a new object, so carry those two markers over by hand: durable execution reads them
+        # to list the tool the way a workflow started before they were set saw it.
+        added._sequential_from_toolset = tool._sequential_from_toolset  # pyright: ignore[reportPrivateUsage]
+        added._defer_loading_from_toolset = tool._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
         if added.max_retries is None and self.max_retries is not None:
             added.max_retries = self.max_retries
         if added.strict is None and self.strict is not None:
             added.strict = self.strict
         if added.include_return_schema is None and self.include_return_schema is not None:
             added.include_return_schema = self.include_return_schema
-        if self.sequential and not added.sequential:
-            added.sequential = True
-            added._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.requires_approval:
             added.requires_approval = True
-        if self._defer_loading and not added.defer_loading:
-            added.defer_loading = True
-            added._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.metadata is not None:
             added.metadata = self.metadata | (added.metadata or {})
         self.tools[tool.name] = added

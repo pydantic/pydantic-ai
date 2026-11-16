@@ -2187,6 +2187,25 @@ def test_add_tool_leaves_a_shared_tool_untouched():
     assert (tool.requires_approval, tool.max_retries, tool.metadata) == (False, None, None)
 
 
+def test_add_tool_keeps_strict_and_include_return_schema_off_a_shared_tool():
+    """A toolset fills `strict`/`include_return_schema` on its copy, not on the `Tool` other toolsets hold."""
+
+    def my_tool() -> str:  # pragma: no cover
+        return 'my_tool'
+
+    tool = Tool(my_tool)
+    strict_toolset = FunctionToolset([tool], strict=True, include_return_schema=True)
+    plain = FunctionToolset([tool])
+
+    def values(toolset: FunctionToolset[None]) -> tuple[bool | None, bool | None]:
+        stored = toolset.tools['my_tool']
+        return stored.strict, stored.include_return_schema
+
+    assert values(strict_toolset) == (True, True)
+    assert values(plain) == (None, None)
+    assert (tool.strict, tool.include_return_schema) == (None, None)
+
+
 def test_add_tool_returns_the_toolset_copy_from_add_function():
     """The tool a function is added as keeps the toolset's defaults even when the function passes one."""
     toolset = FunctionToolset[None](max_retries=4)
