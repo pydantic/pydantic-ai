@@ -1080,11 +1080,12 @@ Each call runs a list of actions in order and returns a screenshot of the result
         creating.join(READY_TIMEOUT)
         assert not creating.is_alive()
 
-        def run(x: int) -> None:
+        async def run(x: int) -> None:
             agent = Agent(_scripted([{'type': 'click', 'x': x, 'y': 1}]), capabilities=[ComputerUse()])
-            outputs.append(agent.run_sync('Go.', workspace=screen).output)
+            outputs.append((await agent.run('Go.', workspace=screen)).output)
 
-        threads = [threading.Thread(target=run, args=(x,), daemon=True) for x in (1, 2)]
+        # `anyio.run` closes each thread's loop when its run ends; an unclosed one breaks when collected later.
+        threads = [threading.Thread(target=anyio.run, args=(run, x), daemon=True) for x in (1, 2)]
         for thread in threads:
             thread.start()
         for thread in threads:
