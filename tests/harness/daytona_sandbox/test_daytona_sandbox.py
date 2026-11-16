@@ -43,6 +43,7 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
         auto_stop_interval=0,
         working_dir='/work',
         env={'A': 'b'},
+        secrets={'GH_TOKEN': 'github-token'},
         allow_internet_access=False,
     )
     backend = capability.get_workspace(_ctx(), ref=None)
@@ -54,8 +55,9 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
         params.snapshot,
         params.auto_stop_interval,
         params.env_vars,
+        params.secrets,
         params.network_block_all,
-    ) == ('python', 0, {'A': 'b'}, True)
+    ) == ('python', 0, {'A': 'b'}, {'GH_TOKEN': 'github-token'}, True)
 
 
 @pytest.mark.parametrize(
@@ -65,6 +67,14 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
         ({'auto_stop_interval': -1}, 'auto_stop_interval must be an integer of at least 0'),
         ({'auto_stop_interval': 1.5}, 'auto_stop_interval must be an integer of at least 0'),
         ({'defer_loading': True, 'id': 'sandbox'}, 'does not support `defer_loading=True`'),
+        ({'secrets': ['GH_TOKEN']}, r'^`secrets` maps environment variable names to Secret names'),
+        ({'secrets': 'GH_TOKEN'}, r'^`secrets` maps environment variable names to Secret names'),
+        ({'secrets': {'GH_TOKEN': 1}}, r'^`secrets` maps environment variable names to Secret names'),
+        ({'secrets': {1: 'github-token'}}, r'^`secrets` maps environment variable names to Secret names'),
+        (
+            {'secrets': {'GH_TOKEN': 'github-token'}, 'env': {'GH_TOKEN': 'x'}},
+            r'^GH_TOKEN cannot be in both `env` and `secrets`\.$',
+        ),
     ],
 )
 def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message: str) -> None:
@@ -347,6 +357,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'env',
         'id',
         'path_authority',
+        'secrets',
         'snapshot',
         'working_dir',
     ]
@@ -358,6 +369,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'description': 'a sandbox',
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
+        'secrets': {'GH_TOKEN': 'github-token'},
         'snapshot': 'base',
         'auto_stop_interval': 30,
         'allow_internet_access': False,

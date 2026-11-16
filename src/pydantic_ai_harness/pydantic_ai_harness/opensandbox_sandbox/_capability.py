@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
@@ -19,10 +20,16 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
-from pydantic_ai_harness.opensandbox_sandbox._backend import PROVIDER, OpenSandboxBackend, destroy_sandbox
+from pydantic_ai_harness.opensandbox_sandbox._backend import (
+    NETWORK_POLICY_CONFLICT,
+    PROVIDER,
+    OpenSandboxBackend,
+    destroy_sandbox,
+)
 
 if TYPE_CHECKING:
     from opensandbox.config import ConnectionConfig
+    from opensandbox.models.sandboxes import NetworkPolicy
 
     from pydantic_ai.agent import AgentRunResult
 
@@ -58,7 +65,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     Ending a run does not delete the sandbox: remove it with
     [`destroy`][pydantic_ai_harness.opensandbox_sandbox.OpenSandbox.destroy],
     or set `sandbox_timeout`. Commands run as the image's user. Outbound network access follows the server's
-    policy unless `allow_internet_access=False` requests deny-all egress for a new sandbox.
+    policy unless `allow_internet_access=False` or `network_policy` sets one for a new sandbox.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such as `Coder`,
     `Shell`, and `FileSystem`. See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
@@ -85,8 +92,13 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     """Whether a new sandbox keeps the server's network policy. `False` requests deny-all egress.
 
     Requires the server's egress sidecar; direct IP connections are blocked only in `dns+nft` mode, not the
-    default DNS-only mode. Does not change the policy of an attached sandbox.
+    default DNS-only mode. Does not change the policy of an attached sandbox. Leave it `True` when you pass
+    `network_policy`.
     """
+
+    network_policy: NetworkPolicy | None = None
+    """The SDK's `NetworkPolicy` for a new sandbox, passed to `Sandbox.create` unchanged; a spec cannot set it.
+    Does not change the policy of an attached sandbox."""
 
     secure_access: bool = False
     """Ask the server to turn on Secure Access for a new sandbox.
@@ -126,6 +138,8 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         check_path_authority(self.path_authority)
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_env(self.env)
+        if self.network_policy is not None and not self.allow_internet_access:
+            raise UserError(NETWORK_POLICY_CONFLICT)
 
     @classmethod
     def from_spec(
@@ -198,6 +212,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             env=self.env,
             resource=self.resource,
             allow_internet_access=self.allow_internet_access,
+            network_policy=self.network_policy,
             secure_access=self.secure_access,
             sandbox_timeout=self.sandbox_timeout,
         )

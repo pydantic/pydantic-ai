@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
@@ -18,7 +19,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
-from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox
+from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox, secrets_error
 
 if TYPE_CHECKING:
     from daytona import AsyncDaytona
@@ -88,6 +89,11 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
     path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
     See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+    secrets: Mapping[str, str] | None = None
+    """Daytona's `secrets` for a new sandbox, passed to `AsyncDaytona.create` unchanged: environment
+    variable name to Secret name. The variable holds a placeholder, and Daytona swaps in the real value
+    in HTTPS request headers as requests leave for the Secret's `hosts` (any host if it has none). An
+    attached sandbox keeps the ones it was created with."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('DaytonaSandbox', self.defer_loading)
@@ -95,6 +101,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
+        if (error := secrets_error(self.secrets, self.env)) is not None:
+            raise UserError(f'{error}.')
 
     @classmethod
     def from_spec(
@@ -110,6 +118,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> DaytonaSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -128,6 +137,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             env=env,
             authority=authority,
             path_authority=path_authority,
+            secrets=secrets,
         )
 
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:
@@ -159,6 +169,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             allow_internet_access=self.allow_internet_access,
             working_dir=self.working_dir,
             env=self.env,
+            secrets=self.secrets,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
