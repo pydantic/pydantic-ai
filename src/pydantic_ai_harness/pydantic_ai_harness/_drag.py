@@ -8,12 +8,9 @@ from collections.abc import Sequence
 
 from pydantic_ai.computer_use import Point
 
-DRAG_PRESS_PAUSE = 0.1
-"""Seconds between pressing the button and the first move, and between the last move and letting go. A web page's
-drag-and-drop misses a drag whose events all arrive at once."""
-
 DRAG_STEP_PAUSE = 0.05
-"""Seconds between the moves of a drag, for the same reason."""
+"""Seconds before each move of a drag. A web page's drag-and-drop, such as Firefox's, misses a drag whose moves all
+arrive at once."""
 
 _STEP_PIXELS = 200
 """The longest single move in a drag."""
