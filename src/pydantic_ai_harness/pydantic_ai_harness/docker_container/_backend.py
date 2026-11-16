@@ -255,11 +255,12 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 _PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
 
 _START_DESKTOP = (
-    f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-    # A stale lock, such as one left by `docker stop`, stops Xvfb starting once its PID belongs to another process.
-    # A running X server's lock stays, whichever server it is, such as `Xvnc`.
-    f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
-    f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
+    # Decided from this container's own lock, not from an X server answering: with `--network host`, another
+    # container's or the host's X server on the same display answers through Linux's shared abstract socket.
+    # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
+    # A running X server's lock names it, whichever server it is, such as `Xvnc`.
+    f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
+    f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
     # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
     # running: the pointer goes back to the middle and held buttons are let go.
     # `-nolisten local` closes Linux's abstract socket, which `--network host` would share with every host user; the
@@ -267,7 +268,7 @@ _START_DESKTOP = (
     f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset '
     f'>/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
     + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
-    + 'fi; '
+    + ';; esac; '
     'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; '
@@ -277,8 +278,8 @@ _START_DESKTOP = (
     f"echo 'the panel did not start:' >&2; tail -n 5 {_PID_DIR}/panel.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then a window manager, then the
-panel unless it shows. A second start waits for the first, then finds its X server.
+"""Starts an X display of the size `$1` names unless this container's X lock names a running X server, then a
+window manager, then the panel unless it shows. A second start waits for the first, then finds its X server.
 
 It fails once the X server exits, or after 10 seconds. A second `fluxbox` exits when one runs, so starting it every
 time recovers one that died. It then waits up to 10 seconds for the window manager to answer `xprop`, so the first

@@ -207,7 +207,7 @@ def x11_display(
     script: str,
     where: Callable[[], str],
 ) -> LazyDisplay:
-    """A backend's display on an X server that `script` starts at the size `$1` names, unless one answers.
+    """A backend's display on an X server that `script` starts at the size `$1` names, unless one runs.
 
     `where` names the environment in errors.
     """
