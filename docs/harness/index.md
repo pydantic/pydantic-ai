@@ -267,6 +267,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
+| [Wrap Up At Limits](wrap-up-at-limits.md) | Harness | End the run with a final answer, not `UsageLimitExceeded`, when a usage limit would stop it |
 
 ### Self-extension
 

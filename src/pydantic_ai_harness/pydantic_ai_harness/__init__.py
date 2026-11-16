@@ -95,6 +95,7 @@ if TYPE_CHECKING:
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
     from .warn_on_cache_busts import WarnOnCacheBusts
+    from .wrap_up_at_limits import WrapUpAtLimits
     from .youdotcom import YouResearch, YouSearch
 
 __all__ = [
@@ -203,6 +204,7 @@ __all__ = [
     'TrajectoryJudge',
     'WarnNearLimits',
     'WarnOnCacheBusts',
+    'WrapUpAtLimits',
     'YouResearch',
     'YouSearch',
 ]
@@ -311,6 +313,7 @@ _LAZY_EXPORTS = {
     'TrajectoryJudge': 'trajectory_judge',
     'WarnNearLimits': 'compaction',
     'WarnOnCacheBusts': 'warn_on_cache_busts',
+    'WrapUpAtLimits': 'wrap_up_at_limits',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
     # Pre-rename names; the target module's `__getattr__` emits the

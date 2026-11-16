@@ -32,6 +32,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
 | Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
+| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
 
 ## RepairToolArguments
 
@@ -801,6 +802,51 @@ print(agent.run_sync('Explain the change').output)
   every answer, the first one included.
 - Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
 
+## WrapUpAtLimits
+
+When the run's `UsageLimits` leave room for one more model request but not another, makes that request
+the last: `tool_choice='none'` with the tool definitions kept (cache-safe for text output), plus a
+request-scoped `SystemPromptPart` with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
+run's output instead of `UsageLimitExceeded`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import UsageLimits
+
+from pydantic_ai_harness import WrapUpAtLimits
+
+
+def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.model_settings and info.model_settings.get('tool_choice') == 'none':
+        return ModelResponse(parts=[TextPart('partial answer')])
+    return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'x'})])
+
+
+agent = Agent(FunctionModel(research), capabilities=[WrapUpAtLimits()])
+
+
+@agent.tool_plain
+def look_up(topic: str) -> str:
+    return topic
+
+
+print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).output)
+#> partial answer
+```
+
+- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (budget used up, or a batch
+  that would go over it), and input/output/total token limits (projected from the run's responses).
+  `cost_limit` is not projected.
+- A batch over `tool_calls_limit` runs none of its calls; each gets `NOT_EXECUTED` under its
+  `tool_call_id`. With no request left, core raises as before.
+- Find the final prompt by `metadata['origin'] == 'pydantic-ai-harness.wrap_up_at_limits.v1'`;
+  `metadata['limit']` is the `LimitName` that triggered it.
+- With tool output, `tool_choice='none'` sends only the output tools, so that request's prefix differs.
+- Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe; no spans.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -814,4 +860,5 @@ print(agent.run_sync('Explain the change').output)
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
+- https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

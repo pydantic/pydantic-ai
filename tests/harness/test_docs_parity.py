@@ -202,6 +202,7 @@ _CAPABILITY_PAGE_META = {
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
+    'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'github.md': ('github', 'GitHub'),
