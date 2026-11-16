@@ -351,7 +351,23 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         *,
         idx: str | None = None,
     ) -> RowsResult:
-        """Run the `similarity_search` tool. `idx` is the deprecated name of `index_name`."""
+        """Nearest-neighbor search on a column that has an embedding index.
+
+        Args:
+            table: Pixeltable table path.
+            query: Text to embed and search for.
+            column: Column with an embedding index.
+            columns: Extra columns to return with the match and score. Omit to return the
+                default columns; indexed media is never returned. Explicit media, array, binary,
+                and unstored computed or iterator columns are rejected.
+            limit: Maximum rows to return, capped by the capability.
+            index_name: Embedding index name. Required when the column has more than one index.
+            idx: Deprecated name of `index_name`.
+
+        Returns:
+            Rows ordered by similarity, each with a `score` field. If the table has a column by
+            that name, the field takes `similarity_` prefixes until it is free.
+        """
         if idx is not None:
             if index_name is not None:
                 raise TypeError('Pass `index_name` only: `idx` is its deprecated name.')

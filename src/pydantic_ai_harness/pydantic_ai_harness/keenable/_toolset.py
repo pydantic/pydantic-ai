@@ -24,6 +24,7 @@ from pydantic_ai_harness._typeguards import is_object_dict, is_object_list
 from pydantic_ai_harness._warn import warn_argument_renamed
 
 KEENABLE_DEFAULT_MAX_RESULTS = 5
+"""Number of results `web_search` returns per query unless configured."""
 
 KEENABLE_MAX_RESULTS = 50
 """The most results one Keenable search returns; the API rejects a larger `max_results`."""
