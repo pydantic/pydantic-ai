@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import os
+import shlex
 from collections.abc import Mapping
 
 import anyio
@@ -166,25 +167,25 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
     assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], False, {'DISPLAY': ':1'})]
 
 
-async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # E2B runs a command as one argument, which Linux caps at 131,072 bytes; the limit is patched down from 100,000.
-    monkeypatch.setattr('pydantic_ai_harness._x11._MAX_CHAIN_BYTES', 30)
+async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit() -> None:
+    """E2B runs a command as one argument, which Linux caps at 131,072 bytes, so each command's `xdotool` arguments stay
+    under 100,000 bytes."""
     desktop = ScriptedDesktop()
 
-    await desktop.screen.act(TypeText(text='abcd'))
-    # Held keys go down in the first command and up in the last, so they stay held between them.
-    await desktop.screen.act(Drag(path=(Point(x=0, y=0), Point(x=10, y=0)), modifiers=('alt',)))
+    await desktop.screen.act(TypeText(text='a' * 17_000))
+    typed = desktop.argvs
+    assert len(typed) == 2
+    assert all(len(shlex.join(argv[5:])) < 100_000 for argv in typed)
+    assert [argv[4:9] for argv in typed] == [['xdotool', 'key', '--delay', '12', '--']] * 2
+    assert sum(argv.count('U0061') for argv in typed) == 17_000
 
-    assert [argv[4:] for argv in desktop.argvs] == [
-        ['xdotool', 'key', '--delay', '12', '--', 'U0061', 'U0062'],
-        ['xdotool', 'key', '--delay', '12', '--', 'U0063', 'U0064'],
-        ['xdotool', 'keydown', 'alt', 'mousemove', '0', '0', 'mousedown', '1', 'sleep', '0.1'],
-        ['xdotool', 'sleep', '0.05', 'mousemove', '5', '0'],
-        ['xdotool', 'sleep', '0.05', 'mousemove', '10', '0'],
-        ['xdotool', 'sleep', '0.1', 'mouseup', '1', 'keyup', 'alt'],
-    ]
+    # Held keys go down in the first command and up in the last, so they stay held between them.
+    await desktop.screen.act(Drag(path=tuple(Point(x=n % 2, y=0) for n in range(2_500)), modifiers=('alt',)))
+    dragged = desktop.argvs[2:]
+    assert len(dragged) == 2
+    assert all(len(shlex.join(argv[5:])) < 100_000 for argv in dragged)
+    assert dragged[0][4:7] == ['xdotool', 'keydown', 'alt']
+    assert dragged[-1][-4:] == ['mouseup', '1', 'keyup', 'alt']
 
 
 @pytest.mark.parametrize(
