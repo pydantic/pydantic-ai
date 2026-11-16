@@ -402,10 +402,10 @@ shared toolset definitions remain registered. `False` is rejected for MCP and dy
 ## Tool arguments
 
 Function tool arguments cross into the chained task run as JSON, and the task run validates them again with the tool's schema,
-which reads each field's alias. Nested Pydantic models and Pydantic dataclasses cross by alias. A `TypedDict`
-or a standard-library dataclass crosses by Python name, so a field with an alias fails that validation, or
-takes its default if it has one. Let such a type validate by name as well; the same decorator works on a
-standard-library dataclass:
+which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross
+by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second
+validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its
+default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
 
 ```python
 from typing import Annotated

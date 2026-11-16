@@ -218,7 +218,7 @@ A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in a `vali
 
 Each activity derives its typed arguments independently, so schema validators must be idempotent. A Pydantic validation context is rebuilt from the `validation_context` configured on [`Agent`][pydantic_ai.agent.Agent]; a callable context builder runs again with the activity's own run context.
 
-Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema, which reads each field's alias. Nested Pydantic models and Pydantic dataclasses cross by alias. A `TypedDict` or a standard-library dataclass crosses by Python name, so a field with an alias fails that validation, or takes its default if it has one. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema, which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
 
 ```python
 from typing import Annotated

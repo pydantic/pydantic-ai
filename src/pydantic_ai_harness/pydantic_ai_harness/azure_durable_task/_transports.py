@@ -131,7 +131,7 @@ class _Call:
 
 _CALL = TypeAdapter(_Call)
 # By alias, so nested models and pydantic dataclasses revalidate through the tool's alias-reading schema.
-# A `TypedDict` or stdlib dataclass value carries no aliases and still ships by Python name.
+# This adapter sees no field types, so a `TypedDict` or stdlib dataclass outside a model still ships by Python name.
 _FUNCTION_TOOL_ARGS = TypeAdapter(dict[str, object])
 
 

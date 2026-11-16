@@ -267,10 +267,11 @@ def typed_dict_aliased_argument_model(messages: list[ModelMessage], info: AgentI
 
 
 async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json_boundary() -> None:
-    """A validated `TypedDict` is a plain dict keyed by Python name, so no generic serializer can write its aliases.
+    """A validated `TypedDict` parameter is a plain dict keyed by Python name, so it crosses the boundary that way.
 
-    After the boundary, the tool's schema reads `roomName`, so the argument revalidates only when the `TypedDict`
-    also validates by name.
+    The serializer for the arguments sees no field types, so it can't write the `TypedDict`'s aliases. After the
+    boundary, the tool's schema reads `roomName`, so the argument revalidates only when the `TypedDict` also
+    validates by name.
     """
     seen: list[str] = []
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
@@ -281,8 +282,9 @@ async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json
         capabilities=[runtime],
     )
 
+    # Revalidation rejects the by-name `venue`, so this tool never runs.
     @agent.tool_plain
-    async def book_venue(venue: Venue, guests: int) -> str:  # pragma: no cover - revalidation rejects the wire
+    async def book_venue(venue: Venue, guests: int) -> str:  # pragma: no cover
         return venue['room']
 
     @agent.tool_plain
