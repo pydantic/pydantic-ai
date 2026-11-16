@@ -7,7 +7,7 @@ it after installing the browser binary to verify the real integration end to end
     playwright install chromium
     uv run python scripts/playwright_smoke.py
 
-It exercises the public `PlaywrightBrowser` surface and checks twelve things:
+It exercises the public `PlaywrightBrowser` surface and checks thirteen things:
 
 - lazy launch plus a real navigation to https://example.com (prints the title),
 - the allowlist bounce (a disallowed host returns an error result, not content),
@@ -37,6 +37,10 @@ It exercises the public `PlaywrightBrowser` surface and checks twelve things:
 - attaching over `cdp_url` to a browser that already holds a session: the run gets
   its own context (the existing cookie is not visible), the allowlist still bounces,
   and the host browser's own page survives teardown,
+- reusing that browser's default context with `cdp_context='default'` and a
+  `cdp_url_factory`: an inherited tab on a loopback address refuses the run until
+  the host closes it, then the run sees the existing cookie, the allowlist still
+  bounces, the factory is called once, and the host's tabs survive teardown,
 - clean teardown: each scenario runs its own capability, whose `wrap_run` closes
   the browser when the run ends. After it prints `all checks passed`, confirm no
   Chromium lingered, e.g. `pgrep -fl chromium` shows nothing this script started.
@@ -364,6 +368,69 @@ async def _check_cdp_attach() -> None:
     print('cdp attach ok -- isolated context, allowlist enforced, host browser left open')
 
 
+async def _check_cdp_default_context() -> None:
+    """Reusing the default context inherits its session, and refuses a tab the policy blocks.
+
+    The mocked suite cannot answer this: it turns on whether a real Chrome lets a
+    second CDP client route, wire and read the default context of a browser that
+    client did not launch. A cookie is logged into the host browser's default
+    context and a second tab is left on a loopback page. The first run must refuse
+    without reading that page; once the host closes it, a run through a
+    `cdp_url_factory` reads the cookie, is bounced by the allowlist, and leaves the
+    host's tabs open when it disconnects.
+    """
+    server, secret_port = await _serve_secret()
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    endpoint = f'http://127.0.0.1:{port}'
+    calls: list[str] = []
+
+    async def provision() -> str:
+        calls.append(endpoint)
+        return endpoint
+
+    try:
+        with TemporaryDirectory() as user_data_dir:
+            async with async_playwright() as pw:
+                default_context = await pw.chromium.launch_persistent_context(
+                    user_data_dir, headless=True, args=[f'--remote-debugging-port={port}']
+                )
+                try:
+                    page = await default_context.new_page()
+                    await page.goto('https://example.com')
+                    await page.evaluate(f"document.cookie = '{_COOKIE}; path=/'")
+                    loopback = await default_context.new_page()
+                    await loopback.goto(f'http://127.0.0.1:{secret_port}/')
+
+                    refused = PlaywrightBrowser[object](cdp_url=endpoint, cdp_context='default')
+                    (blocked,) = await _run_tools(refused, [('get_text', {})])
+                    assert 'blocked by the browser policy' in blocked, blocked
+                    assert _SECRET not in blocked, f'an inherited blocked page reached the model: {blocked}'
+
+                    await loopback.close()
+                    reused = PlaywrightBrowser[object](
+                        cdp_url_factory=provision, cdp_context='default', allowed_domains=['example.com']
+                    )
+                    _, cookies, bounced = await _run_tools(
+                        reused,
+                        [
+                            ('navigate', {'url': 'https://example.com'}),
+                            ('execute_js', {'script': 'document.cookie'}),
+                            ('navigate', {'url': 'https://www.iana.org/'}),
+                        ],
+                    )
+                    assert _COOKIE in cookies, f'default context session not inherited: {cookies}'
+                    assert 'not in allowed_domains' in bounced, bounced
+                    assert calls == [endpoint], calls
+                    assert not page.is_closed(), 'teardown closed a page the run did not create'
+                finally:
+                    await default_context.close()
+    finally:
+        server.close()
+    print('cdp default context ok -- session inherited, blocked tab refused, allowlist enforced, host tabs left open')
+
+
 async def _serve_html(body: bytes) -> tuple[asyncio.Server, int]:
     """Serve a fixed HTML body over HTTP on a loopback port."""
 
@@ -624,6 +691,7 @@ async def _main() -> None:
     await _check_dialogs()
     await _check_typing_and_waiting()
     await _check_cdp_attach()
+    await _check_cdp_default_context()
     print('all checks passed')
 
 
