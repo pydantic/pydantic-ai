@@ -1,41 +1,23 @@
-// Replays the Python fixtures through the WASM build: `node ts/conformance.ts`.
+// Replays the Python fixtures through the WASM build and the TypeScript host:
+// `node ts/conformance.ts`.
 
 import { readFileSync } from "node:fs";
 
-type Exports = {
-  memory: WebAssembly.Memory;
-  alloc: (len: number) => number;
-  dealloc: (ptr: number, len: number) => void;
-  call: (ptr: number, len: number) => bigint;
-};
+import { Agent, ModelRetry } from "./agent.ts";
+import { CoreError, callCore } from "./core.ts";
+import type { Json } from "./core.ts";
 
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-type Response = { ok: Json } | { error: string };
+type JsonObject = { [key: string]: Json };
 
-const wasmPath = "../target/wasm32-unknown-unknown/release/pydantic_ai_core.wasm";
-const { instance } = await WebAssembly.instantiate(readFileSync(new URL(wasmPath, import.meta.url)));
-const { memory, alloc, dealloc, call } = instance.exports as Exports;
-
-function invoke(request: Json): Response {
-  const input = new TextEncoder().encode(JSON.stringify(request));
-  const inputPtr = alloc(input.length);
-  new Uint8Array(memory.buffer, inputPtr, input.length).set(input);
-  const packed = BigInt.asUintN(64, call(inputPtr, input.length));
-  dealloc(inputPtr, input.length);
-  const outputPtr = Number(packed >> 32n);
-  const outputLen = Number(packed & 0xffffffffn);
-  const output = new TextDecoder().decode(new Uint8Array(memory.buffer, outputPtr, outputLen));
-  dealloc(outputPtr, outputLen);
-  return JSON.parse(output);
+function fixtures<T>(name: string): T {
+  return JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
 }
 
-export function modelProfile(family: string, model: string): Response {
-  return invoke({ fn: "model_profile", family, model });
+function sameJson(actual: Json, expected: Json): boolean {
+  return JSON.stringify(actual) === JSON.stringify(expected);
 }
 
-export function transformSchema(transformer: string, schema: Json, strict: boolean | null): Response {
-  return invoke({ fn: "transform_schema", transformer, schema, strict });
-}
+const failures: string[] = [];
 
 type Golden = {
   profiles: { model: string; expected: Json }[];
@@ -44,32 +26,112 @@ type Golden = {
     transformer: string;
     strict: boolean | null;
     schema: Json;
-    expected: { [key: string]: Json };
+    expected: JsonObject;
   }[];
 };
-
-const golden: Golden = JSON.parse(readFileSync(new URL("../fixtures/golden.json", import.meta.url), "utf8"));
-const failures: string[] = [];
+const golden = fixtures<Golden>("golden.json");
 
 for (const { model, expected } of golden.profiles) {
-  const actual = modelProfile("openai", model);
-  if (!("ok" in actual) || JSON.stringify(actual.ok) !== JSON.stringify(expected)) {
+  if (!sameJson(callCore({ fn: "model_profile", family: "openai", model }), expected)) {
     failures.push(`profile ${JSON.stringify(model)}`);
   }
 }
 
 for (const { name, transformer, strict, schema, expected } of golden.schemas) {
-  const actual = transformSchema(transformer, schema, strict);
-  const matches =
-    "error" in expected
-      ? "error" in actual && actual.error === expected.error
-      : "ok" in actual && JSON.stringify(actual.ok) === JSON.stringify(expected);
+  let matches: boolean;
+  try {
+    matches = sameJson(callCore({ fn: "transform_schema", transformer, schema, strict }), expected);
+  } catch (error) {
+    matches = error instanceof CoreError && error.message === expected.error;
+  }
   if (!matches) {
     failures.push(`schema ${name} ${transformer} strict=${strict}`);
   }
 }
 
-console.log(`${golden.profiles.length} profiles, ${golden.schemas.length} schema cases, ${failures.length} failures`);
+type RunStep = { request: Json; response: Json; tool_results?: JsonObject[] };
+type Scenario = {
+  name: string;
+  start: {
+    model: string;
+    instructions: string;
+    user_prompt: string;
+    tools: JsonObject[];
+    message_history?: Json[];
+  };
+  steps: RunStep[];
+  output: string;
+  usage: Json;
+  new_messages: Json[];
+};
+const { scenarios } = fixtures<{ scenarios: Scenario[] }>("runs.json");
+let requests = 0;
+
+// The host replays each run of the real `pydantic-ai`: `fetch` checks the request and answers
+// with the recorded response, and the tool gives the results the Python tool gave.
+for (const { name, start, steps, output, usage, new_messages } of scenarios) {
+  const remainingSteps = [...steps];
+  const toolResults = steps.flatMap((step) => step.tool_results ?? []);
+  const agent = new Agent({
+    model: start.model,
+    instructions: start.instructions,
+    apiKey: "-",
+    tools: start.tools.map((tool) => ({
+      name: tool.name as string,
+      parameters: tool.parameters_json_schema,
+      execute: () => {
+        const result = toolResults.shift()!;
+        if ("retry" in result) {
+          throw new ModelRetry(result.retry as string);
+        }
+        return result.content;
+      },
+    })),
+    fetch: async (url, init) => {
+      const step = remainingSteps.shift()!;
+      requests += 1;
+      const sameUrl = url === "https://api.openai.com/v1/chat/completions";
+      if (!sameUrl || init?.body !== JSON.stringify(step.request)) {
+        failures.push(`run ${name}: request ${steps.length - remainingSteps.length}`);
+      }
+      return new Response(JSON.stringify(step.response), { status: 200 });
+    },
+  });
+
+  const result = await agent.run(start.user_prompt, start.message_history);
+  const newMessages = result.messages.slice(-new_messages.length);
+  const sameResult = result.output === output && sameJson(result.usage, usage);
+  if (!sameResult || !sameMessages(newMessages, new_messages)) {
+    failures.push(`run ${name}: result`);
+  }
+}
+
+// The core writes its message fields in its own order, so messages are compared key by key.
+function sameMessages(actual: Json, expected: Json): boolean {
+  if (Array.isArray(expected)) {
+    return (
+      Array.isArray(actual) &&
+      actual.length === expected.length &&
+      expected.every((item, index) => sameMessages(actual[index], item))
+    );
+  }
+  if (expected !== null && typeof expected === "object") {
+    const keys = Object.keys(expected);
+    return (
+      actual !== null &&
+      typeof actual === "object" &&
+      !Array.isArray(actual) &&
+      Object.keys(actual).length === keys.length &&
+      keys.every((key) => key in actual && sameMessages(actual[key], expected[key]))
+    );
+  }
+  return actual === expected;
+}
+
+console.log(
+  `${golden.profiles.length} profiles, ${golden.schemas.length} schema cases, ` +
+    `${scenarios.length} runs with ${requests} requests, ${failures.length} failures`,
+);
 for (const failure of failures) {
   console.log(`  ${failure}`);
 }

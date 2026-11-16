@@ -1,0 +1,1181 @@
+{
+ "scenarios": [
+  {
+   "name": "tool_call",
+   "start": {
+    "type": "start",
+    "model": "gpt-4.1-mini",
+    "instructions": "You are a helpful assistant.",
+    "user_prompt": "What is the temperature in Tokyo?",
+    "tools": [
+     {
+      "name": "get_temperature",
+      "description": null,
+      "parameters_json_schema": {
+       "additionalProperties": false,
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ],
+       "type": "object"
+      },
+      "strict": null
+     }
+    ]
+   },
+   "steps": [
+    {
+     "request": {
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "messages": [
+       {
+        "role": "system",
+        "content": "You are a helpful assistant."
+       },
+       {
+        "role": "user",
+        "content": "What is the temperature in Tokyo?"
+       }
+      ],
+      "tool_choice": "auto",
+      "tools": [
+       {
+        "type": "function",
+        "function": {
+         "name": "get_temperature",
+         "description": "",
+         "parameters": {
+          "additionalProperties": false,
+          "properties": {
+           "city": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "city"
+          ],
+          "type": "object"
+         },
+         "strict": true
+        }
+       }
+      ]
+     },
+     "response": {
+      "choices": [
+       {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+         "annotations": [],
+         "content": null,
+         "refusal": null,
+         "role": "assistant",
+         "tool_calls": [
+          {
+           "function": {
+            "arguments": "{\"city\":\"Tokyo\"}",
+            "name": "get_temperature"
+           },
+           "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+           "type": "function"
+          }
+         ]
+        }
+       }
+      ],
+      "created": 1744810634,
+      "id": "chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "object": "chat.completion",
+      "service_tier": "default",
+      "system_fingerprint": "fp_38647f5e19",
+      "usage": {
+       "completion_tokens": 15,
+       "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "prompt_tokens": 50,
+       "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+       },
+       "total_tokens": 65
+      }
+     },
+     "tool_calls": [
+      {
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+       "tool_name": "get_temperature",
+       "args": "{\"city\":\"Tokyo\"}"
+      }
+     ],
+     "tool_results": [
+      {
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+       "content": {
+        "city": "Tokyo",
+        "celsius": 20
+       }
+      }
+     ]
+    },
+    {
+     "request": {
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "messages": [
+       {
+        "role": "system",
+        "content": "You are a helpful assistant."
+       },
+       {
+        "role": "user",
+        "content": "What is the temperature in Tokyo?"
+       },
+       {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+         {
+          "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+          "type": "function",
+          "function": {
+           "name": "get_temperature",
+           "arguments": "{\"city\":\"Tokyo\"}"
+          }
+         }
+        ]
+       },
+       {
+        "role": "tool",
+        "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+        "content": "{\"city\":\"Tokyo\",\"celsius\":20}"
+       }
+      ],
+      "tool_choice": "auto",
+      "tools": [
+       {
+        "type": "function",
+        "function": {
+         "name": "get_temperature",
+         "description": "",
+         "parameters": {
+          "additionalProperties": false,
+          "properties": {
+           "city": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "city"
+          ],
+          "type": "object"
+         },
+         "strict": true
+        }
+       }
+      ]
+     },
+     "response": {
+      "choices": [
+       {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+         "annotations": [],
+         "content": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+         "refusal": null,
+         "role": "assistant"
+        }
+       }
+      ],
+      "created": 1744810635,
+      "id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "object": "chat.completion",
+      "service_tier": "default",
+      "system_fingerprint": "fp_38647f5e19",
+      "usage": {
+       "completion_tokens": 15,
+       "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "prompt_tokens": 75,
+       "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+       },
+       "total_tokens": 90
+      }
+     }
+    }
+   ],
+   "output": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+   "usage": {
+    "requests": 2,
+    "input_tokens": 125,
+    "output_tokens": 30
+   },
+   "new_messages": [
+    {
+     "kind": "request",
+     "parts": [
+      {
+       "part_kind": "user-prompt",
+       "content": "What is the temperature in Tokyo?"
+      }
+     ],
+     "instructions": "You are a helpful assistant."
+    },
+    {
+     "kind": "response",
+     "parts": [
+      {
+       "part_kind": "tool-call",
+       "tool_name": "get_temperature",
+       "args": "{\"city\":\"Tokyo\"}",
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9"
+      }
+     ],
+     "usage": {
+      "input_tokens": 50,
+      "output_tokens": 15
+     },
+     "model_name": "gpt-4.1-mini-2025-04-14",
+     "provider_name": "openai",
+     "provider_response_id": "chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq",
+     "finish_reason": "tool_call"
+    },
+    {
+     "kind": "request",
+     "parts": [
+      {
+       "part_kind": "tool-return",
+       "tool_name": "get_temperature",
+       "content": {
+        "city": "Tokyo",
+        "celsius": 20
+       },
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9"
+      }
+     ],
+     "instructions": "You are a helpful assistant."
+    },
+    {
+     "kind": "response",
+     "parts": [
+      {
+       "part_kind": "text",
+       "content": "The temperature in Tokyo is currently 20.0 degrees Celsius."
+      }
+     ],
+     "usage": {
+      "input_tokens": 75,
+      "output_tokens": 15
+     },
+     "model_name": "gpt-4.1-mini-2025-04-14",
+     "provider_name": "openai",
+     "provider_response_id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+     "finish_reason": "stop"
+    }
+   ]
+  },
+  {
+   "name": "tool_retry",
+   "start": {
+    "type": "start",
+    "model": "gpt-4.1-mini",
+    "instructions": "You are a helpful assistant.",
+    "user_prompt": "What is the temperature in Tokyo?",
+    "tools": [
+     {
+      "name": "get_temperature",
+      "description": null,
+      "parameters_json_schema": {
+       "additionalProperties": false,
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ],
+       "type": "object"
+      },
+      "strict": null
+     }
+    ]
+   },
+   "steps": [
+    {
+     "request": {
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "messages": [
+       {
+        "role": "system",
+        "content": "You are a helpful assistant."
+       },
+       {
+        "role": "user",
+        "content": "What is the temperature in Tokyo?"
+       }
+      ],
+      "tool_choice": "auto",
+      "tools": [
+       {
+        "type": "function",
+        "function": {
+         "name": "get_temperature",
+         "description": "",
+         "parameters": {
+          "additionalProperties": false,
+          "properties": {
+           "city": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "city"
+          ],
+          "type": "object"
+         },
+         "strict": true
+        }
+       }
+      ]
+     },
+     "response": {
+      "choices": [
+       {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+         "annotations": [],
+         "content": null,
+         "refusal": null,
+         "role": "assistant",
+         "tool_calls": [
+          {
+           "function": {
+            "arguments": "{\"city\":\"Tokyo\"}",
+            "name": "get_temperature"
+           },
+           "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+           "type": "function"
+          }
+         ]
+        }
+       }
+      ],
+      "created": 1744810634,
+      "id": "chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "object": "chat.completion",
+      "service_tier": "default",
+      "system_fingerprint": "fp_38647f5e19",
+      "usage": {
+       "completion_tokens": 15,
+       "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "prompt_tokens": 50,
+       "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+       },
+       "total_tokens": 65
+      }
+     },
+     "tool_calls": [
+      {
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+       "tool_name": "get_temperature",
+       "args": "{\"city\":\"Tokyo\"}"
+      }
+     ],
+     "tool_results": [
+      {
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+       "retry": "The weather service is down."
+      }
+     ]
+    },
+    {
+     "request": {
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "messages": [
+       {
+        "role": "system",
+        "content": "You are a helpful assistant."
+       },
+       {
+        "role": "user",
+        "content": "What is the temperature in Tokyo?"
+       },
+       {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+         {
+          "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+          "type": "function",
+          "function": {
+           "name": "get_temperature",
+           "arguments": "{\"city\":\"Tokyo\"}"
+          }
+         }
+        ]
+       },
+       {
+        "role": "tool",
+        "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+        "content": "{\"error\":\"The weather service is down.\"}"
+       }
+      ],
+      "tool_choice": "auto",
+      "tools": [
+       {
+        "type": "function",
+        "function": {
+         "name": "get_temperature",
+         "description": "",
+         "parameters": {
+          "additionalProperties": false,
+          "properties": {
+           "city": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "city"
+          ],
+          "type": "object"
+         },
+         "strict": true
+        }
+       }
+      ]
+     },
+     "response": {
+      "choices": [
+       {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+         "annotations": [],
+         "content": null,
+         "refusal": null,
+         "role": "assistant",
+         "tool_calls": [
+          {
+           "function": {
+            "arguments": "{\"city\":\"Tokyo\"}",
+            "name": "get_temperature"
+           },
+           "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+           "type": "function"
+          }
+         ]
+        }
+       }
+      ],
+      "created": 1744810634,
+      "id": "chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "object": "chat.completion",
+      "service_tier": "default",
+      "system_fingerprint": "fp_38647f5e19",
+      "usage": {
+       "completion_tokens": 15,
+       "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "prompt_tokens": 50,
+       "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+       },
+       "total_tokens": 65
+      }
+     },
+     "tool_calls": [
+      {
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+       "tool_name": "get_temperature",
+       "args": "{\"city\":\"Tokyo\"}"
+      }
+     ],
+     "tool_results": [
+      {
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+       "content": {
+        "city": "Tokyo",
+        "celsius": 20
+       }
+      }
+     ]
+    },
+    {
+     "request": {
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "messages": [
+       {
+        "role": "system",
+        "content": "You are a helpful assistant."
+       },
+       {
+        "role": "user",
+        "content": "What is the temperature in Tokyo?"
+       },
+       {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+         {
+          "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+          "type": "function",
+          "function": {
+           "name": "get_temperature",
+           "arguments": "{\"city\":\"Tokyo\"}"
+          }
+         }
+        ]
+       },
+       {
+        "role": "tool",
+        "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+        "content": "{\"error\":\"The weather service is down.\"}"
+       },
+       {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+         {
+          "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+          "type": "function",
+          "function": {
+           "name": "get_temperature",
+           "arguments": "{\"city\":\"Tokyo\"}"
+          }
+         }
+        ]
+       },
+       {
+        "role": "tool",
+        "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+        "content": "{\"city\":\"Tokyo\",\"celsius\":20}"
+       }
+      ],
+      "tool_choice": "auto",
+      "tools": [
+       {
+        "type": "function",
+        "function": {
+         "name": "get_temperature",
+         "description": "",
+         "parameters": {
+          "additionalProperties": false,
+          "properties": {
+           "city": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "city"
+          ],
+          "type": "object"
+         },
+         "strict": true
+        }
+       }
+      ]
+     },
+     "response": {
+      "choices": [
+       {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+         "annotations": [],
+         "content": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+         "refusal": null,
+         "role": "assistant"
+        }
+       }
+      ],
+      "created": 1744810635,
+      "id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "object": "chat.completion",
+      "service_tier": "default",
+      "system_fingerprint": "fp_38647f5e19",
+      "usage": {
+       "completion_tokens": 15,
+       "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "prompt_tokens": 75,
+       "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+       },
+       "total_tokens": 90
+      }
+     }
+    }
+   ],
+   "output": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+   "usage": {
+    "requests": 3,
+    "input_tokens": 175,
+    "output_tokens": 45
+   },
+   "new_messages": [
+    {
+     "kind": "request",
+     "parts": [
+      {
+       "part_kind": "user-prompt",
+       "content": "What is the temperature in Tokyo?"
+      }
+     ],
+     "instructions": "You are a helpful assistant."
+    },
+    {
+     "kind": "response",
+     "parts": [
+      {
+       "part_kind": "tool-call",
+       "tool_name": "get_temperature",
+       "args": "{\"city\":\"Tokyo\"}",
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9"
+      }
+     ],
+     "usage": {
+      "input_tokens": 50,
+      "output_tokens": 15
+     },
+     "model_name": "gpt-4.1-mini-2025-04-14",
+     "provider_name": "openai",
+     "provider_response_id": "chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq",
+     "finish_reason": "tool_call"
+    },
+    {
+     "kind": "request",
+     "parts": [
+      {
+       "part_kind": "tool-return",
+       "tool_name": "get_temperature",
+       "content": "The weather service is down.",
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+       "outcome": "retried",
+       "retry": {
+        "cause": "model_retry",
+        "attempt": 1,
+        "max_retries": 1
+       }
+      }
+     ],
+     "instructions": "You are a helpful assistant."
+    },
+    {
+     "kind": "response",
+     "parts": [
+      {
+       "part_kind": "tool-call",
+       "tool_name": "get_temperature",
+       "args": "{\"city\":\"Tokyo\"}",
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9"
+      }
+     ],
+     "usage": {
+      "input_tokens": 50,
+      "output_tokens": 15
+     },
+     "model_name": "gpt-4.1-mini-2025-04-14",
+     "provider_name": "openai",
+     "provider_response_id": "chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq",
+     "finish_reason": "tool_call"
+    },
+    {
+     "kind": "request",
+     "parts": [
+      {
+       "part_kind": "tool-return",
+       "tool_name": "get_temperature",
+       "content": {
+        "city": "Tokyo",
+        "celsius": 20
+       },
+       "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9"
+      }
+     ],
+     "instructions": "You are a helpful assistant."
+    },
+    {
+     "kind": "response",
+     "parts": [
+      {
+       "part_kind": "text",
+       "content": "The temperature in Tokyo is currently 20.0 degrees Celsius."
+      }
+     ],
+     "usage": {
+      "input_tokens": 75,
+      "output_tokens": 15
+     },
+     "model_name": "gpt-4.1-mini-2025-04-14",
+     "provider_name": "openai",
+     "provider_response_id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+     "finish_reason": "stop"
+    }
+   ]
+  },
+  {
+   "name": "text_only",
+   "start": {
+    "type": "start",
+    "model": "gpt-4.1-mini",
+    "instructions": "You are a helpful assistant.",
+    "user_prompt": "What is the temperature in Tokyo?",
+    "tools": []
+   },
+   "steps": [
+    {
+     "request": {
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "messages": [
+       {
+        "role": "system",
+        "content": "You are a helpful assistant."
+       },
+       {
+        "role": "user",
+        "content": "What is the temperature in Tokyo?"
+       }
+      ]
+     },
+     "response": {
+      "choices": [
+       {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+         "annotations": [],
+         "content": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+         "refusal": null,
+         "role": "assistant"
+        }
+       }
+      ],
+      "created": 1744810635,
+      "id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "object": "chat.completion",
+      "service_tier": "default",
+      "system_fingerprint": "fp_38647f5e19",
+      "usage": {
+       "completion_tokens": 15,
+       "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "prompt_tokens": 75,
+       "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+       },
+       "total_tokens": 90
+      }
+     }
+    }
+   ],
+   "output": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+   "usage": {
+    "requests": 1,
+    "input_tokens": 75,
+    "output_tokens": 15
+   },
+   "new_messages": [
+    {
+     "kind": "request",
+     "parts": [
+      {
+       "part_kind": "user-prompt",
+       "content": "What is the temperature in Tokyo?"
+      }
+     ],
+     "instructions": "You are a helpful assistant."
+    },
+    {
+     "kind": "response",
+     "parts": [
+      {
+       "part_kind": "text",
+       "content": "The temperature in Tokyo is currently 20.0 degrees Celsius."
+      }
+     ],
+     "usage": {
+      "input_tokens": 75,
+      "output_tokens": 15
+     },
+     "model_name": "gpt-4.1-mini-2025-04-14",
+     "provider_name": "openai",
+     "provider_response_id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+     "finish_reason": "stop"
+    }
+   ]
+  },
+  {
+   "name": "message_history",
+   "start": {
+    "type": "start",
+    "model": "gpt-4.1-mini",
+    "instructions": "You are a helpful assistant.",
+    "user_prompt": "And in Paris?",
+    "tools": [
+     {
+      "name": "get_temperature",
+      "description": null,
+      "parameters_json_schema": {
+       "additionalProperties": false,
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ],
+       "type": "object"
+      },
+      "strict": null
+     }
+    ],
+    "message_history": [
+     {
+      "parts": [
+       {
+        "content": "What is the temperature in Tokyo?",
+        "timestamp": "2026-11-16T10:48:30.216744Z",
+        "part_kind": "user-prompt"
+       }
+      ],
+      "timestamp": "2026-11-16T10:48:30.216928Z",
+      "instructions": "You are a helpful assistant.",
+      "kind": "request",
+      "run_id": "01a1e3f9-04f3-769b-a2ca-6701f7b54468",
+      "conversation_id": "01a1e3f9-04f3-769b-a2ca-67027f85c86a",
+      "metadata": null,
+      "state": "complete"
+     },
+     {
+      "parts": [
+       {
+        "tool_name": "get_temperature",
+        "args": "{\"city\":\"Tokyo\"}",
+        "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+        "tool_kind": null,
+        "id": null,
+        "provider_name": null,
+        "provider_details": null,
+        "part_kind": "tool-call"
+       }
+      ],
+      "usage": {
+       "input_tokens": 50,
+       "cache_write_tokens": 0,
+       "cache_write_1h_tokens": 0,
+       "cache_read_tokens": 0,
+       "output_tokens": 15,
+       "output_reasoning_tokens": 0,
+       "input_audio_tokens": 0,
+       "cache_audio_read_tokens": 0,
+       "output_audio_tokens": 0,
+       "audio_seconds": 0.0,
+       "details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "cost": "0.000044"
+      },
+      "model_name": "gpt-4.1-mini-2025-04-14",
+      "model_id": "openai:gpt-4.1-mini",
+      "timestamp": "2026-11-16T10:48:30.235419Z",
+      "kind": "response",
+      "provider_name": "openai",
+      "provider_url": "https://api.openai.com/v1/",
+      "canonical_system": "openai",
+      "provider_details": {
+       "finish_reason": "tool_calls",
+       "service_tier": "default",
+       "timestamp": "2025-04-16T13:37:14Z"
+      },
+      "provider_response_id": "chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq",
+      "finish_reason": "tool_call",
+      "run_id": "01a1e3f9-04f3-769b-a2ca-6701f7b54468",
+      "conversation_id": "01a1e3f9-04f3-769b-a2ca-67027f85c86a",
+      "metadata": null,
+      "workspace_ref": null,
+      "history_digest": null,
+      "failed_attempts": null,
+      "state": "complete"
+     },
+     {
+      "parts": [
+       {
+        "tool_name": "get_temperature",
+        "content": {
+         "city": "Tokyo",
+         "celsius": 20
+        },
+        "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+        "tool_kind": null,
+        "metadata": null,
+        "timestamp": "2026-11-16T10:48:30.240245Z",
+        "outcome": "success",
+        "retry": null,
+        "part_kind": "tool-return",
+        "content_file_digests": []
+       }
+      ],
+      "timestamp": "2026-11-16T10:48:30.240556Z",
+      "instructions": "You are a helpful assistant.",
+      "kind": "request",
+      "run_id": "01a1e3f9-04f3-769b-a2ca-6701f7b54468",
+      "conversation_id": "01a1e3f9-04f3-769b-a2ca-67027f85c86a",
+      "metadata": null,
+      "state": "complete"
+     },
+     {
+      "parts": [
+       {
+        "content": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+        "id": null,
+        "provider_name": null,
+        "provider_details": null,
+        "citations": null,
+        "part_kind": "text"
+       }
+      ],
+      "usage": {
+       "input_tokens": 75,
+       "cache_write_tokens": 0,
+       "cache_write_1h_tokens": 0,
+       "cache_read_tokens": 0,
+       "output_tokens": 15,
+       "output_reasoning_tokens": 0,
+       "input_audio_tokens": 0,
+       "cache_audio_read_tokens": 0,
+       "output_audio_tokens": 0,
+       "audio_seconds": 0.0,
+       "details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "cost": "0.000054"
+      },
+      "model_name": "gpt-4.1-mini-2025-04-14",
+      "model_id": "openai:gpt-4.1-mini",
+      "timestamp": "2026-11-16T10:48:30.242649Z",
+      "kind": "response",
+      "provider_name": "openai",
+      "provider_url": "https://api.openai.com/v1/",
+      "canonical_system": "openai",
+      "provider_details": {
+       "finish_reason": "stop",
+       "service_tier": "default",
+       "timestamp": "2025-04-16T13:37:15Z"
+      },
+      "provider_response_id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+      "finish_reason": "stop",
+      "run_id": "01a1e3f9-04f3-769b-a2ca-6701f7b54468",
+      "conversation_id": "01a1e3f9-04f3-769b-a2ca-67027f85c86a",
+      "metadata": null,
+      "workspace_ref": null,
+      "history_digest": null,
+      "failed_attempts": null,
+      "state": "complete"
+     }
+    ]
+   },
+   "steps": [
+    {
+     "request": {
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "messages": [
+       {
+        "role": "system",
+        "content": "You are a helpful assistant."
+       },
+       {
+        "role": "user",
+        "content": "What is the temperature in Tokyo?"
+       },
+       {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+         {
+          "id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+          "type": "function",
+          "function": {
+           "name": "get_temperature",
+           "arguments": "{\"city\":\"Tokyo\"}"
+          }
+         }
+        ]
+       },
+       {
+        "role": "tool",
+        "tool_call_id": "call_bhZkmIKKItNGJ41whHUHB7p9",
+        "content": "{\"city\":\"Tokyo\",\"celsius\":20}"
+       },
+       {
+        "role": "assistant",
+        "content": "The temperature in Tokyo is currently 20.0 degrees Celsius."
+       },
+       {
+        "role": "user",
+        "content": "And in Paris?"
+       }
+      ],
+      "tool_choice": "auto",
+      "tools": [
+       {
+        "type": "function",
+        "function": {
+         "name": "get_temperature",
+         "description": "",
+         "parameters": {
+          "additionalProperties": false,
+          "properties": {
+           "city": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "city"
+          ],
+          "type": "object"
+         },
+         "strict": true
+        }
+       }
+      ]
+     },
+     "response": {
+      "choices": [
+       {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": null,
+        "message": {
+         "annotations": [],
+         "content": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+         "refusal": null,
+         "role": "assistant"
+        }
+       }
+      ],
+      "created": 1744810635,
+      "id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "object": "chat.completion",
+      "service_tier": "default",
+      "system_fingerprint": "fp_38647f5e19",
+      "usage": {
+       "completion_tokens": 15,
+       "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+       },
+       "prompt_tokens": 75,
+       "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+       },
+       "total_tokens": 90
+      }
+     }
+    }
+   ],
+   "output": "The temperature in Tokyo is currently 20.0 degrees Celsius.",
+   "usage": {
+    "requests": 1,
+    "input_tokens": 75,
+    "output_tokens": 15
+   },
+   "new_messages": [
+    {
+     "kind": "request",
+     "parts": [
+      {
+       "part_kind": "user-prompt",
+       "content": "And in Paris?"
+      }
+     ],
+     "instructions": "You are a helpful assistant."
+    },
+    {
+     "kind": "response",
+     "parts": [
+      {
+       "part_kind": "text",
+       "content": "The temperature in Tokyo is currently 20.0 degrees Celsius."
+      }
+     ],
+     "usage": {
+      "input_tokens": 75,
+      "output_tokens": 15
+     },
+     "model_name": "gpt-4.1-mini-2025-04-14",
+     "provider_name": "openai",
+     "provider_response_id": "chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP",
+     "finish_reason": "stop"
+    }
+   ]
+  }
+ ]
+}
