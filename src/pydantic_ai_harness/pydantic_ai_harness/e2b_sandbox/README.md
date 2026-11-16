@@ -227,7 +227,7 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 `network` takes E2B's network options, passed to `Sandbox.create` unchanged. Their `rules` let commands use a token the sandbox never holds: E2B's proxy, outside the sandbox, sets the headers on each HTTPS request to the named host, replacing a header of the same name. Here `gh` and `git push` act as the token's owner, while `echo $GH_TOKEN` in the sandbox prints only `placeholder`:
 
-```python {test="skip"}
+```python {names="defined"}
 import base64
 
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
