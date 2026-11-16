@@ -441,9 +441,9 @@ class DaytonaSandboxBackend(
         env: Environment variables every command gets; a command's own `env` is layered on top.
             They are also set on a newly created sandbox.
         desktop: Whether the sandbox has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse],
-            started on first use: `True` for 1280x800, or its `(width, height)`, at least 1024x768. The size applies
-            to a new sandbox, since Daytona can't resize a running one. The snapshot needs Daytona's desktop
-            packages, which the default snapshot has.
+            started on first use: `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox,
+            since Daytona can't resize a running one. The snapshot needs Daytona's desktop packages, which the default
+            snapshot has.
     """
 
     def __init__(
@@ -475,12 +475,6 @@ class DaytonaSandboxBackend(
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
         self._desktop_size = desktop_size(desktop)
-        creates = sandbox is None and ref is None
-        if creates and self._desktop_size is not None and (self._desktop_size[0] < 1024 or self._desktop_size[1] < 768):
-            # Daytona's desktop starts at 1024x768 when asked for less.
-            raise UserError(
-                f"Daytona's desktop is at least 1024x768, not {self._desktop_size[0]}x{self._desktop_size[1]}."
-            )
         # Commands see the desktop too, so a program the agent starts from the shell opens on it.
         self._env = {**({'DISPLAY': DISPLAY} if self._desktop_size else {}), **(env or {})}
         self._display = (

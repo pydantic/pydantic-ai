@@ -4,7 +4,7 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 `tests/harness/daytona_sandbox/test_daytona_live.py` before changing the mapping:
 
 - `computer_use.start()` returns once the display answers; starting a running desktop is harmless.
-- `VNC_RESOLUTION` on a new sandbox sets the display size; without it, or below 1024x768, the size is 1024x768.
+- `VNC_RESOLUTION` on a new sandbox sets the display size, such as 800x600; without it, the size is 1024x768.
 - Screenshots are PNGs at the display's size; a region screenshot is the region at full resolution.
 - `mouse.scroll`'s amount is wheel clicks; `left` and `right` send X buttons 6 and 7.
 - Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
@@ -13,11 +13,12 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
   emoji.
 - `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
   scroll lock and media keys.
-- Its numpad names are `num0` to `num9`, `num_enter`, `num_plus`, `num_minus`, `num_asterisk`, `num_slash`,
-  `num_decimal` and `num_lock`; the display refuses `menu`.
+- Its keypad digits are `num0` to `num9`, which follow Num Lock, and Num Lock is `num_lock`. Its other keypad names
+  type other keys (`num_plus` types `n`), and the display refuses `menu`.
 - Pressing `f13` to `f24` crashes the computer-use process for good.
 - After the sandbox stops and starts, `get_status()` says `inactive` until `start()`. Input sent before that start
-  breaks the desktop: every request answers 503 until the sandbox stops and starts again.
+  breaks the desktop until the sandbox stops and starts again: input answers 500 (`connection is shut down`), and
+  `start()` and `get_status()` answer 503.
 """
 
 from __future__ import annotations as _annotations
@@ -107,16 +108,7 @@ _NAMED_KEYS = frozenset(
 )
 """Normalized key names Daytona presses under the same name; `f13` to `f24` crash its desktop."""
 
-_RENAMED_KEYS = {
-    **{f'numpad{n}': f'num{n}' for n in range(10)},
-    'numpad_enter': 'num_enter',
-    'numpad_add': 'num_plus',
-    'numpad_subtract': 'num_minus',
-    'numpad_multiply': 'num_asterisk',
-    'numpad_divide': 'num_slash',
-    'numpad_decimal': 'num_decimal',
-    'numlock': 'num_lock',
-}
+_RENAMED_KEYS = {**{f'numpad{n}': f'num{n}' for n in range(10)}, 'numlock': 'num_lock'}
 """Normalized key names Daytona presses under another name."""
 
 _UNSHIFTED = frozenset("abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./")
@@ -281,16 +273,13 @@ class DaytonaDesktop:
                 raise WorkspaceError("Daytona's desktop did not scroll.")
 
     async def _type(self, text: str) -> None:
-        """Type `text`, `_TYPED_PER_REQUEST` characters at a time, pressing Tab for each tab, which `type` refuses."""
+        """Type `text`, `_TYPED_PER_REQUEST` characters at a time."""
         if any(ord(character) > 0xFFFF for character in text):
             raise UnsupportedActionError("Daytona's desktop cannot type characters beyond U+FFFF, such as most emoji.")
         keyboard = self._computer_use().keyboard
-        for index, segment in enumerate(text.split('\t')):
-            if index:
-                await _send_input(partial(keyboard.press, 'tab', request_timeout=_REQUEST_TIMEOUT))
-            for start in range(0, len(segment), _TYPED_PER_REQUEST):
-                part = segment[start : start + _TYPED_PER_REQUEST]
-                await _send_input(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
+        for start in range(0, len(text), _TYPED_PER_REQUEST):
+            part = text[start : start + _TYPED_PER_REQUEST]
+            await _send_input(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
 
     async def act(self, action: DisplayAction) -> None:
         await self._check_running()

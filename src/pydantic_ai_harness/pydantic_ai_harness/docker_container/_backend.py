@@ -50,7 +50,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, start_x_server, wait_until_ready, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerContainerBackend', 'remove_container')
@@ -249,21 +249,23 @@ windows fill the screen."""
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
 
+_PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
+
 _START_DESKTOP = (
-    # A display this script starts is marked as ours, so it gets the panel.
-    start_x_server(f'{_PID_DIR}/xvfb.log', first=f': >{_PID_DIR}/panel; ')
-    # Started apart from the X server, so a start cancelled between the two still gets its panel on the next one.
-    + f'[ ! -e {_PID_DIR}/panel ] || kill -0 "$(cat {_PID_DIR}/panel)" 2>/dev/null '
-    f'|| {{ setsid tint2 >/dev/null 2>&1 9>&- & echo $! >{_PID_DIR}/panel; }}; '
-    'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
+    start_x_server(f'{_PID_DIR}/xvfb.log') + 'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
-    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
+    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; '
+    # tint2 shows only once a window manager answers, so it starts after one.
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >{_PID_DIR}/panel.log 2>&1 9>&- & '
+    + wait_until_ready(_PANEL_SHOWS, '$!', 'the panel', f'{_PID_DIR}/panel.log')
+    + 'fi'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then the panel of a display it
-started unless that runs, then a window manager. A second start waits for the first, then finds its X server.
+"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then a window manager, then the
+panel unless it shows. A second start waits for the first, then finds its X server.
 
 A second `fluxbox` exits when one runs, so starting it every time recovers one that died. It then waits up to 10
-seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it lands on.
+seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it lands on, and
+up to 10 seconds for the panel window, so the first screenshot isn't black.
 """
 
 

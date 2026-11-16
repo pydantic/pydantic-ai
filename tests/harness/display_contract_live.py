@@ -2,6 +2,10 @@
 
 from __future__ import annotations as _annotations
 
+import io
+
+from PIL import Image
+
 from pydantic_ai.computer_use import MoveMouse, Point, Region
 from pydantic_ai_harness.computer_use import (
     Display,
@@ -24,3 +28,8 @@ async def check_display_contract(display: Display) -> None:
     if isinstance(display, SupportsCursorPosition):
         await display.act(MoveMouse(x=width // 3, y=height // 3))
         assert await display.cursor_position() == Point(x=width // 3, y=height // 3)
+
+
+def is_blank(png: bytes) -> bool:
+    """Whether every pixel of a PNG has the same color, as a screen with nothing drawn on it does."""
+    return Image.open(io.BytesIO(png)).convert('RGB').getcolors(maxcolors=1) is not None
