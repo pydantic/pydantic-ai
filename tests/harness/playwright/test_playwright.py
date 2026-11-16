@@ -134,12 +134,11 @@ class _FakeFrameContent:
         self._inner_text_error = inner_text_error
         self._wait_for_error = wait_for_error
         self._wait_delay = wait_delay
-        self._loaded_url = loaded_url
+        self._loaded_url = url if loaded_url is None else loaded_url
         self.wait_states: list[str | None] = []
 
     async def wait_for_load_state(self, state: Literal['domcontentloaded'], *, timeout: float | None = None) -> None:
-        if self._loaded_url is not None:
-            self.url = self._loaded_url
+        self.url = self._loaded_url
 
     async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
         if self._inner_text_error is not None:
@@ -2360,9 +2359,13 @@ class TestPlaywrightBrowserLifecycle:
             policy=MainFrameOnExampleCom(allowed_domains=['example.com'], block_private_addresses=False),
         )
         async with session:
-            result = await _toolset(page, session=session).get_text()
-        assert 'Allowed embedded content' in result
-        assert 'Inline srcdoc content' in result
+            tools = _toolset(page, session=session)
+            result = await tools.get_text()
+            assert 'Allowed embedded content' in result
+            assert 'Inline srcdoc content' in result
+            # The same document in the main frame is refused, so the frame above passed as a subframe.
+            page.url = 'https://embed.example.org/'
+            assert 'top-level document off example.com' in await tools.get_text()
 
     async def test_default_context_navigates_on_from_a_failed_load(self) -> None:
         # A refused or failed load leaves Chromium's error page in the tab; it holds nothing from the
