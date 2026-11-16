@@ -247,6 +247,17 @@ async def test_a_desktop_refuses_the_host_network(docker: FakeDocker, container_
         await orphan.screenshot()
 
 
+async def test_a_desktop_refuses_a_podman_namespace_path(docker: FakeDocker, container_dir: Path) -> None:
+    """Podman keeps `ns:<path>` as the network mode, and `ns:/proc/1/ns/net` is the host's network."""
+    docker.add_container('host-ns', container_dir, network='ns:/proc/1/ns/net')
+    docker.add_container('joined', container_dir, network='container:host-ns')
+    for name in ['host-ns', 'joined']:
+        attached = screen(DockerContainerBackend(ref=WorkspaceRef(provider='docker', id=name), desktop=True))
+        with pytest.raises(UserError, match="a desktop can't use the host's network"):
+            await attached.screenshot()
+    assert docker.xdotool_calls == []
+
+
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:
     ref = WorkspaceRef(provider='docker', id='pydantic-ai-abc')
 

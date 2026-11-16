@@ -415,7 +415,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
         """Refuse a desktop on the host's network, however the container got there.
 
         Its X clients could then reach an X server on the host through Linux's shared abstract socket, and drive
-        the host's screen. A `container:<id>` network is that container's, so it is followed.
+        the host's screen. A `container:<id>` network is that container's, so it is followed. Podman's `ns:<path>`
+        joins whatever namespace the path names, such as the host's at `ns:/proc/1/ns/net`, so it is refused too.
         """
         container = self._name
         while True:
@@ -424,7 +425,7 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             if result.exit_code != 0:
                 raise WorkspaceUnavailableError(f'could not inspect container {container}: {result.stderr.strip()}')
             mode = result.stdout.strip()
-            if mode == 'host':
+            if mode == 'host' or mode.startswith('ns:'):
                 raise UserError(
                     "a desktop can't use the host's network: its X clients could reach an X server on the host "
                     "through Linux's shared abstract socket, and drive the host's screen"
