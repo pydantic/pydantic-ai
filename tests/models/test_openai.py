@@ -2175,8 +2175,7 @@ async def test_parameterized_structured_suffix_media_type_inlined(allow_model_re
 async def test_openapi_yaml_structured_suffix_inlined(allow_model_requests: None):
     """A `+yaml` structured-suffix media type is inlined as text, like bare YAML is.
 
-    Unit test, not VCR: before `+yaml` counted as text-like the mapping raised
-    `Unsupported binary content type` before any request was made, so this pins the request
+    Unit test, not VCR: the outcome is decided by the request mapping, so this pins the request
     shape the mock client receives.
     """
     yaml_content = BinaryContent(data=b'openapi: 3.1.0\ninfo:\n  title: demo', media_type='application/openapi+yaml')
