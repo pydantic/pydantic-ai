@@ -388,6 +388,26 @@ At registration, the resolver receives `tool=None` and `tool_name=''` for the to
 Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run. The
 shared toolset definitions remain registered. `False` is rejected for MCP and dynamic tools.
 
+## Tool arguments
+
+Function tool arguments cross into the chained task run as JSON, and the task run validates them again with the tool's schema,
+which reads each field's alias. Nested Pydantic models and Pydantic dataclasses cross by alias. A `TypedDict`
+or a standard-library dataclass crosses by Python name, so a field with an alias fails that validation, or
+takes its default if it has one. Let such a type validate by name as well; the same decorator works on a
+standard-library dataclass:
+
+```python
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, with_config
+from typing_extensions import TypedDict
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+```
+
 ## Execution limits
 
 - **JSON inputs and results:** Dependencies, messages, model settings, metadata, tool arguments, events, and

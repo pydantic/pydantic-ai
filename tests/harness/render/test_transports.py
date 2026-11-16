@@ -7,7 +7,8 @@ from datetime import date
 from typing import Annotated
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, with_config
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
@@ -194,6 +195,111 @@ async def test_aliased_function_arguments_are_revalidated_after_the_json_boundar
     assert await pending == 'aliased arguments arrived'
     assert seen == [('Ada', 2)]
     assert 'aliased-arguments__function_toolset__<agent>.call_tool' in context.task_names
+
+
+class Room(BaseModel):
+    name: str = Field(alias='roomName')
+    max_price: float | None = Field(None, alias='maxPrice')
+
+
+@pydantic_dataclass
+class Guest:
+    name: Annotated[str, Field(alias='guestName')]
+
+
+def nested_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('nested aliased arguments arrived')])
+    args = {'room': {'roomName': 'A1', 'maxPrice': 10}, 'guest': {'guestName': 'Ada'}}
+    return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
+
+
+async def test_nested_aliased_function_arguments_cross_the_json_boundary_by_alias() -> None:
+    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default."""
+    seen: list[tuple[str, float | None, str]] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(nested_aliased_argument_model),
+        name='nested-aliased-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def book(room: Room, guest: Guest) -> str:
+        seen.append((room.name, room.max_price, guest.name))
+        return 'ok'
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('book A1 for Ada')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'nested aliased arguments arrived'
+    assert seen == [('A1', 10.0, 'Ada')]
+
+
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class NamedVenue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+def typed_dict_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(', '.join(f'{part.tool_name}: {part.outcome}' for part in returns))])
+    args = {'venue': {'roomName': 'A1'}, 'guests': 2}
+    return ModelResponse(
+        parts=[
+            ToolCallPart('book_venue', args, tool_call_id='venue'),
+            ToolCallPart('book_named_venue', args, tool_call_id='named-venue'),
+        ]
+    )
+
+
+async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json_boundary() -> None:
+    """A validated `TypedDict` is a plain dict keyed by Python name, so no generic serializer can write its aliases.
+
+    After the boundary, the tool's schema reads `roomName`, so the argument revalidates only when the `TypedDict`
+    also validates by name.
+    """
+    seen: list[str] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(typed_dict_aliased_argument_model),
+        name='typed-dict-aliased-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def book_venue(venue: Venue, guests: int) -> str:  # pragma: no cover - revalidation rejects the wire
+        return venue['room']
+
+    @agent.tool_plain
+    async def book_named_venue(venue: NamedVenue, guests: int) -> str:
+        seen.append(venue['room'])
+        return 'ok'
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('book A1')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'book_venue: retried, book_named_venue: success'
+    assert seen == ['A1']
 
 
 async def test_invalid_typed_arguments_follow_normal_model_retry_control_flow() -> None:

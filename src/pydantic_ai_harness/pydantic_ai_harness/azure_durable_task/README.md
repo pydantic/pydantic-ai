@@ -170,6 +170,26 @@ def support(
 Inside activities, live run fields such as `ctx.messages` and `ctx.prompt` are unavailable and raise
 `UserError`, and tools cannot emit run events.
 
+## Tool arguments
+
+Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema,
+which reads each field's alias. Nested Pydantic models and Pydantic dataclasses cross by alias. A `TypedDict`
+or a standard-library dataclass crosses by Python name, so a field with an alias fails that validation, or
+takes its default if it has one. Let such a type validate by name as well; the same decorator works on a
+standard-library dataclass:
+
+```python
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, with_config
+from typing_extensions import TypedDict
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+```
+
 ## Approvals and deferred calls
 
 Approvals belong to your orchestrator. Include `DeferredToolRequests`
