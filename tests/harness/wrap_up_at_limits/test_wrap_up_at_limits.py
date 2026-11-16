@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -26,7 +27,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ToolChoice
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness import WrapUpAtLimits
+from pydantic_ai_harness import SubAgent, SubAgents, WrapUpAtLimits
 from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, wrapped_up_by
 
 from ._messages import ORIGIN, wrap_ups
@@ -101,6 +102,29 @@ class TestWrapUpAtLimits:
         ) as stream:
             assert await stream.get_output() == 'what I found so far'
             assert wrapped_up_by(stream.new_messages()) == 'request_limit'
+
+    async def test_sub_agent_with_its_own_budget_returns_its_answer(self) -> None:
+        def parent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = [
+                part.content
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, ToolReturnPart)
+            ]
+            if returns:
+                return ModelResponse(parts=[TextPart(str(returns[0]))])
+            return ModelResponse(
+                parts=[ToolCallPart('delegate_task', {'agent_name': 'researcher', 'task': 'Research'})]
+            )
+
+        researcher = _agent(_Researcher(), [])
+        researcher.name = 'researcher'
+        sub_agents = SubAgents[None](agents=[SubAgent(researcher, usage_limits=UsageLimits(request_limit=2))])
+
+        result = await Agent(FunctionModel(parent), deps_type=type(None), capabilities=[sub_agents]).run('Go')
+
+        assert 'what I found so far' in result.output
 
     async def test_records_spans(self) -> None:
         exporter = InMemorySpanExporter()

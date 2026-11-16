@@ -53,7 +53,7 @@ When the run's `UsageLimits` leave room for one more model request but not for a
 - A batch of tool calls that would go over `tool_calls_limit` still raises `UsageLimitExceeded`, before any of its calls run. Answering such a batch as not executed and wrapping up after it needs core to stop counting denied tool results against the limit ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
 - Token use is projected from this run's responses. Input and total tokens are assumed to grow on each further request by as much as the last response grew over the one before, plus the final prompt; output tokens to be at most the largest response's. A final request that uses more than projected still raises `UsageLimitExceeded`.
 - `cost_limit` and `per_request_input_tokens_limit` aren't projected, and raise as before.
-- A model that still calls tools on the final request, as a provider that doesn't enforce `tool_choice='none'` allows, has them run as usual. The next request is made the last again, or raises `UsageLimitExceeded` when no request is left.
+- A model that still calls tools on the final request, as a provider that doesn't enforce `tool_choice='none'` allows, has them run as usual, unless `tool_calls_limit` is used up, in which case they raise `UsageLimitExceeded`. After calls that ran, the next request is made the last again, or raises when no request is left.
 
 ## Telling a wrapped-up answer from a finished one
 
@@ -89,6 +89,6 @@ The span carries no prompt text. The final request itself shows as an ordinary m
 - [`WarnNearLimits`](../compaction/) warns the model as limits approach. `WrapUpAtLimits` acts on the last request. Use both to have the model wind down first.
 - It decides on the usage when its hook runs. List it after capabilities that spend from the run's usage before a request, such as `SummarizingCompaction`, so it sees what they spent.
 - [Compaction](../compaction/) still runs on the final request. A strategy that makes a model request of its own, such as `SummarizingCompaction`, has no request left there and raises `UsageLimitExceeded`; wrap it in `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded))` with a strategy that makes no model requests. Skipping compaction on the final request needs a core ordering hook ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
-- In [Subagents](../sub_agents/), pass it in `shared_capabilities` so a sub-agent that reaches its budget returns its wrapped-up answer to the parent.
+- In [Subagents](../sub_agents/), give a sub-agent its own `SubAgent.usage_limits` and add `WrapUpAtLimits` to its capabilities: it returns a wrapped-up answer to the parent instead of reaching its budget. A sub-agent that shares the parent's budget (no `usage_limits` of its own) would spend the parent's last request on its answer, so the parent then raises.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/wrap_up_at_limits/).

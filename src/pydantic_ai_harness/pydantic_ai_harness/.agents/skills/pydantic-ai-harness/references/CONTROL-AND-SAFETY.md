@@ -844,6 +844,8 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 - With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
   `tool_choice`.
 - List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
+- For a sub-agent, give it its own `SubAgent.usage_limits`; sharing the parent's budget spends the parent's
+  last request.
 - Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
   it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Span: `run wrapped up`
   (`wrap_up_at_limits.limit`).
