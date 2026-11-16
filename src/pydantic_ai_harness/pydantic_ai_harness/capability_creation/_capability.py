@@ -116,9 +116,10 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     async def load_active(self, workspace: WorkspaceBackend) -> list[AbstractCapability[object]]:
         """Construct every active authored capability for the next run in `workspace`, as `store.load_active()` does.
 
-        Raises `UserError`, before running any authored code, when `workspace` would refuse a run.
+        Raises `UserError`, before running any authored code, when `workspace` would refuse a run. Only `workspace` is
+        checked, so pass the one the run uses, as `agent.run(..., workspace=...)`.
         """
-        await self._check_workspace(Workspace(workspace))
+        await self._check_workspace(workspace if isinstance(workspace, Workspace) else Workspace(workspace))
         return await anyio.to_thread.run_sync(self.store.load_active, abandon_on_cancel=True)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -138,8 +139,8 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
         if workspace.ref is None or workspace.ref.provider != 'local' or workspace.read_only:
             raise UserError(
                 '`CapabilityCreation` imports model-written Python into the agent process, so it only runs when '
-                "the workspace is this machine and writable. Attach a writable `LocalWorkspace('.')`, not "
-                'a sandbox or a read-only workspace.'
+                "the workspace is this machine and writable. Use a writable `LocalWorkspace('.')` or "
+                "`LocalWorkspaceBackend('.')`, not a sandbox or a read-only workspace."
             )
         written = await self._absolute_directory()
         # `authority_of` collapses `..` as text, while the store's file operations climb from a link's target.
