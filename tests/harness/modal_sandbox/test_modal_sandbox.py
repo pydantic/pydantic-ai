@@ -11,6 +11,7 @@ from typing import Any
 
 import anyio
 import pytest
+from modal.experimental import OutboundPolicy
 
 import pydantic_ai_harness.modal_sandbox as modal_sandbox_package
 from pydantic_ai import Agent
@@ -537,7 +538,7 @@ def test_working_dir_must_be_an_absolute_posix_path(working_dir: str) -> None:
 
 
 async def test_creation_settings_reach_the_sandbox(fake_modal: FakeModal) -> None:
-    policy: Any = object()
+    policy = OutboundPolicy()
     capability = ModalSandbox(
         sandbox_timeout=10, idle_timeout=2, working_dir='/work', env={'A': '1'}, outbound_policy=policy
     )

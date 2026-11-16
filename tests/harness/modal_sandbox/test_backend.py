@@ -19,6 +19,7 @@ from typing import Any
 
 import anyio
 import pytest
+from modal.experimental import OutboundPolicy
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -860,8 +861,7 @@ class TestCreate:
         assert fake_modal.create_kwargs[-1]['outbound_policy'] is None
 
     async def test_outbound_policy_passes_through(self, fake_modal: FakeModal) -> None:
-        # `modal` is the fake here, so a sentinel stands in for a `modal.experimental.OutboundPolicy`.
-        policy: Any = object()
+        policy = OutboundPolicy()
         await started(outbound_policy=policy, env={'GH_TOKEN': 'placeholder'})
         assert fake_modal.create_kwargs[-1]['outbound_policy'] is policy
         assert fake_modal.create_kwargs[-1]['env'] == {'GH_TOKEN': 'placeholder'}
