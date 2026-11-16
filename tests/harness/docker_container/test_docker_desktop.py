@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -20,6 +21,10 @@ from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE, DockerConta
 
 from ..display_fakes import FAKE_SCREENSHOT
 from ._fake_docker import FakeDocker, install_fake_docker
+
+pytestmark = pytest.mark.skipif(
+    os.name != 'posix', reason='`DockerContainerBackend` runs `docker` as a POSIX subprocess'
+)
 
 
 @pytest.fixture

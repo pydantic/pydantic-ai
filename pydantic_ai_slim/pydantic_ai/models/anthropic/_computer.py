@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, NotRequired, TypeGuard
+from typing import Annotated, Any, TypeGuard
 
 from anthropic.types.beta import (
     BetaComputerToolset20260801Param,
@@ -43,8 +43,6 @@ class ComputerReplay(TypedDict):
     computer_tool: AnthropicComputerToolVersion
     computer_action_counts: list[Annotated[int, Field(ge=1)]]
     """How many actions each call became, so results are matched to calls without mapping them again."""
-    computer_refusal: NotRequired[str]
-    """Why none of the calls ran, sent to Claude in place of the retry's validation errors."""
 
 
 _REPLAY = TypeAdapter(ComputerReplay)
@@ -129,11 +127,6 @@ class NativeComputer:
             computer_tool=self.version,
             computer_action_counts=[len(member) for member in member_actions],
         )
-        if between := [f'`{name}`' for names in split.values() for name in names]:
-            replay['computer_refusal'] = (
-                f'No computer action ran: they run together as one batch, and a call of {" and ".join(between)} came '
-                "between them. Make the computer calls before or after the other tools' calls, not between them."
-            )
         return ComputerCallPart(
             self.name,
             # A field Claude left out takes the `computer` tool's default.
@@ -153,6 +146,21 @@ class NativeComputer:
         if block['id'] in split:
             return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
         return map_computer_member(name, args)
+
+
+SPLIT_BATCH_REFUSAL = (
+    'No computer action ran: they run together as one batch, and another tool call came between them. Make the '
+    "computer calls before or after the other tools' calls, not between them."
+)
+"""What Claude gets in place of the retry's validation errors when another tool call split a batch.
+
+Fixed text, with nothing from the history in it, which may come from storage or a UI.
+"""
+
+
+def splits_batch(part: ToolCallPart) -> bool:
+    """Whether a `computer` call that `computer_replay` accepted still has an action marked as after another tool's."""
+    return any(isinstance(action, dict) and 'after_tool_calls' in action for action in part.args_as_dict()['actions'])
 
 
 @dataclass
@@ -251,7 +259,7 @@ _Coordinate = Annotated[list[int], Field(min_length=2, max_length=2)]
 class _Click(_Strict):
     coordinate: _Coordinate | None = None
     text: str | None = None
-    """Keys held during the click, as for a move, scroll or drag."""
+    """Keys held during the click, as for a scroll or drag."""
 
 
 class _Move(_Strict):
