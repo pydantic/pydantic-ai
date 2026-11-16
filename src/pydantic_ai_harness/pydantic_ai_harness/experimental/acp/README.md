@@ -126,24 +126,24 @@ A coding agent should read and write files in the workspace the editor opened, n
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, run_acp_stdio_sync
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.experimental.acp import ACPSession, ACPSessionConfig, run_acp_stdio_sync
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-sonnet-5')
 
 
-def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+def session_config(session: ACPSession) -> ACPSessionConfig[None]:
     # Run file and shell tools in the directory the client opened.
     workspace = LocalWorkspaceBackend(session.cwd)
-    return AcpSessionConfig(deps=None, capabilities=[FileSystem[None](), Shell[None]()], workspace=workspace)
+    return ACPSessionConfig(deps=None, capabilities=[FileSystem[None](), Shell[None]()], workspace=workspace)
 
 
 if __name__ == '__main__':
     run_acp_stdio_sync(agent, session_config=session_config)
 ```
 
-The factory runs once per session with the client's [`AcpSession`][pydantic_ai_harness.experimental.acp.AcpSession] setup (its `cwd`, `mcp_servers`, and capabilities) and returns an [`AcpSessionConfig`][pydantic_ai_harness.experimental.acp.AcpSessionConfig] whose `deps`, `capabilities`, `toolsets`, and optional `workspace` apply to every run in that session. This is correct across multiple concurrent sessions in one process, where a single static `FileSystem` could not be.
+The factory runs once per session with the client's [`ACPSession`][pydantic_ai_harness.experimental.acp.ACPSession] setup (its `cwd`, `mcp_servers`, and capabilities) and returns an [`ACPSessionConfig`][pydantic_ai_harness.experimental.acp.ACPSessionConfig] whose `deps`, `capabilities`, `toolsets`, and optional `workspace` apply to every run in that session. This is correct across multiple concurrent sessions in one process, where a single static `FileSystem` could not be.
 
 Use `capabilities` for session behavior so hooks, instructions, ordering constraints, and capability event ownership are preserved. Keep `toolsets` for bare toolsets such as MCP servers. Session capabilities and toolsets are added to the agent's own configuration.
 
@@ -153,24 +153,24 @@ The local `FileSystem` and `Shell` above operate on the session's workspace -- w
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, acp_filesystem, acp_terminal
+from pydantic_ai_harness.experimental.acp import ACPSession, ACPSessionConfig, acp_filesystem, acp_terminal
 
 
-def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+def session_config(session: ACPSession) -> ACPSessionConfig[None]:
     # Use the editor's filesystem/terminal when offered; otherwise fall back to local.
     fs = acp_filesystem(session) or FileSystem[None]()
     shell = acp_terminal(session) or Shell[None]()
     workspace = LocalWorkspaceBackend(session.cwd)
-    return AcpSessionConfig(deps=None, capabilities=[fs, shell], workspace=workspace)
+    return ACPSessionConfig(deps=None, capabilities=[fs, shell], workspace=workspace)
 ```
 
-Each helper returns a core `Toolset` capability wrapping the client-backed toolset. Pass it in `capabilities`, not `toolsets`. To use a bare toolset directly, construct `AcpFileSystemToolset` or `AcpTerminalToolset` instead. These wrappers add no telemetry spans; core already traces their tool calls.
+Each helper returns a core `Toolset` capability wrapping the client-backed toolset. Pass it in `capabilities`, not `toolsets`. To use a bare toolset directly, construct `ACPFileSystemToolset` or `ACPTerminalToolset` instead. These wrappers add no telemetry spans; core already traces their tool calls.
 
 Each helper returns `None` when the client did not advertise the capability, so the `or` falls back to local and the agent works either way. The tool names match the local `FileSystem`/`Shell`, so rich rendering (next section) is identical. `acp_terminal` runs the command in the editor's environment and returns its captured output (see [Limitations](#cancellation-and-limitations)).
 
-If a client advertises filesystem reads but not writes, `acp_filesystem` keeps editor-native reads and sends writes through the session's workspace (`AcpSessionConfig.workspace`), bounded by `session.cwd`; without one, they go to this machine at `session.cwd`. Use this only when that workspace shares the editor's disk; for a remote editor, those writes land on the agent's side.
+If a client advertises filesystem reads but not writes, `acp_filesystem` keeps editor-native reads and sends writes through the session's workspace (`ACPSessionConfig.workspace`), bounded by `session.cwd`; without one, they go to this machine at `session.cwd`. Use this only when that workspace shares the editor's disk; for a remote editor, those writes land on the agent's side.
 
 ## Tool approval
 

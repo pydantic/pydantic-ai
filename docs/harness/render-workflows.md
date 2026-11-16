@@ -293,7 +293,7 @@ to trigger the deployed task.
 
 The capability registers definitions for these operations:
 
-- model requests, buffered stream requests, compaction, and suspended-response cleanup;
+- model requests, buffered stream requests, compaction, token counts, and suspended-response cleanup;
 - per named function toolset, shared by its tools, argument validation and tool calls;
 - per MCP and dynamic toolset, discovery, instructions, validation, and calls;
 - `event_stream_handler` delivery;
@@ -343,7 +343,7 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 ## Memory
 
 `Memory` can read and write through Render task runs when its store is accessible to every worker. Use a shared
-external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryStore` and files on an individual worker
+external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryMemoryStore` and files on an individual worker
 do not persist across task instances.
 
 ## Task options and tool opt-out

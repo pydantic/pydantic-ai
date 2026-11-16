@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`GroqModel` now honors the unified `service_tier` (#12072), so it leaves `unsupported_settings`; unified `'flex'` set in shared settings, e.g. on a `FallbackModel`, now reaches Groq, which can return a 498 at flex capacity.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13521"
+}

@@ -87,7 +87,7 @@ For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[BoxLiteSandbox(image='python:3.12-slim'), Shell(), FileSystem()])
