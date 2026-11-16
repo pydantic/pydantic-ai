@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import anyio
 import pytest
-from boxd import NotFoundError
+from boxd import NotFoundError, PermissionDeniedError
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import (
@@ -157,6 +157,19 @@ async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held
         await screen(backend).act(Drag(path=_path(101)))
 
     assert host.desktop.calls == ['mouse_down 0 0 left', 'mouse_move 1 2', 'mouse_up pointer left']
+
+
+async def test_rejected_credentials_during_a_long_drag_end_the_run_when_the_release_fails(host: FakeBoxd) -> None:
+    backend = await _started(host)
+    host.desktop.errors = [
+        None,
+        PermissionDeniedError('not a member of this organization'),
+        APIStatusError('release connection lost', code='unavailable', grpc_code=14),
+    ]
+
+    with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials') as error:
+        await screen(backend).act(Drag(path=_path(101)))
+    assert 'not a member' not in str(error.value)
 
 
 async def test_a_machine_deleted_during_a_failed_long_drag_ends_the_run(host: FakeBoxd) -> None:

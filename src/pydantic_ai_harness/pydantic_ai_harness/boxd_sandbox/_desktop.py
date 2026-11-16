@@ -191,11 +191,18 @@ class BoxdDesktop:
                 await computer.move(machine_id, point.x, point.y)
             await computer.mouse_up(machine_id, end.x, end.y)
         except BaseException as error:
+            import boxd  # loaded by the backend, which guards the import for a missing extra
+
             released = False
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
                 await computer.mouse_up(machine_id)
                 released = True
-            if released or not isinstance(error, Exception):
+            # Rejected credentials keep their type, so the backend still ends the run on them.
+            if (
+                released
+                or not isinstance(error, Exception)
+                or isinstance(error, boxd.AuthenticationError | boxd.PermissionDeniedError)
+            ):
                 raise
             raise WorkspaceError(
                 f'{error}. Releasing the left mouse button failed too, so it may still be held.'
