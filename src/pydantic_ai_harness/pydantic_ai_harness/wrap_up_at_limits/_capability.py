@@ -6,15 +6,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from pydantic_ai import CallToolsNode, ModelRequestNode
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
-    ToolReturnPart,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -36,11 +34,8 @@ DEFAULT_WRAP_UP_PROMPT = (
 )
 """What `WrapUpAtLimits` tells the model on the final request, unless `prompt` is set."""
 
-NOT_EXECUTED = 'Not executed: run limit reached.'
-"""The result each call gets in a tool-call batch that `WrapUpAtLimits` doesn't run."""
-
 _ORIGIN = 'pydantic-ai-harness.wrap_up_at_limits.v1'
-"""The `origin` in the `metadata` of the parts `WrapUpAtLimits` adds."""
+"""The `origin` in the `metadata` of the final prompt."""
 
 
 @dataclass
@@ -65,45 +60,6 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     prompt: str = DEFAULT_WRAP_UP_PROMPT
     """What the model is told on the final request."""
 
-    async def after_node_run(
-        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT], result: NodeResult[AgentDepsT]
-    ) -> NodeResult[AgentDepsT]:
-        """Answer a tool-call batch that would exceed `tool_calls_limit` as not executed, so the next request wraps up.
-
-        Decided as the model request hands its response on, before anything can run the batch. None of its
-        calls run, as with core's own check. With no request left, or when the batch came from the final
-        request itself, core raises as usual.
-        """
-        limits = ctx.usage_limits
-        if (
-            not isinstance(node, ModelRequestNode)
-            or not isinstance(result, CallToolsNode)
-            or _answers_wrap_up(ctx.messages)
-            or limits is None
-            or limits.tool_calls_limit is None
-            or (limits.request_limit is not None and ctx.usage.requests >= limits.request_limit)
-        ):
-            return result
-        calls = result.model_response.tool_calls
-        tools = ctx.tools
-        function_calls = sum(
-            1 for call in calls if (tool := tools.get(call.tool_name)) is None or tool.kind == 'function'
-        )
-        if ctx.usage.tool_calls + function_calls <= limits.tool_calls_limit:
-            return result
-        parts: list[ModelRequestPart] = [
-            ToolReturnPart(
-                call.tool_name,
-                NOT_EXECUTED,
-                tool_call_id=call.tool_call_id,
-                metadata={'origin': _ORIGIN},
-                outcome='denied',
-            )
-            for call in calls
-        ]
-        ctx.tracer.start_span('tool calls not executed', attributes={'wrap_up_at_limits.calls': len(parts)}).end()
-        return ModelRequestNode[AgentDepsT, object](ModelRequest(parts=parts))
-
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -113,14 +69,10 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         limits = ctx.usage_limits
         messages = request_context.messages
         # A provider-resume turn ends in a suspended `ModelResponse` and continues the request before it.
-        if limits is None or not messages or not isinstance(last := messages[-1], ModelRequest):
+        if limits is None or not messages or not isinstance(messages[-1], ModelRequest):
             return request_context
         prompt_tokens = len(self.prompt) // CHARS_PER_TOKEN
         limit = _limit_reached(ctx.usage, limits, _run_responses(messages, ctx.run_id), prompt_tokens)
-        if limit is None and any(
-            isinstance(part, ToolReturnPart) and part.metadata == {'origin': _ORIGIN} for part in last.parts
-        ):
-            limit = 'tool_calls_limit'
         if limit is None:
             return request_context
         ctx.tracer.start_span('run wrapped up', attributes={'wrap_up_at_limits.limit': limit}).end()
@@ -138,16 +90,6 @@ def wrapped_up_by(messages: Sequence[ModelMessage]) -> LimitName | None:
                 if (limit := _wrap_up_limit(part)) is not None:
                     return limit
     return None
-
-
-def _answers_wrap_up(messages: list[ModelMessage]) -> bool:
-    """Whether the last response in `messages` answers a final request `WrapUpAtLimits` made."""
-    for message in reversed(messages[:-1]):
-        if isinstance(message, ModelResponse):
-            return False
-        if any(_wrap_up_limit(part) is not None for part in message.parts):
-            return True
-    return False
 
 
 def _wrap_up_limit(part: ModelRequestPart) -> LimitName | None:

@@ -836,21 +836,17 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 #> partial answer
 ```
 
-- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (budget used up, or a batch
-  that would go over it), and input/output/total token limits (projected from the run's responses).
-  `cost_limit` and `per_request_input_tokens_limit` are not projected.
-- A batch over `tool_calls_limit` runs none of its calls; each gets `NOT_EXECUTED` under its
-  `tool_call_id` and `outcome='denied'`, outside core's tool pipeline: no tool call/result events or tool
-  hooks for them. With no request left, for calls after streamed text that ends a
-  `run_stream()`, or on a run resumed with deferred tool results, core raises as before.
+- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (budget used up), and
+  input/output/total token limits (projected from the run's responses). `cost_limit` and
+  `per_request_input_tokens_limit` are not projected. A batch over `tool_calls_limit` still raises.
 - `wrapped_up_by(result.new_messages())` (`.wrap_up_at_limits`) returns the `LimitName` that cut the run
   short, or `None`; it reads the final prompt's `metadata` (`origin` `'pydantic-ai-harness.wrap_up_at_limits.v1'`).
 - With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
   `tool_choice`.
 - List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
 - Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
-  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Spans: `run wrapped up`
-  (`wrap_up_at_limits.limit`) and `tool calls not executed` (`wrap_up_at_limits.calls`).
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Span: `run wrapped up`
+  (`wrap_up_at_limits.limit`).
 
 ## See also
 

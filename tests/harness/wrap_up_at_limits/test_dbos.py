@@ -74,7 +74,7 @@ def test_recovery_wraps_up_at_the_same_request(dbos: DBOS) -> None:
 
     @DBOS.workflow(name='wrap_up_dbos')
     def workflow() -> None:
-        result = agent.run_sync('Research', usage_limits=UsageLimits(tool_calls_limit=3))
+        result = agent.run_sync('Research', usage_limits=UsageLimits(request_limit=3))
         attempts.append((result.output, result.all_messages()))
         if len(attempts) == 1:
             raise _Crash
@@ -90,7 +90,7 @@ def test_recovery_wraps_up_at_the_same_request(dbos: DBOS) -> None:
 
     (first_output, first), (recovered_output, recovered) = attempts
     assert first_output == recovered_output == 'what I found so far'
-    expected = [(DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'tool_calls_limit'})]
+    expected = [(DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'request_limit'})]
     assert wrap_ups(first) == wrap_ups(recovered) == expected
     # Recovery read the model responses from the journal; the hooks ran again over them.
     assert _model_calls == [None, None, 'none']

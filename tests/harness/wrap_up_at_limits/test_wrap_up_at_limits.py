@@ -10,17 +10,14 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
-    ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -30,8 +27,7 @@ from pydantic_ai.settings import ToolChoice
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import WrapUpAtLimits
-from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, NOT_EXECUTED, wrapped_up_by
-from pydantic_graph import End
+from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, wrapped_up_by
 
 from ._messages import ORIGIN, wrap_ups
 
@@ -99,116 +95,12 @@ class TestWrapUpAtLimits:
         assert [choice for choice, _ in model.requests] == [None, None, 'none']
         assert model.requests[2][1] == model.requests[0][1]
 
-    async def test_over_budget_batch_is_answered_as_not_executed(self) -> None:
-        model = _Researcher()
-        looked_up: list[str] = []
-
-        result = await _agent(model, looked_up).run('Research', usage_limits=UsageLimits(tool_calls_limit=3))
-
-        assert result.output == 'what I found so far'
-        assert sorted(looked_up) == ['a1', 'b1']
-        assert result.usage.tool_calls == 2
-        skipped = [
-            (part.tool_call_id, part.outcome)
-            for message in result.new_messages()
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.content == NOT_EXECUTED
-        ]
-        assert skipped == [('a2', 'denied'), ('b2', 'denied')]
-        assert wrap_ups(result.new_messages()) == [
-            (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'tool_calls_limit'})
-        ]
-
-    async def test_over_budget_batch_is_answered_under_run_stream(self) -> None:
-        looked_up: list[str] = []
-
-        async with _agent(_Researcher(), looked_up).run_stream(
-            'Research', usage_limits=UsageLimits(tool_calls_limit=3)
+    async def test_run_stream_wraps_up(self) -> None:
+        async with _agent(_Researcher(), []).run_stream(
+            'Research', usage_limits=UsageLimits(request_limit=2)
         ) as stream:
-            output = await stream.get_output()
-            messages = stream.all_messages()
-
-        assert output == 'what I found so far'
-        assert sorted(looked_up) == ['a1', 'b1']
-        returns = [
-            (part.tool_call_id, part.content)
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        assert returns == [
-            ('a1', 'notes on a1'),
-            ('b1', 'notes on b1'),
-            ('a2', NOT_EXECUTED),
-            ('b2', NOT_EXECUTED),
-        ]
-
-    async def test_answered_batch_emits_no_tool_events(self) -> None:
-        agent = _agent(_Researcher(), [])
-
-        results: list[str] = []
-        async with agent.run_stream_events('Research', usage_limits=UsageLimits(tool_calls_limit=3)) as events:
-            async for event in events:
-                if isinstance(event, FunctionToolCallEvent | FunctionToolResultEvent):
-                    results.append(f'{event.event_kind}:{event.tool_call_id}')
-
-        # The calls answered with `NOT_EXECUTED` never reach core's tool pipeline, so no call or result event is emitted.
-        assert results == [
-            'function_tool_call:a1',
-            'function_tool_call:b1',
-            'function_tool_result:a1',
-            'function_tool_result:b1',
-        ]
-
-    async def test_batch_is_answered_when_the_caller_streams_nodes(self) -> None:
-        looked_up: list[str] = []
-        agent = _agent(_Researcher(), looked_up)
-
-        async with agent.iter('Research', usage_limits=UsageLimits(tool_calls_limit=3)) as run:
-            node = run.next_node
-            while not isinstance(node, End):
-                if Agent.is_call_tools_node(node):
-                    async with node.stream(run.ctx) as events:
-                        async for _ in events:
-                            pass
-                node = await run.next(node)
-        assert run.result is not None
-
-        assert run.result.output == 'what I found so far'
-        assert sorted(looked_up) == ['a1', 'b1']
-        returns = [
-            part.content
-            for message in run.result.all_messages()
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        assert returns == ['notes on a1', 'notes on b1', NOT_EXECUTED, NOT_EXECUTED]
-
-    async def test_final_request_gets_one_chance(self) -> None:
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            step = sum(isinstance(message, ModelResponse) for message in messages) + 1
-            # Ignores `tool_choice='none'`, as a provider that doesn't enforce it can.
-            return ModelResponse(
-                parts=[ToolCallPart('look_up', {'topic': f'a{step}'}), ToolCallPart('look_up', {'topic': f'b{step}'})]
-            )
-
-        looked_up: list[str] = []
-        agent = Agent(FunctionModel(model), capabilities=[WrapUpAtLimits()])
-
-        @agent.tool_plain
-        def look_up(topic: str) -> str:
-            looked_up.append(topic)
-            return topic
-
-        with capture_run_messages() as messages, pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
-            await agent.run('Research', usage_limits=UsageLimits(tool_calls_limit=3))
-
-        assert sorted(looked_up) == ['a1', 'b1']
-        assert wrapped_up_by(messages) == 'tool_calls_limit'
-        assert sum(isinstance(message, ModelResponse) for message in messages) == 3
+            assert await stream.get_output() == 'what I found so far'
+            assert wrapped_up_by(stream.new_messages()) == 'request_limit'
 
     async def test_records_spans(self) -> None:
         exporter = InMemorySpanExporter()
@@ -217,17 +109,14 @@ class TestWrapUpAtLimits:
         agent = _agent(_Researcher(), [])
         agent.instrument = InstrumentationSettings(tracer_provider=provider)
 
-        await agent.run('Research', usage_limits=UsageLimits(tool_calls_limit=3))
+        await agent.run('Research', usage_limits=UsageLimits(request_limit=3))
 
         spans = [
             (span.name, dict(span.attributes or {}))
             for span in exporter.get_finished_spans()
-            if span.name in ('tool calls not executed', 'run wrapped up')
+            if span.name == 'run wrapped up'
         ]
-        assert spans == [
-            ('tool calls not executed', {'wrap_up_at_limits.calls': 2}),
-            ('run wrapped up', {'wrap_up_at_limits.limit': 'tool_calls_limit'}),
-        ]
+        assert spans == [('run wrapped up', {'wrap_up_at_limits.limit': 'request_limit'})]
 
     async def test_exhausted_tool_calls_wrap_up_the_next_request(self) -> None:
         model = _Researcher()
@@ -280,7 +169,7 @@ class TestWrapUpAtLimits:
             assert wrapped_up_by(result.new_messages()) is None
 
     @pytest.mark.moves_cache_prefix(reason="with tool output, `tool_choice='none'` sends only the output tools")
-    # With `tool_calls_limit`, the output call is checked against the used-up budget and must not count toward it.
+    # With `tool_calls_limit`, the output call comes on the final request, after the budget is used up.
     @pytest.mark.parametrize('limits', [UsageLimits(request_limit=2), UsageLimits(tool_calls_limit=1)])
     async def test_structured_output_is_still_produced(self, limits: UsageLimits) -> None:
         class Report(BaseModel):
@@ -320,35 +209,6 @@ class TestWrapUpAtLimits:
         with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
             await agent.run('Research', usage_limits=UsageLimits(request_limit=1, tool_calls_limit=1))
         assert looked_up == []
-
-    async def test_resumed_approvals_are_left_to_core(self) -> None:
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart('delete', {'path': 'a'}, tool_call_id='d1'),
-                    ToolCallPart('delete', {'path': 'b'}, tool_call_id='d2'),
-                ]
-            )
-
-        deleted: list[str] = []
-        agent = Agent(FunctionModel(model), output_type=[str, DeferredToolRequests], capabilities=[WrapUpAtLimits()])
-
-        @agent.tool_plain(requires_approval=True)
-        def delete(path: str) -> str:
-            deleted.append(path)
-            return path
-
-        first = await agent.run('Clean up')
-        assert isinstance(first.output, DeferredToolRequests)
-
-        # The approved calls aren't answered with `NOT_EXECUTED`: core's own check applies to them.
-        with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
-            await agent.run(
-                message_history=first.all_messages(),
-                deferred_tool_results=DeferredToolResults(approvals={'d1': True, 'd2': True}),
-                usage_limits=UsageLimits(tool_calls_limit=1),
-            )
-        assert deleted == []
 
     async def test_resumed_provider_turn_is_left_alone(self) -> None:
         """Calls the hook directly: no `FunctionModel` leaves a suspended response for a run to resume."""

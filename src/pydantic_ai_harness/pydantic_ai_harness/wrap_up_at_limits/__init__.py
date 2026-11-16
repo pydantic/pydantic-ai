@@ -2,10 +2,9 @@
 
 from pydantic_ai_harness.wrap_up_at_limits._capability import (
     DEFAULT_WRAP_UP_PROMPT,
-    NOT_EXECUTED,
     LimitName,
     WrapUpAtLimits,
     wrapped_up_by,
 )
 
-__all__ = ['DEFAULT_WRAP_UP_PROMPT', 'NOT_EXECUTED', 'LimitName', 'WrapUpAtLimits', 'wrapped_up_by']
+__all__ = ['DEFAULT_WRAP_UP_PROMPT', 'LimitName', 'WrapUpAtLimits', 'wrapped_up_by']

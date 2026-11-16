@@ -42,14 +42,13 @@ When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for one
 | Limit | The final request |
 |---|---|
 | `request_limit` | The last request the limit allows |
-| `tool_calls_limit` | The request after the tool-call budget is used up, or after a batch of tool calls that would go over it |
+| `tool_calls_limit` | The request after the tool-call budget is used up |
 | `input_tokens_limit`, `output_tokens_limit`, `total_tokens_limit` | The first request after which a final request is projected to go over the limit |
 
-- A batch of tool calls that would go over `tool_calls_limit` is all or none, as without the capability: none of its calls run. Each is answered with `NOT_EXECUTED` under its original `tool_call_id`, so the model sees which calls didn't happen. These answers don't go through core's tool pipeline: no `FunctionToolCallEvent` or `FunctionToolResultEvent` is emitted for them and tool hooks don't see them, so a UI that waits for a call's result event shows them as pending. Both the calls and their answers are in the message history. Routing them through the pipeline needs a core change ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
+- A batch of tool calls that would go over `tool_calls_limit` still raises `UsageLimitExceeded`, before any of its calls run. Answering such a batch as not executed and wrapping up after it needs core to stop counting denied tool results against the limit ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
 - Token use is projected from this run's responses. Input and total tokens are assumed to grow on each further request by as much as the last response grew over the one before, plus the final prompt; output tokens to be at most the largest response's. A final request that uses more than projected still raises `UsageLimitExceeded`.
 - `cost_limit` and `per_request_input_tokens_limit` aren't projected, and raise as before.
-- A model that still calls tools on the final request, as a provider that doesn't enforce `tool_choice='none'` allows, gets no second chance: a batch over `tool_calls_limit` raises `UsageLimitExceeded` as before. Calls within the budget run as usual, and the next request is made the last again, or raises when no request is left.
-- Under `Agent.run_stream()`, a response whose text or output arrives before its tool calls ends the stream there, and core runs or checks those calls as before. A run resumed with [deferred tool results](../deferred-tools.md) is checked by core as before too.
+- A model that still calls tools on the final request, as a provider that doesn't enforce `tool_choice='none'` allows, has them run as usual. The next request is made the last again, or raises `UsageLimitExceeded` when no request is left.
 
 ## Telling a wrapped-up answer from a finished one
 
@@ -72,14 +71,13 @@ def report(result: AgentRunResult[str]) -> str:
 
 ## Telemetry
 
-`WrapUpAtLimits` marks its two decisions with zero-duration spans on an [instrumented](../logfire.md) agent:
+`WrapUpAtLimits` marks its decision with a zero-duration span on an [instrumented](../logfire.md) agent:
 
 | Span | Attribute | Meaning |
 |---|---|---|
 | `run wrapped up` | `wrap_up_at_limits.limit` | The `LimitName` that made the request the last |
-| `tool calls not executed` | `wrap_up_at_limits.calls` | How many calls of the batch were answered with `NOT_EXECUTED` |
 
-The spans carry no tool names, arguments or prompt text. The final request itself shows as an ordinary model request.
+The span carries no prompt text. The final request itself shows as an ordinary model request.
 
 ## Composition
 
@@ -99,5 +97,3 @@ See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_
 ::: pydantic_ai_harness.wrap_up_at_limits.LimitName
 
 ::: pydantic_ai_harness.wrap_up_at_limits.DEFAULT_WRAP_UP_PROMPT
-
-::: pydantic_ai_harness.wrap_up_at_limits.NOT_EXECUTED
