@@ -13,7 +13,14 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
+from contextlib import (
+    AbstractContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+    suppress,
+)
 from contextvars import ContextVar
 from dataclasses import replace
 from functools import partial
@@ -542,7 +549,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             workspace = self._claim_explicit_workspace(run_capability, ctx, workspace)
         else:
             self._check_construction_workspace(ctx, workspace)
-        return DurableWorkspace(workspace, durability=self, ctx=ctx)
+        durable = DurableWorkspace(workspace, durability=self, ctx=ctx)
+        # Calls made before the run's steps begin use `ctx`: without this, each one gets a new backend.
+        ctx.workspace = durable
+        return durable
 
     def _check_construction_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace) -> None:
         """Reject a run-level workspace a unit on another worker would not rebuild.
@@ -1352,7 +1362,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             lifecycle=self.engine_spec.toolset_lifecycles['function'],
             durable_registrations=self._bound_operation_registrations(call_tool, validate_args),
             durable_config=base_config,
+            listing_in_durable_context=partial(self._function_tools_listing_in_durable_context, toolset),
         )
+
+    def _function_tools_listing_in_durable_context(
+        self, toolset: FunctionToolset[AgentDepsT]
+    ) -> AbstractContextManager[None]:
+        """The scope a wrapped `FunctionToolset` lists its tools in, inside the durable context."""
+        return nullcontext()
 
     def _build_dynamic_toolset(self, toolset: DynamicToolset[AgentDepsT]) -> DurableDynamicToolset[AgentDepsT]:
         base_config = self._toolset_operation_config('dynamic', cast(str, toolset.id))
