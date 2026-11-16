@@ -42,8 +42,11 @@ Set the light model's effort from the PR's complexity.
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
 Until a size label exists, do not claim the trivial-S exception.
-Clean means douwebot `APPROVE` on the current head, with no douwebot comments on that head.
-Address every douwebot comment, including non-blocking comments.
+Clean means douwebot's latest non-dismissed completed verdict on the current head is `APPROVE`.
+It also means no douwebot findings on that head except settled optional findings.
+A settled optional finding is an inline comment on that approval that starts with `Optional:` and whose review thread is resolved.
+Blocking findings and review-body findings block, resolved or not. An unresolved optional finding blocks.
+Address every douwebot comment, including `Optional:` comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
@@ -57,7 +60,7 @@ A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
-On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until douwebot approves the head.
+On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until the head has a clean douwebot approval.
 Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
 If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
 
@@ -506,7 +509,7 @@ if the head changes, capture the new SHA and restart the loop.
      that access, or when the diff does not change guarded paths, apply the `douwebot` label. Do not
      push or touch review threads while the label is present. Require the triggered run to succeed,
      and verify that the PR head still equals the captured SHA after the label is removed.
-     Require douwebot `APPROVE` on that SHA with no douwebot comments on that head.
+     Require a clean douwebot approval on that SHA, as the [Merge bar](#merge-bar) defines it.
      A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
 
    Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
@@ -519,7 +522,7 @@ if the head changes, capture the new SHA and restart the loop.
    a finding exactly as they bind your first commit, and a bot cannot approve a scope expansion —
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
-   Address every douwebot comment, including non-blocking comments, using the same evidence-based triage.
+   Address every douwebot comment, including `Optional:` comments, using the same evidence-based triage.
    Address every `PR Review Checks` finding the same way, `medium` findings included.
    Its findings sit inline, keyed `<!-- pr-review-checks finding=… -->`, or in its review body when GitHub rejected inline comments.
    An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.

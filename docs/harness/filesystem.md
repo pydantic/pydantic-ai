@@ -10,7 +10,7 @@ search, find, create, and inspect -- all scoped to a single `root_dir` in the
 run's workspace. Every path is resolved, symlinks included, and
 containment-checked before any I/O, and access is filtered through allow, deny, and read-only glob patterns.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/filesystem/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/file_system/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -186,7 +186,7 @@ with the validated arguments as `typed_args`:
 
 ```python
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai_harness.filesystem import ReadFileCallPart
+from pydantic_ai_harness.file_system import ReadFileCallPart
 
 
 def paths_read(messages: list[ModelMessage]) -> list[str]:
@@ -217,9 +217,9 @@ so it is left out of every run step that has `read_file`. The instructions name 
 they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
 is called in the run:
 
-- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
+- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceOverflowStore()`. Reads of its spill
   files through `read_file` are not reduced again.
-- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own and a relative
+- `Memory`'s `read_memory`, with a `FileMemoryStore` that has no `workspace=` of its own and a relative
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
 
@@ -309,7 +309,7 @@ its entries are. A denied or failed operation emits no event, including a
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent
 
 agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), FileSystem()])
 
@@ -322,7 +322,7 @@ async def hold_migrations(ctx, event):
 Other capabilities subscribe with `@on_event` on a method, the way
 `RepoContext` follows `FileReadEvent`, `DirectoryListedEvent` and
 `FileWrittenEvent`. A host with its own file tools can emit the same event types
-by importing them from `pydantic_ai_harness.filesystem`, which lets subscribers
+by importing them from `pydantic_ai_harness.file_system`, which lets subscribers
 react without depending on tool names or raw model arguments.
 
 `FileSystem` emits no OpenTelemetry spans of its own: the core tool-call span
@@ -406,7 +406,7 @@ To call a tool method yourself, outside a run, pass the workspace:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
+from pydantic_ai_harness.file_system import FileSystem, FileSystemToolset
 
 
 async def main() -> None:
@@ -485,7 +485,7 @@ reject them.
 ## Configuration
 
 ```python {names="defined"}
-from pydantic_ai_harness.filesystem import DEFAULT_TOOL_NAMES, FileSystem
+from pydantic_ai_harness.file_system import DEFAULT_TOOL_NAMES, FileSystem
 
 FileSystem(
     root_dir=None,                 # str | Path -- containment boundary (None = the working directory; '/' = no checks)

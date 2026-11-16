@@ -4,7 +4,7 @@ Mutation testing complements the 100% branch-coverage requirement: coverage
 proves every line and branch runs, mutation testing proves the assertions
 actually pin the behavior down.
 
-Covers `pydantic_ai_harness/filesystem/_toolset.py` and
+Covers `pydantic_ai_harness/file_system/_toolset.py` and
 `pydantic_ai_harness/shell/_toolset.py`.
 
 Run with [mutmut](https://mutmut.readthedocs.io/) v3 via `scripts/run-mutmut.sh`,
@@ -20,8 +20,8 @@ scripts/run-mutmut.sh show <mutant-name>
 ```mermaid
 flowchart TB
     accTitle: Mutation testing: check that the tests pin the behavior down
-    accDescr: For filesystem/_toolset.py and shell/_toolset.py, mutmut makes each mutant with one small change, such as a flipped condition, and runs the test suite against the mutated code. A mutant is killed if a test failed and survived if no test failed. Triage each survivor: it is a missing test, so write one that kills it, or an equivalent mutant no test could tell from the original.
-    code["filesystem/_toolset.py<br/>shell/_toolset.py"]
+    accDescr: For file_system/_toolset.py and shell/_toolset.py, mutmut makes each mutant with one small change, such as a flipped condition, and runs the test suite against the mutated code. A mutant is killed if a test failed and survived if no test failed. Triage each survivor: it is a missing test, so write one that kills it, or an equivalent mutant no test could tell from the original.
+    code["file_system/_toolset.py<br/>shell/_toolset.py"]
     subgraph mutmut["mutmut, per mutant"]
         mutant["mutant<br/>one small change, such<br/>as a flipped condition"]
         tests["test suite<br/>runs against<br/>the mutated code"]

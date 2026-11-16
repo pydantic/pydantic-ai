@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.subagents import DelegationOutcome, DelegationTask
+from pydantic_ai_harness.sub_agents import DelegationOutcome, DelegationTask
 from pydantic_clai2.runtime.tasks import Tasks
 from pydantic_clai2.ui.menus.task_view import Action, TaskView, perform, task_rows, transcript_blocks
 from tests.clai2.live_script import frame, press
