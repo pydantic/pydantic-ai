@@ -7,7 +7,7 @@ import base64
 import inspect
 import json
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from functools import partial
 from typing import Literal
@@ -1367,16 +1367,19 @@ class TestTelemetry:
         ],
     )
     @pytest.mark.parametrize('include_content', [False, True])
-    async def test_outcome_is_recorded(self, capability: AskUser[None], outcome: str, include_content: bool) -> None:
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        settings = InstrumentationSettings(tracer_provider=provider, include_content=include_content)
+    async def test_outcome_is_recorded(
+        self,
+        capability: AskUser[None],
+        outcome: str,
+        include_content: bool,
+        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+    ) -> None:
+        instrumentation, exporter = instrumented(include_content)
         agent = Agent(
             calling(raw_questions()),
             deps_type=type(None),
             output_type=[str, DeferredToolRequests],
-            capabilities=[capability, Instrumentation(settings=settings)],
+            capabilities=[capability, instrumentation],
         )
         await agent.run('go')
 
