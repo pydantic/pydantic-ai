@@ -34,11 +34,11 @@ interactions:
             order. Never call load_capability.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund tools.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         thinking:
           type: enabled
           budget_tokens: 10000
@@ -541,9 +541,9 @@ interactions:
               type: tool_reference
             is_error: false
           - text: |-
-              <system><context id="capability:refunds">
+              <system><pyai:context id="capability:refunds">
               Always give the refund date in the format DD/MM/YYYY.
-              </context></system>
+              </pyai:context></system>
             type: text
         model: claude-haiku-4-5
         stream: true
@@ -554,11 +554,11 @@ interactions:
             order. Never call load_capability.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund tools.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         thinking:
           type: enabled
           budget_tokens: 10000
@@ -797,9 +797,9 @@ interactions:
               type: tool_reference
             is_error: false
           - text: |-
-              <system><context id="capability:refunds">
+              <system><pyai:context id="capability:refunds">
               Always give the refund date in the format DD/MM/YYYY.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -833,11 +833,11 @@ interactions:
             order. Never call load_capability.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund tools.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         thinking:
           type: enabled
           budget_tokens: 10000

@@ -36,6 +36,7 @@ RENAMED_MODULES = (
     'app',
     'builtin_plugins/herdr_client',
     'cli/cli',
+    'mcp/client',
     'mcp/command',
     'mcp/form',
     'mcp/menu',
@@ -43,6 +44,7 @@ RENAMED_MODULES = (
     'mcp/settings',
     'mcp/store',
     'mcp/tokens',
+    'models/retry_after',
     'plugins/factories',
     'plugins/git',
     'runtime/processes',
@@ -52,7 +54,7 @@ RENAMED_MODULES = (
     'ui/rendering/rendering',
     'ui/rendering/splash_art',
 )
-"""Modules #11326 moved off a leading underscore, as package paths relative to `pydantic_clai2`."""
+"""Modules #11326 and #12235 moved off a leading underscore, as package paths relative to `pydantic_clai2`."""
 
 
 def test_renamed_modules_are_not_underscore_prefixed() -> None:

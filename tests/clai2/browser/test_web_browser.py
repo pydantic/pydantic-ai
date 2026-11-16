@@ -411,6 +411,56 @@ async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) ->
     await expect(heading).to_have_attribute('title', '/x/scratch')
 
 
+async def test_imported_session_shows_its_source(page: Page, web_ui: WebUI) -> None:
+    """A session imported from Claude Code or Codex says which beside its title; CLAI's own say nothing."""
+
+    def entry(session_id: str, title: str, source: str | None) -> dict[str, object]:
+        return {
+            'id': session_id,
+            'title': title,
+            'workspace': '/x/scratch',
+            'updated_at': '2026-01-01T00:00:00Z',
+            'created_at': '2026-01-01T00:00:00Z',
+            'state': 'ready',
+            'owner_pid': None,
+            'messages': 2,
+            'model': None,
+            'current': False,
+            'archived': False,
+            'openable': True,
+            'source': source,
+        }
+
+    worktree = {
+        'root': '/x/scratch',
+        'label': 'main',
+        'current': True,
+        'missing': False,
+        'sessions': [entry('a', 'Imported work', 'Claude Code'), entry('b', 'Own work', None)],
+    }
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(
+            json=[
+                {
+                    'key': '/x/scratch/.git',
+                    'folder': '/x/scratch',
+                    'name': 'scratch',
+                    'current': True,
+                    'worktrees': [worktree],
+                }
+            ]
+        )
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    imported = page.locator('.sidebar .session').filter(has_text='Imported work')
+    await expect(imported.locator('.session-chip')).to_have_text('Claude Code')
+    own = page.locator('.sidebar .session').filter(has_text='Own work')
+    await expect(own).to_be_visible()
+    await expect(own.locator('.session-chip')).to_have_count(0)
+
+
 async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
     """Sessions of removed worktrees wait, closed, in one group after the live ones; a branch archives at once."""
 
@@ -902,8 +952,12 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
-async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
-    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+async def test_a_refused_update_shows_no_saved_badge(
+    page: Page, web_ui: WebUI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings > About refuses Update… while CLAI cannot restart; its row must not claim it saved anything."""
+    # The launch session installs for every page, so its refusal is the one About shows.
+    monkeypatch.setattr(web_ui.fleet.launch, 'restart_refusal', lambda: 'CLAI cannot restart now.')
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
@@ -917,7 +971,7 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
     badge = await page.wait_for_function(
         """() => {
-          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          if (!document.querySelector('.toast.error')?.textContent?.includes('CLAI cannot restart now.')) return null
           const row = [...document.querySelectorAll('.setting')]
             .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
           return row.querySelector('.setting-state')?.textContent ?? 'none'
@@ -1051,7 +1105,8 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     # A mention typed before more text replaces only itself, the caret stays after it, and the list stays closed.
     await composer.fill('see  and more')
     await composer.evaluate('area => area.setSelectionRange(4, 4)')
-    await page.keyboard.type('@REA')
+    # Entered at once: typed key by key, the list for `@RE` could show first, and Tab waits for the newer one.
+    await page.keyboard.insert_text('@REA')
     await expect(names.first).to_have_text('README.md')
     await composer.press('Tab')
     await expect(composer).to_have_value('see @README.md and more')

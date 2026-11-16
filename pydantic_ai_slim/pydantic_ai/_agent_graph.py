@@ -30,6 +30,7 @@ from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
+from weakref import WeakValueDictionary
 
 import anyio
 from opentelemetry.trace import Tracer
@@ -61,6 +62,7 @@ from pydantic_ai._utils import (
     now_utc,
 )
 from pydantic_ai._uuid import uuid7
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -1009,6 +1011,17 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     round-trip the original selection token across the activity/step/task boundary.
     """
 
+    failed_tool_nodes: WeakValueDictionary[int, CallToolsNode[DepsT, OutputDataT]] = dataclasses.field(
+        default_factory=WeakValueDictionary[int, 'CallToolsNode[DepsT, OutputDataT]'], init=False, repr=False
+    )
+    """Runtime-only replay nodes, held weakly so recovery does not extend their lifetime."""
+
+    def release_tool_error_caches(self) -> None:
+        """Break cached-error traceback cycles after run recovery and resource teardown finish."""
+        for node in self.failed_tool_nodes.values():
+            node._stream_error = None  # pyright: ignore[reportPrivateUsage]
+        self.failed_tool_nodes.clear()
+
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
     """The base class for all agent nodes.
@@ -1503,6 +1516,16 @@ async def _resolve_native_tool_factory(
     return tool
 
 
+async def _deferred_capability_catalog(run_context: RunContext[DepsT]) -> list[models.DeferredCapabilityEntry]:
+    """The step's deferred capability catalog, from the loader that renders it into the instructions.
+
+    Called after the instructions are rendered, which is when the loader resolves the catalog for the step, so both
+    read the same resolution.
+    """
+    loader = next((cap for cap in run_context.capabilities.values() if isinstance(cap, DeferredCapabilityLoader)), None)
+    return [] if loader is None else await loader.catalog(run_context)
+
+
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
@@ -1577,6 +1600,7 @@ async def _prepare_request_parameters(
         _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
         _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
+        deferred_capabilities=await _deferred_capability_catalog(run_context),
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
@@ -2685,6 +2709,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
+            _max_tokens_getter=lambda: ctx.state.last_max_tokens,
         )
 
     async def _make_request(
@@ -2844,7 +2869,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if not isinstance(e, Exception):
                 raise
             outcome = e
-            recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            try:
+                recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            except BaseException:
+                # The escaping error's traceback holds this frame; its outcome alias would close a cycle.
+                del outcome
+                raise
             # Not billed, so its usage is committed with the step's response, without the attempts it carries.
             response = failed.log.attach(recovered)
         state.response = response
@@ -3147,6 +3177,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages,
                 loaded_parts,
                 recording_targets,
+                history=ctx.state.message_history,
                 keep_without_parts={
                     capability_id
                     for capability_id, capability in ctx.deps.capabilities.items()
@@ -3295,8 +3326,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = request_context.messages
         model_settings = request_context.model_settings
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
-        model_request_parameters = _keep_default_output_mode(
-            ctx.state, model, model_settings, request_context.model_request_parameters
+        model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
+            _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
+            model_settings,
         )
         request_context.model_request_parameters = model_request_parameters
 
@@ -3655,6 +3687,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             failed.record_exhausted(request_context, error, start, unrecovered)
             ModelRequestNode._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
+        finally:
+            # The error's traceback holds this frame; retaining error would keep the run's deps in a cycle.
+            del error
 
     @staticmethod
     def _raise_usage_limit_exceeded(
@@ -3885,7 +3920,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
                 if self.model_response.finish_reason == 'length':
-                    raise exceptions.UnexpectedModelBehavior(
+                    raise exceptions.OutputTokenLimitExceeded(
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
@@ -4020,6 +4055,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
+                _raise_if_cut_off_output(
+                    self.model_response, e, output_schema=output_schema, max_tokens=ctx.state.last_max_tokens
+                )
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
@@ -4035,6 +4073,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             raise
         except BaseException as e:
             self._stream_error = e
+            ctx.deps.failed_tool_nodes[id(self)] = self
             raise
 
     async def _handle_tool_calls(
@@ -4354,6 +4393,30 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     ctx.deps.model = model
     ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
+
+
+def _raise_if_cut_off_output(
+    response: _messages.ModelResponse,
+    error: ToolRetryError,
+    *,
+    output_schema: _output.OutputSchema[Any],
+    max_tokens: int | None,
+) -> None:
+    """Raise instead of retrying when the token limit cut off structured text output into incomplete JSON.
+
+    Re-prompting the model with the same limit would only run into it again. Only `NativeOutput` and `PromptedOutput`
+    text is parsed as JSON: a `TextOutput` function raising `ValidationError` on plain text keeps its retry, and so
+    does JSON that parsed but that the schema or an output validator rejected.
+    """
+    if (
+        response.finish_reason == 'length'
+        and isinstance(output_schema.text_processor, _output.BaseObjectOutputProcessor)
+        and isinstance(error.tool_retry, _messages.RetryFeedbackPart)
+        and error.tool_retry.retry.cause == 'validation_error'
+        and _output.is_incomplete_json(error.__cause__)
+    ):
+        # Chained to the `ValidationError`, as in `run_stream()`.
+        raise exceptions.OutputTokenLimitExceeded(_output.truncated_output_message(max_tokens)) from error.__cause__
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

@@ -33,29 +33,40 @@ def prompt_blocks_to_user_content(blocks: Sequence[PromptContentBlock]) -> list[
     """
     content: list[UserContent] = []
     for block in blocks:
-        if isinstance(block, schema.TextContentBlock):
-            content.append(block.text)
-        elif isinstance(block, schema.ImageContentBlock):
-            # ACP requires inline `data`; `uri` is only an optional reference to the image's source.
-            # Prefer the bytes the client actually sent, falling back to the URL only when no inline
-            # data is present (a client sending both must not have its image silently replaced by a
-            # link the model may be unable to fetch).
-            if not block.data and block.uri is not None:
-                content.append(ImageUrl(url=block.uri))
-            else:
+        match block:
+            case schema.TextContentBlock():
+                content.append(block.text)
+            case schema.ImageContentBlock():
+                content.append(_image_content(block))
+            case schema.AudioContentBlock():
                 content.append(BinaryContent(data=base64.b64decode(block.data), media_type=block.mime_type))
-        elif isinstance(block, schema.AudioContentBlock):
-            content.append(BinaryContent(data=base64.b64decode(block.data), media_type=block.mime_type))
-        elif isinstance(block, schema.EmbeddedResourceContentBlock):
-            resource = block.resource
-            if isinstance(resource, schema.TextResourceContents):
-                content.append(resource.text)
-            else:
-                media_type = resource.mime_type or _DEFAULT_BINARY_MEDIA_TYPE
-                content.append(BinaryContent(data=base64.b64decode(resource.blob), media_type=media_type))
-        else:
-            # The only remaining variant is a resource link, which carries no inline content;
-            # pass its URI through as text, prefixed with a human-readable label when present.
-            label = block.title or block.name
-            content.append(f'{label} ({block.uri})' if label else block.uri)
+            case schema.EmbeddedResourceContentBlock():
+                content.append(_embedded_resource_content(block.resource))
+            case _:
+                # The only remaining variant is a resource link, which carries no inline content.
+                content.append(_resource_link_text(block))
     return content
+
+
+def _image_content(block: schema.ImageContentBlock) -> UserContent:
+    # ACP requires inline `data`; `uri` is only an optional reference to the image's source.
+    # Prefer the bytes the client actually sent, falling back to the URL only when no inline
+    # data is present, since the model may be unable to fetch the link.
+    if not block.data and block.uri is not None:
+        return ImageUrl(url=block.uri)
+    return BinaryContent(data=base64.b64decode(block.data), media_type=block.mime_type)
+
+
+def _embedded_resource_content(
+    resource: schema.TextResourceContents | schema.BlobResourceContents,
+) -> UserContent:
+    if isinstance(resource, schema.TextResourceContents):
+        return resource.text
+    media_type = resource.mime_type or _DEFAULT_BINARY_MEDIA_TYPE
+    return BinaryContent(data=base64.b64decode(resource.blob), media_type=media_type)
+
+
+def _resource_link_text(block: schema.ResourceContentBlock) -> str:
+    """The link's URI as text, prefixed with a human-readable label when present."""
+    label = block.title or block.name
+    return f'{label} ({block.uri})' if label else block.uri

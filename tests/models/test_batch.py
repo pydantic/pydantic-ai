@@ -1162,7 +1162,7 @@ async def test_a_batch_has_its_own_trace_linked_to_the_requests_in_it(capfire: C
         (batch.context.span_id, 'in_progress'),
         (batch.context.span_id, 'ended'),
     ]
-    assert not [span for span in spans if 'propagated trace context' in span.name]
+    assert not [span for span in spans if span.name.startswith('Found propagated')]
     for chat in chats:
         assert (chat.attributes or {})['pydantic_ai.batch.id'] == batch_id
         assert [link.context.span_id for link in chat.links] == [batch.context.span_id]

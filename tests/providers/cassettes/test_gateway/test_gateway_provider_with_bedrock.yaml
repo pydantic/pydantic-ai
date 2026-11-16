@@ -15,7 +15,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: http://localhost:8787/bedrock/model/amazon.nova-micro-v1%3A0/converse
+    uri: https://localhost:8787/bedrock/model/amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       content-length:

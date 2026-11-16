@@ -1,15 +1,11 @@
-"""Compaction receipts: a deterministic, honest note left in the surviving history.
+"""Compaction receipts: a deterministic note left in the surviving history.
 
 After a strategy that crosses a compaction *boundary* (older history summarized or dropped)
 rewrites the conversation, it can append a standard receipt so the model knows its memory of
 everything before that point is secondhand and can re-verify rather than confabulate. The
 receipt carries no timestamp -- it is a pure function of its inputs, so its bytes are
 deterministic and testable -- and, when a handle provider is attached and discoverable, an
-identifier for persisted run history.
-
-Wording note: the exact receipt text is content, so it is shipped minimal/neutral and flagged
-pending the benchmark eval-rig pass. The mechanism (presence, determinism, handle discovery,
-OTel span event) is structural and lands now, gated behind each strategy's `receipts` flag.
+identifier for persisted run history. Each strategy gates it behind its `receipts` flag.
 """
 
 from __future__ import annotations

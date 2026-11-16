@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Generator
 from pathlib import Path
@@ -12,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops
-from tests.conftest import detach_dbos_logging, try_import
+from tests.conftest import try_import
 
 from ._stuck_agent import NUDGE_METADATA, model_calls, nudges, read_file, stuck_model
 
@@ -36,7 +37,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_detect_loops',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
     instance = DBOS(config=config)
     DBOS.launch()
@@ -44,7 +44,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 def test_recovery_reaches_the_same_decision(dbos: DBOS) -> None:
@@ -61,6 +60,8 @@ def test_recovery_reaches_the_same_decision(dbos: DBOS) -> None:
         attempts.append(agent.run_sync('Summarize missing.txt').all_messages())
         if len(attempts) == 1:
             raise _Crash
+        # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+        asyncio.get_event_loop().close()
 
     model_calls.clear()
     workflow_id = str(uuid.uuid4())
