@@ -375,13 +375,20 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         """Evaluate `guard` against the validated arguments and act on its verdict."""
         if self.guard is None or not self._guards(call.tool_name):
             return args
-        verdict, _ = replay_verdict(await self._evaluate_arguments(ctx, call, args), args)
+        verdict, position = replay_verdict(await self._evaluate_arguments(ctx, call, args), args)
         match verdict.action:
             case 'allow':
                 return args
             case 'block':
                 message = verdict.message or _DEFAULT_ARGS_BLOCK_MESSAGE
-                trace_block(ctx, direction=_ARGS_DIRECTION, message=message, tool_name=call.tool_name)
+                trace_block(
+                    ctx,
+                    direction=_ARGS_DIRECTION,
+                    guard=self.guard,
+                    position=position,
+                    message=message,
+                    tool_name=call.tool_name,
+                )
                 raise SkipToolExecution(message)
             case 'retry':
                 raise _verdict_retry(verdict.message or _DEFAULT_RETRY_MESSAGE)
@@ -395,6 +402,8 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_approval(
                     ctx,
                     direction=_ARGS_DIRECTION,
+                    guard=self.guard,
+                    position=position,
                     tool_name=call.tool_name,
                     tool_call_id=call.tool_call_id,
                     args=args,
@@ -410,6 +419,8 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_redaction(
                     ctx,
                     direction=_ARGS_DIRECTION,
+                    guard=self.guard,
+                    position=position,
                     replacement=replacement,
                     tool_name=call.tool_name,
                 )
@@ -577,17 +588,30 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         `block`, the substituted value for `replace`. `retry` and `approve` raise. A failed tool
         and a successful one go through here alike, so both get the same verdicts.
         """
-        verdict, _ = replay_verdict(await self._evaluate_result(ctx, call, args, result), result)
+        verdict, position = replay_verdict(await self._evaluate_result(ctx, call, args, result), result)
+        assert self.result_guard is not None
         match verdict.action:
             case 'allow':
                 return _UNCHANGED
             case 'block':
                 message = verdict.message or _DEFAULT_RESULT_BLOCK_MESSAGE
-                trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
+                trace_block(
+                    ctx,
+                    direction=_RESULT_DIRECTION,
+                    guard=self.result_guard,
+                    position=position,
+                    message=message,
+                    tool_name=call.tool_name,
+                )
                 return message
             case 'replace':
                 trace_redaction(
-                    ctx, direction=_RESULT_DIRECTION, replacement=verdict.replacement, tool_name=call.tool_name
+                    ctx,
+                    direction=_RESULT_DIRECTION,
+                    guard=self.result_guard,
+                    position=position,
+                    replacement=verdict.replacement,
+                    tool_name=call.tool_name,
                 )
                 return verdict.replacement
             case 'retry':

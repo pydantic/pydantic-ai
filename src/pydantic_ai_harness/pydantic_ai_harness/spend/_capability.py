@@ -743,21 +743,40 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return delimited(token, str(response_index)) if response_index else token
 
     def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
-        """Raise if `spent` has reached either of the budget's ceilings."""
+        """Raise if `spent` has reached either of the budget's ceilings, the dollar one checked first."""
         if budget.usd is not None and spent.usd >= budget.usd:
-            self._refuse(budget, ctx, f'spent ${spent.usd} of ${budget.usd}')
+            self._refuse(budget, ctx, 'usd', budget.usd, spent.usd, f'spent ${spent.usd} of ${budget.usd}')
         if budget.tokens is not None and spent.tokens >= budget.tokens:
-            self._refuse(budget, ctx, f'used {spent.tokens} of {budget.tokens} tokens')
+            self._refuse(
+                budget, ctx, 'tokens', budget.tokens, spent.tokens, f'used {spent.tokens} of {budget.tokens} tokens'
+            )
 
-    def _refuse(self, budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT], detail: str) -> None:
-        """Record the refusal as a span and raise."""
+    def _refuse(
+        self,
+        budget: Budget[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        limit_kind: Literal['usd', 'tokens'],
+        limit: Decimal | int,
+        spent: Decimal | int,
+        detail: str,
+    ) -> None:
+        """Record the refusal by the `limit_kind` ceiling as a span and raise."""
         record_decision(
             ctx,
             'spend budget exhausted',
-            attributes={'spend.budget': budget.name, 'spend.window': budget.window},
+            attributes={
+                'spend.budget': budget.name,
+                'spend.window': budget.window,
+                'spend.limit_kind': limit_kind,
+                # OpenTelemetry has no decimal type; a dollar amount is recorded as a float.
+                'spend.limit': float(limit) if isinstance(limit, Decimal) else limit,
+                'spend.spent': float(spent) if isinstance(spent, Decimal) else spent,
+            },
             # A scope key is usually a tenant or user id, and a trace has a wider audience than the
-            # application that produced it.
-            content={'spend.scope': budget.scope(ctx)} if budget.scope is not None else None,
+            # application that produced it. `budget.scope` is user code, so it runs only when recorded.
+            content={'spend.scope': budget.scope(ctx)}
+            if budget.scope is not None and ctx.trace_include_content
+            else None,
         )
         raise SpendLimitExceeded(f'Budget {budget.name!r} exhausted for this {budget.window}: {detail}')
 
