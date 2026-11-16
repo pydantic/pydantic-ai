@@ -65,11 +65,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=97
+      - x-originResponse;dur=168
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-120f400f690d0ca607afc6eca984fbf4-d0b4747abe5311eb-01
+      - 00-cd6b41bad4c638230b3886484c5501a2-2f99bd7b4477cbc3-01
       transfer-encoding:
       - chunked
       vary:
@@ -78,54 +78,54 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011Ch6V3t9BFyhXUvgtU29C6","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":5207,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5207,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011Ch6pxh9L2i6XuWq5HYkUS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":5207,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5207,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01ECRYjpcJkjnjxVSVkTF8nf","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}}
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01DZAWSVcvA5Yd6si72pK8Tc","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}           }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}       }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
+        data: {"type":"content_block_stop","index":0            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01FVQsUoBS6tJJNcZq3jMLfD","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}     }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_018YGj5JrcixiRnjaoKZ3Twi","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1       }
+        data: {"type":"content_block_stop","index":1         }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01DbJacn39rNWdN4w17FiQi9","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}}
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01AtxCVSdMEXpVZ9CW7sm59u","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}   }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}              }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}       }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2 }
+        data: {"type":"content_block_stop","index":2           }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":5207,"cache_read_input_tokens":0,"output_tokens":93,"output_tokens_details":{"thinking_tokens":0}}    }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":5207,"cache_read_input_tokens":0,"output_tokens":93,"output_tokens_details":{"thinking_tokens":0}}  }
 
         event: message_stop
-        data: {"type":"message_stop" }
+        data: {"type":"message_stop"       }
 
-  recorded_at: 2026-11-16T10:55:10.487154+00:00
+  recorded_at: 2026-11-16T15:16:16.597385+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -137,7 +137,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "11622"
+      - "11666"
       content-type:
       - application/json
       host:
@@ -155,12 +155,12 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01ECRYjpcJkjnjxVSVkTF8nf
+          - id: toolu_01DZAWSVcvA5Yd6si72pK8Tc
             type: tool_use
             name: screenshot
             input: {}
             toolset_name: computer
-          - id: toolu_01FVQsUoBS6tJJNcZq3jMLfD
+          - id: toolu_018YGj5JrcixiRnjaoKZ3Twi
             type: tool_use
             name: left_click
             input:
@@ -168,7 +168,7 @@ interactions:
               - 100
               - 200
             toolset_name: computer
-          - id: toolu_01DbJacn39rNWdN4w17FiQi9
+          - id: toolu_01AtxCVSdMEXpVZ9CW7sm59u
             type: tool_use
             name: type
             input:
@@ -176,10 +176,24 @@ interactions:
             toolset_name: computer
         - role: user
           content:
-          - tool_use_id: toolu_01ECRYjpcJkjnjxVSVkTF8nf
+          - tool_use_id: toolu_01DZAWSVcvA5Yd6si72pK8Tc
             type: tool_result
             content:
             - text: OK
+              type: text
+            is_error: false
+            toolset_name: computer
+          - tool_use_id: toolu_018YGj5JrcixiRnjaoKZ3Twi
+            type: tool_result
+            content:
+            - text: OK
+              type: text
+            is_error: false
+            toolset_name: computer
+          - tool_use_id: toolu_01AtxCVSdMEXpVZ9CW7sm59u
+            type: tool_result
+            content:
+            - text: Ran 3 actions. Screenshot attached (1280x800).
               type: text
             - source:
                 data: >-
@@ -187,20 +201,6 @@ interactions:
                 media_type: image/png
                 type: base64
               type: image
-            is_error: false
-            toolset_name: computer
-          - tool_use_id: toolu_01FVQsUoBS6tJJNcZq3jMLfD
-            type: tool_result
-            content:
-            - text: OK
-              type: text
-            is_error: false
-            toolset_name: computer
-          - tool_use_id: toolu_01DbJacn39rNWdN4w17FiQi9
-            type: tool_result
-            content:
-            - text: OK
-              type: text
             - source:
                 data: >-
                   iVBORw0KGgoAAAANSUhEUgAABQAAAAMgCAIAAADz+lisAAALuElEQVR4nO3BgQAAAADDoPlTH+AKVQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAG+XSAAFMvxSRAAAAAElFTkSuQmCC
@@ -247,11 +247,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=120
+      - x-originResponse;dur=110
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-16da836acf029459f6ac4332de15946d-fec29564601d2dcf-01
+      - 00-713a203da6354034e95d8cb4fc175c7e-9462f2deb05522a0-01
       transfer-encoding:
       - chunked
       vary:
@@ -260,24 +260,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011Ch6V41SUcLePJT3VML4E5","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2953,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":2953,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}         }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011Ch6pxpWq4DgtKTacwXZne","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":2973,"cache_read_input_tokens":5098,"cache_creation":{"ephemeral_5m_input_tokens":2973,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
+        data: {"type":"content_block_stop","index":0           }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2953,"cache_read_input_tokens":5098,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}            }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":2973,"cache_read_input_tokens":5098,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}   }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"          }
 
-  recorded_at: 2026-11-16T10:55:11.217017+00:00
+  recorded_at: 2026-11-16T15:16:17.239151+00:00

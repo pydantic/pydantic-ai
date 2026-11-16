@@ -48,15 +48,10 @@ def _comparable(response: ModelResponse) -> dict[str, Any]:
     fields = {field.name: getattr(response, field.name) for field in dataclasses.fields(response)}
     del fields['timestamp']
     # A return part stamps the time it was built.
-    fields['parts'] = parts = [
+    fields['parts'] = [
         {'type': type(part).__name__, **dataclasses.asdict(part), 'timestamp': None} | _comparable_args(part)
         for part in response.parts
     ]
-    if response.finish_reason == 'length' and isinstance(response.parts[-1], BaseToolCallPart):
-        # A call cut off at `max_tokens` has no whole input. The stream keeps its partial JSON so the run stops on it;
-        # the SDK's accumulated message parses what it can, where Anthropic's own non-streamed message holds `{}`
-        # (probed live, 2026-11-16). Neither is the call's input, so its arguments aren't compared.
-        parts[-1]['args'] = None
     return fields
 
 
