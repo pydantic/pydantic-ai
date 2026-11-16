@@ -9,7 +9,7 @@ Mock transports use `localhost` base URLs, which VCR ignores.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -34,11 +34,11 @@ from pydantic_ai import (
     ModelUnavailableError,
 )
 from pydantic_ai.capabilities import ModelFallback
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models import Model
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ..conftest import gave_up_on, try_import
+from ..conftest import gave_up_on, retrying_client, try_import
 
 with try_import() as imports_successful:
     import grpc
@@ -56,7 +56,6 @@ with try_import() as imports_successful:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.errors import HfHubHTTPError
     from openai import AsyncOpenAI
-    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.cohere import CohereModel
@@ -70,6 +69,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
@@ -81,7 +81,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.providers.zai import ZaiProvider
-    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
     from .test_bedrock import _bedrock_model_with_error  # pyright: ignore[reportPrivateUsage]
@@ -2297,25 +2296,6 @@ async def test_transport_gave_up_status_error_category(allow_model_requests: Non
     assert summary(gave_up_error) == summary(sdk_error)
 
 
-def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
-    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status."""
-
-    def validate_response(response: httpx2.Response) -> None:
-        response.raise_for_status()
-
-    transport = AsyncHTTPX2TenacityTransport(
-        config=RetryConfig(
-            retry=retry_if_exception_type(httpx2.HTTPStatusError),
-            wait=wait_none(),
-            stop=stop_after_attempt(3),
-            reraise=True,
-        ),
-        wrapped=httpx2.MockTransport(handler),
-        validate_response=validate_response,
-    )
-    return httpx2.AsyncClient(transport=transport)
-
-
 def _retrying_openai(client: httpx2.AsyncClient) -> Model:
     return OpenAIChatModel(
         'gpt-5.2', provider=OpenAIProvider(api_key='test', base_url='http://localhost/v1', http_client=client)
@@ -2360,7 +2340,7 @@ async def test_model_fallback_after_retrying_transport_gives_up(
         return ModelResponse(parts=[TextPart('from the fallback model')])
 
     agent = Agent(
-        make_model(_retrying_client(handler)),
+        make_model(retrying_client(handler)),
         model_settings={'max_retries': 0},
         capabilities=[ModelFallback(FunctionModel(fallback))],
     )
@@ -2371,6 +2351,163 @@ async def test_model_fallback_after_retrying_transport_gives_up(
     [attempt] = result.response.failed_attempts or []
     assert attempt.outcome == 'error'
     assert attempt.error is not None and attempt.error.startswith('ModelUnavailableError: status_code: 503')
+
+
+_AZURE_CONTENT_FILTER_BODY: dict[str, Any] = {
+    'error': {
+        'message': "The response was filtered due to the prompt triggering Azure OpenAI's content management policy.",
+        'type': None,
+        'param': 'prompt',
+        'code': 'content_filter',
+        'status': 400,
+        'innererror': {
+            'code': 'ResponsibleAIPolicyViolation',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        },
+    }
+}
+
+
+def _azure_provider(client: httpx2.AsyncClient) -> AzureProvider:
+    return AzureProvider(
+        azure_endpoint='https://example.openai.azure.com', api_version='2024-10-21', api_key='test', http_client=client
+    )
+
+
+def _retrying_openai_responses(client: httpx2.AsyncClient) -> OpenAIResponsesModel:
+    return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test', http_client=client))
+
+
+async def _compact(model: Model) -> ModelResponse:
+    return await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings={'max_retries': 0},
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+
+async def _azure_chat_content_filter(client: httpx2.AsyncClient) -> object:
+    model = OpenAIChatModel('gpt-5.2', provider=_azure_provider(client))
+    return await model.request([ModelRequest.user_text_prompt('hello')], {'max_retries': 0}, ModelRequestParameters())
+
+
+async def _azure_responses_content_filter(client: httpx2.AsyncClient) -> object:
+    model = OpenAIResponsesModel('gpt-5.2', provider=_azure_provider(client))
+    return await model.request([ModelRequest.user_text_prompt('hello')], {'max_retries': 0}, ModelRequestParameters())
+
+
+async def _azure_compaction_content_filter(client: httpx2.AsyncClient) -> object:
+    return await _compact(OpenAIResponsesModel('gpt-5.2', provider=_azure_provider(client)))
+
+
+async def _resume_expired_response(client: httpx2.AsyncClient) -> object:
+    suspended = ModelResponse(
+        parts=[], model_name='gpt-5.2', provider_name='openai', provider_response_id='resp_expired', state='suspended'
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello'), suspended]
+    return await _retrying_openai_responses(client).request(messages, {'max_retries': 0}, ModelRequestParameters())
+
+
+@pytest.mark.parametrize(
+    ('send', 'status_code', 'body', 'category'),
+    [
+        pytest.param(
+            _azure_chat_content_filter, 400, _AZURE_CONTENT_FILTER_BODY, ModelRequestRejectedError, id='azure-chat'
+        ),
+        pytest.param(
+            _azure_responses_content_filter,
+            400,
+            _AZURE_CONTENT_FILTER_BODY,
+            ModelRequestRejectedError,
+            id='azure-responses',
+        ),
+        pytest.param(
+            _azure_compaction_content_filter,
+            400,
+            _AZURE_CONTENT_FILTER_BODY,
+            ModelRequestRejectedError,
+            id='azure-compaction',
+        ),
+        pytest.param(
+            _resume_expired_response,
+            404,
+            {'error': {'message': "Response with id 'resp_expired' not found.", 'type': 'invalid_request_error'}},
+            ModelNotFoundError,
+            id='responses-resume',
+        ),
+    ],
+)
+async def test_retrying_transport_gave_up_is_not_recovered_from_so_fallback_moves_on(
+    allow_model_requests: None,
+    send: Callable[[httpx2.AsyncClient], Awaitable[object]],
+    status_code: int,
+    body: dict[str, Any],
+    category: type[ModelHTTPError],
+):
+    """An OpenAI status the SDK's error would be recovered from stays a `ModelHTTPError` once a retrying transport gave up.
+
+    Recovered from, an Azure content filter is a `content_filter` response, which the agent raises as
+    `ContentFilterError`, and a resumed response the provider no longer has raises `SuspendedResponseExpired`.
+    Neither is a `ModelAPIError`, so fallback wouldn't move on to the next model, which is why a status a retrying
+    transport gave up on is raised as `ModelHTTPError`, see https://github.com/pydantic/pydantic-ai/pull/11934.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body)
+
+    with pytest.raises(category) as exc_info:
+        await send(retrying_client(handler))
+
+    assert exc_info.value.status_code == status_code
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'body'),
+    [
+        pytest.param(
+            400,
+            {'error': {'message': 'bad', 'type': 'invalid_request_error', 'param': None, 'code': None}},
+            id='400',
+        ),
+        pytest.param(
+            429,
+            {
+                'error': {
+                    'message': 'Rate limit reached.',
+                    'type': 'requests',
+                    'param': None,
+                    'code': 'rate_limit_exceeded',
+                }
+            },
+            id='429',
+        ),
+    ],
+)
+async def test_compaction_transport_gave_up_status_error_category(
+    allow_model_requests: None, status_code: int, body: dict[str, Any]
+):
+    """A status a retrying transport gave up on during compaction raises what the SDK raises for the same response."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body, headers={'retry-after': '2'})
+
+    async def error(client: httpx2.AsyncClient) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await _compact(_retrying_openai_responses(client))
+        return exc_info.value
+
+    def summary(exc: ModelHTTPError) -> tuple[object, ...]:
+        categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
+        return categories, exc.status_code, exc.provider_error_code, exc.provider_error_type, exc.retry_after
+
+    sdk_error = await error(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+    gave_up_error = await error(retrying_client(handler))
+    assert isinstance(gave_up_error.__cause__, httpx2.HTTPStatusError)
+    assert summary(gave_up_error) == summary(sdk_error)
 
 
 @pytest.mark.parametrize(
@@ -2410,7 +2547,7 @@ async def test_retrying_transport_gave_up_keeps_streamed_error_body(
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(status_code, stream=httpx2.ByteStream(json.dumps(body).encode()))
 
-    agent = Agent(make_model(_retrying_client(handler)), model_settings={'max_retries': 0})
+    agent = Agent(make_model(retrying_client(handler)), model_settings={'max_retries': 0})
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('hello')
 

@@ -36,21 +36,7 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gener
         # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
     except httpx2.HTTPStatusError as e:
-        # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
-        body, error, text = _model_errors.transport_error_body(e.response)
-        code, error_type = _model_errors.openai_error_fields(error)
-        raise status_error(
-            model_name,
-            model_id_namespace,
-            status_code=e.response.status_code,
-            body=body,
-            code=code,
-            error_type=error_type,
-            # `openai`'s own message holds the whole body.
-            message=text,
-            headers=dict(e.response.headers),
-            error_object=error,
-        ) from e
+        raise map_transport_status_error(e, model_name, model_id_namespace) from e
     except httpx2.TransportError as e:
         # For a streamed request, `openai` reads the body of an error status outside its own transport error handling,
         # so a connection that breaks off while sending that body surfaces as the raw `httpx2` error.
@@ -68,6 +54,24 @@ def map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str
         error_type=e.type,
         message=e.message,
         headers=dict(e.response.headers),
+    )
+
+
+def map_transport_status_error(e: httpx2.HTTPStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
+    """The error for a status a retrying transport gave up on, which `openai` lets through unwrapped."""
+    body, error, text = _model_errors.transport_error_body(e.response)
+    code, error_type = _model_errors.openai_error_fields(error)
+    return status_error(
+        model_name,
+        model_id_namespace,
+        status_code=e.response.status_code,
+        body=body,
+        code=code,
+        error_type=error_type,
+        # `openai`'s own message holds the whole body.
+        message=text,
+        headers=dict(e.response.headers),
+        error_object=error,
     )
 
 
