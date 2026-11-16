@@ -25,7 +25,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -34,13 +33,6 @@ from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 # Patched to make a feed fail outside the snippet the way a dead worker or a host-binding bug does.
 MONTY_EXECUTOR_RUN = 'pydantic_ai_harness._monty_exec.MontyExecutor.run'
-
-
-def instrumented() -> tuple[Instrumentation, InMemorySpanExporter]:
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return Instrumentation(settings=InstrumentationSettings(tracer_provider=provider)), exporter
 
 
 def code_mode_attributes(exporter: InMemorySpanExporter) -> list[tuple[str, dict[str, Any]]]:
@@ -73,8 +65,9 @@ async def failure_attributes(
     *snippets: str,
     capability: CodeMode[object] | None = None,
     before_sending: Callable[[int], None] | None = None,
+    instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
 ) -> list[tuple[str, dict[str, Any]]]:
-    instrumentation, exporter = instrumented()
+    instrumentation, exporter = instrumented(True)
     agent = Agent(
         run_code_snippets(*snippets, before_sending=before_sending),
         capabilities=[capability or CodeMode[object](), instrumentation],
@@ -176,8 +169,10 @@ def run_code_span(*, budget_exhausted: bool = False, **failure: Any) -> tuple[st
 
 
 class TestRunCodeFailureTelemetry:
-    async def test_a_successful_call_records_only_the_budget(self):
-        assert await failure_attributes('await add(a=1, b=2)') == [run_code_span()]
+    async def test_a_successful_call_records_only_the_budget(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ):
+        assert await failure_attributes('await add(a=1, b=2)', instrumented=instrumented) == [run_code_span()]
 
     @pytest.mark.parametrize(
         ('snippets', 'capability', 'expected'),
@@ -242,9 +237,13 @@ class TestRunCodeFailureTelemetry:
         ],
     )
     async def test_a_sandbox_failure_is_recorded_by_kind(
-        self, snippets: tuple[str, ...], capability: CodeMode[object] | None, expected: list[tuple[str, dict[str, Any]]]
+        self,
+        snippets: tuple[str, ...],
+        capability: CodeMode[object] | None,
+        expected: list[tuple[str, dict[str, Any]]],
+        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
     ):
-        assert await failure_attributes(*snippets, capability=capability) == expected
+        assert await failure_attributes(*snippets, capability=capability, instrumented=instrumented) == expected
 
     @pytest.mark.parametrize(
         ('error', 'expected'),
@@ -266,7 +265,11 @@ class TestRunCodeFailureTelemetry:
         ],
     )
     async def test_a_failure_outside_the_snippet_is_recorded_by_kind(
-        self, monkeypatch: pytest.MonkeyPatch, error: BaseException, expected: dict[str, Any]
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        error: BaseException,
+        expected: dict[str, Any],
+        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
     ):
         """The second snippet fails, so the reset discards the state the first one left."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
@@ -280,12 +283,18 @@ class TestRunCodeFailureTelemetry:
             if index == 1:
                 monkeypatch.setattr(MONTY_EXECUTOR_RUN, fail)
 
-        assert await failure_attributes('x = 1', '1 + 1', before_sending=fail_the_second_snippet) == [
+        assert await failure_attributes(
+            'x = 1', '1 + 1', before_sending=fail_the_second_snippet, instrumented=instrumented
+        ) == [
             run_code_span(),
             run_code_span(session_reset=True, **expected),
         ]
 
-    async def test_a_worker_crash_in_the_first_snippet_resets_the_state_it_built(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_a_worker_crash_in_the_first_snippet_resets_the_state_it_built(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+    ):
         """No earlier snippet ran, but the crashed snippet had started, so what it defined is lost."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
 
@@ -294,9 +303,13 @@ class TestRunCodeFailureTelemetry:
 
         monkeypatch.setattr(MONTY_EXECUTOR_RUN, crash)
 
-        assert await failure_attributes('x = 1') == [run_code_span(error_kind='crashed', session_reset=True)]
+        assert await failure_attributes('x = 1', instrumented=instrumented) == [
+            run_code_span(error_kind='crashed', session_reset=True)
+        ]
 
-    async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(self):
+    async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ):
         """Eager execution runs statements before `run_code`'s span opens; the failure still lands on that span."""
         code = 'boom = 1 // 0\n"unused"'
         args = json.dumps({'code': code})
@@ -310,7 +323,7 @@ class TestRunCodeFailureTelemetry:
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
                 await asyncio.sleep(0)
 
-        instrumentation, exporter = instrumented()
+        instrumentation, exporter = instrumented(True)
         agent = Agent(
             FunctionModel(stream_function=stream_once), capabilities=[CodeMode[object](eager=True), instrumentation]
         )

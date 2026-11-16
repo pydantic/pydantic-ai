@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,7 +15,6 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 
@@ -30,14 +30,16 @@ def run_workflow_once(code: str) -> FunctionModel:
     return FunctionModel(respond)
 
 
-async def workflow_attributes(code: str, **workflow_options: Any) -> list[tuple[str, dict[str, Any]]]:
+async def workflow_attributes(
+    code: str,
+    *,
+    instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+    **workflow_options: Any,
+) -> list[tuple[str, dict[str, Any]]]:
     """Each span with `dynamic_workflow.*` attributes after running `code`, as its name and those attributes."""
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentation, exporter = instrumented(True)
     sub = Agent(TestModel(custom_output_text='ok'), name='sub')
     workflow = DynamicWorkflow[object](agents=[sub], **workflow_options)
-    instrumentation = Instrumentation(settings=InstrumentationSettings(tracer_provider=provider))
 
     await Agent(run_workflow_once(code), capabilities=[workflow, instrumentation]).run('go')
 
@@ -63,8 +65,10 @@ class CrashedError(Exception):
 
 
 class TestDynamicWorkflowTelemetry:
-    async def test_a_completed_script_records_only_the_budget(self):
-        assert await workflow_attributes("await sub(task='x')") == [
+    async def test_a_completed_script_records_only_the_budget(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ):
+        assert await workflow_attributes("await sub(task='x')", instrumented=instrumented) == [
             ('execute_tool run_workflow', {'dynamic_workflow.budget_exhausted': False})
         ]
 
@@ -86,9 +90,13 @@ class TestDynamicWorkflowTelemetry:
         ],
     )
     async def test_a_failed_script_is_recorded_by_kind(
-        self, code: str, workflow_options: dict[str, Any], expected: dict[str, Any]
+        self,
+        code: str,
+        workflow_options: dict[str, Any],
+        expected: dict[str, Any],
+        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
     ):
-        assert await workflow_attributes(code, **workflow_options) == [
+        assert await workflow_attributes(code, instrumented=instrumented, **workflow_options) == [
             ('execute_tool run_workflow', {**expected, 'dynamic_workflow.budget_exhausted': False})
         ]
 
@@ -105,7 +113,11 @@ class TestDynamicWorkflowTelemetry:
         ],
     )
     async def test_a_sandbox_failure_is_recorded_by_kind(
-        self, monkeypatch: pytest.MonkeyPatch, error: BaseException, expected: dict[str, Any]
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        error: BaseException,
+        expected: dict[str, Any],
+        instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
     ):
         monkeypatch.setattr('pydantic_ai_harness.dynamic_workflow._toolset.MontyCrashedError', CrashedError)
 
@@ -114,22 +126,28 @@ class TestDynamicWorkflowTelemetry:
 
         monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyExecutor.run', fail)
 
-        assert await workflow_attributes('1 + 1') == [
+        assert await workflow_attributes('1 + 1', instrumented=instrumented) == [
             ('execute_tool run_workflow', {**expected, 'dynamic_workflow.budget_exhausted': False})
         ]
 
-    async def test_a_script_that_fails_on_the_budget_records_both(self):
-        assert await workflow_attributes("await sub(task='a')\nawait sub(task='b')", max_agent_calls=1) == [
+    async def test_a_script_that_fails_on_the_budget_records_both(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ):
+        assert await workflow_attributes(
+            "await sub(task='a')\nawait sub(task='b')", instrumented=instrumented, max_agent_calls=1
+        ) == [
             (
                 'execute_tool run_workflow',
                 {'dynamic_workflow.error_kind': 'runtime', 'dynamic_workflow.budget_exhausted': True},
             )
         ]
 
-    async def test_a_script_that_catches_the_budget_error_still_records_it(self):
+    async def test_a_script_that_catches_the_budget_error_still_records_it(
+        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ):
         code = "await sub(task='a')\ntry:\n    await sub(task='b')\nexcept RuntimeError:\n    pass"
 
-        assert await workflow_attributes(code, max_agent_calls=1) == [
+        assert await workflow_attributes(code, instrumented=instrumented, max_agent_calls=1) == [
             ('execute_tool run_workflow', {'dynamic_workflow.budget_exhausted': True})
         ]
 
