@@ -502,7 +502,11 @@ sub-agent's model requests and tool calls keep their own checkpoints. A branch's
 with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
 branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
 
-Under other engines, sub-agents run concurrently.
+Under other engines, sub-agents run concurrently. To schedule them differently, for example to
+register every call of a batch with an engine before any of them starts, subclass
+`DynamicWorkflowToolset` and override `create_executor`, which builds the executor each
+`run_workflow` call runs its script with. Its `dispatch` argument runs one sub-agent call, and the
+executor awaits its `flush` callback before it waits on the calls the script has made so far.
 
 ## API
 

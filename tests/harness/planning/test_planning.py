@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -157,6 +158,35 @@ async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
     await agent.run('plan')
 
     assert sequential and set(sequential.values()) == {expected}
+
+
+class YieldingPlanStore(InMemoryPlanStore):
+    """Yields to the event loop on each read, as a store doing real I/O does."""
+
+    async def get_items(self) -> list[PlanItem]:
+        items = await super().get_items()
+        await asyncio.sleep(0)
+        return items
+
+
+async def test_parallel_plan_edits_keep_every_change() -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('set_dependency', {'task_id': 'c', 'depends_on_id': 'a'}),
+                    ToolCallPart('set_dependency', {'task_id': 'c', 'depends_on_id': 'b'}),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    store = YieldingPlanStore()
+    await store.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
+    agent = Agent(FunctionModel(model), capabilities=[Planning(store=store, enable_subtasks=True)])
+
+    await agent.run('Make c wait for a and b.')
+
+    assert [item.depends_on for item in await store.get_items() if item.id == 'c'] == [['a', 'b']]
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):

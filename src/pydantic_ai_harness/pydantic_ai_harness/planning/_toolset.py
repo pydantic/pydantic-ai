@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic
 
+import anyio
 from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
@@ -545,20 +547,26 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     ) -> Any:
         """Run the tool, marking the plan a plan-changing tool returns so `Planning` can find it in the history.
 
-        With durable operations, the run's store is resolved once for the call, so each durable operation it
-        makes uses that store.
+        Plan tools write back changes built from an earlier read, so calls on this toolset take turns: two
+        running at once could each overwrite the other's change. With durable operations, the run's store is
+        resolved once for the call, so each durable operation it makes uses that store.
         """
-        if self._operations is None:
-            result = await super().call_tool(name, tool_args, ctx, tool)
-        else:
-            token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
-            try:
+        async with self._call_lock:
+            if self._operations is None:
                 result = await super().call_tool(name, tool_args, ctx, tool)
-            finally:
-                _TOOL_CALL_STORE.reset(token)
+            else:
+                token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
+                try:
+                    result = await super().call_tool(name, tool_args, ctx, tool)
+                finally:
+                    _TOOL_CALL_STORE.reset(token)
         if isinstance(result, _PlanReply):
             return ToolReturn(str(result), metadata={'origin': PLAN_ORIGIN, 'plan': result.plan})
         return result
+
+    @cached_property
+    def _call_lock(self) -> anyio.Lock:
+        return anyio.Lock(fast_acquire=True)
 
     def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
         """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.
