@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 
 import acp
+import pytest
 
 from pydantic_ai.messages import BinaryContent, ImageUrl
 from pydantic_ai_harness.experimental.acp._content import prompt_blocks_to_user_content
@@ -91,3 +92,24 @@ def test_mixed_blocks_preserve_order() -> None:
     content = prompt_blocks_to_user_content(blocks)
     assert content[0] == 'look at'
     assert isinstance(content[1], ImageUrl)
+
+
+def test_base64_attachments_decode_without_bytes_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Image, audio, and embedded blob attachments decode directly via binascii.a2b_base64."""
+
+    def fail_b64decode(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError('base64.b64decode should not be called')
+
+    monkeypatch.setattr(base64, 'b64decode', fail_b64decode)
+
+    payload = base64.b64encode(b'hello-acp').decode('ascii')
+    blocks = [
+        acp.image_block(payload, 'image/png'),
+        acp.audio_block(payload, 'audio/wav'),
+        acp.resource_block(acp.embedded_blob_resource('file:///a.bin', payload, mime_type='application/octet-stream')),
+    ]
+    content = prompt_blocks_to_user_content(blocks)
+    assert len(content) == 3
+    for item in content:
+        assert isinstance(item, BinaryContent)
+        assert item.data == b'hello-acp'

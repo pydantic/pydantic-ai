@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import base64
+import binascii
 from collections.abc import Sequence
 
 from acp import schema
@@ -39,7 +39,7 @@ def prompt_blocks_to_user_content(blocks: Sequence[PromptContentBlock]) -> list[
             case schema.ImageContentBlock():
                 content.append(_image_content(block))
             case schema.AudioContentBlock():
-                content.append(BinaryContent(data=base64.b64decode(block.data), media_type=block.mime_type))
+                content.append(BinaryContent(data=binascii.a2b_base64(block.data), media_type=block.mime_type))
             case schema.EmbeddedResourceContentBlock():
                 content.append(_embedded_resource_content(block.resource))
             case _:
@@ -54,7 +54,7 @@ def _image_content(block: schema.ImageContentBlock) -> UserContent:
     # data is present, since the model may be unable to fetch the link.
     if not block.data and block.uri is not None:
         return ImageUrl(url=block.uri)
-    return BinaryContent(data=base64.b64decode(block.data), media_type=block.mime_type)
+    return BinaryContent(data=binascii.a2b_base64(block.data), media_type=block.mime_type)
 
 
 def _embedded_resource_content(
@@ -63,7 +63,7 @@ def _embedded_resource_content(
     if isinstance(resource, schema.TextResourceContents):
         return resource.text
     media_type = resource.mime_type or _DEFAULT_BINARY_MEDIA_TYPE
-    return BinaryContent(data=base64.b64decode(resource.blob), media_type=media_type)
+    return BinaryContent(data=binascii.a2b_base64(resource.blob), media_type=media_type)
 
 
 def _resource_link_text(block: schema.ResourceContentBlock) -> str:
