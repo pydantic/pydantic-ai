@@ -262,17 +262,6 @@ def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
 _Keys: TypeAlias = Annotated[tuple[str, ...], Field(min_length=1), AfterValidator(_normalize_keys)]
 _Modifiers: TypeAlias = Annotated[tuple[str, ...], AfterValidator(_normalize_modifiers)]
 
-_CONTROL_CHARACTER = re.compile('[\x00-\x08\x0b-\x1f\x7f-\x9f]')
-
-
-def _check_text(text: str) -> str:
-    if match := _CONTROL_CHARACTER.search(text):
-        raise ValueError(
-            f'text must not contain the control character U+{ord(match.group()):04X}: only `\\n` (Enter) and '
-            '`\\t` (Tab) are typed as keys; write a line break as `\\n`, and press other keys with `keypress`'
-        )
-    return text
-
 
 def _check_position(x: int | None, y: int | None) -> None:
     if (x is None) != (y is None):
@@ -314,7 +303,7 @@ class Click:
     y: _Coordinate | None = None
     """From the top edge of the screenshot."""
     button: MouseButton = 'left'
-    count: Annotated[int, Field(ge=1, le=3)] = 1
+    count: Annotated[int, Field(ge=1)] = 1
     """1 for a click, 2 for a double click, 3 for a triple click."""
     modifiers: _Modifiers = ()
     """Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."""
@@ -388,14 +377,10 @@ class Scroll:
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
 class TypeText:
-    r"""Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-
-    `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
-    is validated, so every backend types the same keys.
-    """
+    """Type text at the keyboard focus. Use `keypress` for shortcuts and special keys."""
 
     type: Literal['type'] = 'type'
-    text: Annotated[str, Field(min_length=1), AfterValidator(_check_text)]
+    text: Annotated[str, Field(min_length=1)]
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
