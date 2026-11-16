@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
-import re
 from pathlib import Path
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
@@ -48,7 +49,7 @@ async def test_the_desktop_image_is_built_once_and_runs_the_container(docker: Fa
 
     # Tagged by the Dockerfile's hash, so a changed Dockerfile builds a new image.
     (image,) = docker.images()
-    assert re.fullmatch(r'pydantic-ai-desktop:[0-9a-f]{12}', image)
+    assert image == f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
     assert (docker.bin_dir / 'images' / image).read_text() == DESKTOP_DOCKERFILE
     assert _run_image(docker) == image
 
@@ -93,6 +94,20 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     xvfb_args = (docker.bin_dir / 'xvfb-starts').read_text()
     assert '-nolisten tcp -nolisten local' in xvfb_args and '-noreset' in xvfb_args
     assert docker.xdotool_calls[-1] == ':1 mousemove 3 4 click --repeat 1 1'
+
+
+async def test_two_starts_at_once_start_one_x_server(docker: FakeDocker, container_dir: Path) -> None:
+    docker.remove_display()
+    first = _desktop(container_dir, image='my-desktop')
+    await first.working_dir()
+    assert first.ref is not None
+    second = DockerContainerBackend(ref=first.ref, working_dir=str(container_dir), desktop=True)
+
+    async with anyio.create_task_group() as tg:
+        for backend in (first, second):
+            tg.start_soon(screen(backend).display_size)
+
+    assert docker.xvfb_starts == 1
 
 
 async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, container_dir: Path) -> None:
