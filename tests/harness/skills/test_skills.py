@@ -3,8 +3,9 @@ from __future__ import annotations
 import inspect
 import os
 import re
+import shutil
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -1078,7 +1079,12 @@ class TestSkillDirectoryPlaceholders:
         assert catalog.skills[0].render('src/app.py').endswith(f'Read {directory}/a.md.\n\nARGUMENTS: src/app.py')
 
 
-def _reader(results: list[str], load: str | None, reads: list[tuple[str, str]]) -> FunctionModel:
+def _reader(
+    results: list[str],
+    load: str | None,
+    reads: list[tuple[str, str]],
+    before_reads: Callable[[], None] = lambda: None,
+) -> FunctionModel:
     """Load `load`, read each `(skill, path)` in one step, then record what each read returned."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1087,6 +1093,7 @@ def _reader(results: list[str], load: str | None, reads: list[tuple[str, str]]) 
         if not any(
             isinstance(part, ToolCallPart) and part.tool_name == 'read_skill_file' for m in messages for part in m.parts
         ):
+            before_reads()
             calls = [
                 ToolCallPart('read_skill_file', {'skill': skill, 'path': path}, tool_call_id=f'read-{index}')
                 for index, (skill, path) in enumerate(reads)
@@ -1220,6 +1227,21 @@ class TestSkillFiles:
             locked.chmod(0o600)
 
         assert results == [IsStr(regex=r".*'locked.md' in skill 'guide' cannot be read: permission denied.*")]
+
+    async def test_a_library_gone_mid_run_fails_the_call(self, tmp_path: Path) -> None:
+        _write_guide(tmp_path / 'skills')
+        _write_skill(tmp_path / 'other', 'other')
+        results: list[str] = []
+        agent: Agent[None, str] = Agent(
+            _reader(results, 'guide', [('guide', 'references/guide.md')], lambda: shutil.rmtree(tmp_path / 'other')),
+            capabilities=[Skills(['skills', 'other'], read_files=True)],
+        )
+
+        await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+
+        assert results == [
+            IsStr(regex=r'.*The skill libraries cannot be read: Skill library directory does not exist.*')
+        ]
 
     async def test_a_workspace_that_cannot_resolve_symlinks_is_refused(self) -> None:
         backend = FilesystemOnlyWorkspaceBackend(

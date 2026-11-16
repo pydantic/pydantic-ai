@@ -365,7 +365,10 @@ class Skills(AbstractCapability[AgentDepsT]):
         """
         if skill not in ctx.loaded_capability_ids:
             raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
-        entries, _ = await self._read(ctx.workspace)
+        try:
+            entries, _ = await self._read(ctx.workspace)
+        except ValueError as error:
+            raise ToolFailed(f'The skill libraries cannot be read: {error}') from None
         entry = entries.get(skill)
         if entry is None or not entry.source.read_files:
             raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
