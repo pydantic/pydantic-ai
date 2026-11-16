@@ -58,7 +58,7 @@ print(result.output)
 
 ### 1. Instruction autoload (on by default)
 
-Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`.
+Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. A `filenames` entry with a directory part, such as `.github/copilot-instructions.md`, loads only when that directory resolves inside the scanned one.
 
 A same-directory link loads only when it points to another instruction file,
 one named in `filenames` or `AGENTS.md`/`CLAUDE.md`: `CLAUDE.md -> AGENTS.md`
