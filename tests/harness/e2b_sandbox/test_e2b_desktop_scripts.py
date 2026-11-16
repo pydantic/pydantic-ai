@@ -7,6 +7,7 @@ does what it should, with stub programs for the sandbox's own.
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from .fake_e2b import FakeE2B
 
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
+    'Xvfb': ':',  # the display answers through `xdotool`
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
     # Shows its window, then stays up past the script's next 0.1 second check, so the start succeeds without leaving a
     # process behind; `startxfce4-fails` makes it exit with an error instead.
@@ -44,23 +46,31 @@ async def _start_script(fake_e2b: FakeE2B) -> str:
     return start
 
 
+_TOOLS = ('cat', 'rm', 'sleep', 'tail', 'touch', 'tr')
+"""The host programs the script and the stubs use; every other program is a stub or missing, never the host's."""
+
+
 @pytest.fixture
 def stubs(tmp_path: Path) -> Path:
-    """The directory of stub programs, which a test's flag files sit beside."""
+    """The directory of stub programs, which a test's flag files sit beside: the only one on the script's `PATH`."""
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     for name, body in _STUBS.items():
         (bin_dir / name).write_text(f'#!/bin/sh\nbin={bin_dir}\n{body}\n')
         (bin_dir / name).chmod(0o755)
+    for name in _TOOLS:
+        tool = shutil.which(name)
+        assert tool is not None, name
+        (bin_dir / name).symlink_to(tool)
     return bin_dir
 
 
 def _run(script: str, stubs: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Runs `script` under `/bin/sh` with the stubs first on `PATH` and its fixed paths moved beside them."""
+    """Runs `script` under `/bin/sh` with only the stubs on `PATH` and its fixed paths moved beside them."""
     root = stubs.parent
     for old, new in [('/tmp/', f'{root}/'), ('/proc/', f'{root}/proc/')]:
         script = script.replace(old, new)
-    env = {'PATH': f'{stubs}:/usr/bin:/bin'}
+    env = {'PATH': str(stubs)}
     return subprocess.run(['/bin/sh', '-c', script, 'sh', *args], env=env, capture_output=True, text=True, timeout=30)
 
 

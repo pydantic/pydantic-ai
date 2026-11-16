@@ -33,6 +33,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ModelFallback,
     PrefixTools,
+    PrepareTools,
     RawToolArgs,
     ValidatedToolArgs,
 )
@@ -816,6 +817,24 @@ Each call runs a list of actions in order and returns a screenshot of the result
         with pytest.raises(UserError, match=message):
             await agent.run('Go.')
 
+    async def test_an_engine_that_checkpoints_the_whole_tool_call_is_refused(self) -> None:
+        """As Absurd does: on replay the call is skipped, so the buttons it left pressed would never be released."""
+
+        class CheckpointingCalls(RecordingDurability):
+            engine_spec = replace(
+                RecordingDurability.engine_spec, engine_name='Absurd', wrapped_toolset_kinds=frozenset({'function'})
+            )
+
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}]),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), CheckpointingCalls()],
+        )
+        with pytest.raises(UserError, match="can't run under Absurd durable execution"):
+            await agent.run('Go.')
+        assert provider.actions == []
+
     async def test_on_a_read_only_workspace_the_model_can_look_but_not_act(self) -> None:
         provider = ScreenProvider()
         model = _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}])
@@ -1094,6 +1113,50 @@ Each call runs a list of actions in order and returns a screenshot of the result
 
         assert outputs == ['done', 'done']
 
+    async def test_a_run_attaching_to_an_environment_a_call_just_created_waits_for_that_call(self) -> None:
+        """The first call's environment has no ref until the call starts it, and the call holds that ref's lock too."""
+        first_acting, second_acted = anyio.Event(), anyio.Event()
+        interleaved: list[bool] = []
+
+        class Holding(ScreenBackend):
+            async def act(self, action: DisplayAction) -> None:
+                await super().act(action)
+                if action == Click(x=1, y=1):
+                    first_acting.set()
+                    with anyio.move_on_after(0.1):
+                        await second_acted.wait()
+                    interleaved.append(second_acted.is_set())
+                else:
+                    second_acted.set()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return Holding(self, ref)
+
+        provider = Provider()
+        screen = provider.backend(None)
+
+        async def attach() -> None:
+            assert screen.ref is not None
+            agent = Agent(
+                _scripted([{'type': 'click', 'x': 2, 'y': 2}]),
+                capabilities=[provider.capability(), ComputerUse(native=False)],
+            )
+            await agent.run('Go.', workspace=screen.ref)
+
+        async def create() -> None:
+            agent = Agent(_scripted([{'type': 'click', 'x': 1, 'y': 1}]), capabilities=[ComputerUse(native=False)])
+            await agent.run('Go.', workspace=screen)
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(create)
+            with anyio.fail_after(READY_TIMEOUT):
+                await first_acting.wait()
+            tasks.start_soon(attach)
+
+        assert interleaved == [False]
+        assert provider.actions == [Click(x=1, y=1), Click(x=2, y=2)]
+
     async def test_agents_on_different_screens_do_not_wait_on_each_other(self) -> None:
         first_acting, second_acted = anyio.Event(), anyio.Event()
         waited: list[bool] = []
@@ -1225,6 +1288,35 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 await holding.wait()
             tasks.cancel_scope.cancel()
         assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_call_cancelled_while_taking_its_screenshot_releases_its_buttons(self) -> None:
+        """A tool timeout can cancel a call after it acted; the next call mustn't find the button still pressed."""
+        hung = False
+
+        class Hanging(ScreenBackend):
+            async def screenshot(self) -> bytes:
+                nonlocal hung
+                if not hung:
+                    hung = True
+                    await anyio.sleep_forever()
+                return await super().screenshot()
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return Hanging(self, ref)
+
+        async def with_timeout(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [replace(tool_def, timeout=0.1) for tool_def in tool_defs]
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}], [{'type': 'move', 'x': 5, 'y': 5}]),
+            capabilities=[provider.capability(), ComputerUse(), PrepareTools(with_timeout)],
+        )
+        await agent.run('Go.')
+
+        # The run's end releases it again, as a call that never reported may have left it pressed.
+        assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5), MouseUp()]
 
     async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
         self, durability: list[AbstractCapability[object]]
