@@ -337,8 +337,9 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         """
         eligible: list[tuple[int, _StaticText]] = []
         pending: dict[int, int] = {}
-        recorded = _lasting_reminder_texts(ctx.messages)
-        for reminder in tuple(self.reminders):
+        reminders = tuple(self.reminders)
+        recorded = _lasting_reminder_texts(ctx.messages, reminders)
+        for reminder in reminders:
             if not _should_fire(reminder, self._request_count):
                 continue
             if reminder.trigger is not None and not reminder.trigger(ctx):
@@ -699,8 +700,10 @@ def _is_reminder_prompt(part: object) -> TypeGuard[SystemPromptPart]:
     )
 
 
-def _lasting_reminder_texts(messages: Sequence[ModelMessage]) -> set[str]:
-    """The contents of the lasting reminder prompts in the history the model sees."""
+def _lasting_reminder_texts(messages: Sequence[ModelMessage], reminders: Sequence[Reminder[AgentDepsT]]) -> set[str]:
+    """The contents of the lasting reminder prompts in the history the model sees, if any of `reminders` needs them."""
+    if not any(reminder.skip_unchanged for reminder in reminders):
+        return set()
     return {
         part.content
         for message in post_compaction_window(messages)
