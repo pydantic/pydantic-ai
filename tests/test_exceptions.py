@@ -35,8 +35,10 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    OutputRetriesExceeded,
     OutputTokenLimitExceeded,
     ToolFailedError,
+    ToolRetriesExceeded,
     ToolRetryError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -83,6 +85,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelRequestTimeout('model', 30),
         lambda: IncompleteToolCall('test'),
         lambda: OutputTokenLimitExceeded('test'),
+        lambda: ToolRetriesExceeded('test', tool_name='tool', max_retries=1, last_cause='model_retry'),
+        lambda: OutputRetriesExceeded('test', tool_name=None, max_retries=1, last_cause='no_output'),
         lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
     ],
     ids=[
@@ -101,6 +105,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'ModelRequestTimeout',
         'IncompleteToolCall',
         'OutputTokenLimitExceeded',
+        'ToolRetriesExceeded',
+        'OutputRetriesExceeded',
         'ToolRetryError',
     ],
 )
@@ -255,6 +261,20 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
         (lambda: OutputTokenLimitExceeded('cut off'), {'message': 'cut off', 'body': None}),
         (
+            lambda: ToolRetriesExceeded('too many', tool_name='made_up', max_retries=2, last_cause='unknown_tool'),
+            {'message': 'too many', 'tool_name': 'made_up', 'max_retries': 2, 'last_cause': 'unknown_tool'},
+        ),
+        (
+            lambda: OutputRetriesExceeded('too many', tool_name=None, max_retries=3, last_cause='no_output'),
+            {'message': 'too many', 'tool_name': None, 'max_retries': 3, 'last_cause': 'no_output'},
+        ),
+        (
+            lambda: OutputRetriesExceeded(
+                'too many', tool_name='final_result', max_retries=1, last_cause='model_retry'
+            ),
+            {'message': 'too many', 'tool_name': 'final_result', 'max_retries': 1, 'last_cause': 'model_retry'},
+        ),
+        (
             lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
             {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
         ),
@@ -288,6 +308,9 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
         'OutputTokenLimitExceeded',
+        'ToolRetriesExceeded',
+        'OutputRetriesExceeded-text',
+        'OutputRetriesExceeded-output-tool',
         'InlinedSchemaTooLargeError',
     ],
 )

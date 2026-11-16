@@ -4935,8 +4935,8 @@ async def test_a_settled_stream_keeps_its_traceparent_after_the_stream_is_gone(c
 _EXPECTED_EXCEPTION_EVENTS: dict[str, list[tuple[str, str, str]]] = {
     'retry': [
         ('execute_tool my_tool', 'pydantic_ai.exceptions.ToolRetryError', 'True'),
-        ('execute_tool my_tool', 'pydantic_ai.exceptions.UnexpectedModelBehavior', 'True'),
-        ('invoke_agent agent', 'pydantic_ai.exceptions.UnexpectedModelBehavior', 'False'),
+        ('execute_tool my_tool', 'pydantic_ai.exceptions.ToolRetriesExceeded', 'True'),
+        ('invoke_agent agent', 'pydantic_ai.exceptions.ToolRetriesExceeded', 'False'),
     ],
     'failed': [
         ('execute_tool my_tool', 'pydantic_ai.exceptions.ToolFailedError', 'True'),

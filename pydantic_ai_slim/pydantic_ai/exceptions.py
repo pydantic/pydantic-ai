@@ -22,8 +22,10 @@ if TYPE_CHECKING:
         ModelMessage,
         ModelRequestAttempt,
         ModelResponse,
+        RetryFeedbackCause,
         RetryFeedbackPart,
         RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+        ToolRetryCause,
         ToolReturnPart,
     )
     from .models import KnownModelName, Model
@@ -63,6 +65,8 @@ __all__ = (
     'ModelNotFoundError',
     'ModelRequestTimeout',
     'ContentFilterError',
+    'ToolRetriesExceeded',
+    'OutputRetriesExceeded',
     'OutputTokenLimitExceeded',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -602,6 +606,62 @@ class UnexpectedModelBehavior(AgentRunError):
 
 class ContentFilterError(UnexpectedModelBehavior):
     """Raised when content filtering is triggered by the model provider."""
+
+
+class ToolRetriesExceeded(UnexpectedModelBehavior):
+    """Raised when a tool call had to be retried more often than the tool's retry limit allows.
+
+    The model kept calling a tool with arguments that failed validation, a tool that raised
+    [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or a tool that doesn't exist, so the run ended
+    without output. See [tool retries](../tools-advanced.md#tool-retries).
+    """
+
+    tool_name: str
+    """The name of the tool whose retries ran out.
+
+    When [`last_cause`][pydantic_ai.exceptions.ToolRetriesExceeded.last_cause] is `'unknown_tool'`, this is a name
+    the model made up: it is text written by the model.
+    """
+    max_retries: int
+    """The retry limit that was exceeded."""
+    last_cause: ToolRetryCause
+    """Why the last call had to be retried."""
+
+    def __init__(self, message: str, tool_name: str, max_retries: int, last_cause: ToolRetryCause):
+        self.tool_name = tool_name
+        self.max_retries = max_retries
+        self.last_cause: ToolRetryCause = last_cause
+        super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.message, self.tool_name, self.max_retries, self.last_cause)
+
+
+class OutputRetriesExceeded(UnexpectedModelBehavior):
+    """Raised when the model's output had to be retried more often than the output retry limit allows.
+
+    The model responded, but never with output that passed validation: the output didn't match the
+    [output type](../output.md), an output validator or output function raised
+    [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or the response had no output at all.
+    """
+
+    tool_name: str | None
+    """The name of the output tool whose retries ran out, or `None` when the output wasn't an output tool call."""
+    max_retries: int
+    """The retry limit that was exceeded."""
+    last_cause: ToolRetryCause | RetryFeedbackCause
+    """Why the last output had to be retried."""
+
+    def __init__(
+        self, message: str, tool_name: str | None, max_retries: int, last_cause: ToolRetryCause | RetryFeedbackCause
+    ):
+        self.tool_name = tool_name
+        self.max_retries = max_retries
+        self.last_cause: ToolRetryCause | RetryFeedbackCause = last_cause
+        super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.message, self.tool_name, self.max_retries, self.last_cause)
 
 
 class ModelAPIError(AgentRunError):

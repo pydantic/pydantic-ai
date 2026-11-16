@@ -266,6 +266,25 @@ def tool_bound_retry_part(error: ToolRetryError) -> _messages.ToolReturnPart:
     return part
 
 
+def _output_tool_retries_exceeded(
+    error: exceptions.UnexpectedModelBehavior, tool_name: str, max_retries: int
+) -> exceptions.UnexpectedModelBehavior:
+    """The error an output tool call ends the run with once the tool manager refuses to retry it.
+
+    The tool manager counts an output tool's retries like any other tool's, so it reports them as
+    `ToolRetriesExceeded`; to the caller they are output retries.
+    """
+    message = f'Exceeded maximum output retries ({max_retries})'
+    if isinstance(error, exceptions.ToolRetriesExceeded):
+        wrapped = exceptions.OutputRetriesExceeded(
+            message, tool_name=tool_name, max_retries=max_retries, last_cause=error.last_cause
+        )
+    else:
+        wrapped = exceptions.UnexpectedModelBehavior(message)
+    wrapped.__cause__ = error.__cause__ or error
+    return wrapped
+
+
 @dataclasses.dataclass
 class _OutputCallResult(Generic[NodeRunEndT]):
     """Result of validating and executing one output tool call.
@@ -634,8 +653,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # Defensive: an output tool is always present in the toolset, so the `None` fallback to
             # the agent-level budget isn't expected in normal operation.
             max_retries = tool.max_retries if tool is not None else max_output_retries
-            wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({max_retries})')
-            wrapped.__cause__ = e.__cause__ or e
+            wrapped = _output_tool_retries_exceeded(e, call.tool_name, max_retries)
             return _OutputCallResult(call=call, args_valid=False, raise_exc=wrapped)
 
         if not validated.args_valid:
@@ -654,8 +672,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             result_data: Any = await self.tool_manager.execute_output_tool_call(validated, schema=self.schema)
         except exceptions.UnexpectedModelBehavior as e:
             max_retries = validated.tool.max_retries if validated.tool else max_output_retries
-            wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({max_retries})')
-            wrapped.__cause__ = e.__cause__ or e
+            wrapped = _output_tool_retries_exceeded(e, call.tool_name, max_retries)
             return _OutputCallResult(call=call, args_valid=True, raise_exc=wrapped)
         except ToolRetryError as e:
             self.output_retries_increment += 1

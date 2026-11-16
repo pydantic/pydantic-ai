@@ -31,8 +31,8 @@ from .exceptions import (
     SkipToolValidation,
     ToolFailed,
     ToolFailedError,
+    ToolRetriesExceeded,
     ToolRetryError,
-    UnexpectedModelBehavior,
     UserError,
 )
 from .messages import (
@@ -319,6 +319,21 @@ class _ToolUnavailable(ModelRetry):
         self.tool = tool
 
 
+def _retry_cause(error: Exception) -> _messages.ToolRetryCause:
+    """Why a tool call has to be retried, given the error that says so."""
+    if isinstance(error, _UnknownTool):
+        return 'unknown_tool'
+    if isinstance(error, _ToolUnavailable):
+        return 'unavailable_tool'
+    if (
+        isinstance(error, ToolRetryError)
+        and isinstance(part := error.tool_retry, _messages.ToolReturnPart)
+        and part.retry is not None
+    ):
+        return part.retry.cause
+    return 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
+
+
 class _ValidationDeferral(Exception):
     """Internal signal that validation requested approval for or deferred the tool call.
 
@@ -517,7 +532,7 @@ class ToolManager(Generic[AgentDepsT]):
         return tool.tool_def if tool is not None else None
 
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> int:
-        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries, else return the attempt.
+        """Raise `ToolRetriesExceeded` if the tool has exceeded its max retries, else return the attempt.
 
         The attempt is 1-based: the retry this failure makes, on the count `max_retries` limits.
         """
@@ -526,9 +541,12 @@ class ToolManager(Generic[AgentDepsT]):
         # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
         # (the count starts at 0 and only ever grows, so it would never equal a negative target).
         if retries >= max_retries:
-            raise UnexpectedModelBehavior(
+            raise ToolRetriesExceeded(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
-                'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
+                'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries',
+                tool_name=name,
+                max_retries=max_retries,
+                last_cause=_retry_cause(error),
             ) from error
         return retries + 1
 
@@ -542,17 +560,14 @@ class ToolManager(Generic[AgentDepsT]):
         max_retries: int | None,
     ) -> ToolRetryError:
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
-        cause = (
-            'unknown_tool'
-            if isinstance(error, _UnknownTool)
-            else 'unavailable_tool'
-            if isinstance(error, _ToolUnavailable)
-            else None
-        )
         return _record_attempt(
             ToolRetryError(
                 build_retried_tool_return(
-                    error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
+                    error,
+                    tool_name=name,
+                    tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
+                    cause=_retry_cause(error),
                 )
             ),
             attempt=attempt,
