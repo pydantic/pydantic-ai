@@ -17,6 +17,7 @@ from typing import IO, Any
 import anyio
 import anyio.lowlevel
 import pytest
+from e2b import SandboxNetworkOpts
 from e2b.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
@@ -134,6 +135,16 @@ class TestCreate:
         # The most E2B's Hobby plan allows, pausing rather than killing at the end of it.
         assert (call.template, call.timeout, call.envs, call.lifecycle) == (None, 3_600, None, {'on_timeout': 'pause'})
         assert call.allow_internet_access is True
+        assert call.network is None
+
+    async def test_network_options_pass_through(self, fake_e2b: FakeE2B) -> None:
+        network: SandboxNetworkOpts = {
+            'rules': {'api.github.com': [{'transform': {'headers': {'Authorization': 'token secret'}}}]}
+        }
+        await started(network=network)
+        assert fake_e2b.create_calls[-1].network == network
+        # The value never reaches the sandbox's environment.
+        assert fake_e2b.create_calls[-1].envs is None
 
     @pytest.mark.parametrize(
         ('error', 'message'),

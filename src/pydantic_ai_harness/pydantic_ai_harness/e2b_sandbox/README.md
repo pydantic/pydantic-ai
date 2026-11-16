@@ -223,6 +223,31 @@ if __name__ == '__main__':
 
 The `finally` kills the sandbox even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
+## Give commands a credential they cannot read
+
+`network` takes E2B's network options, passed to `Sandbox.create` unchanged. Their `rules` keep a token out of the sandbox while its commands still use it: E2B's proxy, outside the sandbox, sets the headers on every request to the named host and replaces any header of that name the request carried. Here `gh` and `git push` act as the token's owner, while `echo $GH_TOKEN` in the sandbox prints only `placeholder`:
+
+```python {test="skip"}
+import base64
+
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+token = '...'  # a GitHub token, such as the output of `gh auth token`
+basic = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+sandbox = E2BSandbox(
+    env={'GH_TOKEN': 'placeholder'},  # `gh` sends a token only when one is set; the proxy replaces it
+    network={
+        'rules': {
+            'github.com': [{'transform': {'headers': {'Authorization': f'Basic {basic}'}}}],  # git over HTTPS
+            'api.github.com': [{'transform': {'headers': {'Authorization': f'token {token}'}}}],  # gh
+            'uploads.github.com': [{'transform': {'headers': {'Authorization': f'token {token}'}}}],
+        }
+    },
+)
+```
+
+The proxy applies the headers only over HTTP and HTTPS, so a remote such as `git@github.com:owner/repo.git` gets no credential: use the `https://` URL. The agent can still use the token for anything it allows, on any repository it reaches. Name only hosts you trust not to send request headers back in a response, or a command can read the value there. E2B keeps the rules for the sandbox's whole life, including after a reattach. To change them on a running sandbox, such as to rotate the token, call `update_network` on `await backend.get_sandbox()`; it replaces every network option at once. To keep the token out of the request that creates the sandbox too, save it as an E2B secret and use `e2b.Secret.fill(name)` as the header's value.
+
 ## Preview a dev server
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` applies, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
@@ -281,6 +306,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
+| `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Give commands a credential they cannot read](#give-commands-a-credential-they-cannot-read). A spec cannot set it. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 

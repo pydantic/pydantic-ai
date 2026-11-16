@@ -84,6 +84,7 @@ class FakeCreateCall:
     secure: bool
     allow_internet_access: bool
     lifecycle: dict[str, str] | None
+    network: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -687,10 +688,11 @@ class FakeAsyncSandboxFactory:
         secure: bool = True,
         allow_internet_access: bool = True,
         lifecycle: dict[str, str] | None = None,
+        network: dict[str, Any] | None = None,
     ) -> FakeSandbox:
         self._control.clients.append(self._client)
         self._control.create_calls.append(
-            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle)
+            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle, network)
         )
         if self._control.create_hangs:
             await anyio.sleep_forever()

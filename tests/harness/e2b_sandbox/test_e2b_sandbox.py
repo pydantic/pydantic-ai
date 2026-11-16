@@ -282,7 +282,9 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
         working_dir='/work',
         env={'FOO': 'bar'},
         allow_internet_access=False,
+        network={'rules': {'github.com': [{'transform': {'headers': {'Authorization': 'Basic secret'}}}]}},
     )
+    assert 'secret' not in repr(capability)
     agent = Agent(TestModel(call_tools=['run_command']), capabilities=[capability])
 
     @agent.tool
@@ -293,6 +295,7 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
     assert 'ok' in result.output
     call = fake_e2b.create_calls[0]
     assert (call.template, call.timeout, call.envs, call.allow_internet_access) == ('base', 120, {'FOO': 'bar'}, False)
+    assert call.network == {'rules': {'github.com': [{'transform': {'headers': {'Authorization': 'Basic secret'}}}]}}
     assert fake_e2b.sandboxes[0].commands.calls[-1].cwd == '/work'
     assert fake_e2b.sandboxes[0].killed is False
     assert isinstance(result.workspace, Workspace)
