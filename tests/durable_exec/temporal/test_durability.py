@@ -470,11 +470,11 @@ def _echo_sent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
     return ModelResponse(parts=[TextPart(f'{info.instructions} {(info.model_settings or {}).get("temperature")}')])
 
 
-def _per_model_instructions(ctx: RunContext[None]) -> str:
+def _per_model_instructions(ctx: RunContext[Any]) -> str:
     return f'You are {ctx.model.model_name}.'
 
 
-def _per_model_settings(ctx: RunContext[None]) -> ModelSettings:
+def _per_model_settings(ctx: RunContext[Any]) -> ModelSettings:
     return {'temperature': 0.9 if ctx.model.model_name == 'per_model_target' else 0.1}
 
 

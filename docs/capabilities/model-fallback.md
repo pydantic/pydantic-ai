@@ -235,6 +235,7 @@ Instructions and model settings that depend on the model can read it from `ctx.m
 
 ```python {title="model_fallback_instructions.py"}
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback
@@ -244,9 +245,9 @@ from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
-class PerModelTuning(AbstractCapability[None]):
+class PerModelTuning(AbstractCapability[Any]):
     def get_instructions(self):
-        def instructions(ctx: RunContext[None]) -> str:
+        def instructions(ctx: RunContext[Any]) -> str:
             if ctx.model.model_name == 'backup':
                 return 'Answer in one word.'
             return 'Answer briefly.'
@@ -254,7 +255,7 @@ class PerModelTuning(AbstractCapability[None]):
         return instructions
 
     def get_model_settings(self):
-        def settings(ctx: RunContext[None]) -> ModelSettings:
+        def settings(ctx: RunContext[Any]) -> ModelSettings:
             return {'temperature': 0.0 if ctx.model.model_name == 'backup' else 0.7}
 
         return settings

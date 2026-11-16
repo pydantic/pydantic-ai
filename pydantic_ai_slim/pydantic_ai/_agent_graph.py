@@ -652,9 +652,9 @@ class _StepRecording:
     resolved_loaded_parts: list[_messages.InstructionPart]
     """The loaded capabilities' instruction parts as of the before-chain, which the prefix is split from."""
     loaded_capability_ids: Collection[str]
-    instruction_records: list[list[_messages.ModelRequestPart]]
+    instruction_records: list[Sequence[_messages.ModelRequestPart]]
     """The instruction changes currently recorded on each target."""
-    settings_records: list[list[_messages.ModelRequestPart]]
+    settings_records: list[Sequence[_messages.ModelRequestPart]]
     """The model settings changes currently recorded on each target."""
     resolved: list[_messages.InstructionPart] | None
     """The instruction parts currently recorded, as resolved before the hooks."""

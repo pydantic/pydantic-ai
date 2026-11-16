@@ -3147,7 +3147,7 @@ async def test_returning_to_the_step_model_records_its_own_instructions_again():
         ) -> ModelResponse:
             if request_context.attempt == 1:
                 raise RetryModelRequest(backup)
-            raise RetryModelRequest(ctx.model)
+            raise RetryModelRequest(primary_model)
 
     attempts = 0
 
@@ -3159,7 +3159,8 @@ async def test_returning_to_the_step_model_records_its_own_instructions_again():
             raise ModelAPIError(model_name='primary', message='down')
         return ModelResponse(parts=[TextPart('primary')])
 
-    agent = Agent(FunctionModel(primary, model_name='primary'), capabilities=[_PerModel(seen), BackAndForth()])
+    primary_model = FunctionModel(primary, model_name='primary')
+    agent = Agent(primary_model, capabilities=[_PerModel(seen), BackAndForth()])
     result = await agent.run('x')
     assert result.output == 'primary'
     assert sent == snapshot(
