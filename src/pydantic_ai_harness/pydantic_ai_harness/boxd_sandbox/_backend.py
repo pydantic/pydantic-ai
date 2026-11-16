@@ -32,6 +32,10 @@ changing acquisition, command, file, or error handling:
   A failure is the matching builtin `OSError` (`FileNotFoundError`, `IsADirectoryError`, ...), a symlink loop
   is `ELOOP`, and `remove` deletes a symlink itself. A machine whose boxd agent predates the file API, such as
   one restored from an older snapshot, raises `MachineAgentOutdatedError` until it reboots.
+- Verified 2026-11-16: `machines.create` refuses `isolated` or `vcpu` beside a `spec` (`MachineSpecError`), so
+  a machine with `secrets` gets both from the spec, its size as `'{vcpu}x{4 * vcpu}'` (vCPUs x GiB of memory).
+  A spec combines with `from_snapshot`. In the machine, a secret's variable holds a `bxds_` stand-in, never
+  the value. A secret can be deleted while a machine still names it; the machine keeps running.
 """
 
 from __future__ import annotations
