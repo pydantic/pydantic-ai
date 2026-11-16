@@ -137,7 +137,7 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
 - Screenshots are the main cost: about 1,300 input tokens each at 1280x800, resent with every request. Prompt caching
   cuts the resends to about a tenth.
 - Every request carries every earlier screenshot, so a long run reaches the provider's limits: Claude refuses a
-  request with more than 100 images on its 200k-context models, and Gemini one over 20 MB. `ComputerUse` doesn't drop
+  request with more than 100 images on its 200k-context models. `ComputerUse` doesn't drop
   old screenshots, and [`ClearToolResults`](compaction.md) leaves `computer` results alone.
 - Each call is one model request, so long tasks can hit the default [`request_limit`](../agent.md#usage-limits) of 50.
   Pass higher [`UsageLimits`][pydantic_ai.usage.UsageLimits].
