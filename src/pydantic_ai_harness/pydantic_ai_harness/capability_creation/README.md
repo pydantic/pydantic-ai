@@ -186,9 +186,12 @@ With `defer_loading=True`, a run starts before the capability loads, so these ch
 writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
 
 `creation.load_active(workspace)` makes the same checks against `workspace` before it loads
-anything. For a `directory` outside the working directory, pass a workspace that names it, and
-pass the same one to `agent.run(..., workspace=...)`:
-`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('./project')), authority='operator', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+anything. It checks only the workspace it is given, so give it the one the run uses: as in the
+example above, configure the workspace with `agent.run(..., workspace=...)` rather than a
+`LocalWorkspace` capability, and pass the same object to both. For a `directory` outside the
+working directory, that workspace names it:
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('./project')), authority='operator', path_authority={'/var/lib/my-app/authored': 'operator'})`,
+whose `path_authority` paths are not `~`-expanded.
 `creation.store.load_active()` has no workspace to ask, so it runs the code it finds: call it
 only on a directory you would run yourself. The checks also only look at who controls the
 directory, not what the model has read: to keep text in a lower workspace from steering what
