@@ -377,7 +377,7 @@ missing from the Python CLAI runs on fails right away, naming the install comman
 of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
 
 ```bash
-pip/uv-add "pydantic-clai2[typesafe]"
+pip/uv-add "pydantic-clai2[typesafe]>=0.66.1a0"
 ```
 
 From a pydantic-ai checkout, run CLAI with the extra instead:

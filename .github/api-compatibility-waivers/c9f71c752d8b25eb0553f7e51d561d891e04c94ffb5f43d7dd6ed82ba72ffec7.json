@@ -1,0 +1,5 @@
+{
+  "against": "v2.66.0",
+  "reason": "`pydantic_clai2.cli.self_update.PYPI_URL` names PyPI's index page, whose JSON form lists pre-releases and yanked files, so `/update` offers CLAI's pre-releases; the JSON API's `info.version` names only the newest final.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12804"
+}

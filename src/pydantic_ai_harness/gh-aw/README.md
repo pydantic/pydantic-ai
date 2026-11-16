@@ -76,7 +76,8 @@ The engine creates a generated module with a private wrapper around either the h
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
 JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
-`pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
+`pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins (CLAI at any
+pre-release stage of it, such as `0.67.0a0` for `0.67.0`), plus
 `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
 through Pydantic AI's public dynamic toolset interface, preserving the agent's existing

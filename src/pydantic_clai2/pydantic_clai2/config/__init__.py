@@ -157,7 +157,7 @@ class Settings(BaseModel):
     )
     update_channel: UpdateChannel = Field(
         default='stable',
-        description='Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main.',
+        description='Where /update looks: stable for PyPI releases (pre-releases included), or main for the newest CLAI commit on main.',
     )
     worktree_remove_commands: dict[str, list[str]] = Field(
         default={},
