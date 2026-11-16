@@ -231,6 +231,15 @@ def _not_run_error(outcome: _NotRun, run: _RunButtons, stray: list[MouseButton])
     return outcome.error()
 
 
+def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> None:
+    """Add the buttons `actions` press to the run's stray ones, as a call cut off after acting can't say which are held.
+
+    A call that reports replaces them with the buttons it says may be held.
+    """
+    if (run := _run_buttons(ctx)) is not None:
+        run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
+
+
 def _model_limit(model: AbstractModel, call: ComputerCallPart | None = None) -> _ScreenshotLimit:
     """The largest screenshot every model that may answer takes, and the one that made `call`, as recorded on it."""
     models = candidate_models(model)
@@ -394,8 +403,10 @@ async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[MouseBu
         if pressing and isinstance(e, UnsupportedActionError):
             held.remove(pressing)  # the display refused the press, so nothing is pressed
         return str(e) or type(e).__name__
-    if isinstance(action, MouseUp) and action.button in held:
-        held.remove(action.button)
+    # A click releases its button, and a drag the left one.
+    released = action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
+    if released in held:
+        held.remove(released)
     return None
 
 
@@ -638,17 +649,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             keeps_held=keeps_held,
         )
         stray = list(run.stray)
-        # A call that never reports, such as an interrupted one, may leave any of these pressed for the run's end.
-        pressing: list[MouseButton] = [action.button for action in actions if isinstance(action, MouseDown)]
-        run.held, run.stray = [], [*stray, *plan.held, *pressing]
-        try:
-            outcome = await self._call(ctx, actions, plan)
-            if isinstance(outcome, _NotRun):
-                raise _not_run_error(outcome, run, stray)
-        except UserError:
-            # Refused before anything acted, so this call's presses never ran.
-            run.stray = [*stray, *plan.held]
-            raise
+        # A call that never reports, such as an interrupted one, may leave these pressed for the run's end. Its own
+        # presses join them once its actions start running.
+        run.held, run.stray = [], [*stray, *plan.held]
+        outcome = await self._call(ctx, actions, plan)
+        if isinstance(outcome, _NotRun):
+            raise _not_run_error(outcome, run, stray)
         tool_return, held = outcome
         result: ComputerResult = tool_return.metadata
         run.held, run.stray = held, stray
@@ -668,9 +674,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         except UserError:
             # A configuration error, such as a model the engine doesn't know, isn't the call failing.
             raise
-        except Exception as e:
-            # The unit failed, timed out or lost its worker, after any number of actions.
-            raise ToolFailed(_INTERRUPTED) from e
+        except BaseException as e:
+            # The unit failed, timed out, lost its worker or was cancelled, after any number of actions.
+            _leave_presses_for_run_end(ctx, actions)
+            if isinstance(e, Exception):
+                raise ToolFailed(_INTERRUPTED) from e
+            raise
         return outcome
 
     @durable_operation('call')
@@ -706,6 +715,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 if refused := _off_screen(actions, *mapping.space, 'grid' if plan.grid else 'screen'):
                     raise ToolFailed(refused)
                 pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
+                _leave_presses_for_run_end(ctx, actions)
                 return await self._act_and_look(display, pixels, mapping, plan, held)
             except ToolFailed as e:
                 # A call that fails releases every button that may be held, so only a call that succeeds says which are.
