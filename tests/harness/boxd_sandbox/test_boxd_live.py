@@ -164,9 +164,8 @@ _TERMINAL = "setsid xterm -e sh -c 'cat > typed.txt' </dev/null >/dev/null 2>&1 
 async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_any_text(
     client: boxd.AsyncBoxd,
 ) -> None:
-    """Validates the fake-encoded assumptions that commands get the desktop's `DISPLAY`, that typing reaches
-    the focused window as Unicode with a newline as Enter, and that actions past boxd's per-call limits
-    (characters typed, wheel clicks, key repeats, drag points) are split so boxd takes each part."""
+    """Validates the fake-encoded assumptions that commands get the desktop's `DISPLAY`, and that typing reaches
+    the focused window as Unicode with a newline as Enter, also past boxd's 10,000 characters a call."""
     async with _owned(client, desktop=True) as backend:
         display = backend.display
         assert display is not None
@@ -180,14 +179,23 @@ async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_a
         text = 'héllo 😀\n' + ('x' * 99 + '\n') * 101
         await display.act(TypeText(text=text))
         await display.act(PressKeys(keys=('ctrl+d',)))
-        await display.act(Scroll(x=50, y=50, direction='down', amount=150))
-        await display.act(PressKeys(keys=('shift',), repeat=150))
-        await display.act(Drag(path=tuple(Point(x=600 + n, y=400) for n in range(150))))
 
         with anyio.fail_after(30):
             while (typed := await backend.run(['cat', 'typed.txt'], timeout=30)).stdout.count('\n') < 102:
                 await anyio.sleep(0.5)
         assert typed.stdout == text
+
+
+async def test_boxd_takes_scrolls_key_repeats_and_drags_past_its_per_call_limits(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumption that wheel clicks, key repeats and drag points past the 100 boxd takes
+    in one call are split so boxd takes each part."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        await display.act(Scroll(x=50, y=50, direction='down', amount=150))
+        await display.act(PressKeys(keys=('shift',), repeat=150))
+        await display.act(Drag(path=tuple(Point(x=600 + n, y=400) for n in range(150))))
 
 
 async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.AsyncBoxd) -> None:
