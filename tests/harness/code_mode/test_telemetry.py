@@ -9,13 +9,14 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -27,7 +28,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 from tests.harness.conftest import Instrumented
 
@@ -334,6 +335,38 @@ class TestRunCodeFailureTelemetry:
         await agent.run('go')
 
         assert code_mode_attributes(exporter) == [run_code_span(error_kind='runtime', session_reset=False)]
+
+    @pytest.mark.parametrize('eager', [False, True], ids=['sequential', 'eager'])
+    async def test_a_call_ended_by_a_usage_limit_records_only_the_budget(self, eager: bool, instrumented: Instrumented):
+        """Core's tool call limit ends the run inside a nested call, so `run_code` records no failure of its own."""
+        code = 'await add(a=1, b=2)\nawait add(a=3, b=4)'
+        args = json.dumps({'code': code})
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+
+        async def stream_once(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            yield {1: DeltaToolCall(name='run_code')}
+            for offset in range(0, len(args), 8):
+                yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
+                await asyncio.sleep(0)
+
+        instrumentation, exporter = instrumented(False)
+        agent = Agent(
+            FunctionModel(respond, stream_function=stream_once),
+            capabilities=[CodeMode[object](eager=eager), instrumentation],
+        )
+
+        @agent.tool_plain
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=2))
+
+        assert code_mode_attributes(exporter) == snapshot(
+            [('execute_tool run_code', {'code_mode.budget_exhausted': False})]
+        )
 
     async def test_a_diverged_prefix_records_the_failed_statement_and_the_restart(self):
         """The failure kept the session, but the restart discards the one `x = 1` ran in."""
