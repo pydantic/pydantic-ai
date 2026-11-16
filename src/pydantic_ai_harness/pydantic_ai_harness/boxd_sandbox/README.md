@@ -207,7 +207,7 @@ async def set_github_secret(token: str) -> None:  # a GitHub token, such as the 
         await client.secrets.set(
             'GH_TOKEN',
             token,
-            scope='private-unattached',  # reaches only machines whose spec names it
+            scope='unattached',  # reaches only machines whose spec names it
             domains=['github.com', 'api.github.com', 'uploads.github.com'],
         )
 

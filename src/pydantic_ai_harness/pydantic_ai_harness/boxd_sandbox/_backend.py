@@ -405,10 +405,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
         secrets: Names of existing boxd secrets a newly created machine gets, applied as
-            `boxd.spec.secrets(*secrets)` in its machine spec. Each is set in the machine's
-            environment as a placeholder that boxd's proxy, outside the machine, replaces with the
-            real value on requests to the secret's domains. An attached machine keeps the ones it
-            was created with.
+            `boxd.spec.secrets(*secrets)` in its machine spec. A secret bound to domains is set in the
+            machine's environment as a placeholder that boxd's proxy, outside the machine, replaces
+            with the real value on requests to those domains; a secret without domains is set as its
+            real value. An attached machine keeps the ones it was created with.
     """
 
     def __init__(
