@@ -285,6 +285,20 @@ class TestComputerUse:
 
         assert provider.actions == [Click(x=640, y=400)]
 
+    async def test_a_grid_model_call_after_text_in_its_response_still_points_on_its_grid(self) -> None:
+        provider = ScreenProvider()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                call = ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 500, 'y': 500}]})
+                return ModelResponse(parts=[TextPart('Clicking the middle.'), call])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond, profile=_GRID), capabilities=[provider.capability(), ComputerUse()])
+        await agent.run('Go.')
+
+        assert provider.actions == [Click(x=640, y=400)]
+
     async def test_a_grid_model_is_told_its_grid_in_the_tool_description(self) -> None:
         seen: list[AgentInfo] = []
 
@@ -1227,11 +1241,9 @@ Each call runs a list of actions in order and returns a screenshot of the result
             tasks.cancel_scope.cancel()
         assert provider.actions == [MouseDown(), MouseUp()]
 
-    async def test_a_call_refused_before_it_acts_leaves_its_presses_to_the_run_end(
+    async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
         self, durability: list[AbstractCapability[Any]]
     ) -> None:
-        # A failed call may have pressed any button it names, so the run's end releases them; a release with nothing
-        # pressed causes no click.
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'mouse_down'}, {'type': 'click', 'x': 5000, 'y': 1}]),
@@ -1241,7 +1253,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
-        assert provider.actions == [MouseUp()]
+        assert provider.actions == []
 
     async def test_an_environment_gone_at_the_end_of_a_run_leaves_its_result(self) -> None:
         class LostOnRelease(ScreenBackend):
@@ -1276,9 +1288,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert pressed.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
         assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
 
-    async def test_a_call_after_one_that_failed_after_a_press_releases_it_before_reporting_what_is_held(
-        self,
-    ) -> None:
+    async def test_a_call_whose_screenshot_fails_releases_the_buttons_it_holds(self) -> None:
         class FirstScreenshotFails(ScreenBackend):
             failed = False
 
@@ -1300,7 +1310,9 @@ Each call runs a list of actions in order and returns a screenshot of the result
         failed, moved = _returns((await agent.run('Go.')).all_messages())
 
         assert failed.outcome == 'failed'
-        # The press may or may not have stuck, so the next call releases it rather than call it still pressed.
+        assert failed.content == snapshot(
+            'Ran 1 action. Taking the screenshot failed: the capture failed. The left mouse button was released.'
+        )
         assert moved.content == ['Ran 1 action. Screenshot attached (1280x800).', SCREENSHOT]
         assert provider.actions == [MouseDown(), MouseUp(), MoveMouse(x=5, y=5)]
 
@@ -1331,6 +1343,12 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.metadata is not None and tool_return.metadata['performed'] == 1
+        assert tool_return.content == [
+            snapshot(
+                "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it did not run. The left mouse button was released. Screenshot attached (1280x800)."
+            ),
+            SCREENSHOT,
+        ]
         assert provider.actions == [MouseDown(), MouseUp()]
 
     async def test_a_failed_call_says_it_released_the_button_an_earlier_call_pressed(self) -> None:
@@ -1453,7 +1471,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
 
         assert tool_return.outcome == 'failed'
         assert tool_return.content == snapshot(
-            "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. Releasing the left mouse button failed too, so it may still be held."
+            "Action 2 of 3 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after it did not run. Releasing the left mouse button failed, so it may still be held."
         )
 
     async def test_losing_the_environment_while_releasing_a_button_ends_the_run(self) -> None:

@@ -390,8 +390,8 @@ Gotchas:
 One `computer` tool: the model sends a list of mouse and keyboard actions, they run on
 `ctx.workspace`'s display, and the tool returns a screenshot. Needs a workspace whose backend
 implements `SupportsDisplay` and a model that accepts images. A model without image input fails before
-its request. A workspace without a display fails the run at its start; under durable execution, the
-first `computer` call or native tool size read fails it instead.
+its request. A workspace without a display ends the run with `UserError` at its first display read:
+the native tool's size before the first request, or the first `computer` call.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
