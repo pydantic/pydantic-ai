@@ -1187,11 +1187,11 @@ class TestConcurrentChanges:
     ) -> None:
         """Each change depends on the one sent before it in the same response.
 
-        Without `sequential`, the first case always fails and the edit cases fail when the race goes the wrong way,
-        which it did more often with `content_hashes=False` than with hashes on.
+        Uses `content_hashes=False` because the edit cases reproduce the race far more often without hashes. Keep it
+        unhashed so this test still guards `sequential` for edits.
         """
         for path, content in files.items():
-            (tmp_path / path).parent.mkdir(parents=True)
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / path).write_text(content)
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
