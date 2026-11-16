@@ -296,10 +296,16 @@ class X11Computer:
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(_DISPLAY_SIZE)).stdout
         # `[ \t]*` stays on one line; `\s*` would take time growing with the square of the output's length.
-        width, height = (re.search(rf'^[ \t]*{name}: (\d+)$', output, re.MULTILINE) for name in ('Width', 'Height'))
+        width, height = (
+            re.search(rf'^[ \t]*{name}: (\d{{1,5}})$', output, re.MULTILINE) for name in ('Width', 'Height')
+        )
         if width is None or height is None:
             raise WorkspaceError(f'Unexpected display size output: {output.strip()!r}')
-        return int(width[1]), int(height[1])
+        size = int(width[1]), int(height[1])
+        # X11 sizes are 16-bit; a bigger one would make a drag plan that many points.
+        if not all(1 <= side <= 65535 for side in size):
+            raise WorkspaceError(f'The display reported an impossible size: {size[0]}x{size[1]}')
+        return size
 
     async def screenshot(self) -> bytes:
         return await self._capture()
