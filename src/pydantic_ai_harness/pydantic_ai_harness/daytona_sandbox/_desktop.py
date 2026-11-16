@@ -12,7 +12,8 @@ How Daytona's default snapshot behaves. Re-run the live display tests in
 - `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
   emoji.
 - `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
-  scroll lock and media keys (`unsupported key "printscreen"`), and the desktop keeps working.
+  scroll lock and media keys (`unsupported key "printscreen"`), and the desktop keeps working. `keyboard.down`
+  refuses print screen the same way, with a 500.
 - The mouse has no `back` or `forward` button (`unsupported mouse button "back"`).
 - Its keypad digits are `num0` to `num9`, which follow Num Lock, and Num Lock is `num_lock`. Its other keypad names
   type other keys (`num_plus` types `n`), and the display refuses `menu`.
@@ -215,8 +216,14 @@ class DaytonaDesktop:
         pressed: list[str] = []
         try:
             for key in keys:
-                pressed.append(key)  # before the request, which can press the key and still fail
-                await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
+                pressed.append(key)  # before the request, which may press the key without confirming it
+                try:
+                    await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
+                except WorkspaceUnavailableError:
+                    raise
+                except Exception:
+                    pressed.pop()  # Daytona answered that it didn't press it, such as `unsupported key "printscreen"`
+                    raise
             yield
             while pressed:
                 await _send_input(partial(keyboard.up, pressed[-1], request_timeout=REQUEST_TIMEOUT))

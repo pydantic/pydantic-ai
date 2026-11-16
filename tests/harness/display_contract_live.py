@@ -5,11 +5,8 @@ from __future__ import annotations as _annotations
 import zlib
 
 from pydantic_ai.computer_use import MoveMouse, Point, Region
-from pydantic_ai_harness.computer_use import (
-    Display,
-    SupportsCursorPosition,
-    SupportsZoom,
-)
+
+from .display_fakes import FullDisplay
 
 
 def png_size(png: bytes) -> tuple[int, int]:
@@ -17,15 +14,13 @@ def png_size(png: bytes) -> tuple[int, int]:
     return int.from_bytes(png[16:20], 'big'), int.from_bytes(png[20:24], 'big')
 
 
-async def check_display_contract(display: Display) -> None:
+async def check_display_contract(display: FullDisplay) -> None:
     """Check that screenshots match the display size, zoom gives the size asked for, and the pointer moves."""
     width, height = await display.display_size()
     assert png_size(await display.screenshot()) == (width, height)
-    if isinstance(display, SupportsZoom):
-        assert png_size(await display.zoom(Region(left=10, top=20, right=110, bottom=70))) == (100, 50)
-    if isinstance(display, SupportsCursorPosition):
-        await display.act(MoveMouse(x=width // 3, y=height // 3))
-        assert await display.cursor_position() == Point(x=width // 3, y=height // 3)
+    assert png_size(await display.zoom(Region(left=10, top=20, right=110, bottom=70))) == (100, 50)
+    await display.act(MoveMouse(x=width // 3, y=height // 3))
+    assert await display.cursor_position() == Point(x=width // 3, y=height // 3)
 
 
 def is_blank(png: bytes) -> bool:

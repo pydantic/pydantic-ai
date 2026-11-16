@@ -233,6 +233,24 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
     ]
 
 
+async def test_a_key_daytona_refuses_to_hold_is_not_reported_held(fake_daytona: FakeDaytona) -> None:
+    """Daytona refuses `keyboard.down` of a key it hasn't with a 500 (observed live 2026-11-16), as it refuses `press`."""
+    backend, sandbox = await _started(fake_daytona)
+    down = sandbox.computer_use.keyboard.down
+    refusal = 'Failed to press key down: internal server error: unsupported key "printscreen"'
+
+    async def down_refusing(key: str, request_timeout: float | None = None) -> None:
+        if key == 'printscreen':
+            raise DaytonaInternalServerError(refusal, status_code=500)
+        await down(key, request_timeout)
+
+    sandbox.computer_use.keyboard.down = down_refusing
+    with pytest.raises(WorkspaceError, match=f': {refusal}$'):
+        await screen(backend).act(HoldKeys(keys=('ctrl', 'printscreen'), seconds=1))
+
+    assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
+
+
 HOLDING_CTRL = MoveMouse(x=1, y=1, modifiers=('ctrl',))
 
 

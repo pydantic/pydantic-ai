@@ -32,7 +32,7 @@ import daytona
 import pytest
 from pytest_examples import CodeExample
 
-from pydantic_ai.computer_use import Click, PressKeys, TypeText
+from pydantic_ai.computer_use import Click, PressKeys, Scroll, TypeText
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
@@ -40,6 +40,7 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from ..display_contract_live import check_display_contract, png_size
+from ..display_fakes import screen
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
 pytestmark = pytest.mark.daytona_live
@@ -303,6 +304,22 @@ async def test_a_new_desktop_sandbox_below_1024x768_gets_that_size(client: dayto
         assert png_size(await display.screenshot()) == (800, 600)
 
 
+_EVENT_LOGGER = """
+import tkinter as tk
+root = tk.Tk()
+root.geometry('400x300+0+0')
+log = open('events.txt', 'w')
+def write(line):
+    log.write(line + '\\n')
+    log.flush()
+root.bind_all('<KeyPress>', lambda event: write(f'key {event.keysym}'))
+root.bind('<ButtonPress>', lambda event: write(f'button {event.num} state {event.state}'))
+root.after(500, write, 'ready')
+root.mainloop()
+"""
+"""A window at the top left that logs to `events.txt` each key it gets and each mouse button with X's modifier state."""
+
+
 class TestLiveDaytonaDesktop:
     """Runs the display against a sandbox started with a desktop. Commands and files are the module's other tests':
     a desktop sandbox runs them the same way."""
@@ -321,11 +338,34 @@ class TestLiveDaytonaDesktop:
                 await backend.aclose()
 
     async def test_display_contract(self, backend: WorkspaceBackend) -> None:
-        assert isinstance(backend, DaytonaSandboxBackend)
-        display = backend.display
-        assert display is not None
+        display = screen(backend)
         assert await display.display_size() == (1280, 800)
         await check_display_contract(display)
+
+    async def test_modifiers_are_held_around_clicks_and_scrolls(self, backend: WorkspaceBackend) -> None:
+        """Validates the mapping the fake assumes: Daytona holds a click's or scroll's modifiers around it, and `cmd`,
+        which `super` maps to, is `Super_L`."""
+        assert isinstance(backend, DaytonaSandboxBackend)
+        display = screen(backend)
+        await display.display_size()  # starts the desktop, so the window opens on it
+        await backend.write_bytes('log_events.py', _EVENT_LOGGER.encode())
+        await backend.run('rm -f events.txt; setsid python3 log_events.py >/dev/null 2>&1 &', shell=True)
+        await backend.run('until grep -q ready events.txt 2>/dev/null; do sleep 0.1; done', shell=True, timeout=30)
+
+        await display.act(Click(x=200, y=150))  # focuses the window, so it gets the key events
+        await display.act(Click(x=200, y=150, modifiers=('shift',)))
+        await display.act(Scroll(x=200, y=150, direction='down', amount=1, modifiers=('ctrl',)))
+        await display.act(Click(x=200, y=150, modifiers=('super',)))
+
+        logged = (await backend.run('sleep 1; cat events.txt', shell=True)).stdout.splitlines()
+        # X's state bits: 1 is shift, 4 is control, 64 is Mod4, which Super_L is on.
+        assert [line for line in logged if line.startswith('button')] == [
+            'button 1 state 0',
+            'button 1 state 1',
+            'button 5 state 4',
+            'button 1 state 64',
+        ]
+        assert 'key Super_L' in logged
 
     async def test_keys_and_text_reach_the_focused_window(self, backend: WorkspaceBackend) -> None:
         """Validates the key mapping the fake assumes: a shifted symbol is shift and its key on Daytona's display."""

@@ -22,6 +22,7 @@ from pydantic_ai_harness.computer_use import Display
 from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 
 from ..display_contract_live import check_display_contract, is_blank
+from ..display_fakes import screen
 
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
@@ -169,9 +170,7 @@ class TestLiveDockerDesktop:
             await _destroy(backend)
 
     async def test_display_contract(self, backend: WorkspaceBackend) -> None:
-        assert isinstance(backend, DockerContainerBackend)
-        assert backend.display is not None
-        await check_display_contract(backend.display)
+        await check_display_contract(screen(backend))
 
     async def test_the_first_screenshot_shows_the_desktop(self, backend: DockerContainerBackend) -> None:
         assert backend.display is not None
