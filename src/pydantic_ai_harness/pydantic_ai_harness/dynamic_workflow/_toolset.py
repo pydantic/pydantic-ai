@@ -146,16 +146,16 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     return resolved
 
 
-class _WorkflowArguments(TypedDict):
+class _WorkflowArgs(TypedDict):
     code: Annotated[str, Field(description='The Python orchestration script to execute in the sandbox.')]
 
 
-_WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArguments)
+_WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArgs)
 _WORKFLOW_ARGS_JSON_SCHEMA = _WORKFLOW_ARGS_ADAPTER.json_schema()
 _WORKFLOW_ARGS_VALIDATOR: SchemaValidatorProt = _WORKFLOW_ARGS_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 
 
-class _BudgetExhausted(RuntimeError):
+class _BudgetExhaustedError(RuntimeError):
     """The run's `max_agent_calls` budget is spent; no further sub-agent runs are allowed."""
 
     def __init__(self, max_agent_calls: int) -> None:
@@ -814,7 +814,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         caps stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
         """
         if self._call_count >= self.max_agent_calls:
-            raise _BudgetExhausted(self.max_agent_calls)
+            raise _BudgetExhaustedError(self.max_agent_calls)
         self._call_count += 1
         agent = self._by_name[agent_name].agent
         # Also suspension-free: concurrent dispatches join the batch in dispatch order.
@@ -911,7 +911,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             task = _dispatched_task(agent_name, kwargs)
             try:
                 output = await self._run_one(agent_name, task, ctx, branches)
-            except _BudgetExhausted:
+            except _BudgetExhaustedError:
                 budget_exhausted = True
                 raise
             completed_dispatches.append(_CompletedDispatch(agent_name=agent_name, task=task, result=output))

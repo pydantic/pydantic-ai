@@ -1,8 +1,8 @@
 # Delegation and Planning
 
 Capabilities that structure long or multi-part work: `Planning` (a model-owned task list),
-`SubAgents` (one `delegate_task` tool over named child agents), `DynamicWorkflow` (the model
-scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run), and
+`SubAgents` (one `delegate_task` tool over named child agents), `Peers` (messages between
+independently run sessions), `DynamicWorkflow` (the model scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run), and
 `BackgroundTools` (slow tools run while the agent keeps going). All import from
 `pydantic_ai_harness`; only `DynamicWorkflow` needs an extra.
 
@@ -12,6 +12,7 @@ scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run
 | --- | --- |
 | Parent calls one specific agent from a tool it writes itself, full control over prompt and deps | Core agent delegation (`await other.run(..., usage=ctx.usage)` inside a tool; see the `building-pydantic-ai-agents` skill, ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Model picks among several named specialists, occasionally, judging each result before the next | `SubAgents` |
+| Independently run sessions discover or message each other without controlling each other's runs | `Peers` |
 | Fan-out, chaining, voting, or retry loops over sub-agents, where intermediate results should not enter the parent context | `DynamicWorkflow` |
 | A second opinion from another (often stronger) model, not a task hand-off | `Advisor` |
 | Keep a checklist across a long run, or hand a plan from a planner run to an executor run | `Planning` |
@@ -147,7 +148,7 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
 - `workspace_resolver=None`: an async `(ctx, request: DelegationWorkspaceRequest) -> Workspace`
   callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
-  `pydantic_ai_harness.subagents`. Validate permitted delegates and paths in the callback.
+  `pydantic_ai_harness.sub_agents`. Validate permitted delegates and paths in the callback.
   Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
   still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
   directory changes on resume. Remote and durable delegations reject this argument.
@@ -155,7 +156,7 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   capabilities). `max_depth=3` caps nesting, counting the top-level run.
 - `tool_retries=2`, `contain_errors=False`, `event_stream_handler=None`, `tool_name='delegate_task'`.
 - Disk agents: `agent_overrides={'name': AgentOverride(model=..., effort='high')}` and
-  `tool_resolver` (maps frontmatter `tools` names to toolsets); from `pydantic_ai_harness.subagents`.
+  `tool_resolver` (maps frontmatter `tools` names to toolsets); from `pydantic_ai_harness.sub_agents`.
 
 Gotchas:
 
@@ -171,6 +172,11 @@ Gotchas:
   child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
   remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
+- A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
+  raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
+  `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
+  `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level run, and a
+  remote worker applies the announced limits as received.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
@@ -183,7 +189,7 @@ Gotchas:
 ```python
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.subagents import SubAgent, SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents, TaskControl
 
 researcher = Agent('test', name='researcher', description='Researches a topic.')
 orchestrator = Agent(
@@ -238,7 +244,7 @@ no longer matches it. `message_history` is trusted as the caller's own, metadata
 client history with a UI adapter or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
 
 ```python
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 
 tasks = DelegationTasks()
 reports = DelegationReports(tasks, conversation_id='conversation-1')
@@ -251,6 +257,49 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
 - With `DelegationTasks(directory=...)`, a damaged saved task file is skipped and listed in
   `owner.problems` instead of stopping `opened()`. `await DelegationTasks.discover(directory)` reads the
   saved task tree (`tasks` by ID, plus `problems`) without opening an owner or resuming anything.
+
+## Peers
+
+Use `Peers` for independently run sessions, not delegated child runs. The host provides a
+`PeerNetwork` for discovery and delivery, and an optional `PeerInbox` for receiving messages.
+`InMemoryPeerNetwork` and `LocalPeerInbox` connect sessions within one application. Bind the same inbox to
+`network.join(handle=..., inbox=inbox)` and `Peers(network=view, inbox=inbox)` on the recipient.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import Peers
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox
+
+network = InMemoryPeerNetwork()
+inbox = LocalPeerInbox()
+view = network.join(handle='reviewer', inbox=inbox)
+agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
+```
+
+- Tools: `list_peers(query='')` lists other sessions, filtering handle, title, workspace,
+  or branch; `send_message(to, text, reply_to=None)` addresses a listed handle or ID.
+- `Peers` defaults: `max_messages_per_run=10`, `max_message_bytes=16384` UTF-8 bytes,
+  `max_listed=30`. `LocalPeerInbox` defaults: `max_pending=50`, `max_message_bytes=16384`.
+  Set both byte limits when changing allowed message size.
+- A peer with no active run holds the message; `InMemoryPeerNetwork` never starts its run, and a
+  host network's own policy decides whether a message wakes it. A running peer reads the message
+  at its next model request. Sending never waits for a reply.
+- `PeerNetwork.send` takes a `key` (`Peers` passes `run_id:run_step:tool_call_id`); a retried send
+  with the same key must not deliver twice.
+- For host storage, implement `PeerInbox`: `take(run_id)` before and after each model request,
+  `acknowledge(message_id)` once in history, `release(run_id)` at run end.
+- Use `LocalPeerInbox(path=...)` for pending messages across restarts. The host owns transport,
+  identity, authentication, and any cross-process coordination; the in-memory network
+  does not supply those. A receiver without `Peers(inbox=...)` does not read an inbox.
+- Peer text is untrusted data, not user approval. Use `read_peer_message(part)` to read typed
+  provenance from message metadata, not by parsing displayed text. A host delivering peer
+  messages itself sends each as its own part. If peers can reach the agent, require approval
+  for tools with side effects: a peer message can steer the run into any unapproved tool.
+- Joining `InMemoryPeerNetwork` without an inbox is send-only; incoming messages are rejected.
+  `LocalPeerInbox(accepting=False)` refuses new messages and retains already-pending messages.
+- Do not combine `Peers` with durable-execution capabilities. Construction raises `UserError` because
+  the engine records neither inbox reads nor sends, so a replay could diverge.
 
 ## DynamicWorkflow
 
@@ -361,7 +410,10 @@ Gotchas:
 - Local path: the advisor sees only the consultation prompt (plus completed history, including
   `system_prompt` parts, tool calls, and results, with `forward_history=True`), never the executor's
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
-  `max_uses`.
+  `max_uses`. A parent `count_tokens_before_request=True` is kept on an advisor model that implements
+  `count_tokens` and retried once without the up-front count (limits checked after the response) on any
+  pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
+  consultation started, in which case the error propagates.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
   other instance's value, two list `output_type`s combining, and any other option the later one's.
 - Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
@@ -423,6 +475,7 @@ Gotchas:
 
 - https://pydantic.dev/docs/ai/harness/planning/
 - https://pydantic.dev/docs/ai/harness/subagents/
+- https://pydantic.dev/docs/ai/harness/peers/
 - https://pydantic.dev/docs/ai/harness/dynamic-workflow/
 - https://pydantic.dev/docs/ai/harness/advisor/
 - https://pydantic.dev/docs/ai/harness/background-tools/

@@ -434,6 +434,39 @@ class ModelProfile(TypedDict, total=False):
     Only the outgoing copy changes: stored message history keeps the original IDs.
     """
 
+    tool_call_ids_are_response_scoped: bool
+    """Whether the model's tool call IDs are only unique within one response. Default: `False`.
+
+    Pydantic AI pairs each tool call with its result by `tool_call_id` across the whole message history, so an API
+    that numbers the calls in every response from scratch (`call_0`, then `call_0` again in the next response) makes
+    two different calls look like one. When set, each tool call ID the provider sends is stored with a suffix derived
+    from its response's [`provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], or from its
+    [`timestamp`][pydantic_ai.messages.ModelResponse.timestamp] when it has none, such as `call_0_k3ZcR9aQ`. The suffix
+    is the same every time the response is replayed, and keeps the ID within the `[a-zA-Z0-9_-]` characters that
+    Anthropic and Bedrock require. IDs Pydantic AI generates itself are already unique and are left alone, and so
+    is a call an `OpenAIResponsesModel` stream receives before the response's ID, which a request continuing that
+    response with `previous_response_id` couldn't restore from the timestamp.
+
+    When the history is sent back to the same provider and endpoint, the suffix is removed again, so the provider gets
+    the IDs it sent. Other providers and endpoints get the stored IDs.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and set by the
+    [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
+    """
+
+    rejects_unpaired_tool_calls: bool
+    """Whether the API rejects a tool call that has no result, or a tool result that names no call. Default: `False`.
+
+    When set, `Model.prepare_messages` pairs the history it translates from another provider's native tool search: a
+    translated `search_tools` result whose ID names no call takes the ID of the oldest call in its response still
+    waiting for one, and a translated call that has no result gets a synthesized interrupted result. It doesn't touch
+    other unanswered tool calls, which the repair every agent run makes already handles. Set by
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and by
+    [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] for the `AsyncAnthropic` client. See
+    [Configuring `ToolSearch`](../tools-advanced.md#configuring-toolsearch).
+    """
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
@@ -476,6 +509,7 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
     'openai_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openrouter_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openai_reasoning_enabled_by_default': 'thinking_enabled_by_default',
+    'openai_responses_tool_call_ids_are_response_scoped': 'tool_call_ids_are_response_scoped',
 }
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
 
@@ -563,6 +597,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
     'tool_call_id_length': None,
+    'tool_call_ids_are_response_scoped': False,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }
