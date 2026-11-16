@@ -9,12 +9,16 @@ from openai.types import responses
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
+from ..._utils import is_str_dict
 from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart
 from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
 from .. import ModelRequestParameters
 
-_SCROLL_PIXELS_PER_CLICK = 100
-"""OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far."""
+_SCROLL_PIXELS_PER_CLICK = 114
+"""OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far.
+
+Measured in Firefox ESR 153 on `DockerContainer(desktop=True)`'s 1280x800 desktop: every click scrolled 114 pixels.
+"""
 
 _BLANK_SCREENSHOT = (
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAsTj2FAAAAABJRU5ErkJggg=='
@@ -96,8 +100,6 @@ _OpenAIAction = (
 
 _OPENAI_ACTION: TypeAdapter[_OpenAIAction] = TypeAdapter(Annotated[_OpenAIAction, Field(discriminator='type')])
 
-_LIST = TypeAdapter(list[Any], config={'strict': True})
-
 
 def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
     """One OpenAI computer action as `computer` tool actions, each with a note when it runs differently than asked.
@@ -175,8 +177,6 @@ def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tu
     return scroll, f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
 
 
-_STORED_ITEM_TA = TypeAdapter(dict[str, Any])
-
 _COMPUTER_CALL_KEYS = (
     responses.ResponseComputerToolCallParam.__required_keys__
     | responses.ResponseComputerToolCallParam.__optional_keys__
@@ -190,11 +190,8 @@ def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
     A history may come from storage or a UI, so an item of another type is not sent, nor is any key a `computer_call`
     doesn't have: otherwise a forged item could be a message from the developer. The API judges the values.
     """
-    try:
-        stored = _STORED_ITEM_TA.validate_python((part.provider_details or {}).get('computer_call'))
-    except ValidationError:
-        return None
-    if stored.get('type') != 'computer_call':
+    stored = (part.provider_details or {}).get('computer_call')
+    if not is_str_dict(stored) or stored.get('type') != 'computer_call':
         return None
     return {key: value for key, value in stored.items() if key in _COMPUTER_CALL_KEYS}
 
@@ -232,9 +229,8 @@ def map_computer_call(
 
 def _map_actions(dumped: dict[str, Any]) -> list[tuple[dict[str, Any], str | None]]:
     """A `computer_call` item's actions as `computer` tool actions, each with its note on how a pixel scroll runs."""
-    try:
-        actions = _LIST.validate_python(dumped.get('actions', []))
-    except ValidationError:
+    actions: list[Any] = dumped.get('actions', [])
+    if not isinstance(actions, list):
         # Not a list, even if it is one action: the call is malformed, so none of it runs.
         actions = [None]
     return [tool_action for action in actions for tool_action in _map_computer_action(action)]

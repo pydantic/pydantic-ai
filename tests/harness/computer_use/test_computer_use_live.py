@@ -512,9 +512,9 @@ async def test_gpt_is_told_how_a_pixel_scroll_ran(
     )
     await agent.run('Scroll down by exactly 250 pixels at x=640 y=400 in one scroll action, then reply "done".')
 
-    assert provider.actions == [Scroll(x=640, y=400, direction='down', amount=3)]
+    assert provider.actions == [Scroll(x=640, y=400, direction='down', amount=2)]
     last = request_capture.bodies('/responses')[-1]
-    assert 'scroll_y=250 ran as 3 wheel clicks of about 100 pixels each.' in str(_objects(last, 'input')[-1])
+    assert 'scroll_y=250 ran as 2 wheel clicks of about 114 pixels each.' in str(_objects(last, 'input')[-1])
 
 
 @pytest.mark.vcr
@@ -530,6 +530,9 @@ async def test_gpt_computer_call_cut_off_by_the_token_limit_has_no_actions(
     (call,) = [part for part in response.parts if isinstance(part, ComputerCallPart)]
     # OpenAI sends the cut-off call with no actions.
     assert call.actions is None
+    stored = (call.provider_details or {})['computer_call']
+    assert stored['status'] == 'incomplete'
+    assert 'actions' not in stored
 
 
 @pytest.mark.vcr
