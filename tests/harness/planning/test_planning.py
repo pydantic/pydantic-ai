@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable
+from copy import copy
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
@@ -160,17 +161,15 @@ async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
     assert sequential and set(sequential.values()) == {expected}
 
 
-class YieldingPlanStore(InMemoryPlanStore):
-    """Yields to the event loop after each read, as a store doing real I/O does.
+_READINESS_WAIT_TIMEOUT = 5.0
 
-    The yields leave a concurrent call, including one from another run that is a few steps behind, time to read the
-    same plan before this read's caller writes.
-    """
+
+class YieldingPlanStore(InMemoryPlanStore):
+    """Yields to the event loop after each read, as a store doing real I/O does."""
 
     async def get_items(self) -> list[PlanItem]:
         items = await super().get_items()
-        for _ in range(50):
-            await anyio.lowlevel.checkpoint()
+        await anyio.lowlevel.checkpoint()
         return items
 
 
@@ -195,9 +194,18 @@ async def test_parallel_plan_edits_keep_every_change() -> None:
 
 
 async def test_concurrent_runs_on_one_store_keep_every_change() -> None:
+    both_requested = anyio.Event()
+    requests = 0
+
     def model_depending_on(depends_on_id: str) -> FunctionModel:
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
             if len(messages) == 1:
+                # Both runs call their plan tool in step, rather than however far apart their runs started.
+                requests += 1
+                if requests == 2:
+                    both_requested.set()
+                await both_requested.wait()
                 return ModelResponse(
                     parts=[ToolCallPart('set_dependency', {'task_id': 'c', 'depends_on_id': depends_on_id})]
                 )
@@ -209,14 +217,30 @@ async def test_concurrent_runs_on_one_store_keep_every_change() -> None:
     await store.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
     agent = Agent(capabilities=[Planning(store=store, enable_subtasks=True)])
 
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(partial(agent.run, 'wait for a', model=model_depending_on('a')))
-        tg.start_soon(partial(agent.run, 'wait for b', model=model_depending_on('b')))
+    with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(partial(agent.run, 'wait for a', model=model_depending_on('a')))
+            tg.start_soon(partial(agent.run, 'wait for b', model=model_depending_on('b')))
 
     assert [sorted(item.depends_on) for item in await store.get_items() if item.id == 'c'] == [['a', 'b']]
 
 
-_READINESS_WAIT_TIMEOUT = 5.0
+async def test_worker_tree_calls_from_one_run_take_turns_across_store_objects() -> None:
+    """A worker's resolver may build a new store object for each call, all over the same plan."""
+    backing = YieldingPlanStore()
+    await backing.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
+    # A shallow copy is a new store object over the same items.
+    planning = Planning[None](store_resolver=lambda ctx: copy(backing), enable_subtasks=True)
+    toolset = cast(PlanningToolset[None], planning.get_toolset())
+    ctx = _run_ctx(planning)
+    tool = (await toolset.get_tools(ctx))['set_dependency']
+
+    async with anyio.create_task_group() as tg:
+        for depends_on_id in 'ab':
+            args = {'task_id': 'c', 'depends_on_id': depends_on_id}
+            tg.start_soon(toolset.call_tool, 'set_dependency', args, ctx, tool)
+
+    assert [item.depends_on for item in await backing.get_items() if item.id == 'c'] == [['a', 'b']]
 
 
 class GatedPlanStore(InMemoryPlanStore):

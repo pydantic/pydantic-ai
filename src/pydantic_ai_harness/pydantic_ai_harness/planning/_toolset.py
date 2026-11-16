@@ -503,7 +503,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         self._capability = capability
         self._operations = operations
         self._subtasks = capability.enable_subtasks
-        self._store_locks: dict[int, anyio.Lock] = {}
+        # A store is keyed by `id()`, as it need not be hashable; `call_tool` holds it while its entry exists.
+        self._locks: dict[tuple[str, object], anyio.Lock] = {}
         descriptions = capability.descriptions or {}
         offered = available_tool_names(subtasks=self._subtasks)
         reject_unknown_tool_names(capability.tools, offered, field='tools')
@@ -543,12 +544,14 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     ) -> Any:
         """Run the tool, marking the plan a plan-changing tool returns so `Planning` can find it in the history.
 
-        Plan tools write back changes built from an earlier read, so calls on the same store take turns: two
-        running at once could each overwrite the other's change. With durable operations, the run's store is
-        resolved once for the call, so each durable operation it makes uses that store.
+        Plan tools write back changes built from an earlier read, so calls from the same run, and calls on the
+        same store, take turns: two running at once could each overwrite the other's change. A run's calls take
+        turns even when a durable worker resolves a new store object for each. With durable operations, the run's
+        store is resolved once for the call, so each durable operation it makes uses that store.
         """
         store = await resolve_run_store(ctx, self._capability, self)
-        async with self._store_turn(store):
+        # Always the run's turn first, so two calls can't each hold the lock the other waits for.
+        async with self._turn(('run', ctx.run_id)), self._turn(('store', id(store))):
             if self._operations is None:
                 result = await super().call_tool(name, tool_args, ctx, tool)
             else:
@@ -562,16 +565,14 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         return result
 
     @asynccontextmanager
-    async def _store_turn(self, store: PlanStore) -> AsyncGenerator[None]:
-        # Keyed by identity, as a store need not be hashable; `store` stays referenced while its entry exists.
-        key = id(store)
-        lock = self._store_locks.setdefault(key, anyio.Lock(fast_acquire=True))
+    async def _turn(self, key: tuple[str, object]) -> AsyncGenerator[None]:
+        lock = self._locks.setdefault(key, anyio.Lock(fast_acquire=True))
         try:
             async with lock:
                 yield
         finally:
-            if not lock.locked() and self._store_locks.get(key) is lock:
-                del self._store_locks[key]
+            if not lock.locked() and self._locks.get(key) is lock:
+                del self._locks[key]
 
     def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
         """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.
