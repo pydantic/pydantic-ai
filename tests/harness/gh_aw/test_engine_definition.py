@@ -57,16 +57,8 @@ requires_clai2 = pytest.mark.skipif(
     reason='running the launcher requires pydantic-clai2',
 )
 
-
-@pytest.fixture(scope='module', autouse=True)
-def started_node() -> None:
-    """Start `node` once before this module's tests.
-
-    The first `node` start on a fresh CI runner can take several seconds. The per-test budget
-    does not count shared fixture setup, so paying that cost here keeps it off whichever tests
-    each worker happens to run first.
-    """
-    subprocess.run(['node', '-e', ''], check=True)
+# The first `node` start on a runner is slow; `started_node` pays it outside every test's budget.
+pytestmark = pytest.mark.usefixtures('started_node')
 
 
 # Stands in for gh-aw's own helper module, which the harness script requires next to
