@@ -844,10 +844,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             allow_no_new_messages=True,
         )
         calls = self._held_computer_calls(restored, new_messages, model_request_parameters)
-        if calls is None:
-            previous_response_id, calls = None, {}
-        else:
-            messages = new_messages
+        messages = new_messages
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
         messages = _without_model_settings_deltas(messages)
@@ -1531,10 +1528,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         restored = self._restore_response_scoped_tool_call_ids(messages)
         previous_response_id, conversation_id, new_messages = self._resolve_server_side_state(model_settings, messages)
         calls = self._held_computer_calls(restored, new_messages, wire_request_parameters)
-        if calls is None:
-            previous_response_id, conversation_id, calls = None, None, {}
-        else:
-            messages = new_messages
+        messages = new_messages
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
 
@@ -2253,16 +2247,25 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         restored: list[ModelMessage],
         new_messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
-    ) -> dict[str, ToolCallPart] | None:
-        """The `computer_call`s the server holds before `new_messages`, or `None` if the whole history must go instead.
+    ) -> dict[str, ToolCallPart]:
+        """The `computer_call`s the server holds before `new_messages`, whose outputs go as `computer_call_output`s.
 
-        An output of a held call is a `computer_call_output` even when the call itself isn't sent again. The API refuses
-        one without its computer tool, so then the request leaves the server-side state and sends the computer calls
-        as function calls.
+        The API refuses a `computer_call_output` without its computer tool, so answering a held call without it raises.
         """
-        calls = computer_calls_by_id(restored[: len(restored) - len(new_messages)])
-        if calls and self._native_computer_name(model_request_parameters) is None:
-            return None
+        held = len(restored) - len(new_messages)
+        calls = computer_calls_by_id(restored[:held])
+        answered = any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id in calls
+            for message in restored[held:]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if answered and self._native_computer_name(model_request_parameters) is None:
+            raise UserError(
+                'The stored response or conversation holds a native computer call, so its result must be sent with '
+                'the native computer tool: the API refuses it otherwise. Keep the native computer tool for this run, '
+                'or continue without `openai_previous_response_id` and `openai_conversation_id`.'
+            )
         return calls
 
     @staticmethod
