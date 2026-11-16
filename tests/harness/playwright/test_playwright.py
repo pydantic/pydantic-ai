@@ -2369,6 +2369,7 @@ class TestPlaywrightBrowserLifecycle:
         # origin, so it must not lock every later tool out of the inherited context.
         page = _FakePage(url='chrome-error://chromewebdata/', body='Allowed content')
         page.frames.append(_FakeFrameContent(url='data:text/html,<p>inline</p>', text='Inline data content'))
+        page.frames.append(_FakeFrameContent(url='blob:https://example.com/preview', text='Inline blob content'))
         session = PlaywrightBrowserSession(
             cdp_url='http://localhost:9222',
             cdp_context='default',
@@ -2378,6 +2379,7 @@ class TestPlaywrightBrowserLifecycle:
             result = await _toolset(page, session=session).navigate('https://example.com/')
         assert 'Allowed content' in str(result)
         assert 'Inline data content' in str(result)
+        assert 'Inline blob content' in str(result)
         assert page.url == 'https://example.com/'
 
     async def test_default_context_refuses_service_workers_whatever_the_policy(

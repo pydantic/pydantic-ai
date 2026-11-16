@@ -204,8 +204,8 @@ _BLANK_PAGE = 'about:blank'
 _ERROR_PAGE_SCHEME = 'chrome-error://'
 """Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
 
-_INLINE_SUBFRAME_PREFIXES = ('about:srcdoc', 'data:')
-"""URL prefixes of subframes whose document is written in the parent's markup, so no request loads it."""
+_INLINE_SUBFRAME_PREFIXES = ('about:srcdoc', 'data:', 'blob:')
+"""URL prefixes of subframes whose document the page supplied itself, so no request loads it."""
 
 _BLOCK_SERVICE_WORKER_REGISTRATION = (
     'if (self.ServiceWorkerContainer) ServiceWorkerContainer.prototype.register = async () => {'
@@ -1278,7 +1278,7 @@ class PlaywrightBrowserSession:
                     not top_level and frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)
                 ):
                     # Chromium's error page holds nothing from the origin that failed to load, and an
-                    # inline subframe came from its parent's markup, which this loop checks.
+                    # inline subframe's document came from a page this loop checks, not a request.
                     continue
                 document = EgressRequest(
                     url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level
@@ -1356,12 +1356,14 @@ class PlaywrightBrowserSession:
         self.page = pages[0]
 
     async def _install_guards(self, context: PlaywrightBrowserContext) -> None:
-        """Keep every request of `context` on a path the policy sees, and route them through it.
+        """Keep requests of `context` on a path routes see, and route them when the policy enforces anything.
 
         A context the session did not create keeps the service-worker setting it was
-        created with, and a worker's requests never reach a route, so new registrations
-        are refused the way `service_workers='block'` refuses them, whatever the policy.
-        Workers registered before the session attached are out of its reach.
+        created with, and a worker's requests never reach a route, so registrations are
+        refused the way `service_workers='block'` refuses them, whatever the policy. The
+        refusal reaches each document created or navigated from now on: workers
+        registered before the session attached, and documents already loaded until they
+        navigate, are out of its reach.
         """
         if self._cdp_context == 'default':
             await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))

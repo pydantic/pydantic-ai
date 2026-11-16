@@ -296,7 +296,9 @@ profile dedicated to the agent, never your everyday browser, and set
 `allowed_domains` when the agent reads pages you do not control.
 
 Loaded tab and frame URLs must pass the policy's navigation and subframe rules
-before handlers are attached and before page operations. On refusal, close or
+before handlers are attached and before page operations. Chromium's error page
+and `srcdoc`, `data:` and `blob:` subframes load no document a request could
+carry, so they are not put to the policy. On refusal, close or
 navigate the blocked tab in the provider browser and retry; Pydantic AI leaves it
 unchanged.
 
@@ -328,7 +330,8 @@ timeout.
 While attached, the session refuses new service-worker registrations, and
 Playwright leaves the browser's download and emulation settings as they are.
 Service workers registered and connections opened before attachment bypass the
-request guards, and a page loaded before attachment can still register a worker.
+request guards, and a page loaded before attachment can still register a worker
+until it navigates.
 
 ## Lifecycle
 

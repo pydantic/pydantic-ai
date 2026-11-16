@@ -258,9 +258,10 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     signed in to that browser: attach it to a profile dedicated to the agent, not
     an everyday browser. Loaded tab and frame URLs must pass the egress policy
     before handlers are attached and before tools read or act on a page. Egress
-    guards and native session handlers still apply, and new service-worker
-    registrations are refused while attached. Downloads follow the browser's own
-    settings, and service workers registered before attachment are not guarded.
+    guards and native session handlers still apply, and documents loaded while
+    attached cannot register service workers. Downloads follow the browser's own
+    settings. Workers registered before attachment are not guarded, and a document
+    loaded before attachment can still register one until it navigates.
     """
 
     id: str | None = 'playwright_browser'
