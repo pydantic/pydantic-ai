@@ -39,6 +39,9 @@ async def main():
 
 On a [read-only](../workspace.md#read-only-access) workspace the agent can take screenshots but not act.
 
+A `screenshot` action before a call's last action returns the screen at that point, besides the screenshot the
+call ends with.
+
 ## What the model is told
 
 The instructions tell the model that the screen belongs to the computer its shell and file tools run on, so a program
