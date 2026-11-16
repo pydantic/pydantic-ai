@@ -361,7 +361,7 @@ class TestMaxFires:
         # lands after this turn's eligibility snapshot, so the new reminder fires next turn.
         reminders: list[Reminder[None]] = [Reminder('first', tag=None)]
 
-        def grow(_ctx: Any) -> str | None:
+        def grow(_ctx: RunContext[None]) -> str | None:
             if len(reminders) == 1:
                 reminders.append(Reminder('appended', tag=None))
             return None

@@ -53,15 +53,28 @@ def test_moved_module_paths_are_gone(module: str) -> None:
         ('pydantic_ai_harness', 'DockerSandbox'),
         ('pydantic_ai_harness', 'InputGuard'),
         ('pydantic_ai_harness.bubblewrap_sandbox', 'BubblewrapSandbox'),
+        ('pydantic_ai_harness.compaction', 'ContextUsageEvent'),
+        ('pydantic_ai_harness.compaction', 'LimitWarner'),
         ('pydantic_ai_harness.compaction', 'SlidingWindow'),
         ('pydantic_ai_harness.guardrails', 'GuardResult'),
+        ('pydantic_ai_harness.guardrails', 'InputGuardFunc'),
+        ('pydantic_ai_harness.guardrails', 'OutputGuard'),
+        ('pydantic_ai_harness.guardrails', 'OutputGuardFunc'),
         ('pydantic_ai_harness.media', 'DiskMediaStore'),
         ('pydantic_ai_harness.memory', 'FileStore'),
+        ('pydantic_ai_harness.memory', 'InMemoryStore'),
         ('pydantic_ai_harness.planning', 'PlanEventEmitter'),
         ('pydantic_ai_harness.spend_limits', 'SpendStore'),
         ('pydantic_ai_harness.step_persistence', 'SnapshotSaved'),
         ('pydantic_ai_harness.tool_output_limits', 'LocalFileStore'),
+        ('pydantic_ai_harness.tool_output_limits', 'WorkspaceStore'),
     ],
 )
 def test_renamed_aliases_are_gone(module: str, name: str) -> None:
     assert not hasattr(importlib.import_module(module), name)
+
+
+@pytest.mark.parametrize('name', ['AcpFileSystemToolset', 'AcpSession', 'AcpSessionConfig', 'AcpTerminalToolset'])
+def test_renamed_acp_aliases_are_gone(name: str) -> None:
+    pytest.importorskip('acp')
+    assert not hasattr(importlib.import_module('pydantic_ai_harness.experimental.acp'), name)

@@ -1170,7 +1170,7 @@ class TestConfigurationFromData:
 
 
 class TestObservability:
-    """Push through `SpendRecordedEvent`, pull through `status`."""
+    """Pull through `status`."""
 
     async def test_status_reports_what_is_left(self):
         guard = SpendLimits(

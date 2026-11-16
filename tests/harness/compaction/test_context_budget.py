@@ -97,7 +97,12 @@ class _FakeRealtimeModel(AbstractModel):
         return 'openai'
 
 
-def _ctx(model: Any = None, *, messages: list[ModelMessage] | None = None, emitted: list[Any] | None = None) -> Any:
+def _ctx(
+    model: Any = None,
+    *,
+    messages: list[ModelMessage] | None = None,
+    emitted: list[ContextUsageMeasuredEvent] | None = None,
+) -> Any:
     """Minimal `RunContext`-like object for driving hooks."""
 
     @dataclasses.dataclass
@@ -134,16 +139,12 @@ def _ctx(model: Any = None, *, messages: list[ModelMessage] | None = None, emitt
     return ctx
 
 
-def _readings(events: list[Any]) -> list[ContextUsageMeasuredEvent]:
-    return [event for event in events if isinstance(event, ContextUsageMeasuredEvent)]
-
-
-def _usage_hooks() -> tuple[Hooks[Any], list[ContextUsageMeasuredEvent]]:
-    hooks = Hooks[Any]()
+def _usage_hooks() -> tuple[Hooks[object], list[ContextUsageMeasuredEvent]]:
+    hooks = Hooks[object]()
     seen: list[ContextUsageMeasuredEvent] = []
 
     @hooks.on.event(ContextUsageMeasuredEvent)
-    async def record(ctx: RunContext[Any], event: ContextUsageMeasuredEvent) -> None:
+    async def record(ctx: RunContext[object], event: ContextUsageMeasuredEvent) -> None:
         seen.append(event)
 
     return hooks, seen
@@ -666,7 +667,7 @@ class TestRequestModelIsTheOneResolved:
     async def test_a_summarizing_tier_calls_the_request_model(self, monkeypatch: pytest.MonkeyPatch):
         """The same rule for the model a summarizing tier inherits when it has none of its own."""
         self._windows(monkeypatch, run=10_000_000, request=1_000)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
 
         class _Recording:
             async def compact(self, messages: list[ModelMessage], ctx: Any) -> list[ModelMessage]:
@@ -693,12 +694,12 @@ class TestRequestModelIsTheOneResolved:
 
     async def test_report_context_usage(self, monkeypatch: pytest.MonkeyPatch):
         self._windows(monkeypatch, run=10_000_000, request=1_000)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         monitor: ReportContextUsage[None] = ReportContextUsage()
 
         await monitor.before_model_request(_ctx(self.RUN, emitted=seen), _request_context(_history(2), self.REQUEST))
 
-        assert _readings(seen)[0].window_tokens == 1_000
+        assert seen[0].window_tokens == 1_000
 
 
 _FallbackFactory = Callable[[int], object]
@@ -1055,16 +1056,16 @@ class TestReportContextUsage:
 
     async def test_reports_before_each_request(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         monitor: ReportContextUsage[None] = ReportContextUsage()
 
         request_context = _request_context(_history(2))
         assert await monitor.before_model_request(_ctx(emitted=seen), request_context) is request_context
 
-        assert len(_readings(seen)) == 1
-        assert _readings(seen)[0].window_tokens == 1_000
-        assert _readings(seen)[0].used_tokens > 0
-        assert _readings(seen)[0].resolved is True
+        assert len(seen) == 1
+        assert seen[0].window_tokens == 1_000
+        assert seen[0].used_tokens > 0
+        assert seen[0].resolved is True
 
     async def test_never_edits_the_history(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
@@ -1078,7 +1079,7 @@ class TestReportContextUsage:
 
     async def test_after_a_compactor_reports_the_rewritten_anchored_history(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='x' * 4_000)]),
             ModelResponse(parts=[TextPart(content='done')], usage=RequestUsage(input_tokens=10_000, output_tokens=0)),
@@ -1098,11 +1099,11 @@ class TestReportContextUsage:
         await second_monitor.before_model_request(ctx, request_context)
 
         expected = estimate_context_tokens(messages) - (before - estimate_token_count(request_context.messages))
-        assert [usage.used_tokens for usage in _readings(seen)] == [expected, expected]
+        assert [usage.used_tokens for usage in seen] == [expected, expected]
 
     async def test_accumulates_reclaim_from_multiple_compactors(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='x' * 4_000)]),
             ModelResponse(parts=[TextPart(content='old reply ' + 'x' * 4_000)]),
@@ -1128,12 +1129,12 @@ class TestReportContextUsage:
         await monitor.before_model_request(ctx, request_context)
 
         expected = estimate_context_tokens(messages) - (before - estimate_token_count(request_context.messages))
-        assert [usage.used_tokens for usage in _readings(seen)] == [expected]
+        assert [usage.used_tokens for usage in seen] == [expected]
 
     async def test_a_clamp_between_compactor_and_reporter_keeps_the_reclaim(self, monkeypatch: pytest.MonkeyPatch):
         """A strategy that replaces the context without recording must carry the correction."""
         _fixed_window(monkeypatch, 1_000)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='x' * 4_000)]),
             ModelResponse(parts=[TextPart(content='done')], usage=RequestUsage(input_tokens=10_000, output_tokens=0)),
@@ -1153,7 +1154,7 @@ class TestReportContextUsage:
         await monitor.before_model_request(ctx, request_context)
 
         expected = estimate_context_tokens(messages) - (before - estimate_token_count(request_context.messages))
-        assert [usage.used_tokens for usage in _readings(seen)] == [expected]
+        assert [usage.used_tokens for usage in seen] == [expected]
 
     async def test_ignores_reclaim_from_a_different_request_context(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
@@ -1169,7 +1170,7 @@ class TestReportContextUsage:
         compactor: SlidingWindowCompaction[None] = SlidingWindowCompaction(
             max_messages=2, keep_messages=2, preserve_first_user_message=False
         )
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         monitor: ReportContextUsage[None] = ReportContextUsage()
         unrelated_context = _request_context(
             [
@@ -1184,11 +1185,11 @@ class TestReportContextUsage:
         )
         await monitor.before_model_request(_ctx(emitted=seen), unrelated_context)
 
-        assert [usage.used_tokens for usage in _readings(seen)] == [estimate_context_tokens(unrelated_context.messages)]
+        assert [usage.used_tokens for usage in seen] == [estimate_context_tokens(unrelated_context.messages)]
 
     async def test_after_a_compactor_reports_the_rewritten_unanchored_history(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='x' * 4_000)]),
             ModelResponse(parts=[TextPart(content='done')]),
@@ -1204,40 +1205,40 @@ class TestReportContextUsage:
         request_context = await compactor.before_model_request(ctx, request_context)
         await monitor.before_model_request(ctx, request_context)
 
-        assert _readings(seen)[0].used_tokens == estimate_context_tokens(request_context.messages)
+        assert seen[0].used_tokens == estimate_context_tokens(request_context.messages)
 
     async def test_override_skips_resolution(self, monkeypatch: pytest.MonkeyPatch):
         def _explode(_model_ref: str) -> int | None:  # pragma: no cover -- must not be called
             raise AssertionError('an explicit window must not consult the registry')
 
         _patch_snapshot(monkeypatch, _explode)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         monitor: ReportContextUsage[None] = ReportContextUsage(context_window=4_242)
 
         await monitor.before_model_request(_ctx(emitted=seen), _request_context(_history(2)))
 
-        assert (_readings(seen)[0].window_tokens, _readings(seen)[0].resolved) == (4_242, True)
+        assert (seen[0].window_tokens, seen[0].resolved) == (4_242, True)
 
     async def test_falls_back_for_an_unknown_model(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, None)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         monitor: ReportContextUsage[None] = ReportContextUsage()
 
         await monitor.before_model_request(_ctx(emitted=seen), _request_context(_history(2)))
 
-        assert (_readings(seen)[0].window_tokens, _readings(seen)[0].resolved) == (DEFAULT_CONTEXT_WINDOW, False)
+        assert (seen[0].window_tokens, seen[0].resolved) == (DEFAULT_CONTEXT_WINDOW, False)
 
     async def test_custom_fallback(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, None)
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         monitor: ReportContextUsage[None] = ReportContextUsage(fallback_context_window=32_000)
 
         await monitor.before_model_request(_ctx(emitted=seen), _request_context(_history(2)))
 
-        assert _readings(seen)[0].window_tokens == 32_000
+        assert seen[0].window_tokens == 32_000
 
     async def test_each_request_resolves_independently(self, monkeypatch: pytest.MonkeyPatch):
-        seen: list[Any] = []
+        seen: list[ContextUsageMeasuredEvent] = []
         monitor: ReportContextUsage[None] = ReportContextUsage()
 
         _fixed_window(monkeypatch, 1_000)
@@ -1245,7 +1246,7 @@ class TestReportContextUsage:
         _fixed_window(monkeypatch, 2_000)
         await monitor.before_model_request(_ctx(emitted=seen), _request_context(_history(2)))
 
-        assert [reading.window_tokens for reading in _readings(seen)] == [1_000, 2_000]
+        assert [reading.window_tokens for reading in seen] == [1_000, 2_000]
 
     def test_rejects_a_non_positive_window(self):
         with pytest.raises(ValueError, match='context_window must be positive'):
