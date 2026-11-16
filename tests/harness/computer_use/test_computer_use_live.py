@@ -462,7 +462,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
                         'image',
                     ],
                 ),
-                (True, ["the fake display cannot perform 'hold_key'"]),
+                (True, ['Failed.']),
                 (True, ['Not executed: an earlier computer action in this turn failed.']),
             ],
             id='mid-batch',
@@ -475,7 +475,7 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
                 (
                     False,
                     [
-                        "Failed: the fake display cannot perform 'hold_key'",
+                        'Failed.',
                         "Action 1 of 2 (hold_key) failed: the fake display cannot perform 'hold_key'. The 1 action after"
                         ' it did not run. Screenshot attached (1280x800).',
                         'image',
