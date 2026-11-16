@@ -36,6 +36,7 @@ from daytona import (
     DaytonaAuthenticationError,
     DaytonaBadGatewayError,
     DaytonaConnectionError,
+    DaytonaError,
     DaytonaForbiddenError,
     DaytonaTimeoutError,
     ScreenshotRegion,
@@ -219,10 +220,11 @@ class DaytonaDesktop:
                 pressed.append(key)  # before the request, which may press the key without confirming it
                 try:
                     await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
-                except WorkspaceUnavailableError:
-                    raise
-                except Exception:
-                    pressed.pop()  # Daytona answered that it didn't press it, such as `unsupported key "printscreen"`
+                except DaytonaError as error:
+                    # Daytona answered that it didn't press it, such as `unsupported key "printscreen"`; any other
+                    # failure, such as an answer that can't be read, may follow a press, so the key is let go.
+                    if error.status_code is not None:
+                        pressed.pop()
                     raise
             yield
             while pressed:
