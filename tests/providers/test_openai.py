@@ -1,11 +1,13 @@
+import httpx2
 import pytest
+
+from pydantic_ai import Agent
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
-
     from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -54,17 +56,34 @@ def test_init_of_openai_with_base_url_env_var_and_without_api_key(env: TestEnv):
     assert provider.client.api_key == 'api-key-not-set'
 
 
-async def test_openai_provider_async_api_key_callback():
-    """`api_key` accepts an async callable, forwarded verbatim to the OpenAI SDK.
+async def test_async_api_key_callback_refreshes_per_request(allow_model_requests: None):
+    """An async `api_key` callable is resolved by the OpenAI SDK for every request."""
+    token = 'old-token'
 
-    The SDK resolves the callable per request, so `client.api_key` stays empty at rest.
-    """
+    async def api_key() -> str:
+        return token
 
-    async def provide_key() -> str:
-        return 'test-api-key'
+    requests: list[httpx2.Request] = []
 
-    provider = OpenAIProvider(api_key=provide_key)
-    assert isinstance(provider.client, AsyncOpenAI)
-    assert provider.client._api_key_provider is provide_key  # pyright: ignore[reportPrivateUsage]
-    assert provider.client.api_key == ''
-    assert await provider.client._refresh_api_key() == 'test-api-key'  # pyright: ignore[reportPrivateUsage]
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'chatcmpl-1',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': 'gpt-4o',
+                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'ok'}, 'finish_reason': 'stop'}],
+            },
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=api_key, http_client=http_client)))
+        assert (await agent.run('hello')).output == 'ok'
+        token = 'refreshed-token'
+        assert (await agent.run('again')).output == 'ok'
+    assert [request.headers['authorization'] for request in requests] == [
+        'Bearer old-token',
+        'Bearer refreshed-token',
+    ]

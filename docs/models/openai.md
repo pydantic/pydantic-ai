@@ -70,7 +70,7 @@ agent = Agent(model)
 ...
 ```
 
-`api_key` also accepts an async callable returning the key (`Callable[[], Awaitable[str]]`), which the OpenAI SDK resolves on each request — useful for short-lived or rotating credentials.
+For short-lived or rotating credentials, `api_key` also accepts an async callable that returns the key, which the OpenAI SDK calls before each request. [Batch processing](../batch.md#which-requests-share-a-batch) refuses such a client, and [Responses WebSockets](#responses-websockets) send its requests over HTTP.
 
 ## Custom OpenAI Client
 

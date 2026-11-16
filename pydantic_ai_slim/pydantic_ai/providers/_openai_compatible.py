@@ -40,7 +40,7 @@ class _OpenAISDKProvider(Provider[AsyncOpenAI]):
         self,
         *,
         base_url: str | None,
-        api_key: str | None | Callable[[], Awaitable[str]],
+        api_key: str | Callable[[], Awaitable[str]] | None,
         http_client: AsyncHTTPClient | None,
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:
