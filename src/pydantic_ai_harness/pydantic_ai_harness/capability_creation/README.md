@@ -191,7 +191,7 @@ example above, configure the workspace with `agent.run(..., workspace=...)` rath
 `LocalWorkspace` capability, and pass the same object to both. For a `directory` outside the
 working directory, that workspace names it:
 `AuthorityWorkspace(Workspace(LocalWorkspaceBackend('./project')), authority='operator', path_authority={'/var/lib/my-app/authored': 'operator'})`,
-whose `path_authority` paths are not `~`-expanded.
+which refuses a `~` path in `path_authority`.
 `creation.store.load_active()` has no workspace to ask, so it runs the code it finds: call it
 only on a directory you would run yourself. The checks also only look at who controls the
 directory, not what the model has read: to keep text in a lower workspace from steering what

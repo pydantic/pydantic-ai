@@ -139,8 +139,9 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
         if workspace.ref is None or workspace.ref.provider != 'local' or workspace.read_only:
             raise UserError(
                 '`CapabilityCreation` imports model-written Python into the agent process, so it only runs when '
-                "the workspace is this machine and writable. Use a writable `LocalWorkspace('.')` or "
-                "`LocalWorkspaceBackend('.')`, not a sandbox or a read-only workspace."
+                "the workspace is this machine and writable. Use a writable `LocalWorkspaceBackend('.')` as the run's "
+                "`workspace=` and in `load_active`, or a `LocalWorkspace('.')` capability, not a sandbox or a "
+                'read-only workspace.'
             )
         written = await self._absolute_directory()
         # `authority_of` collapses `..` as text, while the store's file operations climb from a link's target.
