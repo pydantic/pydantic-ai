@@ -511,8 +511,11 @@ creates `{table}_media` the same way on its own first use (see the
 [media docs](../media/)). Four consequences worth knowing before pointing the
 store at an existing database:
 
-- The connecting role needs `CREATE` on the schema for that first call. A role
-  without it fails on the first operation, not at construction.
+- The statements are skipped when all of the store's tables already exist, so
+  only the call that creates them needs `CREATE` on the schema. After that, a
+  role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables is
+  enough. A role without `CREATE` on a database missing a table fails on the
+  first operation, not at construction.
 - Processes that start together wait on the advisory lock instead of colliding
   in the catalog, which `CREATE TABLE IF NOT EXISTS` alone does not rule out.
   The lock is released when the transaction ends.
