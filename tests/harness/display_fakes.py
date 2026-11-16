@@ -9,7 +9,9 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable
 from typing import Protocol, Self, runtime_checkable
 
-from pydantic_ai.computer_use import MoveMouse, Point, Region
+from pydantic_ai.computer_use import ComputerReturnPart, MoveMouse, Point, Region
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.computer_use import (
     Display,
@@ -118,3 +120,12 @@ def screen(backend: WorkspaceBackend) -> FullDisplay:
     display = backend.display
     assert isinstance(display, FullDisplay)
     return display
+
+
+def look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A `FunctionModel` function: takes a screenshot, clicks on what it showed, then answers."""
+    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
+    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
+    if done == len(steps):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])

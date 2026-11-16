@@ -8,13 +8,12 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
-from ..display_fakes import FAKE_SCREENSHOT, screen
+from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
 from .fake_e2b import FakeE2B
 
 
@@ -81,20 +80,11 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(fake_e2b: FakeE2B, 
     assert E2BSandbox().backend(ref).display is None
 
 
-def _look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Takes a screenshot, clicks on what it showed, then answers."""
-    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
-    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
-    if done == len(steps):
-        return ModelResponse(parts=[TextPart('done')])
-    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
-
-
 async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
     fake_e2b: FakeE2B, display: FakeDisplay
 ) -> None:
     agent = Agent(
-        FunctionModel(_look_click_then_finish),
+        FunctionModel(look_click_then_finish),
         capabilities=[E2BSandbox(desktop=True), ComputerUse(native=False)],
     )
 
@@ -103,8 +93,8 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
     looked, clicked = [
         part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerReturnPart)
     ]
-    assert looked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
-    assert clicked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert looked.result == {'performed': 1}
+    assert clicked.result == {'performed': 1}
     assert clicked.screenshot is not None and clicked.screenshot.data == FAKE_SCREENSHOT
     assert [call.template for call in fake_e2b.create_calls] == ['desktop']
     assert len(display.starts) == 1
