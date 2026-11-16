@@ -125,7 +125,7 @@ carries the prompt-body reference and a comment saying why. After changing it, c
 recompiled lock: `activation.needs` must list the job,
 and the job itself must **not** have `needs: activation`.
 
-# Pull request workflows run only on same-repository branches
+# Privileged pull request workflows run only on same-repository branches
 
 No workflow here triggers on `pull_request_target`. GitHub blocks that event by default in public
 repositories from 2026-12-02 (#12961). Do not add it back.
@@ -178,14 +178,15 @@ changes `bots.yml`, so the gate trusts that author's reviewer.
 
 ## `PR Guard` sweeps on a schedule
 
-`pr-guard.yml` closes non-maintainer PRs, fork PRs among them. That needs a write token, which a fork
-PR's `pull_request` run never gets. So the guard runs every 10 minutes from the default branch instead. `pr_guard_sweep.py` finds each open PR with an
-opened, reopened, ready-for-review or edited event since 5 minutes before the last successful sweep
-started. It runs `pr_guard.sh` once per PR, as the user behind the author's latest such event, or
-else the latest event. A bot that rewrites the description right after the author opens the PR
-therefore cannot earn the trusted-actor bypass for the opening. A failed sweep leaves the next
-sweep to read the same events again, at most 3 hours back. A close lands up to one interval after
-its event, later when GitHub delays the schedule.
+`pr-guard.yml` closes non-maintainer PRs, fork PRs among them. That needs a write token, which a
+fork PR's `pull_request` run never gets. So the guard runs every 10 minutes from the default branch
+instead. `pr_guard_sweep.py` finds each open PR with an opened, reopened, ready-for-review or edited
+event since 5 minutes before the last successful sweep started. It runs `pr_guard.sh` once per PR,
+as the user behind the author's latest such event, or else the latest event. A bot that rewrites
+the description right after the author opens the PR therefore cannot earn the trusted-actor bypass
+for the opening. A failed sweep leaves the next sweep to read the same events again, at most 3 hours
+back. When no sweep succeeds for longer than that, the guard never judges the older events. A close
+lands up to one interval after its event, later when GitHub delays the schedule.
 
 # `Protect .github` keeps external changes out of this directory
 
@@ -236,9 +237,9 @@ event fired when a PR's **base branch** changes, and the verdict is a diff again
 base — hence also the `state != open` early exit, since `edited` fires on closed PRs too.
 
 The PR's own copy of the guard runs; see
-[Pull request workflows run only on same-repository branches](#pull-request-workflows-run-only-on-same-repository-branches).
-A fork can edit its copy and make the guard pass. On a fork PR the guard is therefore advisory: the
-control is that maintainers do not merge fork PRs. A fork run's token is read-only, so the guard
+[Privileged pull request workflows run only on same-repository branches](#privileged-pull-request-workflows-run-only-on-same-repository-branches).
+A fork can edit its copy and make the guard pass, so the guard cannot stop a fork PR: the control
+is that maintainers do not merge fork PRs. A fork run's token is read-only, so the guard
 cannot post its explanation there.
 
 # PR metadata gates enforce the merge bar
