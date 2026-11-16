@@ -435,9 +435,12 @@ class TestCompactOnCacheExpiry:
         prepared = model.prepare_messages(local.sent[0])
         opening = prepared[0]
         assert isinstance(opening, ModelRequest)
-        assert isinstance(opening.parts[0], SystemPromptPart)
-        assert opening.parts[0].content == system_prompt
-        assert isinstance(opening.parts[1], CompactionPart)
+        # The framework may add its own system parts, but the application's prompt is among the leading system parts,
+        # and the mark comes right after them.
+        leading = opening.parts
+        system_count = next(i for i, part in enumerate(leading) if not isinstance(part, SystemPromptPart))
+        assert system_prompt in [part.content for part in leading[:system_count] if isinstance(part, SystemPromptPart)]
+        assert isinstance(leading[system_count], CompactionPart)
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_later_fallback_replaces_the_mark_an_earlier_one_left(self) -> None:
