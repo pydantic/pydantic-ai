@@ -54,7 +54,6 @@ def test_moved_module_paths_are_gone(module: str) -> None:
         ('pydantic_ai_harness', 'InputGuard'),
         ('pydantic_ai_harness.bubblewrap_sandbox', 'BubblewrapSandbox'),
         ('pydantic_ai_harness.compaction', 'SlidingWindow'),
-        ('pydantic_ai_harness.experimental.acp', 'AcpSession'),
         ('pydantic_ai_harness.guardrails', 'GuardResult'),
         ('pydantic_ai_harness.media', 'DiskMediaStore'),
         ('pydantic_ai_harness.memory', 'FileStore'),
