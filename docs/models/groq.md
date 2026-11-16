@@ -82,7 +82,7 @@ agent = Agent(model)
 
 ## Structured output {#structured-output}
 
-[`NativeOutput`][pydantic_ai.output.NativeOutput] sends Groq's [`json_schema` response format](https://console.groq.com/docs/structured-outputs) on the models below. Unless you pass `strict` to `NativeOutput`, the model decides whether the request uses strict mode:
+[`NativeOutput`][pydantic_ai.output.NativeOutput] sends Groq's [`json_schema` response format](https://console.groq.com/docs/structured-outputs) on the models below. Unless you pass `strict` to `NativeOutput`, the `strict` value Pydantic AI sends depends on the model:
 
 | Models | `strict` sent |
 |---|---|
