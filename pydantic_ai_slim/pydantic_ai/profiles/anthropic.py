@@ -651,16 +651,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     if supports_advisor:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
-    # Each model's computer use tool, from Anthropic's compatibility table. Claude 5.5 and later take only the
-    # toolset on the Claude API. Retired or retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get a function tool.
-    # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
-    computer_tool_version: AnthropicComputerToolVersion | None = None
-    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
-        computer_tool_version = 'computer_toolset_20260801'
-    elif model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
-        computer_tool_version = 'computer_20251124'
-    elif model_name.startswith('claude-haiku-4-5'):
-        computer_tool_version = 'computer_20250124'
+    computer_tool_version = _computer_tool_version(model_name)
     if computer_tool_version is not None:
         supported_native_tools = supported_native_tools | {ComputerTool}
 
@@ -724,6 +715,22 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         # native mid-conversation system role on any transport, where the announcement would be a system message.
         profile['default_framing_announcement'] = 'always'
     return profile
+
+
+def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
+    """The model's computer use tool, from Anthropic's compatibility table.
+
+    Claude 5.5 and later take only the toolset on the Claude API. Retired or retiring models (Opus 4 and 4.1, Sonnet 4
+    and 4.5) get a function tool.
+    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    """
+    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
+        return 'computer_toolset_20260801'
+    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        return 'computer_20251124'
+    if model_name.startswith('claude-haiku-4-5'):
+        return 'computer_20250124'
+    return None
 
 
 def _code_execution_tool_versions(
