@@ -668,7 +668,7 @@ agent = Agent(
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
 - `LLMReminder` vs `TrajectoryJudge`: `LLMReminder` adds a model-written goal refresher on every
   firing, blocks the request it precedes, and falls back to `GoalReanchor` text on error;
-  `TrajectoryJudge` runs alongside the agent, steers only when the run drifts, and raises an
+  `TrajectoryJudge` runs alongside the agent (outside durable execution), steers only when the run drifts, and raises an
   evaluation error on the run. Use `LLMReminder` for a regular goal refresher, the judge for course
   correction, and `GoalReanchor` for free re-anchoring.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
