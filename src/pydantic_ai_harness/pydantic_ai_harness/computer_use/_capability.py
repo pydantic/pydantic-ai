@@ -210,11 +210,6 @@ def _model_limit(model: AbstractModel) -> _ScreenshotLimit:
     )
 
 
-def _call_limit(call: ComputerCallPart) -> _ScreenshotLimit:
-    """The largest screenshot the model that made `call` takes, as the agent recorded it on the call."""
-    return _ScreenshotLimit(max_side=call.screenshot_max_side, max_pixels=call.screenshot_max_pixels)
-
-
 def _min_limit(first: _ScreenshotLimit, second: _ScreenshotLimit) -> _ScreenshotLimit:
     """The largest screenshot both limits allow."""
     return _ScreenshotLimit(
@@ -223,12 +218,15 @@ def _min_limit(first: _ScreenshotLimit, second: _ScreenshotLimit) -> _Screenshot
     )
 
 
-def _check_fits(what: str, size: tuple[int, int], limit: _ScreenshotLimit, model_name: str, then: str = '') -> None:
-    """Refuse a screenshot of `size` larger than the model can see, naming it `what`."""
+def _check_fits(what: str, size: tuple[int, int], limit: _ScreenshotLimit, model_name: str, purpose: str = '') -> None:
+    """Refuse a screenshot of `size` larger than the model can see, naming it `what`.
+
+    `purpose` ends the advice to start the display smaller, such as `' to use this model on it'`.
+    """
     if (fitted := limit.fit(size)) != size:
         raise UserError(
             f'{what} is {size[0]}x{size[1]}, larger than {model_name!r} can see. Start the display at '
-            f'{fitted[0]}x{fitted[1]} or smaller{then}.'
+            f'{fitted[0]}x{fitted[1]} or smaller{purpose}.'
         )
 
 
@@ -665,7 +663,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         made = _the_call(ctx)
         call = made[1] if made else None
         # The grid and screenshot limit of the model that made the call, as the agent recorded them.
-        grid, made_limit = (call.coordinate_grid, _call_limit(call)) if call else (None, _ScreenshotLimit())
+        grid, made_limit = None, _ScreenshotLimit()
+        if call:
+            grid = call.coordinate_grid
+            made_limit = _ScreenshotLimit(max_side=call.screenshot_max_side, max_pixels=call.screenshot_max_pixels)
         plan = _Plan(
             grid=grid,
             # The model pointed on the latest screenshot before its call.
