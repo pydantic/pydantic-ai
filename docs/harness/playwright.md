@@ -330,8 +330,7 @@ between tool calls.
   events) and an event's text (`browser.event.message`) are recorded only when the
   run includes content in traces. The spans go to the run's own tracer, so an agent
   instrumented for [Logfire](../logfire.md) reports them with everything else. A
-  session used outside an agent run emits no spans. `PlaywrightBrowserSession.tracer`
-  has been removed; spans use the calling run's tracer, read per call.
+  session used outside an agent run emits no spans.
 - The agent can read the same log through `console_messages` and
   `network_requests`, which is often how it recovers from a page that renders
   from an API rather than from HTML. Only what identifies a request is recorded,

@@ -592,12 +592,12 @@ async def compact_with_span(
     """Run *compact* and emit a `compact_messages` span when it changes the history.
 
     *compact* runs before the span so a no-op compaction (a trigger fired but the history is
-    returned unchanged) emits nothing. The span is started on `ctx.tracer`, which is a no-op
-    tracer unless core's instrumentation is active, so this adds no overhead to a
-    non-instrumented run; the before/after attributes are only computed when the span records.
+    returned unchanged) emits nothing. The span is emitted in the run's trace and is a no-op
+    unless the run is instrumented, so this adds no overhead to a non-instrumented run; the
+    before/after attributes are only computed when the span records.
 
     Args:
-        ctx: Run context whose `tracer` the span is started on.
+        ctx: Run context whose trace the span is emitted in.
         strategy: Strategy name recorded in the `compaction.strategy` attribute.
         messages: The pre-compaction messages, measured for the `*_before` attributes.
         compact: Zero-argument async callable returning the compacted message list.
