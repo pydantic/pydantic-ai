@@ -17,6 +17,7 @@ from typing import Any
 import anyio
 import anyio.lowlevel
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.context import Context
 from opentelemetry.sdk.trace import Span, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -1825,7 +1826,10 @@ class TestTaskControlTelemetry:
             await parent.run('Go.')
         [wait] = [span for span in exporter.get_finished_spans() if span.name == 'sub_agents wait for tasks']
         assert wait.status.status_code == StatusCode.ERROR
-        assert 'quotes the task' not in str([wait.status.description, *(event.attributes for event in wait.events)])
+        assert wait.status.description is None
+        assert [dict(event.attributes or {}) for event in wait.events] == snapshot(
+            [{'exception.type': 'RuntimeError', 'exception.escaped': 'False'}]
+        )
 
     async def test_a_cancelled_wait_is_not_an_error(self) -> None:
         # Not the child's gate: the child stays blocked, so the run is cancelled mid-wait.
