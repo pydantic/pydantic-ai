@@ -121,8 +121,9 @@ Their computer use tools scale a larger screenshot down, and Claude then clicks 
 largest size that fits. A 1280x800 screen fits every model.
 
 Claude Opus 4.8 and the Claude 5 models refuse a screenshot larger than 2576 pixels on the longer side or 4784 image
-tokens, and the run stops with Anthropic's error. GPT-5.4 and GPT-5.5 take any size, but click less accurately above
-2560x1440 (measured).
+tokens, and the run stops with Anthropic's error.
+
+GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 clicked within a pixel up to 2560x1440 and missed by hundreds of pixels at 3840x2160, while GPT-5.4 already missed one target by 40 pixels at 2560x1440.
 
 ## When something goes wrong
 

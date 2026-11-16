@@ -42,7 +42,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.messages import BinaryImage, CompactionPart, ModelRequest
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -54,6 +54,7 @@ from ..display_fakes import FAKE_DISPLAY_SIZE, ScreenProvider, png
 
 with try_import() as openai_installed:
     from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as anthropic_installed:
@@ -596,6 +597,73 @@ async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
 
 @needs_openai
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='the resumed agent sends the computer tool as a function, not the native tool')
+async def test_gpt_answers_a_stored_computer_call_after_the_tool_opts_out(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A run paused on a native call the server holds resumes with `ComputerUse(native=False)`."""
+    provider = ScreenProvider()
+    hooks = Hooks[object]()
+
+    @hooks.on.before_tool_execute
+    async def ask_before_acting(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return args
+
+    model = _gpt(openai_api_key, request_capture)
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    native = Agent(
+        model,
+        capabilities=[provider.capability(), ComputerUse(), hooks],
+        output_type=[str, DeferredToolRequests],
+        model_settings=settings,
+    )
+    paused = await native.run(TASK)
+    assert isinstance(paused.output, DeferredToolRequests)
+    (approval,) = paused.output.approvals
+    paused_requests = len(request_capture.bodies('/responses'))
+
+    opted_out = Agent(model, capabilities=[provider.capability(), ComputerUse(native=False)], model_settings=settings)
+    approved = DeferredToolResults(approvals={approval.tool_call_id: True})
+    await opted_out.run(message_history=paused.all_messages(), deferred_tool_results=approved)
+
+    assert provider.actions == DONE
+    resumed = request_capture.bodies('/responses')[paused_requests:]
+    # The API refuses a `computer_call_output` without its computer tool, so the server's copy of the call is left
+    # and the whole history goes, with the call as a function call.
+    assert resumed and all('previous_response_id' not in body for body in resumed)
+    assert 'computer_call_output' not in _kinds(resumed[0])
+    (output,) = [
+        item for item in _items(resumed[0], 'function_call_output') if item['call_id'] == approval.tool_call_id
+    ]
+    assert output
+
+
+@needs_openai
+@pytest.mark.vcr
+async def test_gpt_on_bedrock_mantle_drives_the_screen_through_the_native_computer_tool(
+    allow_model_requests: None, request_capture: RequestCapture
+) -> None:
+    mantle = BedrockMantleProvider(
+        region_name='us-east-1',
+        api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'),
+        http_client=request_capture.client,
+    )
+    model = infer_model('bedrock-mantle:openai.gpt-5.5', lambda _: mantle)
+    provider = ScreenProvider()
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
+
+    assert provider.actions == DONE
+    first, *_, last = request_capture.bodies('/responses')
+    assert {'type': 'computer'} in _objects(first, 'tools')
+    assert _items(last, 'computer_call_output')
+
+
+@needs_openai
+@pytest.mark.vcr
 async def test_gpt_gets_the_whole_history_back_with_store_off(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
@@ -755,7 +823,7 @@ async def test_gpt_is_told_why_a_denied_call_has_a_blank_screenshot(
     result = await agent.run(message_history=paused.all_messages(), deferred_tool_results=denied)
 
     assert provider.actions == []
-    assert isinstance(result.output, str) and 'no' in result.output.lower()
+    assert isinstance(result.output, str) and 'said no' in result.output.lower()
     last = request_capture.bodies('/responses')[-1]
     (output,) = [item for item in _items(last, 'computer_call_output') if item['call_id'] == approval.tool_call_id]
     note = _objects(last, 'input')[_objects(last, 'input').index(output) + 1]
@@ -815,7 +883,7 @@ async def test_gpt_is_told_how_a_pixel_scroll_ran(
 
 @needs_openai
 @pytest.mark.vcr
-async def test_gpt_computer_call_cut_off_by_the_token_limit_runs_nothing(
+async def test_gpt_computer_call_cut_off_by_the_token_limit_has_no_actions(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
     model = _gpt(openai_api_key, request_capture, 'gpt-5.5')
@@ -825,7 +893,7 @@ async def test_gpt_computer_call_cut_off_by_the_token_limit_runs_nothing(
 
     assert response.finish_reason == 'length'
     (call,) = [part for part in response.parts if isinstance(part, ComputerCallPart)]
-    # OpenAI sends the cut-off call with no actions; its arguments don't parse, so nothing would run.
+    # OpenAI sends the cut-off call with no actions.
     assert call.actions is None
 
 
