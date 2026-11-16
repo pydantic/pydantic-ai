@@ -2870,7 +2870,7 @@ class TestTieredCompaction:
         assert 'Tiered summary.' in _summary_text(result.messages)
 
 
-async def test_tiered_compaction_triggers_for_dense_post_anchor_tool_result():
+async def test_tiered_compaction_triggers_for_dense_tool_result_without_a_usage_anchor():
     """Dense tool output crosses the target by the class-aware estimate, with no usage anchor present."""
     calls: list[str] = []
     t1 = _RecordingTier('t1', calls, drop=1)
