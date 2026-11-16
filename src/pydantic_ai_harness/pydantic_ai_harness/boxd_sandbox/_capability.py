@@ -10,7 +10,6 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import (
     check_env,
@@ -104,7 +103,6 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         if self.snapshot is not None and self.vcpu is not None:
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
         check_env(self.env)
-        desktop_size(self.desktop)
 
     @classmethod
     def from_spec(

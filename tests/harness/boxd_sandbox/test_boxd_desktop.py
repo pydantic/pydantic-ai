@@ -80,8 +80,8 @@ def _path(points: int) -> tuple[Point, ...]:
         ),
         pytest.param(TypeText(text='héllo 😀\n'), ["type 8 'héllo 😀\\n'"], id='type-any-unicode'),
         pytest.param(
-            TypeText(text='a' * 4_001),
-            [f"type 2000 '{'a' * 20}'", f"type 2000 '{'a' * 20}'", "type 1 'a'"],
+            TypeText(text='a' * 20_001),
+            [f"type 10000 '{'a' * 20}'", f"type 10000 '{'a' * 20}'", "type 1 'a'"],
             id='type-in-parts',
         ),
         pytest.param(
@@ -102,6 +102,8 @@ def _path(points: int) -> tuple[Point, ...]:
             id='keysyms',
         ),
         pytest.param(HoldKeys(keys=('shift', 'a'), seconds=1.5), ["key 'shift+a' repeat=0 hold_ms=1500"], id='hold'),
+        # boxd refuses a hold over 5 minutes itself: `hold_ms is at most 300000`.
+        pytest.param(HoldKeys(keys=('a',), seconds=301), ["key 'a' repeat=0 hold_ms=301000"], id='long-hold'),
         # boxd reads `hold_ms=0` as a plain press.
         pytest.param(HoldKeys(keys=('a',), seconds=0.0001), ["key 'a' repeat=0 hold_ms=1"], id='short-hold'),
     ],
@@ -119,7 +121,6 @@ async def test_each_action_maps_onto_boxd_calls(host: FakeBoxd, action: DisplayA
     [
         pytest.param(MoveMouse(x=1, y=1, modifiers=('alt',)), id='move-holding-a-key'),
         pytest.param(Drag(path=_path(101), modifiers=('shift',)), id='long-drag-holding-a-key'),
-        pytest.param(HoldKeys(keys=('a',), seconds=300.5), id='hold-longer-than-boxd-allows'),
         pytest.param(object(), id='unknown-action-type'),
     ],
 )

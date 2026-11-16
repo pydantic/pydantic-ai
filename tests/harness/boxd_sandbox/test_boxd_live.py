@@ -176,16 +176,18 @@ async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_a
         await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
 
         await display.act(Click(x=50, y=50))
-        await display.act(TypeText(text='héllo 😀\n' + 'x' * 2_500 + '\n'))
+        # Over boxd's 10,000 characters a call, in lines a terminal takes (it keeps at most 4,095 of one line).
+        text = 'héllo 😀\n' + ('x' * 99 + '\n') * 101
+        await display.act(TypeText(text=text))
         await display.act(PressKeys(keys=('ctrl+d',)))
         await display.act(Scroll(x=50, y=50, direction='down', amount=150))
         await display.act(PressKeys(keys=('shift',), repeat=150))
         await display.act(Drag(path=tuple(Point(x=600 + n, y=400) for n in range(150))))
 
         with anyio.fail_after(30):
-            while (typed := await backend.run(['cat', 'typed.txt'], timeout=30)).stdout.count('\n') < 2:
+            while (typed := await backend.run(['cat', 'typed.txt'], timeout=30)).stdout.count('\n') < 102:
                 await anyio.sleep(0.5)
-        assert typed.stdout == 'héllo 😀\n' + 'x' * 2_500 + '\n'
+        assert typed.stdout == text
 
 
 async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.AsyncBoxd) -> None:

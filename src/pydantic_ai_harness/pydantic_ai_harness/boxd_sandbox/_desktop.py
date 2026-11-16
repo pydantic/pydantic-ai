@@ -10,7 +10,7 @@ tests in `tests/harness/boxd_sandbox/test_boxd_live.py` before changing the mapp
   scaled rather than resizing it. Every call answers with the screen's size and the pointer's position.
 - Screenshots are PNGs at the screen's size; a `region` screenshot is the region at full resolution.
 - `type` types any Unicode, emoji included, newlines as Enter and tabs as Tab, at most 10,000 characters a call;
-  2,000 take about 9 seconds.
+  10,000 take about 46 seconds.
 - `key` takes X keysyms, several joined with `+` for a combination, and `U` plus a code point for any character. It
   refuses the bare names `pause`, `numlock`, `scrolllock` and the numpad and media key names, and a `repeat` over 100.
 - `scroll` turns at most 100 wheel clicks a call, and `drag` takes 2 to 100 points.
@@ -53,11 +53,8 @@ DISPLAY = ':100'
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing the mouse button after a failed or cancelled drag."""
 
-_LONGEST_HOLD_SECONDS = 300
-"""Longest time boxd holds keys down in one call."""
-
-_TYPED_PER_CALL = 2_000
-"""Characters typed by one call: boxd takes at most 10,000, and 2,000 take about 9 seconds."""
+_TYPED_PER_CALL = 10_000
+"""Characters typed by one call, the most boxd takes."""
 
 _SCROLLED_PER_CALL = 100
 """Wheel clicks one call may turn."""
@@ -169,11 +166,6 @@ class BoxdDesktop:
                 combination = _combination(keys)
                 for start in range(0, repeat, _REPEATS_PER_CALL):
                     await computer.key(machine_id, combination, repeat=min(_REPEATS_PER_CALL, repeat - start))
-            # https://docs.boxd.sh/guides/computer-use.md#limits: `hold_ms` up to 5 minutes.
-            case HoldKeys(seconds=seconds) if seconds > _LONGEST_HOLD_SECONDS:
-                raise UnsupportedActionError(
-                    f"boxd's desktop can hold keys for at most {_LONGEST_HOLD_SECONDS} seconds."
-                )
             case HoldKeys(keys=keys, seconds=seconds):
                 await computer.key(machine_id, _combination(keys), hold_ms=max(1, round(seconds * 1000)))
             case _:
