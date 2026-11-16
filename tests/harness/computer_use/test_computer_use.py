@@ -1115,19 +1115,17 @@ Each call runs a list of actions in order and returns a screenshot of the result
 
     async def test_a_run_attaching_to_an_environment_a_call_just_created_waits_for_that_call(self) -> None:
         """The first call's environment has no ref until the call starts it, and the call holds that ref's lock too."""
-        first_acting, second_acted = anyio.Event(), anyio.Event()
-        interleaved: list[bool] = []
+        first_acting, release_first = anyio.Event(), anyio.Event()
+        order: list[object] = []
 
         class Holding(ScreenBackend):
             async def act(self, action: DisplayAction) -> None:
                 await super().act(action)
+                order.append(action)
                 if action == Click(x=1, y=1):
                     first_acting.set()
-                    with anyio.move_on_after(0.1):
-                        await second_acted.wait()
-                    interleaved.append(second_acted.is_set())
-                else:
-                    second_acted.set()
+                    await release_first.wait()
+                    order.append('first released')
 
         class Provider(ScreenProvider):
             def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
@@ -1153,9 +1151,11 @@ Each call runs a list of actions in order and returns a screenshot of the result
             with anyio.fail_after(READY_TIMEOUT):
                 await first_acting.wait()
             tasks.start_soon(attach)
+            # Every other task is now blocked: the second run waits for the screen, or it acted already.
+            await anyio.wait_all_tasks_blocked()
+            release_first.set()
 
-        assert interleaved == [False]
-        assert provider.actions == [Click(x=1, y=1), Click(x=2, y=2)]
+        assert order == [Click(x=1, y=1), 'first released', Click(x=2, y=2)]
 
     async def test_agents_on_different_screens_do_not_wait_on_each_other(self) -> None:
         first_acting, second_acted = anyio.Event(), anyio.Event()
