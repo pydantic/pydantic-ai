@@ -74,6 +74,11 @@ def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message
         BoxdSandbox(**settings)
 
 
+def test_invalid_desktop_size_fails_at_construction() -> None:
+    with pytest.raises(ValueError, match='`desktop` must be a positive width and height'):
+        BoxdSandbox(desktop=(0, 800))
+
+
 @pytest.mark.parametrize(
     ('env', 'error'), [({'PORT': 3000}, TypeError), ({'': 'empty'}, ValueError), ({'A': 'nul\0'}, ValueError)]
 )
