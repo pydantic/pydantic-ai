@@ -89,8 +89,11 @@ def deserialize_run_context(
 def _publish_run_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
     """Publish the worker agent's tracer as the run's telemetry, as the run's tracer can't cross into the activity.
 
-    Content is captured only if the run captures it too.
+    Content is captured only if the run captures it too. A context that didn't carry
+    `trace_include_content` leaves the activity untraced, as reading it would raise.
     """
+    if 'trace_include_content' not in ctx.__dataclass_fields__:
+        return
     settings = agent_instrumentation_settings(agent)
     if settings is not None and get_current_span().is_recording():
         publish_run_telemetry(settings.tracer, include_content=settings.include_content and ctx.trace_include_content)
