@@ -6716,7 +6716,7 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
         pytest.param(
             ThinkingPart(content='', id='rs_0123abcd', signature='<encrypted>', provider_name='openai'),
             None,
-            snapshot({'role': 'assistant', 'content': '<think>\n\n</think>\n\nRain in Paris.'}),
+            snapshot({'role': 'assistant', 'content': 'Rain in Paris.'}),
             id='encrypted_only',
         ),
         pytest.param(
