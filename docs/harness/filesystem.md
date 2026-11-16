@@ -288,9 +288,8 @@ exceeds 65536, bounding line-matching work before calling the differ.
 A final line without a newline is marked the way `git diff` marks it, so a
 change to the final newline alone is visible. A `FilesSearchedEvent` counts
 the matches the model received; `truncated` says the search stopped at
-`max_search_results` or `max_find_results`. `search` is the deprecated name of
-`search_kind`: it still reads, with a warning, and a payload saved under it
-still loads.
+`max_search_results` or `max_find_results`. A payload saved under the earlier
+`search` key still loads into `search_kind`.
 
 `path` is the normalized location relative to `root_dir`, never an absolute
 path, so it is safe to echo to the model or a UI. `root_dir` is the emitting
@@ -436,7 +435,6 @@ A directory pattern also applies to descendants: `denied_patterns=['private']` d
 readable; add a path to `denied_patterns` to make it unreadable. Harness capabilities keep their own files,
 such as spilled tool output and background job status, under `.pydantic-ai-harness/`. Pass an empty list to
 make every path writable.
-`protected_patterns` is its deprecated name and still works, with a warning.
 
 ```python
 from pydantic_ai import Agent

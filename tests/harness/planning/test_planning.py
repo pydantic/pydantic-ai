@@ -38,12 +38,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import ClearToolResults, HarnessDeprecationWarning
+from pydantic_ai_harness import ClearToolResults
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
-    PlanEvent,
-    PlanEventEmitter,
-    PlanEventType,
     PlanItem,
     Planning,
     PlanningToolset,
@@ -76,10 +73,6 @@ with try_import() as anthropic_imports:
 with try_import() as openai_imports:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
-
-pytestmark = [
-    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
-]
 
 
 def _ctx() -> RunContext[None]:
@@ -326,49 +319,6 @@ class TestTypes:
         assert update.status is TaskStatus.completed
 
 
-# --- Events -----------------------------------------------------------------
-
-
-class TestEventEmitter:
-    async def test_sync_and_async_callbacks(self) -> None:
-        seen: list[str] = []
-        emitter = PlanEventEmitter()
-
-        @emitter.on_created
-        def sync_cb(event: PlanEvent) -> None:
-            seen.append(f'sync:{event.item.content}')
-
-        @emitter.on_created
-        async def async_cb(event: PlanEvent) -> None:
-            seen.append(f'async:{event.item.content}')
-
-        await emitter.emit(PlanEvent(event_type=PlanEventType.created, item=PlanItem(content='x')))
-        assert seen == ['sync:x', 'async:x']
-
-    def test_all_decorators_register(self) -> None:
-        emitter = PlanEventEmitter()
-        cb: list[object] = []
-        for register in (
-            emitter.on_created,
-            emitter.on_updated,
-            emitter.on_status_changed,
-            emitter.on_completed,
-            emitter.on_deleted,
-        ):
-            register(cb.append)
-        assert all(len(v) == 1 for v in emitter._listeners.values())  # pyright: ignore[reportPrivateUsage]
-
-    def test_off(self) -> None:
-        emitter = PlanEventEmitter()
-
-        def cb(event: PlanEvent) -> None:  # pragma: no cover - registered then removed, never fired
-            ...
-
-        emitter.on(PlanEventType.created, cb)
-        assert emitter.off(PlanEventType.created, cb) is True
-        assert emitter.off(PlanEventType.created, cb) is False
-
-
 # --- Renderers --------------------------------------------------------------
 
 
@@ -573,22 +523,6 @@ class TestWritePlan:
         assert (await store.get_item('b')).status is TaskStatus.blocked  # type: ignore[union-attr]
         assert (await store.get_item('d')).status is TaskStatus.pending  # type: ignore[union-attr]
         assert (await store.get_item('e')).status is TaskStatus.pending  # type: ignore[union-attr]
-
-    async def test_auto_blocking_stays_event_silent(self) -> None:
-        # write_plan is a bulk replacement: it reconciles dependency blocks before
-        # storing, so it must not emit per-step events even when a step is blocked.
-        events: list[PlanEvent] = []
-        emitter = PlanEventEmitter()
-        for kind in PlanEventType:
-            emitter.on(kind, events.append)
-        store = InMemoryPlanStore(event_emitter=emitter)
-        ts = _toolset(subtasks=True, store=store)
-        await ts.write_plan(
-            _ctx(),
-            [PlanItem(id='a', content='A'), PlanItem(id='b', content='B', depends_on=['a'])],
-        )
-        assert (await store.get_item('b')).status is TaskStatus.blocked  # type: ignore[union-attr]
-        assert events == []
 
     async def test_subtasks_rejects_bad_hierarchy(self) -> None:
         store = InMemoryPlanStore()
@@ -1383,18 +1317,6 @@ class TestReminder:
             ModelRequest(parts=[UserPromptPart('continue')]),
         ]
         assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n(0/1 completed)')]
-
-    def test_cache_ttl_is_deprecated_and_ignored(self) -> None:
-        with pytest.warns(HarnessDeprecationWarning, match=r'`Planning\(cache_ttl=\.\.\.\)` is deprecated and ignored'):
-            Planning[None](cache_ttl='1h')
-        with pytest.warns(HarnessDeprecationWarning, match='cache_ttl'):
-            Planning.from_spec(cache_ttl='5m')
-
-    @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
-    def test_cache_ttl_unset_does_not_warn(self) -> None:
-        assert Planning[None]().cache_ttl is None
-        assert Planning[None](cache_ttl=None).cache_ttl is None
-        assert Planning.from_spec().cache_ttl is None
 
 
 # --- End to end -------------------------------------------------------------

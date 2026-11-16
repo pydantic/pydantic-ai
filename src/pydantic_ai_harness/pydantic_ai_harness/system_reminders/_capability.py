@@ -5,7 +5,6 @@ from __future__ import annotations
 import html
 import logging
 import re
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
@@ -30,7 +29,6 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import user_prompt_text
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored, warn_default_changed
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 
 if TYPE_CHECKING:
@@ -39,28 +37,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _Unset:
-    """The default of an option whose default changed, so leaving it unset can warn."""
-
-    def __init__(self, default: object) -> None:
-        self.default = default
-
-    def __repr__(self) -> str:
-        return repr(self.default)
-
-
 _LLM_REMINDER_INTERVAL = 10
 """How many model requests apart an `LLMReminder` generates by default, as often as `TrajectoryJudge` evaluates."""
-
-# Type checkers see the effective defaults; at runtime the sentinels tell an omitted `Reminder.tag` or
-# `LLMReminder.interval` from an explicit value, so the public field types stay what callers can pass.
-if TYPE_CHECKING:
-    _UNSET: None = None
-    _UNSET_INTERVAL: int = _LLM_REMINDER_INTERVAL
-else:
-    _UNSET = _Unset(None)
-    _UNSET_INTERVAL = _Unset(_LLM_REMINDER_INTERVAL)
-
 
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
 """The `origin` in the `metadata` of the parts a `SystemReminders` firing enqueues.
@@ -130,14 +108,12 @@ class Reminder(Generic[AgentDepsT]):
     max_fires: int | None = None
     """Maximum number of times this reminder may fire within a run. `None` means no limit."""
 
-    tag: str | None = _UNSET
+    tag: str | None = None
     r"""When set, wrap the content in an XML tag: `<tag>\ncontent\n</tag>`.
 
     The default is `None`, which sends the raw content. That's what a reminder needs: it's already a
     system prompt, which the model is shown as one, natively where the model supports it and in a
-    `<system>` tag otherwise. Leaving `tag` unset behaves exactly like `tag=None`, but warns that the
-    default used to be `'system-reminder'`; pass `tag=None` to silence it. (The unset default is a
-    private sentinel shown as `None`, so the field's type stays `str | None`.)
+    `<system>` tag otherwise.
     """
 
     scope: Literal['conversation', 'request'] = 'request'
@@ -159,18 +135,6 @@ class Reminder(Generic[AgentDepsT]):
             raise ValueError(f'first_after must be >= 1, got {self.first_after}')
         if self.max_fires is not None and self.max_fires < 1:
             raise ValueError(f'max_fires must be >= 1, got {self.max_fires}')
-        if self.tag is _UNSET:
-            warn_default_changed(
-                owner='Reminder',
-                option='tag',
-                old='system-reminder',
-                new=None,
-                impact=(
-                    'The reminder is sent as a system prompt, so the model already sees it as '
-                    'one, and its content is no longer wrapped in `<system-reminder>`.'
-                ),
-            )
-            self.tag = None
 
 
 DynamicReminder = Callable[[RunContext[AgentDepsT]], 'str | GeneratedReminder | None']
@@ -225,17 +189,6 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     dynamic_reminders: Sequence[DynamicReminder[AgentDepsT] | AsyncDynamicReminder[AgentDepsT]] = ()
     """Callables evaluated every model request; return text to inject or `None` to skip."""
 
-    cache_ttl: Literal['5m', '1h'] | None = None
-    """Deprecated, and has no effect; configure caching on the model instead.
-
-    Reminders used to bring a cache breakpoint of their own, with a `'5m'` TTL by default. They're
-    system prompts at the tail of the request now, and the breakpoints the model's caching settings place (such as
-    `anthropic_cache`) land before them. Set to `'5m'` or `'1h'`, it warns that it's ignored.
-    """
-
-    on_fire: Callable[[str], None] | None = None
-    """Deprecated callback invoked with each rendered reminder. Subscribe to `ReminderFiredEvent` instead."""
-
     # Override the inherited default ID because durable-operation recovery needs a stable identity.
     _: KW_ONLY
     id: str | None = 'system_reminders'
@@ -254,20 +207,6 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # Dynamic configuration is a sequence, not a live queue. Freeze caller-owned lists so
         # callbacks cannot change the operation index used to recover an LLM reminder.
         self.dynamic_reminders = tuple(self.dynamic_reminders)
-        if self.cache_ttl is not None:
-            warn_argument_ignored(
-                'SystemReminders',
-                'cache_ttl',
-                'configure caching on the model instead (such as `anthropic_cache`); its breakpoint lands before '
-                'the reminder.',
-            )
-        if self.on_fire is not None:
-            warnings.warn(
-                '`SystemReminders.on_fire` is deprecated; subscribe to `ReminderFiredEvent` with `@agent.on_event` '
-                'instead, or with `@on_event` on a capability of your own.',
-                HarnessDeprecationWarning,
-                stacklevel=2,
-            )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> SystemReminders[AgentDepsT]:
         """Return a fresh per-run instance with reset counters (config preserved).
@@ -300,9 +239,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         self._request_count += 1
         # Select which reminders fire before mutating any state: `_eligible_static` is
         # pure, and `_collect_dynamic` can raise (a user callback, a model call). Fire
-        # state and `on_fire` are committed only once the reminder is actually added, so
-        # a raising dynamic reminder never leaves a static reminder's `max_fires` budget
-        # spent or reports a fire that never reached the model.
+        # state is committed only once the reminder is actually added, so a raising
+        # dynamic reminder never leaves a static reminder's `max_fires` budget spent.
         fired = self._eligible_static(ctx)
         dynamic_texts = await self._collect_dynamic(ctx)
         reminders: list[str | _StaticText | GeneratedReminder] = [*(text for _, text in fired), *dynamic_texts]
@@ -313,9 +251,6 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
         for reminder in reminders:
             await ctx.emit(ReminderFiredEvent(text=str(reminder)))
-        if self.on_fire is not None:
-            for reminder in reminders:
-                self.on_fire(str(reminder))
         return request_context
 
     def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, _StaticText]]:
@@ -462,13 +397,12 @@ class LLMReminder(Generic[AgentDepsT]):
     model: Model | KnownModelName | str
     max_context_messages: int = 10
     instructions: str = _LLM_INSTRUCTIONS
-    interval: int = _UNSET_INTERVAL
+    interval: int = _LLM_REMINDER_INTERVAL
     """Generate every N model requests within a run: the default `10` fires on the 10th, 20th, 30th, ... request.
 
     Each firing makes one extra model call and adds a framework note and the generated text to the message
     history for good, so a run of R requests gains `2 * (R // interval)` parts. `interval=1` generates on every
-    request, the behavior before the default changed. Leaving it unset behaves exactly like `interval=10`, but
-    warns that the default used to be `1`; pass `interval=10` to silence it.
+    request.
     """
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
     _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
@@ -477,18 +411,6 @@ class LLMReminder(Generic[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.max_context_messages < 1:
             raise ValueError(f'max_context_messages must be >= 1, got {self.max_context_messages}')
-        if self.interval is _UNSET_INTERVAL:
-            warn_default_changed(
-                owner='LLMReminder',
-                option='interval',
-                old=1,
-                new=_LLM_REMINDER_INTERVAL,
-                impact=(
-                    'Each generation adds a lasting record to the message history, so it now generates every '
-                    f'{_LLM_REMINDER_INTERVAL} model requests instead of on every one, and not at all in a run of fewer.'
-                ),
-            )
-            self.interval = _LLM_REMINDER_INTERVAL
         if self.interval < 1:
             raise ValueError(f'interval must be >= 1, got {self.interval}')
 

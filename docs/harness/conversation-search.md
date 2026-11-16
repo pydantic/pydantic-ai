@@ -89,15 +89,7 @@ Scoping applies to the `RunRecord`s a `HistorySource` returns, so a custom sourc
 
 ### Migrating from the `scope='all'` default
 
-`scope` used to default to `'all'` and now defaults to `'conversation'`. Leaving it unset emits one `HarnessDeprecationWarning` per instance; the warning will be removed in the next breaking release. Pass `scope='all'` to keep store-wide search or `scope='conversation'` to accept the new default. To silence every harness deprecation at once:
-
-```python
-import warnings
-
-from pydantic_ai_harness import HarnessDeprecationWarning
-
-warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
-```
+`scope` used to default to `'all'` and now defaults to `'conversation'`. Pass `scope='all'` to keep store-wide search.
 
 ## Key options
 

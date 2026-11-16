@@ -93,11 +93,6 @@ async def call(
 
 
 class TestCoder:
-    def test_deprecated_workspace_is_ignored(self) -> None:
-        with pytest.warns(Warning, match='workspace'):
-            coder = Coder(workspace='elsewhere')
-        assert coder is not None
-
     @pytest.mark.parametrize('extra_limits', [False, True])
     async def test_durable_binding(self, tmp_path: Path, extra_limits: bool) -> None:
         (tmp_path / '.git').mkdir()

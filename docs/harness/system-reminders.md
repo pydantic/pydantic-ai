@@ -209,9 +209,6 @@ async def record(ctx, event):
     print(event.text)
 ```
 
-Migration: `on_fire` remains supported but is deprecated. Move its callback body to this
-subscription.
-
 Per-run state (the request counter and per-reminder fire counts) is isolated via `for_run`, so concurrent runs on the same agent never share fire state.
 
 ## Caching
@@ -221,7 +218,7 @@ Reminders never go into the leading system prompt or instructions, and the histo
 `SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder.
 
 !!! warning "Prompt caching is no longer automatic"
-    If you relied on `SystemReminders` for prompt caching, turn it on for your model. Earlier releases placed a cache breakpoint ahead of every reminder, with a `'5m'` TTL by default, so an agent got caching on Anthropic without configuring any. That breakpoint is gone, and leaving `cache_ttl` unset doesn't warn about it: an agent with no caching configured on its model now pays full price for its prefix on every request. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
+    If you relied on `SystemReminders` for prompt caching, turn it on for your model. Earlier releases placed a cache breakpoint ahead of every reminder, with a `'5m'` TTL by default, so an agent got caching on Anthropic without configuring any. That breakpoint is gone: an agent with no caching configured on its model now pays full price for its prefix on every request.
 
 ## Composition
 

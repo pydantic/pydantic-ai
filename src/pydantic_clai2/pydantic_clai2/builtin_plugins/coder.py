@@ -440,7 +440,6 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         coder = Coder[DepsT](
             instructions=settings.instructions,
             unrestricted_filesystem=settings.unrestricted_filesystem,
-            workspace=settings.workspace,
             repo_context=settings.repo_context,
             sub_agents=settings.sub_agents and not custom_delegation,
             agent_folders=settings.folders(home=Path.home()) or None,

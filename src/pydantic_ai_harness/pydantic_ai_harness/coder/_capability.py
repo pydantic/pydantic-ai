@@ -12,7 +12,6 @@ from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavi
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
@@ -194,7 +193,6 @@ class Coder(CombinedCapability[AgentDepsT]):
     start. Commands are unrestricted and can outlive runs.
 
     Args:
-        workspace: Deprecated and ignored; attach a workspace capability instead.
         instructions: Appended to the default instructions.
         autonomy: How far the agent works on its own. This is guidance to the model, not a
             limit on its tools: nothing stops it from editing if it ignores the sentence.
@@ -235,7 +233,6 @@ class Coder(CombinedCapability[AgentDepsT]):
 
     def __init__(
         self,
-        workspace: str | Path | None = None,
         *,
         instructions: str | None = None,
         autonomy: Autonomy = 'high',
@@ -251,14 +248,6 @@ class Coder(CombinedCapability[AgentDepsT]):
             raise ValueError(f'`autonomy` must be one of {", ".join(map(repr, get_args(Autonomy)))}, not {autonomy!r}.')
         if task_control is not None and not sub_agents:
             raise ValueError('`task_control` requires `sub_agents=True`.')
-        if workspace is not None:
-            warn_argument_ignored(
-                'Coder',
-                'workspace',
-                "the project directory is the workspace's working directory; attach "
-                f'`LocalWorkspace({str(workspace)!r})` (or a sandbox) alongside `Coder()`.',
-                stacklevel=3,
-            )
         bundled_repo_context = (
             repo_context
             if isinstance(repo_context, RepoContext)

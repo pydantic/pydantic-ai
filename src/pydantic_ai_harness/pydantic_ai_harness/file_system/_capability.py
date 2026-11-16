@@ -9,7 +9,6 @@ from pathlib import Path
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
-from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.file_system._toolset import (
     DEFAULT_TOOL_NAMES,
@@ -60,12 +59,6 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     rejected here, and an absolute one that does not contain it fails the run on
     its first file operation. `'/'` turns the containment checks off, while any
     access patterns still match a symlink's target.
-    """
-
-    cwd: str | Path | None = None
-    """Deprecated and ignored: relative paths resolve from the workspace's working directory.
-
-    Set the working directory on the workspace instead, e.g. `LocalWorkspace('./repo')`.
     """
 
     allowed_patterns: Sequence[str] = field(default_factory=list[str])
@@ -142,20 +135,10 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     to retry; a success resets the count. `None` (the default) uses the agent's tool retry budget.
     """
 
-    protected_patterns: Sequence[str] | None = field(default=None, kw_only=True)
-    """Deprecated: renamed to `read_only_patterns`."""
-
     _toolset: FileSystemToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one toolset, built on first use; it resolves the boundary per workspace on its first operation there."""
 
     def __post_init__(self) -> None:
-        if self.cwd is not None:
-            warn_argument_ignored('FileSystem', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
-        if self.protected_patterns is not None:
-            if self.read_only_patterns is not _DEFAULT_READ_ONLY:
-                raise TypeError('Pass `read_only_patterns` only: `protected_patterns` is its deprecated name.')
-            warn_argument_renamed('FileSystem', 'protected_patterns', 'read_only_patterns', stacklevel=4)
-            self.read_only_patterns, self.protected_patterns = self.protected_patterns, None
         root_spelling(None if self.root_dir is None else Path(self.root_dir))
         # Runtime validation: dataclass field annotations are advisory, not enforced.
         # A config-driven caller could pass a string that would otherwise propagate.

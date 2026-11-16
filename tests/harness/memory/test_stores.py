@@ -33,7 +33,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.memory import (
     FileMemoryStore,
     InMemoryMemoryStore,
@@ -748,8 +747,6 @@ async def test_file_store_needs_a_workspace(tmp_path: Path) -> None:
         await FileMemoryStore('memory').read('main.md', max_chars=10)
     with pytest.raises(TypeError, match='takes a workspace backend'):
         FileMemoryStore('memory', workspace=LocalWorkspace('.'))  # pyright: ignore[reportArgumentType]
-    with pytest.warns(HarnessDeprecationWarning, match=r'workspace=LocalWorkspaceBackend\('):
-        FileMemoryStore(tmp_path)
     # A store with its own workspace ignores the one it is bound to.
     store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path))
     assert store.bind(Workspace(LocalWorkspaceBackend(tmp_path / 'elsewhere'))) is store

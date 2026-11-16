@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._events import ContextUsageMeasuredEvent
 from pydantic_ai_harness.compaction._shared import (
@@ -85,13 +83,6 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
         ```
     """
 
-    on_usage: Callable[[ContextUsage], None | Awaitable[None]] | None = None
-    """Deprecated callback with a fresh reading before every model request.
-
-    Subscribe to `ContextUsageMeasuredEvent` instead. A coroutine function is awaited and an exception
-    raised here propagates and fails the run.
-    """
-
     context_window: int | None = None
     """Window override in tokens. `None` resolves it from the request's model."""
 
@@ -102,13 +93,6 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
     """Optional tokenizer, matching the one your compaction strategy uses."""
 
     def __post_init__(self) -> None:
-        if self.on_usage is not None:
-            warnings.warn(
-                '`ReportContextUsage.on_usage` is deprecated; subscribe to `ContextUsageMeasuredEvent` with '
-                '`@agent.on_event` instead, or with `@on_event` on a capability of your own.',
-                HarnessDeprecationWarning,
-                stacklevel=2,
-            )
         if self.context_window is not None and self.context_window < 1:
             raise ValueError('context_window must be positive.')
         if self.fallback_context_window < 1:
@@ -144,7 +128,7 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Measure the pending history, emit it, and invoke the compatibility callback."""
+        """Measure the pending history and emit it."""
         reading = self._measure(ctx, request_context)
         await ctx.emit(
             ContextUsageMeasuredEvent(
@@ -154,8 +138,4 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
                 fraction=reading.fraction,
             )
         )
-        if self.on_usage is not None:
-            outcome = self.on_usage(reading)
-            if isinstance(outcome, Awaitable):
-                await outcome
         return request_context

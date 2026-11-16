@@ -19,8 +19,6 @@ from pathlib import Path
 import anyio
 import pytest
 
-import pydantic_ai_harness
-import pydantic_ai_harness.bubblewrap_sandbox as bubblewrap_sandbox
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
@@ -37,7 +35,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
-from pydantic_ai_harness import BubblewrappedWorkspace, HarnessDeprecationWarning
+from pydantic_ai_harness import BubblewrappedWorkspace
 from pydantic_ai_harness.bubblewrap_sandbox import (
     BubblewrappedWorkspace as SubmoduleBubblewrappedWorkspace,
     BubblewrapWorkspace,
@@ -698,29 +696,6 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
     assert workspace_layers(result.workspace) == [BubblewrapWorkspace, ReadOnlyWorkspace, LocalWorkspaceBackend]
     with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
-
-
-async def test_deprecated_bubblewrap_sandbox_alias_warns_and_wraps(tmp_path: Path) -> None:
-    expected = 'BubblewrapSandbox is deprecated, use BubblewrappedWorkspace instead; it will be removed in v1.'
-    with pytest.warns(HarnessDeprecationWarning, match=f'^{expected}$'):
-        from_root = pydantic_ai_harness.BubblewrapSandbox
-    with pytest.warns(HarnessDeprecationWarning, match=f'^{expected}$'):
-        from_submodule = bubblewrap_sandbox.BubblewrapSandbox
-
-    assert from_root is BubblewrappedWorkspace
-    assert from_submodule is BubblewrappedWorkspace
-    assert 'BubblewrapSandbox' not in pydantic_ai_harness.__all__
-    assert 'BubblewrapSandbox' not in bubblewrap_sandbox.__all__
-    with pytest.raises(AttributeError, match='has no attribute'):
-        _ = bubblewrap_sandbox.DoesNotExist
-
-    wrapped = LocalWorkspace(tmp_path)
-    assert from_root(wrapped, network=True, bwrap_args=('--tmpfs', '/opt')) == BubblewrappedWorkspace(
-        wrapped, network=True, bwrap_args=('--tmpfs', '/opt')
-    )
-    agent = Agent(TestModel(), capabilities=[from_root(wrapped)])
-    result = await agent.run('go')
-    assert workspace_layers(result.workspace) == [BubblewrapWorkspace, LocalWorkspaceBackend]
 
 
 @pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')

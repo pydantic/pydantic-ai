@@ -228,8 +228,7 @@ Key parameters: `source` (required; a `HistorySource`), `scope` (`'conversation'
 `tool_id='conversation-search'`.
 
 Gotchas:
-- Always set `scope` explicitly. Unset resolves to `'conversation'` and emits a
-  `HarnessDeprecationWarning` once per instance. There is no per-run store resolver or tenant
+- `scope` defaults to `'conversation'`. There is no per-run store resolver or tenant
   filter: to search one tenant's earlier conversations, give each tenant its own step store and pass
   both capabilities per run with `scope='all'`:
   `agent.run(q, capabilities=[StepPersistence(store=s), ConversationSearch(SnapshotHistorySource(s), scope='all')])`.
@@ -354,7 +353,7 @@ Gotchas: the local path is read through the run workspace only, with no `workspa
 a sandbox the checkout must be in the sandbox); with a local path set and no workspace, the run fails at start. With no
 local path, the first read of each topic in a run fetches it from GitHub (every read with
 `cache=False`). `~` is not expanded. It never runs git, so keep a local checkout current yourself. Use `pydantic_ai_harness.pydantic_ai_docs`; the old `docs`
-module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old specs).
+module and `PyaiDocs` names are removed (rename a `PyaiDocs` spec block to `PydanticAIDocs`).
 
 ## See also
 

@@ -21,7 +21,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     PLAN_ORIGIN,
@@ -95,12 +94,6 @@ class Planning(AbstractCapability[AgentDepsT]):
     - any other string: use it instead of the built-in guidance.
     """
 
-    cache_ttl: Literal['5m', '1h'] | None = None
-    """Deprecated, and has no effect; configure caching on the model instead.
-
-    Use a model setting such as `anthropic_cache_messages`. Set to `'5m'` or `'1h'`, it warns that it's ignored.
-    """
-
     store: PlanStore | None = None
     """Storage backend. `None` keeps a fresh in-memory plan per run; pass a store to persist it across runs."""
 
@@ -140,15 +133,6 @@ class Planning(AbstractCapability[AgentDepsT]):
 
     _toolset: PlanningToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one `planning` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
-
-    def __post_init__(self) -> None:
-        if self.cache_ttl is not None:
-            warn_argument_ignored(
-                'Planning',
-                'cache_ttl',
-                '`Planning` no longer places a cache breakpoint of its own: configure caching on the model instead '
-                '(such as `anthropic_cache_messages`).',
-            )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Planning[AgentDepsT]:
         """Return a clone with this run's store resolved and cached (per-run isolation)."""
@@ -291,7 +275,6 @@ class Planning(AbstractCapability[AgentDepsT]):
         enable_subtasks: bool = False,
         inject: bool = True,
         guidance: str | None = None,
-        cache_ttl: Literal['5m', '1h'] | None = None,
         tools: list[str] | None = None,
         id: str | None = 'planning',
         description: str | None = None,
@@ -316,7 +299,6 @@ class Planning(AbstractCapability[AgentDepsT]):
             enable_subtasks=enable_subtasks,
             inject=inject,
             guidance=guidance,
-            cache_ttl=cache_ttl,
             tools=tools,
             id=id,
             description=description,

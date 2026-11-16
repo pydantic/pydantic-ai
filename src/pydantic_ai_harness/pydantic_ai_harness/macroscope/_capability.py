@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
-from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.macroscope._toolset import MacroscopeToolset
 
@@ -62,12 +60,6 @@ class Macroscope(AbstractCapability[AgentDepsT]):
     Cannot start with `-` or contain `=`; put the CLI on the workspace's PATH instead.
     """
 
-    cwd: str | Path | None = None
-    """Deprecated and ignored: the review runs in the workspace's working directory.
-
-    Set the working directory on the workspace instead, e.g. `LocalWorkspace('./repo')`.
-    """
-
     timeout: float = 600.0
     """Maximum seconds to wait for a review. Reviews call a remote service, so this is
     generous by default."""
@@ -86,10 +78,6 @@ class Macroscope(AbstractCapability[AgentDepsT]):
     configuration stated twice when they agree, and an error when they differ. To keep two, give each its
     own `id` and wrap them in `PrefixTools`, since their tool names are the same.
     """
-
-    def __post_init__(self) -> None:
-        if self.cwd is not None:
-            warn_argument_ignored('Macroscope', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:

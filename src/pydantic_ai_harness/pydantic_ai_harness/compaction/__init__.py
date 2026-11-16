@@ -4,7 +4,6 @@ Each capability lives in its own module; shared utilities (token estimation, the
 `CompactionStrategy` protocol, tool-pair-safe cutoffs, in-place clearing) live in `_shared`.
 """
 
-from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
 from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
 from pydantic_ai_harness.compaction._compact_on_request import CompactOnRequest
@@ -62,17 +61,3 @@ __all__ = [
     'reinject_pinned',
     'resolve_context_window',
 ]
-
-_RENAMED = {
-    'ContextUsageEvent': ContextUsageMeasuredEvent,
-    'LimitWarner': WarnNearLimits,
-    'SlidingWindow': SlidingWindowCompaction,
-}
-
-
-def __getattr__(name: str) -> object:
-    renamed = _RENAMED.get(name)
-    if renamed is not None:
-        warn_class_renamed(name, renamed.__name__, 'pydantic_ai_harness.compaction')
-        return renamed
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

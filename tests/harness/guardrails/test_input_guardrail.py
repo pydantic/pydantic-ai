@@ -47,7 +47,6 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import (
     BackgroundTools,
     GuardrailResult,
-    HarnessDeprecationWarning,
     InputBlocked,
     InputGuardrail,
 )
@@ -430,34 +429,30 @@ class TestInputGuardrail:
 
         assert seen == ['hello', 'hello', 'hello']
 
-    @pytest.mark.parametrize(
-        ('verdict', 'allowed'), [('unsafe', True), (None, False), (1, True), ({'action': 'block'}, True)]
-    )
-    async def test_a_verdict_that_is_not_a_bool_or_result_is_deprecated(self, verdict: object, allowed: bool):
-        """Read for truthiness as before, so existing guards keep working, with a warning that a label can fail open."""
+    @pytest.mark.parametrize('verdict', ['unsafe', None, 1, {'action': 'block'}])
+    async def test_a_verdict_that_is_not_a_bool_or_result_is_refused(self, verdict: object):
+        """A truthy label such as `'unsafe'` would otherwise let the value through."""
         seen, model = _recording_model()
         agent = Agent(model, capabilities=[InputGuardrail(guard=lambda _: verdict)])  # pyright: ignore[reportArgumentType]
 
-        with pytest.warns(
-            HarnessDeprecationWarning, match=f'returned {type(verdict).__name__}, which is read for truthiness'
-        ):
+        with pytest.raises(UserError, match=f'returned {type(verdict).__name__}\\. Return bool'):
             await agent.run('hello')
 
-        assert seen == (['hello'] if allowed else [])
+        assert seen == []
 
-    async def test_a_wrong_verdict_warning_does_not_show_bound_guard_arguments(self):
+    async def test_a_wrong_verdict_error_does_not_show_bound_guard_arguments(self):
         def check(prompt: str, *, api_key: str) -> object:
             return 'unsafe'
 
         agent = Agent(TestModel(), capabilities=[InputGuardrail(guard=functools.partial(check, api_key='sk-bound'))])  # pyright: ignore[reportArgumentType]
 
-        with pytest.warns(HarnessDeprecationWarning, match='check returned str') as record:
+        with pytest.raises(UserError, match='check returned str') as caught:
             await agent.run('hello')
 
-        assert not any('sk-bound' in str(warning.message) for warning in record)
+        assert 'sk-bound' not in str(caught.value)
 
-    async def test_an_unannotated_context_parameter_still_receives_the_context(self):
-        """`(ctx, prompt=None)` received `RunContext` first before, so it still does, with a warning."""
+    async def test_an_unannotated_first_parameter_receives_the_value(self):
+        """`(ctx, prompt=None)` with no annotation to say otherwise is passed the guarded value alone."""
         seen: list[object] = []
 
         def guard(ctx: object, prompt: object = None) -> bool:
@@ -466,10 +461,9 @@ class TestInputGuardrail:
 
         del guard.__annotations__['ctx']
         agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=guard)])
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            await agent.run('hello')
+        await agent.run('hello')
 
-        assert seen == ['RunContext', 'hello']
+        assert seen == ['str', None]
 
     async def test_retry_action_is_a_usage_error(self):
         agent = Agent(
@@ -1946,23 +1940,21 @@ class TestTakesCtx:
 
         assert takes_ctx(guard) is True
 
-    def test_an_unannotated_first_parameter_keeps_the_context_with_a_warning(self):
+    def test_an_unannotated_first_parameter_is_the_value(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         del guard.__annotations__['ctx']
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
     @pytest.mark.parametrize(
         'annotation',
         [Any, object, Annotated[Any, 'meta'], Annotated[object, 'meta'], Annotated[Annotated[Any, 'a'], 'b']],
     )
-    def test_a_first_parameter_that_fits_either_keeps_the_context_with_a_warning(self, annotation: object):
+    def test_a_first_parameter_that_fits_either_is_the_value(self, annotation: object):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         guard.__annotations__['ctx'] = annotation
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
     def test_a_forward_reference_to_run_context_is_the_context(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
@@ -1970,12 +1962,11 @@ class TestTakesCtx:
         guard.__annotations__['ctx'] = Optional[ForwardRef('RunContext[None]')]  # noqa: UP045
         assert takes_ctx(guard) is True
 
-    def test_an_unresolvable_forward_reference_keeps_the_context_with_a_warning(self):
+    def test_an_unresolvable_forward_reference_is_the_value(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         guard.__annotations__['ctx'] = Optional[ForwardRef('UndefinedAlias')]  # noqa: UP045
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
     def test_a_guard_taking_args_receives_the_context(self):
         """A wrapper written without `functools.wraps` passes `(ctx, value)` on, as it always has."""
@@ -2016,12 +2007,11 @@ class TestTakesCtx:
         guard.__annotations__['ctx'] = 'RunContext[UndefinedDeps]'
         assert takes_ctx(guard) is True
 
-    def test_an_unresolvable_annotation_keeps_the_context_with_a_warning(self):
+    def test_an_unresolvable_annotation_is_the_value(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
 
         guard.__annotations__['ctx'] = 'UndefinedAlias'
-        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
-            assert takes_ctx(guard) is True
+        assert takes_ctx(guard) is False
 
 
 class TestInputGuardrailOrdering:

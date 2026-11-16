@@ -11,10 +11,8 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import HistorySource
 from pydantic_ai_harness.conversation_search._toolset import (
-    SCOPE_DEFAULT_CHANGE_IMPACT,
     ConversationSearchToolset,
     SearchScope,
 )
@@ -93,7 +91,7 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     """Where the search corpus comes from. Use `SnapshotHistorySource` over the
     store a `StepPersistence` capability writes to."""
 
-    scope: SearchScope | None = None
+    scope: SearchScope = 'conversation'
     """How much of the store one search may reach.
 
     `conversation` restricts the corpus to runs whose `conversation_id` matches the
@@ -101,12 +99,6 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     so, rather than falling back to every other unlabelled run. `all` searches every
     run the source enumerates and must only be used when the store is already isolated
     to one principal.
-
-    `None` means the caller did not choose. It resolves to `conversation` and emits a
-    `HarnessDeprecationWarning` once per instance, because this default was `all` in
-    earlier releases and a store-wide caller would otherwise get a narrower corpus with no
-    error. Pass either value to silence it; neither is deprecated. The warning will be
-    removed in the next breaking release; the conversation-scoped default will remain.
     """
 
     tool_id: str = 'conversation-search'
@@ -138,16 +130,6 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     since their tool names are the same.
     """
 
-    def __post_init__(self) -> None:
-        if self.scope is None:
-            warn_default_changed(
-                owner='ConversationSearch',
-                option='scope',
-                old='all',
-                new='conversation',
-                impact=SCOPE_DEFAULT_CHANGE_IMPACT,
-            )
-
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one search stated twice; two that disagree raise rather than merge."""
@@ -155,8 +137,8 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
 
     @property
     def effective_scope(self) -> SearchScope:
-        """The scope actually applied: the caller's choice, or `conversation` when unset."""
-        return 'conversation' if self.scope is None else self.scope
+        """The scope applied; the same as `scope`."""
+        return self.scope
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the `search_conversation_history` tool over the source."""
@@ -177,7 +159,7 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
             context_lines=self.context_lines,
             bm25_k1=self.bm25_k1,
             bm25_b=self.bm25_b,
-            scope=self.effective_scope,
+            scope=self.scope,
         )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
@@ -188,6 +170,6 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
         """
         if not self.add_instructions:
             return None
-        if self.effective_scope == 'conversation':
+        if self.scope == 'conversation':
             return _CONVERSATION_INSTRUCTIONS
         return _ALL_INSTRUCTIONS

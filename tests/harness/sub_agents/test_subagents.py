@@ -27,7 +27,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
@@ -37,7 +36,6 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
@@ -68,7 +66,6 @@ async def test_workspace_free_temporal_delegate() -> None:
     toolset = SubAgentToolset[object](
         agents={'worker': SubAgent(Agent[object, str](TestModel(custom_output_text='worker'), name='worker'))},
         forward_usage=False,
-        inherit_tools=False,
         shared_capabilities=[],
         event_stream_handler=None,
         tool_name='delegate_task',
@@ -91,7 +88,6 @@ async def test_temporal_delegate_with_its_own_model_does_not_read_the_parent_mod
     toolset = SubAgentToolset[object](
         agents={'worker': SubAgent(Agent[object, str](TestModel(custom_output_text='worker'), name='worker'))},
         forward_usage=False,
-        inherit_tools=False,
         shared_capabilities=[],
         event_stream_handler=None,
         tool_name='delegate_task',
@@ -379,103 +375,6 @@ class TestDelegation:
         assert result.output == 'all done'
         assert captured['deps'] == 'PARENT'  # deps always forwarded
         assert captured['usage_is_parent'] is True  # usage shared by default
-
-    async def test_inherit_tools_exposes_parent_tools_but_not_delegate(self) -> None:
-        offered: list[str] = []
-
-        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if not offered:
-                offered.extend(tool.name for tool in info.function_tools)
-                # Call the inherited tool to prove it's actually usable, not just listed.
-                return ModelResponse(parts=[ToolCallPart('parent_tool', {}, tool_call_id='p1')])
-            return ModelResponse(parts=[TextPart('sub done')])
-
-        worker = Agent(FunctionModel(worker_fn), name='worker')
-        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
-            capability: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
-        parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), capabilities=[capability])
-
-        @parent.tool_plain
-        def parent_tool() -> str:
-            return 'PT'
-
-        result = await parent.run('go')
-        assert result.output == 'all done'
-        assert 'parent_tool' in offered  # the parent's tool is inherited by the sub-agent
-        assert 'delegate_task' not in offered  # the delegate tool is filtered out, so no recursion
-
-    async def test_directly_registered_toolset_still_filters_delegate_tool(self) -> None:
-        """`SubAgentToolset` used without the `SubAgents` capability must not recurse.
-
-        Registered directly in `Agent(toolsets=[...])` it is not wrapped in
-        `CapabilityOwnedToolset`, so only the name filter keeps `delegate_task`
-        out of inherited toolsets.
-        """
-        offered: list[str] = []
-
-        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            offered.extend(tool.name for tool in info.function_tools)
-            return ModelResponse(parts=[TextPart('sub done')])
-
-        worker = Agent(FunctionModel(worker_fn), name='worker')
-        toolset: SubAgentToolset[object] = SubAgentToolset(
-            agents={'worker': SubAgent(worker)},
-            forward_usage=True,
-            inherit_tools=True,
-            shared_capabilities=[],
-            event_stream_handler=None,
-            tool_name='delegate_task',
-            tool_retries=1,
-            contain_errors=False,
-            call_counts={},
-        )
-        parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), toolsets=[toolset])
-
-        @parent.tool_plain
-        def parent_tool() -> str:
-            return 'PT'  # pragma: no cover - listed but not called in this test
-
-        result = await parent.run('go')
-        assert result.output == 'all done'
-        assert 'parent_tool' in offered  # the parent's own tool is still inherited
-        assert 'delegate_task' not in offered  # the delegate tool is filtered by name
-
-    async def test_inherit_tools_excludes_capability_contributed_tools(self) -> None:
-        """Tools contributed by the parent's capabilities stay out of sub-agent runs.
-
-        They are bound to capability instances registered in the parent run; sharing
-        them is `shared_capabilities`' job (see the `_inherited_toolsets` docstring).
-        """
-
-        @dataclass
-        class _ToolCapability(AbstractCapability[object]):
-            def get_toolset(self) -> Any:
-                def cap_tool() -> str:
-                    return 'CT'  # pragma: no cover - never offered to the sub-agent
-
-                return FunctionToolset[object](tools=[cap_tool])
-
-        offered: list[str] = []
-
-        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            offered.extend(tool.name for tool in info.function_tools)
-            return ModelResponse(parts=[TextPart('sub done')])
-
-        worker = Agent(FunctionModel(worker_fn), name='worker')
-        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
-            capability: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
-        parent: Agent[object, str] = Agent(
-            _delegate_then_finish('worker'), capabilities=[capability, _ToolCapability()]
-        )
-
-        @parent.tool_plain
-        def parent_tool() -> str:
-            return 'PT'  # pragma: no cover - listed but not called in this test
-
-        result = await parent.run('go')
-        assert result.output == 'all done'
-        assert 'parent_tool' in offered
-        assert 'cap_tool' not in offered
 
     async def test_shared_capabilities_applied_to_subagent(self) -> None:
         cap: _RecordingCapability[object] = _RecordingCapability()
@@ -1058,10 +957,7 @@ class TestIncludeSelf:
                 return _delegate_to_self('subtask')
             return ModelResponse(parts=[ToolCallPart('parent_tool', {})])
 
-        # `inherit_tools=True` would register the parent's tools a second time on a delegate
-        # that already has them, which fails on the duplicate name; it does not apply to `self`.
-        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
-            capability: SubAgents[object] = SubAgents(include_self=True, inherit_tools=True)
+        capability: SubAgents[object] = SubAgents(include_self=True)
         agent: Agent[object, str] = Agent(capabilities=[capability])
 
         @agent.tool_plain
@@ -1108,7 +1004,6 @@ class TestIncludeSelf:
         toolset = SubAgentToolset[object](
             agents={'worker': SubAgent(worker)},
             forward_usage=True,
-            inherit_tools=False,
             shared_capabilities=(),
             event_stream_handler=None,
             tool_name='delegate_task',

@@ -182,12 +182,6 @@ the workspace, so there is no nested context to surface. Each directory in the
 chain must itself resolve inside the working directory, so a symlinked directory
 in the path can't surface an instruction file from outside it.
 
-`traversal_tool_names` and `traversal_path_arg` are deprecated. Setting either
-to a non-default value emits `HarnessDeprecationWarning` and keeps the old
-tool-name and argument sniffing path active for hosts that do not emit events.
-With the defaults, sniffing is disabled, so a `FileSystem` event cannot deliver
-the same note twice.
-
 ## Trust
 
 Walk-up files become part of the agent's instructions, so the model gives them
@@ -244,13 +238,9 @@ RepoContext(
     nested_traversal=True,          # Strategy 3
     nested_inject='contents',       # 'contents' | 'pointer'
     nested_max_chars=32_000,        # int | None -- cap on inlined nested contents per conversation
-    traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
-    traversal_path_arg='path',                                       # deprecated fallback
     asset_roots=('.claude', '.agents', '.codex', '.grok'),
 )
 ```
-
-`workspace_dir=` is deprecated and ignored: the working directory comes from the workspace.
 
 ## Scope
 

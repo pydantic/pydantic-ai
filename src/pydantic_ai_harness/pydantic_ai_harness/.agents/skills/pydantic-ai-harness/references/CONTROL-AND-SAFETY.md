@@ -82,12 +82,10 @@ validation/retry. `Coder` already includes it.
 A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
 when a second positional parameter is required, for `*args` with another parameter, or when the
 second has a default and the first is annotated `RunContext`; a first parameter with no annotation,
-`Any`, `object`, or an unresolvable type not naming `RunContext` still gets it, with a
-`HarnessDeprecationWarning`). It
+`Any`, `object`, or an unresolvable type not naming `RunContext` gets the value). It
 returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(message=None)`,
 `replace(value)`, `retry(message)`, `approve()`. Any other return value (a `'safe'` label, `None`, a
-`numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
-value); return `bool(...)` instead.
+`numpy.bool_`) raises `UserError`; return `bool(...)` instead.
 
 | Verdict | `InputGuardrail` | `OutputGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
 |---|---|---|---|---|
@@ -497,7 +495,7 @@ store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, 
 - Readings: `await limits.status(ctx_or_none, scope='acme')` returns `BudgetStatus` list (`spent`,
   `remaining_usd`, `warning`, `exhausted`); `await limits.exhausted(scope=...)` for an admission
   decision (raises if scoped budgets cannot be resolved; `status` leaves them out of its list).
-- Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
+- Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)`.
 - `expose_tools=True` adds a `get_spend` tool for the model.
 - `price=lambda response: Decimal(...) | None` prices models genai-prices does not know.
 
@@ -518,7 +516,7 @@ Gotchas:
   `BatchSpendStore`:
   `get_many(keys) -> Mapping[str, Spent]` (unknown keys read as zero) and `add_many(entries:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
-  applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
+  applied to its `key`, honour `ttl`), both async. Pass the
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
 - `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
   capability order; cached and `SkipModelRequest` responses aren't charged.
@@ -614,8 +612,8 @@ By default, enqueues reminders at the tail of each model request as a request-sc
 (`scope='request'`): the model sees each one only in the model request it's part of, and the next
 request, even the next step of the same run, no longer shows it. It's kept in message history, and
 it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
-(e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
-has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
+(e.g. `anthropic_cache`); its breakpoint lands before the reminder.
+With `interval>1` the model sees a reminder only on the requests where it fires, so
 text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
@@ -666,9 +664,8 @@ agent = Agent(
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
-- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
-  (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
-  gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
+- Observe with `ReminderFiredEvent`. Turn on caching on the model (such as `anthropic_cache`):
+  `SystemReminders` places no breakpoint of its own.
 - Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
   place them.
 - Not spec-serializable.

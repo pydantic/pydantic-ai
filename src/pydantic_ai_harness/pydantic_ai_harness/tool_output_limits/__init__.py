@@ -11,7 +11,6 @@ back on demand through the registered `read_tool_result` tool, or through `FileS
 protocol is the seam for any other backend.
 """
 
-from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -49,13 +48,3 @@ __all__ = [
     'indented_json',
     'json_lines',
 ]
-
-_RENAMED = {'LocalFileStore': LocalFileOverflowStore, 'WorkspaceStore': WorkspaceOverflowStore}
-
-
-def __getattr__(name: str) -> object:
-    renamed = _RENAMED.get(name)
-    if renamed is not None:
-        warn_class_renamed(name, renamed.__name__, __name__)
-        return renamed
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

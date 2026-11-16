@@ -6,7 +6,6 @@ import asyncio
 import dataclasses
 import re
 import time
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -75,7 +74,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai_harness import BackgroundTools, HarnessDeprecationWarning, Memory
+from pydantic_ai_harness import BackgroundTools, Memory
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
@@ -1110,19 +1109,8 @@ class TestCompaction:
         ],
     )
     def test_validation_summary_prompt_fields(self, summary_prompt: str | None):
-        with pytest.warns(
-            HarnessDeprecationWarning, match=r'`summary_prompt` must contain a `\{messages\}` placeholder'
-        ) as warned:
+        with pytest.raises(ValueError, match=r'`summary_prompt` must contain a `\{messages\}` placeholder'):
             SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)  # pyright: ignore[reportArgumentType]
-        assert warned[0].filename == __file__
-
-    def test_focusing_an_invalid_summary_prompt_does_not_warn_again(self):
-        with pytest.warns(HarnessDeprecationWarning):
-            comp = SummarizingCompaction(model='test', max_messages=10, summary_prompt='Summarize the conversation.')
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            focused = comp.with_focus('the deploy plan')
-        assert focused.summary_prompt == 'Summarize the conversation.\n\nGive particular weight to: the deploy plan'
 
     def test_summary_prompt_with_escaped_braces_is_accepted(self):
         comp = SummarizingCompaction(

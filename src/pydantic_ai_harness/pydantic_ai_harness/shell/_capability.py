@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import anyio
@@ -12,7 +11,6 @@ import anyio
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
 from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
@@ -62,12 +60,6 @@ class Shell(AbstractCapability[AgentDepsT]):
 
     `Shell` is not a security boundary: a command reaches whatever the workspace lets it,
     whatever `FileSystem`'s `root_dir` says. Isolate untrusted work with a sandbox workspace.
-    """
-
-    cwd: str | Path | None = None
-    """Deprecated and ignored: commands start in the workspace's working directory.
-
-    Set the working directory on the workspace instead, e.g. `LocalWorkspace('./repo')`.
     """
 
     allowed_commands: Sequence[str] = field(default_factory=list[str])
@@ -146,8 +138,6 @@ class Shell(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         """Resolve the built-in denylist according to the selected policy."""
-        if self.cwd is not None:
-            warn_argument_ignored('Shell', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
         if self.denied_commands is _DEFAULT_DENIED_COMMANDS:
             self.denied_commands = [] if self.allowed_commands else list(_DEFAULT_DENIED_COMMANDS)
 
