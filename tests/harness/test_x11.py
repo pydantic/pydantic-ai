@@ -36,7 +36,8 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.computer_use import Display, DisplayAction, SupportsZoom, UnsupportedActionError
 from pydantic_ai_harness.docker_container import DockerContainerBackend
 
-from .display_fakes import FAKE_SCREENSHOT
+from .display_contract_live import is_blank
+from .display_fakes import FAKE_SCREENSHOT, png
 
 pytestmark = pytest.mark.skipif(
     os.name != 'posix', reason='`DockerContainerBackend` runs `docker` as a POSIX subprocess'
@@ -392,3 +393,8 @@ async def test_concurrent_first_uses_start_one_display() -> None:
 async def test_x11_computer_refuses_an_unknown_action() -> None:
     with pytest.raises(UnsupportedActionError):
         await ScriptedDesktop().screen.act(object())  # pyright: ignore[reportArgumentType]
+
+
+def test_a_one_colour_screenshot_is_blank() -> None:
+    assert is_blank(png(4, 3))
+    assert not is_blank(png(4, 3, red_box=(1, 1, 2, 2)))

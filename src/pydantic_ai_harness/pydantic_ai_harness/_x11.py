@@ -227,7 +227,8 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
 
 def start_x_server(log: str) -> str:
-    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
+    """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless this machine's
+    X lock for the display names a running X server.
 
     It fails once the X server exits, or after 10 seconds, printing the end of `log`.
 
@@ -236,18 +237,19 @@ def start_x_server(log: str) -> str:
     `9>&-`.
     """
     return (
-        f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-        # A stale lock, such as one left by `docker stop`, stops Xvfb starting once its PID belongs to another process.
-        # A running X server's lock stays, whichever server it is, such as `Xvnc`.
-        f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
-        f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
+        # Decided from the X lock, not from an X server answering: in a shared network namespace, such as Docker's
+        # `--network host`, another X server on the same display answers through Linux's shared abstract socket.
+        # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
+        # A running X server's lock names it, whichever server it is, such as `Xvnc`.
+        f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
+        f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
         # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
         # running: the pointer goes back to the middle and held buttons are let go.
         # `-nolisten local` closes Linux's abstract socket, which a shared network namespace such as Docker's
         # `--network host` shares with every host user; the socket file in /tmp/.X11-unix stays for local commands.
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
-        + 'fi; '
+        + ';; esac; '
     )
 
 
@@ -257,7 +259,7 @@ def x11_display(
     script: str,
     where: Callable[[], str],
 ) -> LazyDisplay:
-    """A backend's display on an X server that `script` starts at the size `$1` names, unless one answers.
+    """A backend's display on an X server that `script` starts at the size `$1` names, unless one runs.
 
     `where` names the environment in errors.
     """

@@ -7,6 +7,7 @@ there, like the real one runs it in the container. Removing a container kills th
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -158,10 +159,12 @@ printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
 _FAKE_TINT2 = """#!/bin/sh
 bin=$(dirname "$0")
 echo started >> "$bin/panel-starts"
+if [ -e "$bin/panel-fails" ]; then echo 'tint2: could not open the config' >&2; exit 1; fi
 touch "$bin/panel-shows"
 exec sleep 1
 """
-"""Stands in for the panel: shows at once and stays running a while."""
+"""Stands in for the panel: shows at once and stays running a while, or exits without showing if `panel-fails`
+exists."""
 
 _FAKE_XWININFO = """#!/bin/sh
 bin=$(dirname "$0")
@@ -184,11 +187,13 @@ echo "$*" >> "$bin/xvfb-starts"
 if [ -e "$bin/xvfb-fails" ]; then echo 'Fatal server error: no screens found' >&2; exit 1; fi
 if [ -e "$FAKE_TMP/.X1-lock" ]; then echo 'Fatal server error: Server is already active for display 1' >&2; exit 1; fi
 echo "${4%x*}" > "$bin/screen-size"  # `-screen 0 WIDTHxHEIGHTx24`, for `xwininfo`, written before the display is up
+# Its lock, and the fake `/proc` entry the display start reads its owner from.
+printf '%10d\\n' $$ > "$FAKE_TMP/.X1-lock" && mkdir -p "$FAKE_TMP/proc/$$" && echo Xvfb > "$FAKE_TMP/proc/$$/comm"
 rm -f "$bin/no-display"
 exec sleep 2
 """
-"""Stands in for an X server: brings the fake display up and stays running a while, or fails if `xvfb-fails` or a
-lock for its display exists.
+"""Stands in for an X server: takes the display's lock, brings the fake display up and stays running a while, or fails
+if `xvfb-fails` or a lock for its display exists.
 
 Also keeps a host's real Xvfb from starting.
 """
@@ -250,8 +255,11 @@ class FakeDocker:
         (self.bin_dir / 'fail-builds').touch()
 
     def remove_display(self, *, can_start: bool = True) -> None:
-        """Take the display down; `Xvfb` brings it back unless `can_start` is false."""
+        """Take the display down, leaving a stale lock in each container; `Xvfb` brings it back unless `can_start` is
+        false."""
         (self.bin_dir / 'no-display').touch()
+        for proc in (self.bin_dir / 'containers').glob('*.tmp/proc'):
+            shutil.rmtree(proc)
         if not can_start:
             (self.bin_dir / 'xvfb-fails').touch()
 
@@ -270,6 +278,9 @@ class FakeDocker:
     def panel_starts(self) -> int:
         path = self.bin_dir / 'panel-starts'
         return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def fail_panel(self) -> None:
+        (self.bin_dir / 'panel-fails').touch()
 
     def close_panel(self) -> None:
         (self.bin_dir / 'panel-shows').unlink()
