@@ -623,7 +623,7 @@ class TestSubAgentsTaskControl:
         ('hold', 'handled', 'expected'),
         [
             (SkipToolExecution('Resuming is off.'), False, 'Resuming is off.'),
-            (ApprovalRequired(), False, 'Resuming needs approval. To resume task'),
+            (ApprovalRequired(), False, "needs approval. Call `delegate_task` with `agent_name='researcher'`"),
             (ApprovalRequired(), True, 'was not resumed: Not now.'),
         ],
     )
@@ -662,7 +662,11 @@ class TestSubAgentsTaskControl:
         assert expected in result.output
         assert not recorder.of(TaskResumedEvent)
 
-    async def test_a_resume_by_message_finds_a_prefixed_delegate_tool(self) -> None:
+    @pytest.mark.parametrize('tool_name', ['delegate_task', 'task'])
+    @pytest.mark.parametrize('prefix', ['', 'ns_'])
+    async def test_a_resume_by_message_finds_the_delegate_tool_by_its_exposed_name(
+        self, tool_name: str, prefix: str
+    ) -> None:
         seen: list[int] = []
 
         def respond(messages: list[ModelMessage]) -> ModelResponse:
@@ -670,11 +674,12 @@ class TestSubAgentsTaskControl:
             return text(f'answer {len(seen)}')
 
         def follow_up(messages: list[ModelMessage]) -> ModelResponse:
-            return call('ns_message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+            return call(f'{prefix}message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
 
+        sub_agents = controlled(researcher(Agent(scripted(respond, respond))), tool_name=tool_name)
         parent = Agent(
-            scripted(call('ns_delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
-            capabilities=[PrefixTools(wrapped=controlled(researcher(Agent(scripted(respond, respond)))), prefix='ns')],
+            scripted(call(f'{prefix}{tool_name}', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[PrefixTools(wrapped=sub_agents, prefix=prefix[:-1]) if prefix else sub_agents],
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
