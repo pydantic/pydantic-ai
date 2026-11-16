@@ -8,7 +8,8 @@ from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import field
+from copy import copy
+from dataclasses import field, replace
 from datetime import datetime
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
@@ -970,6 +971,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         await dispatch_event_immediate(self, event)
         return event
 
+    def _attributed_to(self, capability: AbstractCapability[RunContextAgentDepsT]) -> RunContext[RunContextAgentDepsT]:
+        """This context as `capability`'s own, so what it enqueues is held to the capability's authority.
+
+        For code a capability runs outside its hooks, such as its `for_run` or a `DynamicCapability` factory.
+        """
+        if type(self) is RunContext:
+            ctx = copy(self)
+            ctx._capability = capability
+            return ctx
+        # Subclasses can rely on reconstruction, e.g. TemporalRunContext's field availability guards.
+        return replace(self, _capability=capability)
+
     def _calling_capability_id(self) -> str | None:
         """The run id of the capability whose hook or tool is using this context, or `None` outside one."""
         capability = self._capability
@@ -1011,8 +1024,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         like a framework frame, which a capability part should say instead. Nothing it enqueues gets more authority than
         the capability's [`authority`][pydantic_ai.capabilities.AbstractCapability] ceiling: a part whose source has more
         is stored with the capability as its source, a `SystemPromptPart` below `'operator'` becomes an instruction part
-        lowered to the ceiling, and user content or a `UserPromptPart` at `'none'` becomes data framed as the
-        capability's.
+        lowered to the ceiling, user content, a `UserPromptPart` or retry feedback at `'none'` becomes data framed as the
+        capability's, and retry feedback at `'user'` becomes plain user text. Below `'operator'`, a request part with no such treatment, such as a framework state record, a
+        `CompactionPart` or a typed tool return, raises `UserError`, as does a `SpeechPart` at `'none'`.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -1070,15 +1084,21 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # is the application's, as `emit` treats their events.
         if owner is not None and owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
             capability_id = None
+        elif owner is not None and capability_id is None:
+            # A capability with no `id` of its own before the run has registered it, such as in its `for_run`: still
+            # held to its authority, and named by its class.
+            capability_id = type(owner).__name__
+        # Read before stamping, which converts what a capability below operator authority built by hand.
+        hand_built = None if capability_id is None else hand_built_capability_speech(pending.messages)
         if capability_id is not None:
             ceiling: _messages.Authority = 'operator' if owner is None else owner._effective_authority  # pyright: ignore[reportPrivateUsage]
             # Stamped before it's queued: once queued, a run on another thread may deliver it at once, and it must
             # never reach the model with more authority than the capability has.
-            stamp_capability_parts(pending.messages, capability_id, ceiling)
+            pending.messages = stamp_capability_parts(pending.messages, capability_id, ceiling)
         self.pending_messages.append(pending)
-        if capability_id is not None and (reason := hand_built_capability_speech(pending.messages)):
+        if hand_built is not None:
             warnings.warn(
-                f'Capability {capability_id!r} enqueued {reason}. Define a `CapabilityPart` subclass for what it '
+                f'Capability {capability_id!r} enqueued {hand_built}. Define a `CapabilityPart` subclass for what it '
                 'says, so the framework renders it in the right voice and your code can find it again by type: '
                 'see https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts',
                 UserWarning,

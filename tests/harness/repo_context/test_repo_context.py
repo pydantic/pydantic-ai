@@ -39,7 +39,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SummarizingCompaction
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import (
     AgentContextInventory,
     ContextFile,

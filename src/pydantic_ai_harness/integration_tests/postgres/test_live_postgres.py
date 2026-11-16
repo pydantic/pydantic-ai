@@ -80,7 +80,7 @@ from pydantic_ai_harness.media import (
     parse_media_uri,
 )
 from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
-from pydantic_ai_harness.spend import PostgresSpendStore, SpendEntry, Spent
+from pydantic_ai_harness.spend_limits import PostgresSpendStore, SpendEntry, Spent
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     PostgresStepStore,

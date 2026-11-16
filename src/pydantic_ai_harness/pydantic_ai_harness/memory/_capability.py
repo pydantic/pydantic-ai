@@ -34,8 +34,8 @@ from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness._workspace import secondary_workspace
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
-from pydantic_ai_harness.memory._file import FileStore
-from pydantic_ai_harness.memory._in_memory import InMemoryStore
+from pydantic_ai_harness.memory._file import FileMemoryStore
+from pydantic_ai_harness.memory._in_memory import InMemoryMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
@@ -83,7 +83,7 @@ class MemorySnapshotPart(DataCapabilityPart[str], namespace='memory', name='snap
     """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
 
     Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<memory>` frame, never in the
-    application's voice, with a note saying who wrote it: the agent, or, for a `FileStore` whose `MEMORY.md` is below
+    application's voice, with a note saying who wrote it: the agent, or, for a `FileMemoryStore` whose `MEMORY.md` is below
     `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of], that file's author. It goes in as stored:
     text in it that looks like a framework frame, or opens or closes `<memory>`, gets a note naming that author, not
     the application. Find snapshots in history by this type.
@@ -106,17 +106,17 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     A snapshot of `MEMORY.md` is recorded in the conversation as user-role data,
     once per run in which it changed, and longer topic files are available
-    through `read_memory` and `search_memory`. When a `FileStore` keeps the
+    through `read_memory` and `search_memory`. When a `FileMemoryStore` keeps the
     files in the run's workspace, `read_memory` steps aside for `FileSystem`'s
     `read_file`, and the snapshot gives the directory. Automatic snapshot
     loading is journaled by durability engines that support capability
     operations.
     """
 
-    store: MemoryStore = field(default_factory=InMemoryStore)
+    store: MemoryStore = field(default_factory=InMemoryMemoryStore)
     """Storage backend. The default persists only for the process lifetime.
 
-    `FileStore` keeps Markdown files in the run's workspace, or in a workspace of its own."""
+    `FileMemoryStore` keeps Markdown files in the run's workspace, or in a workspace of its own."""
 
     store_resolver: Callable[[RunContext[AgentDepsT]], MemoryStore] | None = None
     """Optional per-run store resolver. Resolver failures always propagate."""
@@ -223,11 +223,11 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone._run_started = False
         clone._run_continues = False
         store, scope = clone._resolve_scope(ctx)
-        clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
+        clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileMemoryStore) else store, scope)
         return clone
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Note what the run starts from, and fail it when a `FileStore` has no workspace to keep its files in.
+        """Note what the run starts from, and fail it when a `FileMemoryStore` has no workspace to keep its files in.
 
         Read here rather than in `for_run`, which a durable engine also calls to rebuild the capability inside an
         activity, where the run's prompt and history aren't carried.
@@ -241,20 +241,20 @@ class Memory(AbstractCapability[AgentDepsT]):
         self._run_snapshot = _latest_snapshot(ctx.messages, metadata)
         # Put back with the source it was recorded with, read from history rather than the store, without I/O.
         self._run_source = _latest_snapshot_source(ctx.messages, metadata)
-        if isinstance(store, FileStore) and store.workspace is None and not ctx.workspace.attached:
+        if isinstance(store, FileMemoryStore) and store.workspace is None and not ctx.workspace.attached:
             raise UserError(
-                "`Memory(store=FileStore(...))` keeps memory files in the run's workspace, but none is attached "
+                "`Memory(store=FileMemoryStore(...))` keeps memory files in the run's workspace, but none is attached "
                 "to this run. Attach one, such as `LocalWorkspace('.')`, or pass "
-                '`FileStore(..., workspace=LocalWorkspaceBackend(...))` to keep them somewhere else.'
+                '`FileMemoryStore(..., workspace=LocalWorkspaceBackend(...))` to keep them somewhere else.'
             )
 
     def resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         """Return the cached run scope, or resolve one for direct toolset use.
 
-        A `FileStore` without a workspace of its own is bound to `ctx.workspace`.
+        A `FileMemoryStore` without a workspace of its own is bound to `ctx.workspace`.
         """
         store, scope = self._resolved_scope if self._resolved_scope is not None else self._resolve_scope(ctx)
-        return (store.bind(ctx.workspace) if isinstance(store, FileStore) else store), scope
+        return (store.bind(ctx.workspace) if isinstance(store, FileMemoryStore) else store), scope
 
     def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         store = self.store_resolver(ctx) if self.store_resolver is not None else self.store
@@ -536,9 +536,9 @@ class Memory(AbstractCapability[AgentDepsT]):
             raise ValueError('database is only valid with backend="sqlite"')
 
         if backend == 'memory':
-            store: MemoryStore = InMemoryStore()
+            store: MemoryStore = InMemoryMemoryStore()
         elif backend == 'file':
-            store = FileStore(directory)
+            store = FileMemoryStore(directory)
         elif backend == 'sqlite':
             store = SqliteMemoryStore(database=database)
         else:
@@ -571,14 +571,14 @@ class Memory(AbstractCapability[AgentDepsT]):
 async def _store_source(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str) -> CapabilityPartSource:
     """Who wrote the store's snapshot: the agent in an earlier run, unless the store's files could be someone else's.
 
-    A `FileStore` whose `MEMORY.md` is below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of],
+    A `FileMemoryStore` whose `MEMORY.md` is below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of],
     such as one in a repository the operator doesn't control, can hold text the agent never wrote, so the snapshot
     is attributed to that file's author instead. Either way it's data with no authority.
     """
-    if not isinstance(store, FileStore):
+    if not isinstance(store, FileMemoryStore):
         return _MEMORY_SOURCE
-    # The store's own `workspace=`, or else the run's, as `FileStore` reads its files.
-    workspace = secondary_workspace(store.workspace, 'FileStore') or ctx.workspace
+    # The store's own `workspace=`, or else the run's, as `FileMemoryStore` reads its files.
+    workspace = secondary_workspace(store.workspace, 'FileMemoryStore') or ctx.workspace
     source = await WorkspaceSource.from_workspace(workspace, posixpath.join(store.directory, scope, MAIN_FILENAME))
     return _MEMORY_SOURCE if source.authority == 'operator' else source
 
