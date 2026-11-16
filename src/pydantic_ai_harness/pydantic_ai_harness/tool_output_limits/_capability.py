@@ -29,11 +29,11 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._models import is_request_response_model
-from pydantic_ai_harness._typeguards import is_mapping, is_object_list
+from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
-from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
+from pydantic_ai_harness.file_system import READ_FILE_KIND
+from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -52,7 +52,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         from pydantic_ai import Agent
         from pydantic_ai_harness.tool_output_limits import (
             Band,
-            LocalFileStore,
+            LocalFileOverflowStore,
             ToolOutputLimits,
             Spill,
             Summarize,
@@ -160,7 +160,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                         Band(over=20_000, action=Summarize()),
                         Band(over=5_000, action=Truncate()),
                     ],
-                    store=LocalFileStore(),
+                    store=LocalFileOverflowStore(),
                 )
             ],
         )
@@ -182,12 +182,12 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     tokenizer: Callable[[str], int] | None = None
     """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
 
-    store: OverflowStore | WorkspaceStore | None = None
+    store: OverflowStore | WorkspaceOverflowStore | None = None
     """Backend for spilled payloads.
 
-    Defaults to a `WorkspaceStore` in the run's workspace. When the bands can spill and no store
+    Defaults to a `WorkspaceOverflowStore` in the run's workspace. When the bands can spill and no store
     has a workspace to write to, the run fails at its start: attach a workspace, or pass
-    `store=LocalFileStore()` to keep spills on this machine.
+    `store=LocalFileOverflowStore()` to keep spills on this machine.
     """
 
     strip_ansi: bool = False
@@ -208,13 +208,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
     id: str | None = 'tool_output_limits'
 
-    _store: OverflowStore | WorkspaceStore = field(init=False, repr=False)
+    _store: OverflowStore | WorkspaceOverflowStore = field(init=False, repr=False)
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._store = self.store if self.store is not None else WorkspaceStore()
+        self._store = self.store if self.store is not None else WorkspaceOverflowStore()
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
 
@@ -250,14 +250,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when a band can spill but no store has a workspace to write to."""
         store = self._store
         if (
-            isinstance(store, WorkspaceStore)
+            isinstance(store, WorkspaceOverflowStore)
             and store.workspace is None
             and not ctx.workspace.attached
             and any(_spills(band.action) for bands in (self._bands, *self._per_tool.values()) for band in bands)
         ):
             raise UserError(
                 "`ToolOutputLimits` spills oversized tool output to the run's workspace, but none is attached "
-                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileStore()` "
+                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileOverflowStore()` "
                 'to keep spills on this machine.'
             )
 
@@ -265,14 +265,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def _spills_to_run_workspace(self) -> bool:
         """Whether spills are files in the run's workspace, which the run's file tools can read.
 
-        Known from configuration: the default `WorkspaceStore` without a `workspace` of its own.
+        Known from configuration: the default `WorkspaceOverflowStore` without a `workspace` of its own.
         """
         store = self._store
-        return isinstance(store, WorkspaceStore) and store.workspace is None
+        return isinstance(store, WorkspaceOverflowStore) and store.workspace is None
 
     def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
         store = self._store
-        return store.bind(ctx.workspace) if isinstance(store, WorkspaceStore) else store
+        return store.bind(ctx.workspace) if isinstance(store, WorkspaceOverflowStore) else store
 
     # --- toolset ---
 
@@ -754,19 +754,46 @@ def _with_handles(
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
-) -> dict[str, object]:
-    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
-    base: dict[str, object] = {}
-    if is_mapping(existing):
-        base.update({str(key): existing[key] for key in existing})
-    elif existing is not None:
-        base['original_metadata'] = existing
+) -> object:
+    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens).
+
+    A list or tuple stays a list, with the handles appended as one dict item: that is the
+    shape the AG-UI and Vercel AI adapters read UI events and chunks from, and both skip
+    items that are not events, so wrapping it in a dict would silently drop them. A single
+    event or chunk becomes a one item list for the same reason.
+    """
+    handles: dict[str, object] = {}
     if value_handle is not None:
-        base['overflow_handle'] = value_handle
-        base['overflow_bytes'] = value_bytes
+        handles['overflow_handle'] = value_handle
+        handles['overflow_bytes'] = value_bytes
     if content_handle is not None:
-        base['overflow_content_handle'] = content_handle
-    return base
+        handles['overflow_content_handle'] = content_handle
+
+    if is_mapping(existing):
+        return {**{str(key): existing[key] for key in existing}, **handles}
+    if is_object_list_or_tuple(existing):
+        return [*existing, handles]
+    if _is_ui_event(existing):
+        return [existing, handles]
+    if existing is not None:
+        return {'original_metadata': existing, **handles}
+    return handles
+
+
+def _is_ui_event(value: object) -> bool:
+    """Whether `value` is a single AG-UI event or Vercel AI data chunk the UI adapters pass through."""
+    try:
+        from ag_ui.core import BaseEvent
+    except ImportError:
+        pass
+    else:
+        if isinstance(value, BaseEvent):
+            return True
+    try:
+        from pydantic_ai.ui.vercel_ai._utils import DATA_CHUNK_TYPES
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(value, DATA_CHUNK_TYPES)
 
 
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:

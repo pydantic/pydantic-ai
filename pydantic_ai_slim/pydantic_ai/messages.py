@@ -4866,6 +4866,23 @@ ModelResponsePart = Annotated[
 """A message part returned by a model."""
 
 
+def is_retry(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[ToolReturnPart | RetryFeedbackPart]:
+    """Check whether a message part is a retry Pydantic AI sent the model.
+
+    A retry that answers a tool call is that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]
+    with `outcome='retried'`, and one that answers no tool call is a
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. Together they are what the deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] used to record, and a stored history loads in this
+    shape too, so use `is_retry(part)` where code used to check `isinstance(part, RetryPromptPart)`. A
+    `RetryPromptPart` your own code still constructs isn't matched.
+
+    A tool call that failed (`outcome='failed'`) isn't a retry. To find every tool call that reached the model
+    as an error, check a [`BaseToolReturnPart`][pydantic_ai.messages.BaseToolReturnPart]'s `outcome` against
+    [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES] instead.
+    """
+    return isinstance(part, RetryFeedbackPart) or (isinstance(part, ToolReturnPart) and part.outcome == 'retried')
+
+
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceRef:
     """Serializable identity of a [workspace](../workspace.md) environment, without credentials.
@@ -4990,7 +5007,9 @@ class ModelResponse:
     when that differs from `provider_name`, such as `'openai'` for an `openai-codex` response. It's always set
     when the provider's canonical system depends on its client: the `google` and `google-cloud` providers each serve
     both the Gemini API (`'google'`) and Google Cloud (`'google-cloud'`), and `OpenAIProvider` serves OpenAI
-    (`'openai'`) or, with an `AsyncAzureOpenAI` client, Azure (`'azure'`). It applies to the parts whose `provider_name` is this response's.
+    (`'openai'`) or, with an `AsyncAzureOpenAI` client, Azure (`'azure'`). Bedrock Converse also sets `'bedrock'` on a
+    response from a model with OpenAI's encrypted reasoning, like GPT-5.6, which Claude models on Bedrock would
+    otherwise accept by name. It applies to the parts whose `provider_name` is this response's.
     Models read it to decide whether they can send that data, such as encrypted reasoning and thinking signatures,
     back to their own provider: see
     [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].
@@ -5657,7 +5676,15 @@ def _repair_dangling_tool_calls(
     the other pipeline passes — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as the
     mechanism for inspecting what was synthesized.
     """
-    dangling_by_response = _dangling_tool_calls_to_repair(messages, repair_last_response=repair_last_response)
+    return _close_out_dangling_tool_calls(
+        messages, _dangling_tool_calls_to_repair(messages, repair_last_response=repair_last_response)
+    )
+
+
+def _close_out_dangling_tool_calls(
+    messages: list[ModelMessage], dangling_by_response: dict[int, list[ToolCallPart]]
+) -> list[ModelMessage]:
+    """Give each call in `dangling_by_response` a synthesized return, placed as `_repair_dangling_tool_calls` describes."""
     if not dangling_by_response:
         return messages
 

@@ -658,7 +658,7 @@ class ModelAPIError(AgentRunError):
     """The provider's machine-readable error code, if it sent one.
 
     For example `'rate_limit_exceeded'` or `'context_length_exceeded'` (OpenAI), `'ThrottlingException'` (Bedrock),
-    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3051'` (Mistral).
+    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3059'` (Mistral).
     """
 
     provider_error_type: str | None
@@ -836,8 +836,8 @@ class ModelTimeoutError(ModelConnectionError):
 class ModelRequestRejectedError(ModelAPIError):
     """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
 
-    For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
-    subclasses say why, where the provider does:
+    For example an HTTP 400, 413 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies.
+    Its subclasses say why, where the provider does:
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
     [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
     [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
