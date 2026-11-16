@@ -7,7 +7,6 @@ without I/O, which no provider request exercises.
 from __future__ import annotations
 
 import inspect
-from typing import Any
 
 import pytest
 
@@ -18,7 +17,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import AuthorityWorkspace
 
-CAPABILITIES: dict[str, dict[str, Any]] = {
+CAPABILITIES: dict[str, dict[str, str]] = {
     'BoxdSandbox': {},
     'BoxLiteSandbox': {},
     'DaytonaSandbox': {},
