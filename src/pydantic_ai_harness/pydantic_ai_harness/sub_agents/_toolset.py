@@ -1144,12 +1144,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """
         owner = self._owner()
         record = self._visible(ctx, owner, task_id)
-        if record.status != 'running':
-            return await self._resume_by_message(ctx, record, message)
         if record.parent_id != DelegationTasks.child_id():
             raise ModelRetry(f'Task {task_id} is steered by the task that started it, {record.parent_id}, not you.')
         if ctx.in_durable_context:
             raise ModelRetry(f'Task {task_id} runs in a durable unit of its own, which messages cannot reach.')
+        if record.status != 'running':
+            return await self._resume_by_message(ctx, record, message)
         event = await self._announce(
             ctx, owner, record, TaskSteeredEvent(task_id=task_id, agent_name=record.agent_name, message=message)
         )
