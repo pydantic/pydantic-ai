@@ -1654,6 +1654,11 @@ def fireworks_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def deepinfra_api_key() -> str:
+    return os.getenv('DEEPINFRA_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def meta_api_key() -> str:
     return os.getenv('META_API_KEY', 'mock-api-key')
 
