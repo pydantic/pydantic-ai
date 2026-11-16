@@ -508,8 +508,7 @@ conversation from `message_history`, in a new workflow or flow, works in the
 and [Render Workflows](harness/render-workflows.md). There, the `FileSystem` write tools run in the
 orchestrator or parent task, so file-change requests reach listeners live. On Azure, events from the
 other tools are dropped, and listeners run in orchestrator code, so they re-run on every replay and
-can't do I/O; on Render, those events are
-carried back to the run.
+can't do I/O; on Render, those events are carried back to the run.
 
 | Feature | Temporal | DBOS | Prefect |
 |---|---|---|---|
