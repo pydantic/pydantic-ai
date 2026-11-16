@@ -498,10 +498,11 @@ budget, and a spec cannot express one. `SpendLimits(budgets=(),
 store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, ...)`.
 
 - Readings: `await limits.status(ctx_or_none, scope='acme')` returns `BudgetStatus` list (`spent`,
-  `usd_limit`/`token_limit` holding the resolved ceilings, `remaining_usd`, `warning`, `exhausted`; read
-  those rather than `status.budget.usd`, which is the callable for a resolved ceiling); `await limits.exhausted(scope=...)` for an admission
-  decision (raises if a scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status`
-  leaves them out of its list).
+  `usd_limit`/`token_limit` holding the resolved ceilings, `remaining_usd`, `warning`, `exhausted`;
+  read those rather than `status.budget.usd`, which holds the callable itself when the ceiling is
+  given as a callable); `await limits.exhausted(scope=...)` for an admission decision (raises if a
+  scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status` leaves them out of
+  its list).
 - Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
 - `expose_tools=True` adds a `get_spend` tool for the model.
 - `price=lambda response: Decimal(...) | None` prices models genai-prices does not know.
