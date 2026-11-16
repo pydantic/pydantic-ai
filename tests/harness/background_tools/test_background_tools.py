@@ -2134,7 +2134,7 @@ class TestTelemetry:
         await agent.run('go')
 
         attributes = _span(exporter, 'background_tools execute broken').attributes or {}
-        assert attributes['pydantic_ai.tool.retry.cause'] == 'model_retry'
+        assert attributes['background_tools.retry_cause'] == 'model_retry'
         # A background retry is charged on delivery, after this span ends.
         assert 'pydantic_ai.tool.retry.attempt' not in attributes
 
@@ -2162,7 +2162,7 @@ class TestTelemetry:
         await agent.run('go')
 
         attributes = _span(exporter, 'background_tools execute lookup').attributes or {}
-        assert (attributes['background_tools.outcome'], attributes['pydantic_ai.tool.retry.cause']) == (
+        assert (attributes['background_tools.outcome'], attributes['background_tools.retry_cause']) == (
             'retried',
             cause,
         )

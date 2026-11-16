@@ -180,7 +180,7 @@ async def _execute_traced(
             span.set_attribute('background_tools.outcome', outcome)
             if outcome == 'retried' and (cause := _retry_cause(error)) is not None:
                 # Core's attribute, as its `execute_tool` span records a foreground retry.
-                span.set_attribute('pydantic_ai.tool.retry.cause', cause)
+                span.set_attribute('background_tools.retry_cause', cause)
             if outcome == 'error' and not isinstance(error, Exception):
                 # `open_span` marks only an `Exception` as an error. The type alone, as the message can quote content.
                 span.set_status(StatusCode.ERROR, type(error).__name__)
