@@ -197,7 +197,7 @@ def _check_compact_on_request(merged: Any) -> None:
     assert merged.max_per_run == 2
 
 
-def _check_prune_tool_results(merged: Any) -> None:
+def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
     assert merged.placeholder == '[second]'
 
 
