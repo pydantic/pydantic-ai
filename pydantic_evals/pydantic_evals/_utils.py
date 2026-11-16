@@ -5,12 +5,14 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager, suppress
+from datetime import timedelta
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 import logfire_api
+from pydantic import TypeAdapter
 from typing_extensions import ParamSpec, TypeIs
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
@@ -50,6 +52,19 @@ def is_set(t_or_unset: T | Unset) -> TypeIs[T]:
         True if the value is not UNSET, narrowing the type to T in a type-aware way.
     """
     return t_or_unset is not UNSET
+
+
+_DURATION_ADAPTER = TypeAdapter(float | timedelta)
+
+
+def decode_duration(value: timedelta | float | str) -> timedelta:
+    """Decode a `timedelta`, a number of seconds, or an ISO-8601 duration string like `'PT5S'`.
+
+    Serialized datasets store `timedelta` durations as ISO-8601 strings, and spec loading passes them through
+    unvalidated, so duration fields can hold any of these forms.
+    """
+    decoded = _DURATION_ADAPTER.validate_python(value)
+    return decoded if isinstance(decoded, timedelta) else timedelta(seconds=decoded)
 
 
 def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
@@ -105,7 +120,12 @@ _R = TypeVar('_R')
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        with warnings.catch_warnings():
+            # With no current loop in the main thread, Python 3.12 and 3.13 create one and warn that this will
+            # change; 3.14 raises `RuntimeError` instead, handled below. Either way, the loop handling here stays
+            # the same.
+            warnings.simplefilter('ignore', DeprecationWarning)
+            event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 
@@ -141,8 +161,10 @@ def run_until_complete(coro: Awaitable[T]) -> T:
     If the caller interrupts `loop.run_until_complete()` (e.g. by pressing Ctrl-C, raising
     `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
     `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
-    *our own* task and drive its cleanup to completion before re-raising, without touching any
-    other tasks on the (caller-owned) loop.
+    the task driving `coro` and drive its cleanup to completion before re-raising, without touching
+    any other tasks on the (caller-owned) loop. An `asyncio.Task` or `asyncio.Future` passed in is
+    that task, so a drive that fails before it completes, such as one attempted inside an already
+    running event loop, cancels it.
     """
     loop = get_event_loop()
     task = asyncio.ensure_future(coro, loop=loop)

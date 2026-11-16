@@ -445,7 +445,7 @@ pre {
   font-weight: 600;
 }
 
-/* A branch or project, and a short ID when titles repeat: muted, so the title still leads. */
+/* A branch or project, an imported session's agent, and a short ID when titles repeat: muted, so the title still leads. */
 .session-chip {
   flex: none;
   max-width: 40%;
@@ -1594,6 +1594,21 @@ pre {
   padding: 6px 8px 8px 10px;
 }
 
+/* The session composer's bar wraps when it is narrow, as beside a side panel, so its actions move to a second line
+   instead of overflowing the composer. */
+.composer-bar.wraps {
+  flex-wrap: wrap;
+}
+
+/* The turn meter or hint and the send buttons, kept on one line and to the right. */
+.composer-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .hint {
   margin-left: auto;
   color: var(--faint);
@@ -1636,6 +1651,7 @@ pre {
 
 .send {
   display: grid;
+  flex: none;
   place-items: center;
   width: 32px;
   height: 32px;
@@ -2118,10 +2134,10 @@ pre {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-left: auto;
   color: var(--muted);
   font: 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .meter-time {

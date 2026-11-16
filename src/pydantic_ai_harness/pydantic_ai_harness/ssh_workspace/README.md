@@ -6,7 +6,27 @@ Run your agent's commands and file edits on another machine over SSH, using your
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SSHWorkspace's get_workspace hook gives the run a remote host as ctx.workspace, so each command and file operation opens an SSH connection with your own ssh client, logs in with a key in BatchMode, and runs on the host as the login user; output comes back to the tool. The WorkspaceRef names the host and directory. A ref from the message history for the same host and directory reattaches; a ref for any other host or directory raises ValueError.](https://pydantic.dev/docs/ai/img/harness/ssh-workspace.svg)
+```mermaid
+flowchart TB
+    accTitle: SSH Workspace: your agent's commands run on another machine over SSH
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. As their ctx.workspace, SSHWorkspace uses your ssh client with key login only to open a new SSH connection to host dev@build-box for each operation, run as the login user. A WorkspaceRef in the message history for the same host and directory reattaches, and any other ref raises ValueError.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history"]
+        ssh["SSHWorkspace()<br/>your ssh client,<br/>key login only"]:::capability
+    end
+    host["host dev@build-box<br/>runs as the login user"]:::external
+    other["ref for any other<br/>host or directory"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| ssh
+    ref -.->|"same host and<br/>directory: reattaches"| ssh
+    ssh <-->|"a new SSH connection<br/>for each operation"| host
+    ssh -.-x|"raises ValueError"| other
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install
 
@@ -37,7 +57,7 @@ agent = Agent(
 result = agent.run_sync('Run the test suite and fix the first failure.')
 ```
 
-`Coder`'s shell and file tools now run on `build-box`, as the user you log in as, with that user's full authority on the host. To confine the commands, wrap the capability in [`BubblewrapSandbox`](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/).
+`Coder`'s shell and file tools now run on `build-box`, as the user you log in as, with that user's full authority on the host. To confine the commands, wrap the capability in [`BubblewrappedWorkspace`](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/).
 
 `working_dir` defaults to the login directory, and a relative one starts there. The directory must already exist. Commands get the remote login environment plus `env=`. For a single run, pass `workspace=SSHWorkspaceBackend('dev@build-box')` to `agent.run` instead.
 

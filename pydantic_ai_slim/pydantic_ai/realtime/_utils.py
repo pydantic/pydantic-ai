@@ -7,11 +7,12 @@ import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, assert_never, overload
+from typing import TYPE_CHECKING, Literal, assert_never, overload
 
 import anyio
 
-from .._capability_parts import render_capability_parts
+from .. import _model_errors
+from .._capability_parts import render_capability_parts_for_live_channel
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
@@ -23,6 +24,7 @@ from ..messages import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -38,10 +40,14 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     ModelRequestParameters,
     _drop_superseded_request_scoped_prompts,  # pyright: ignore[reportPrivateUsage]
+    _project_instruction_state,  # pyright: ignore[reportPrivateUsage]
+    _render_append_blocks,  # pyright: ignore[reportPrivateUsage]
+    _render_system_prompt_contexts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
@@ -51,6 +57,9 @@ from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import TextContext
 from .settings import ReconnectPolicy
+
+if TYPE_CHECKING:
+    from websockets.exceptions import InvalidStatus
 
 
 def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
@@ -68,11 +77,45 @@ def session_instructions(messages: Sequence[ModelMessage], model_request_paramet
     The standing system prompt the first request opens with comes first, then the resolved
     instructions, the order a standard run's providers send them in. `ModelRequest.instructions`
     recorded in `messages` are never read: only `model_request_parameters.instruction_parts` count.
+
+    Both are rendered as a standard model renders them: append-mode blocks and appending dynamic system
+    prompts as tagged `<pyai:context>` elements, so the changes a session delivers later can name them.
     """
-    blocks = [part.content for part in _standing_system_prompt(messages) if part.content]
-    if instructions := get_instructions(messages, model_request_parameters):
+    standing = _standing_system_prompt(messages)
+    if any(part.context_id is not None for part in standing):
+        (opening,) = _render_system_prompt_contexts(
+            [ModelRequest(parts=[*standing])],
+            inline_system=True,
+            prefix_states_rule=bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
+        )
+        standing = [part for part in opening.parts if isinstance(part, SystemPromptPart)]
+    blocks = [part.content for part in standing if part.content]
+    if instructions := get_instructions(messages, _render_append_blocks(model_request_parameters)):
         blocks.append(instructions)
     return '\n\n'.join(blocks)
+
+
+def render_instruction_change(
+    history: Sequence[ModelMessage],
+    request: ModelRequest,
+    *,
+    prefix: Sequence[InstructionPart],
+    inline_system: bool,
+) -> str:
+    """The text a realtime session delivers a recorded instruction change as, rendered as a standard model renders it.
+
+    `request` records the change (instruction deltas, or statements of appending dynamic system prompts) after
+    `history`, and `prefix` are the instruction parts the session was opened with. Rendered the same every time, so
+    a reconnect replays exactly what was sent.
+    """
+    messages = _project_instruction_state([*history, request], inline_system=inline_system, prefix=None)
+    messages = _render_system_prompt_contexts(
+        messages,
+        inline_system=inline_system,
+        prefix_states_rule=bool(_tagged_append_parts(prefix)),
+    )
+    rendered = messages[-1]
+    return '\n\n'.join(part.content for part in rendered.parts if isinstance(part, SystemPromptPart) and part.content)
 
 
 def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -87,9 +130,11 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     # Counted on the history as authored, as `prepare_messages` does: dropping a leading request-scoped
     # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
-    messages = render_capability_parts(list(messages))
+    messages = render_capability_parts_for_live_channel(list(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
-    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count, sealed=False)
+    return _wrap_non_leading_system_prompts(
+        messages, standing_prompt_count=standing_prompt_count, sealed=False, keep_request_scoped=False
+    )
 
 
 def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) -> Sequence[ModelMessage]:
@@ -173,6 +218,15 @@ class SystemPromptContext(TextContext):
     system_prompt: str
 
 
+@dataclass
+class InstructionChangeContext(SystemPromptContext):
+    """A change to the session's instructions, added as context on the operator's channel without asking for a response.
+
+    Delivered as any other `SystemPromptContext`, except by a connection whose instructions go somewhere other than the
+    conversation, such as GPT-Live's delegation backend.
+    """
+
+
 DEFAULT_MAX_RECONNECTS = 50
 """The `ReconnectPolicy.max_reconnects` default."""
 
@@ -191,6 +245,13 @@ async def reconnect_with_backoff(
         if await attempt():
             return True
     return False
+
+
+def read_rejected_upgrade(error: InvalidStatus) -> tuple[str, dict[str, str]]:
+    """The body, or the reason phrase when it has none, and the headers of a rejected WebSocket upgrade's response."""
+    response = error.response
+    body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+    return body, _model_errors.joined_headers(response.headers)
 
 
 def inject_trace_context(headers: MutableMapping[str, str]) -> None:

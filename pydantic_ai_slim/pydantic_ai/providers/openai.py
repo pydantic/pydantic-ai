@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
@@ -162,7 +163,13 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.
                 openai_supports_batch_api=True,
+                # Measured live on Chat Completions and Responses: a tool call with no result, or a result naming no
+                # call, fails the request with a 400 (https://github.com/pydantic/pydantic-ai/issues/13404). Set here
+                # rather than in `openai_model_profile`, which OpenAI-compatible endpoints share without being
+                # verified to reject it.
+                rejects_unpaired_tool_calls=True,
             ),
+            special_token_route_profile('openai', model_name),
         )
 
     @staticmethod

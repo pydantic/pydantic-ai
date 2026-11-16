@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -38,10 +38,11 @@ from pydantic_ai.messages import (
     ToolCallPart,
     UserPromptPart,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai_harness.browser_use import (
     BrowserAgentSettings,
     BrowserUse,
@@ -158,6 +159,38 @@ class TestPydanticAIChatModel:
         assert usage.completion_tokens > 0
         assert usage.total_tokens == usage.prompt_tokens + usage.completion_tokens
         assert usage.prompt_cached_tokens is None
+
+    async def test_completion_usage_includes_rejected_fallback_attempts(self) -> None:
+        """A response a `FallbackModel` rejected was billed, so browser-use's cost tracking needs its tokens too.
+
+        An attempt that raised reported no usage and adds nothing.
+        """
+
+        def reject(response: ModelResponse) -> bool:
+            return response.text == 'no'
+
+        def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('failing', 'unavailable')
+
+        def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('no')], usage=RequestUsage(input_tokens=100, output_tokens=10))
+
+        def accepted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=7, output_tokens=3))
+
+        model = PydanticAIChatModel(
+            FallbackModel(
+                FunctionModel(failing),
+                FunctionModel(rejected),
+                FunctionModel(accepted),
+                fallback_on=[ModelAPIError, reject],
+            )
+        )
+        result = await model.ainvoke([UserMessage(content='hello')])
+
+        assert result.completion == 'ok'
+        assert result.usage is not None
+        assert (result.usage.prompt_tokens, result.usage.completion_tokens) == (107, 13)
 
     async def test_structured_completion(self) -> None:
         model = PydanticAIChatModel(TestModel())

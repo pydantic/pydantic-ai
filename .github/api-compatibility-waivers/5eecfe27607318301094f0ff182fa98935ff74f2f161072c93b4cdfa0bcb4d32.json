@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Removes clai2-internal `pydantic_clai2.runtime.project_instructions.ORIGIN`: project instructions are found in history by their `ProjectInstructionsPart` type instead of a `metadata` origin. It only served clai2's own runtime.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11935"
+}

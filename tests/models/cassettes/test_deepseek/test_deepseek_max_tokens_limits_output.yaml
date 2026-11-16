@@ -1,0 +1,69 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "176"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-v4-flash
+        stream: false
+        messages:
+        - role: user
+          content: Write a 150-word story about a lighthouse keeper.
+        max_tokens: 8
+        reasoning_effort: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - >-
+        accept-encoding,origin, access-control-request-method,
+        access-control-request-headers
+    body:
+      type: json
+      content:
+        id: fb9d9afe-386b-4d96-99df-bec7d845a36c
+        object: chat.completion
+        created: 1793743868
+        model: deepseek-flash
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "Every night, old Elias climbed the "
+          logprobs: null
+          finish_reason: length
+        usage:
+          prompt_tokens: 15
+          completion_tokens: 8
+          total_tokens: 23
+          prompt_tokens_details:
+            cached_tokens: 0
+          prompt_cache_hit_tokens: 0
+          prompt_cache_miss_tokens: 15
+        system_fingerprint: bc19ba97cbe016479903222bb1578db6
+  recorded_at: 2026-11-03T22:11:09.066467+00:00

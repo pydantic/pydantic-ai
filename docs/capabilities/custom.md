@@ -236,29 +236,32 @@ result = agent.run_sync('hello')
 
 ```python {title="custom_capability_config.py"}
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import InstructionPart
 
 
 @dataclass
-class KnowsCurrentTime(AbstractCapability[Any]):
-    """Tells the agent what time it is."""
+class KnowsCurrentDate(AbstractCapability[Any]):
+    """Tells the agent what day it is."""
 
     def get_instructions(self):
-        def _get_time(ctx: RunContext[Any]) -> str:
-            return f'The current date and time is {datetime.now().isoformat()}.'
+        def _get_date(ctx: RunContext[Any]) -> InstructionPart:
+            return InstructionPart(f"Today's date is {date.today()}.", name='date', on_change='append')  # (1)!
 
-        return _get_time
+        return _get_date
 
 
-agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentTime()])
-result = agent.run_sync('What time is it?')
+agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentDate(id='current_date')])
+result = agent.run_sync("What is today's date?")
 print(result.output)
-#> The current time is 3:45 PM.
+#> Today is January 2, 2032.
 ```
+
+1. The date changes between runs of a conversation. With `on_change='append'`, a new date is added to the history instead of rewriting the instructions, so the provider can keep reusing the conversation it cached; see [Instructions that change during a conversation](#instructions-that-change-during-a-conversation). The capability needs an `id` for this. Text that changes on every request, such as the current time down to the second, belongs in the user prompt or a tool instead.
 
 Instructions can also use [template strings](../agent-spec.md#template-strings) ([`TemplateStr('Hello {{name}}')`][pydantic_ai.template.TemplateStr]) for Handlebars-style templates rendered against the agent's [dependencies](../dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
 
@@ -407,7 +410,7 @@ The class arguments declare the part's kind and, for a data kind, how its conten
 | Argument | What it does |
 |---|---|
 | `namespace`, `name` | Make up the part's [`kind`][pydantic_ai.messages.CapabilityPart.kind], `namespace.name`, which identifies it when history is stored and loaded. `name` defaults to the class name in snake_case without a `Part` suffix, and subclasses inherit the namespace. Both are lowercase snake_case, and a kind can be defined only once. |
-| `tag` | Data kinds only, and required there. The lowercase snake_case tag a data part's content goes in. Prefer an existing tag that says what the content *is*, such as `tool_result`. System-voice tags such as `system` and `context`, and names ending in `_diff`, are refused. |
+| `tag` | Data kinds only, and required there. The lowercase snake_case tag a data part's content goes in. Prefer an existing tag that says what the content *is*, such as `tool_result`. System-voice tags such as `system`, names ending in `_diff`, and the reserved `pyai:` prefix are refused. |
 | `attributes` | Data kinds only. The typed fields whose values go on the tag as attributes, in that order: strings or integers, left off when `None`. Keep them to identity and outcome, such as whose output it is. |
 | `note` | Data kinds only. A fixed sentence in the application's voice that goes with each data part, naming its frame with `{frame}`, which renders as the tag, such as `<review_feedback>`. Name the frame, never its position: providers order system and user content their own way. |
 
@@ -429,10 +432,11 @@ Every part has a [`source`][pydantic_ai.messages.CapabilityPart.source], which s
 | Source | Authority |
 |---|---|
 | [`OperatorSource()`][pydantic_ai.messages.OperatorSource]: your code or your configuration wrote it | `'operator'` |
-| [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks whether the operator controls its files; there's no other way to build one | `'operator'` when the operator controls the workspace's files, which the workspace reports (#11836), and `'none'` otherwise; until workspaces report it, every workspace counts as the operator's |
+| [`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace]: read from a file in a workspace, which it asks for the authority of its files; there's no other way to build one | The workspace's [`authority`][pydantic_ai.workspaces.Workspace.authority]: `'operator'` unless an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it, such as to `'user'` for the user's uploads or `'none'` for a cloned third-party repository |
 | [`UserSource()`][pydantic_ai.messages.UserSource]: the user wrote it, such as a prompt they saved earlier | `'user'` |
 | [`ToolResultSource(tool_name=...)`][pydantic_ai.messages.ToolResultSource]: a tool's output | `'none'` |
 | [`ModelSource(author)`][pydantic_ai.messages.ModelSource]: a model wrote it, such as a judge or a sub-agent, which `author` names | `'none'` |
+| [`CapabilitySource(capability_id, authority=...)`][pydantic_ai.messages.CapabilitySource]: stored by `ctx.enqueue` in place of a source with more authority than the capability's ceiling (below) | The capability's ceiling |
 
 A part reaches the model with the lower of its source's authority and the authority its kind asks for: an instruction kind asks for `'operator'`, a data kind for `'none'`. A source with less authority than the kind asks for downgrades the part rather than being refused:
 
@@ -442,7 +446,13 @@ A part reaches the model with the lower of its source's authority and the author
 
 A note qualifies the content and never vouches for it: a data kind's own `note` is followed by who wrote the content whenever that isn't the operator.
 
-An instruction part's content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace]. A type checker rejects any other string. Text read from a workspace the operator doesn't control carries that workspace's source, so a part built from it is downgraded whatever source you give it. Enqueueing a part that would put something that looks like a framework frame (such as a `<system>` tag) in the application's voice raises a [`UserError`][pydantic_ai.exceptions.UserError]; a capability with fixed text in the application's voice checks it when it's set up.
+An instruction part's content is a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText]: text your code builds from its own values, your configuration, or a file read with [`OperatorText.from_workspace`][pydantic_ai.messages.OperatorText.from_workspace]. A type checker rejects any other string. Text read from a workspace the operator doesn't control carries that workspace's source, so a part built from it is downgraded whatever source you give it. Only the `OperatorText` that `from_workspace` returned carries it: `OperatorText(text.strip())` is a new claim that the operator wrote the text, so to change the text, also pass `await WorkspaceSource.from_workspace(workspace, path)` as the part's source. Enqueueing a part that would put something that looks like a framework frame (such as a `<system>` tag) in the application's voice raises a [`UserError`][pydantic_ai.exceptions.UserError]; a capability with fixed text in the application's voice checks it when it's set up.
+
+A capability can cap the authority of everything it enqueues with its [`authority`][pydantic_ai.capabilities.AbstractCapability] attribute, `'operator'` by default. `ctx.enqueue` stores a part whose source has more authority than that with a `CapabilitySource` naming the capability and the ceiling instead, so the history says who wrote it and with how much authority. It only ever lowers: with `authority='user'`, what the capability says goes in the user's turn, labelled as attached on the user's behalf, and with `authority='none'` it's framed as data whose note names the capability. Set it on a capability whose mid-conversation content you don't fully control, such as one loaded from a plugin: a subclass of the reviewer above that sets `authority = 'none'`. The ceiling covers what the capability sends mid-conversation, as described below. It doesn't cap the capability's instructions, its tool names and descriptions, or its tools' return values, which reach the model as the application configured them: review or leave those out yourself, and for an MCP server you don't trust, also pass `include_instructions=False`. To lower one instance rather than a whole class, call [`with_authority()`][pydantic_ai.capabilities.AbstractCapability.with_authority], which returns a lowered copy: with two instances of the reviewer above in one agent, one of them lowered with `.with_authority('none')`, only what that one enqueues is framed as data. It only lowers too, so `with_authority('operator')` on a capability whose class sets `'none'` leaves it at `'none'`. The ceiling covers everything the capability enqueues, not just its capability parts: a `SystemPromptPart` from a capability below `'operator'` goes out as an instruction part lowered to the ceiling, and user content or a `UserPromptPart` from a capability at `'none'` goes out as data in a `<capability_content>` frame whose note names the capability. Retry feedback, which would otherwise say the application's validation failed, goes out as the capability's own text: plain user text at `'user'`, and data at `'none'`. Nothing it enqueues reaches the model as the application's or the user's words, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice. A plain `ToolReturnPart` is tool output whoever sends it, so it's kept as it is. Any other request part from a capability below `'operator'` raises `UserError` in `ctx.enqueue`: the framework's own records of the run's state, such as an `InstructionDeltaPart`, which the model reads in the application's voice, a `CompactionPart`, which stands in for the history before it, and a typed tool return such as a tool search result, which the framework acts on. So does a `SpeechPart` from a capability at `'none'`, since it reads as the user's own turn, a `ModelResponse` from a capability below `'operator'`, since the model reads it as its own, and a `ModelRequest` with `instructions`, which the model reads in the application's voice. The same ceiling covers the [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content] of a tool the capability contributes: from a capability at `'none'`, it goes out as `<capability_content>` data rather than as user text.
+
+A downgraded instruction part with `scope='request'` still applies to its own request only: Pydantic AI leaves it out of later requests. It's on the user channel, which no provider clears, so it goes last in its request, and the cache breakpoints Pydantic AI places on the message history go ahead of it. That leaves the conversation before it cached, even for a capability that sends one on every step.
+
+A capability's `authority` is the most its content can carry. For a workspace capability, such as [`LocalWorkspace(authority=...)`](../workspace.md#workspace-authority), it's also the default authority of the workspace's files. A file another capability reads through a workspace carries the workspace's level for that file, capped again by the reader's own `authority`.
 
 Text in a part's content that looks like a framework frame, or like the part's own tag, gets a note in the application's voice naming who wrote it: the tool, the model, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
 
@@ -494,7 +504,7 @@ Tag names are lowercase snake_case. `register_tag` raises a [`UserError`][pydant
 `register_tag` is the low-level primitive: an API that declares a tag for you is expected to call it when its class or module is defined, which is just as import-time and deterministic.
 
 !!! warning "Register tags before the first request"
-    A tag registered after requests have been sent changes how later requests escape text. Framing is applied each time a request is built, so earlier history that contains the new tag goes out with different bytes than before, and misses the provider's [prompt cache](caching.md). `register_tag` emits a `UserWarning` when it adds a tag after text has already been escaped.
+    Registration is process-wide and applies to every later [`wrap`][pydantic_ai.framing.wrap] and [`neutralize_tags`][pydantic_ai.framing.neutralize_tags] call, whichever code makes it. A tag registered after requests have been sent changes how later requests escape text. Framing is applied each time a request is built, so earlier history that contains the new tag goes out with different bytes than before, and misses the provider's [prompt cache](caching.md).
 
 Like Pydantic AI's own framing, a tag tells the model where content came from; it doesn't prove it. See [the trust boundary](../message-history.md#trust-boundary-for-client-supplied-history).
 
@@ -1013,7 +1023,11 @@ All tool hooks receive a `tool_def` parameter with the [`ToolDefinition`][pydant
 
 To skip validation and provide pre-validated args, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `wrap_tool_validate`.
 
-A tool call can only be [deferred](../deferred-tools.md) once its arguments have been validated, since whoever resolves the deferral is shown those arguments. [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can therefore be raised from `after_tool_validate`, and from `wrap_tool_validate` once its `handler()` has returned; raising one from `before_tool_validate`, from `wrap_tool_validate` before it calls `handler()`, or from `on_tool_validate_error` (which only runs because validation failed) raises a [`UserError`][pydantic_ai.exceptions.UserError] naming the hook. A permitted deferral behaves exactly like one from a tool's [`args_validator`](../tools-advanced.md#args-validator): the tool isn't executed, the retry budget is untouched, and the call joins the run's [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests].
+A tool call can only be [deferred](../deferred-tools.md) once its arguments have been validated, so a call with invalid arguments is retried instead of reaching whoever resolves the deferral. [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can therefore be raised from `after_tool_validate`, and from `wrap_tool_validate` once its `handler()` has returned; raising one from `before_tool_validate`, from `wrap_tool_validate` before it calls `handler()`, or from `on_tool_validate_error` (which only runs because validation failed) raises a [`UserError`][pydantic_ai.exceptions.UserError] naming the hook. A permitted deferral behaves exactly like one from a tool's [`args_validator`](../tools-advanced.md#args-validator): the tool isn't executed, the retry budget is untouched, and the call joins the run's [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests].
+
+An [external tool](../deferred-tools.md#external-tool-execution) is executed outside the run, which therefore can't approve its calls, so raising `ApprovalRequired` while validating one is a [`UserError`][pydantic_ai.exceptions.UserError]. Raise `CallDeferred` instead, with any `metadata` the code that executes the call needs to approve it.
+
+Whoever resolves the deferral is shown the arguments as the model sent them, not as a validation hook rewrote them. If they approve the call, the validation hooks run again and the tool runs with the rewritten arguments. [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval) shows where to change arguments instead.
 
 `after_tool_validate` stays a reliable gate when the tool's `args_validator` defers: the deferral is held while the gate runs, so rejecting there (with `ModelRetry` or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]) wins, deferring there replaces the held deferral, and the args it returns are the ones the deferred call carries. A deferral raised by `wrap_tool_validate` after its handler returns happens after this gate has already run, so the gate cannot reject or replace that wrapper deferral.
 
@@ -1301,6 +1315,8 @@ An operation can also be called from a tool the capability contributes. Where th
 A `prepare_model_request`, `after_model_request` or `on_model_request_error` hook that runs as a durable operation can still raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to ask for another attempt. The model to attempt has to be named by a string, such as a model registered with the durability capability's `models`, since a model instance can't cross the durable boundary.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
+
+Temporal and DBOS match a recorded operation by its position in the workflow history, but Prefect identifies a recorded task by its arguments. An operation whose arguments are measured in flow code, such as a duration, a timestamp, or a random value, gets different arguments on a flow retry, so Prefect runs it again instead of returning the recorded result. Where running twice matters, pass arguments that stay the same across retries, measuring a changing value inside the operation where you can. See [Durable capability operations](../durable_execution/prefect.md#durable-capability-operations) on the Prefect page.
 
 Keep a capability's `id` stable once runs that use it are deployed, including the default `id` of one you did not write: Harness capabilities that record their tool requests, such as [`ExaSearch`](../harness/exa-search.md), name those records after their `id`.
 

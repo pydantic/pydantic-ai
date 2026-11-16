@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -47,20 +48,30 @@ from pydantic_ai._instrumentation import (
     include_content_ctx,
     model_request_parameters_attributes,
     open_request_policy,
+    serialize_any,
     span_include_content,
 )
-from pydantic_ai.capabilities import Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
-from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart, UploadedFile
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import (
+    DataCapabilityPart,
+    InstructionCapabilityPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OperatorSource,
+    OperatorText,
+    ToolResultSource,
+    UploadedFile,
+)
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, FileSearchTool, MCPServerTool
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import Tool, ToolDefinition
 
@@ -103,6 +114,9 @@ SECRETS = {
     'model_text': 'SENTINEL-model-text',
     'provider_error_body': 'SENTINEL-provider-error-body',
     'prompted_output_template': 'SENTINEL-prompted-output-template',
+    'capability_instruction': 'SENTINEL-capability-instruction',
+    'capability_data': 'SENTINEL-capability-data',
+    'capability_description': 'SENTINEL-capability-description',
 }
 
 
@@ -177,7 +191,9 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
         native_tools=[
             tool,
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     serialized = model_request_parameters_attributes(parameters, include_content=include_content)[
@@ -195,7 +211,7 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
     assert native_tool['allowed_tools'] == ['search']
     assert exported['function_tools'][0]['metadata'] == {'source': 'user'}
     assert exported['native_tools'][1]['files'][0]['file_id'] == 'file-123'
-    assert exported['native_tools'][2]['instructions'] == 'search only these files'
+    assert exported['native_tools'][2]['provider_settings']['xai']['instructions'] == 'search only these files'
     assert tool.authorization_token == 'SENTINEL-token'
     response = ModelResponse(parts=[NativeToolCallPart(tool_name='mcp_server:docs', tool_call_id='call-1')])
     settings, exporter = redacted_setup(include_content)
@@ -213,7 +229,9 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
         ],
         native_tools=[
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     expected = TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
@@ -222,7 +240,32 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
     assert json.loads(serialized) == expected
     assert expected['function_tools'][0]['metadata'] == {'x': 1}
     assert expected['native_tools'][0]['files'][0]['file_id'] == 'file-123'
-    assert expected['native_tools'][1]['instructions'] == 'search only these files'
+    assert expected['native_tools'][1]['provider_settings']['xai']['instructions'] == 'search only these files'
+
+
+@pytest.mark.usefixtures('restore_native_tool_types')
+def test_request_telemetry_serializes_a_native_tool_type_defined_after_the_first_request() -> None:
+    """A native tool type defined after the first request serializes through the parameters' schema."""
+    model_request_parameters_attributes(ModelRequestParameters(native_tools=[CodeExecutionTool()]))
+
+    @dataclass(kw_only=True)
+    class WidgetTool(AbstractNativeTool):
+        kind: str = 'widget'
+        size: int = 0
+
+    parameters = ModelRequestParameters(native_tools=[WidgetTool(size=3)])
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized) == TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
+
+
+@pytest.mark.usefixtures('native_tool_type_without_schema')
+def test_request_telemetry_serializes_by_inference_beside_a_native_tool_type_without_a_schema() -> None:
+    """A registered native tool type pydantic can't build a schema for leaves the parameters serializing by inference."""
+    parameters = ModelRequestParameters(native_tools=[CodeExecutionTool()])
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized) == serialize_any(parameters)
 
 
 def test_native_mcp_redaction_survives_serializer_fallback() -> None:
@@ -836,6 +879,23 @@ async def test_no_content_reaches_telemetry_on_a_successful_run(include_content:
 
 
 @pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_deferred_capability_catalog(include_content: bool) -> None:
+    """A deferred capability's description, in the catalog instructions and in the request parameters' catalog."""
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    capability = Capability[object](
+        id='secret', description=lambda: SECRETS['capability_description'], defer_loading=True
+    )
+    agent = Agent(FunctionModel(respond), capabilities=[capability, Instrumentation(settings=settings)])
+    await agent.run(SECRETS['user_prompt'])
+
+    check(exporter, include_content, {'user_prompt', 'model_text', 'capability_description'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_from_message_history(include_content: bool) -> None:
     """Messages the caller carried in from an earlier run."""
     settings, exporter = redacted_setup(include_content)
@@ -851,6 +911,51 @@ async def test_no_content_reaches_telemetry_from_message_history(include_content
     await agent.run(SECRETS['user_prompt'], message_history=history)
 
     check(exporter, include_content, {'user_prompt', 'message_history', 'model_text'})
+
+
+@dataclass(kw_only=True)
+class _RedactedNudgePart(InstructionCapabilityPart, namespace='test_redaction', name='nudge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _RedactedPagePart(DataCapabilityPart, namespace='test_redaction', name='page', tag='fetched_page'):
+    pass
+
+
+@dataclass
+class _CapabilityPartReporter(AbstractCapability[object]):
+    """Enqueues an operator-voice part, which renders on the system role, and a data part framed on the user channel.
+
+    The run it's in makes one request.
+    """
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(
+            _RedactedNudgePart(content=OperatorText(SECRETS['capability_instruction']), source=OperatorSource()),
+            _RedactedPagePart(content=SECRETS['capability_data'], source=ToolResultSource(tool_name='fetch')),
+        )
+        return request_context
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_capability_parts(include_content: bool) -> None:
+    """What a capability enqueues, on the system role in the application's voice and framed on the user channel."""
+    settings, exporter = redacted_setup(include_content)
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[_CapabilityPartReporter(), Instrumentation(settings=settings)])
+    await agent.run(SECRETS['user_prompt'])
+    # Both parts have to have reached the model, or their sentinels prove nothing.
+    assert SECRETS['capability_instruction'] in str(received) and SECRETS['capability_data'] in str(received)
+
+    check(exporter, include_content, {'user_prompt', 'capability_instruction', 'capability_data', 'model_text'})
 
 
 @pytest.mark.parametrize('include_content', [True, False])

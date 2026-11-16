@@ -73,12 +73,15 @@ Please don't spend effort chasing green CI, addressing every automated review co
 
 Do not force-push updates to an open PR. Rewriting its commits invalidates previous reviews; push follow-up commits instead. We will squash them when merging.
 
-### Automated review is advisory, not a gate
+### Automated review
 
-PRs are automatically reviewed by Devin and our own tooling. These reviews are advisory:
+PRs also receive automated reviews. They add to a maintainer's review; they don't replace it:
 
-- A bot approval does not mean your PR is ready to merge. Only a human maintainer's review counts.
-- A bot finding does not mean you must act on it. If you disagree, say so.
+- When a maintainer requests it, douwebot checks a PR against the repository's guidelines and looks for bugs it can find by reading the code. It doesn't run your code. A PR labeled `size: M` or larger needs a douwebot approval with no findings on its latest commit before it can merge.
+- pydanty runs code to review a PR, when a maintainer requests it.
+- Other bots' comments are advisory.
+- A bot approval does not mean your PR is ready to merge. A maintainer still reviews it.
+- A bot finding is not the final word. If you disagree, reply on its thread, and a maintainer will decide.
 - If automated review is generating noise on your PR, tell us. We use that feedback to retune the tooling.
 
 ### Priority
@@ -146,7 +149,11 @@ everything that transitively imports them, but its fallbacks below can check nea
 prefer targeted runs while iterating. It records what passed under your git directory, so the record
 is per-worktree and never committed. CI runs the same target, and there it checks everything:
 GitHub Actions always sets `CI`, and on seeing it `make typecheck-changed` narrows nothing and hands
-the whole project to `make typecheck-pyright`.
+the whole project to `make typecheck-pyright`. On a pull request, CI first runs that target with
+[pyright-rs](https://github.com/dsfaccini/pyright-rs), a Rust port of Pyright's command-line check,
+and runs Pyright whenever pyright-rs fails, cannot be installed, or ports a Pyright version other
+than the one `uv.lock` pins. The `PYRIGHT` variable names the command the target runs, so
+`make typecheck-pyright PYRIGHT=path/to/pyright-rs` repeats that check locally.
 
 Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
 that did not itself change since the run it recorded. Tests are two thirds of the project's lines

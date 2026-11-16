@@ -17,13 +17,16 @@ from aws_durable_execution_sdk_python import (
     durable_execution,  # pyright: ignore[reportUnknownVariableType]
 )
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
-from aws_durable_execution_sdk_python.exceptions import ExecutionError
+from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
+from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
+from opentelemetry.sdk.metrics.export import ExponentialHistogramDataPoint, HistogramDataPoint
 
 from pydantic_ai import Agent, RunContext, RunUsage
 from pydantic_ai._run_context import get_current_run_context
-from pydantic_ai.capabilities import AbstractCapability, ModelFallback, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ModelFallback, durable_operation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -392,7 +395,10 @@ class TestToolResultSerialization:
     def test_fake_records_result_serialization_failure(self) -> None:
         ctx = FakeDurableContext()
 
-        with pytest.raises(ExecutionError, match='Serialization failed for id: operation'):
+        # SDK 1.x wraps the failure in `ExecutionError`; SDK 2.0+ raises `SerDesError`.
+        with pytest.raises(
+            (ExecutionError, SerDesError), match=r'Serialization failed for id: operation|Unsupported type'
+        ):
             ctx.step(lambda _: object(), name='non-serializable')
 
         assert len(ctx.failed) == 1
@@ -1651,3 +1657,151 @@ class TestReplayFidelity:
         with pytest.raises(RuntimeError, match='permanent'):
             run_durable(lambda: agent.run('go'), context=resumed)
         assert resumed.invoked == []
+
+
+def _span_names(capfire: CaptureLogfire) -> list[str]:
+    return [span['name'] for span in capfire.exporter.exported_spans_as_dict()]
+
+
+def _token_usage_points(capfire: CaptureLogfire) -> int:
+    """How many requests recorded `gen_ai.client.token.usage` since the last collection."""
+    data = capfire.metrics_reader.get_metrics_data()
+    if data is None:
+        return 0  # Nothing was recorded at all.
+    points = [
+        point
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+        if metric.name == 'gen_ai.client.token.usage'
+        for point in metric.data.data_points
+        if isinstance(point, HistogramDataPoint | ExponentialHistogramDataPoint)
+    ]
+    return sum(point.count for point in points) // 2  # One input and one output point each.
+
+
+def _instrumented_agent(tool: Any) -> Agent[Any, Any]:
+    agent = Agent(tool_then_text(), name='a', capabilities=[AWSLambdaDurability(), Instrumentation()])
+    tool.__name__ = 'act'
+    agent.tool_plain(tool)
+    return agent
+
+
+class TestReplayTelemetry:
+    """A resumed execution replays completed steps; their telemetry was recorded when they ran."""
+
+    def test_a_fully_replayed_run_emits_no_spans_or_metrics(self, capfire: CaptureLogfire) -> None:
+        agent = _instrumented_agent(act)
+        first = FakeDurableContext()
+        run_durable(lambda: agent.run('go'), context=first)
+        assert _span_names(capfire) == snapshot(
+            ['chat function:model_fn:', 'execute_tool act', 'chat function:model_fn:', 'invoke_agent a']
+        )
+        assert _token_usage_points(capfire) == 2
+        capfire.exporter.clear()
+
+        resumed = FakeDurableContext(journal=first.operations)
+        result = run_durable(lambda: agent.run('go'), context=resumed)
+
+        assert result.output == 'done'
+        assert _span_names(capfire) == []
+        assert _token_usage_points(capfire) == 0
+
+    def test_a_partly_replayed_run_emits_only_the_work_that_ran(self, capfire: CaptureLogfire) -> None:
+        agent = _instrumented_agent(act)
+        first = FakeDurableContext()
+        run_durable(lambda: agent.run('go'), context=first)
+        _token_usage_points(capfire)
+        capfire.exporter.clear()
+
+        # Only the first model request completed before the interruption.
+        resumed = FakeDurableContext(journal=first.operations[:1])
+        run_durable(lambda: agent.run('go'), context=resumed)
+
+        assert resumed.invoked == ['a__function_toolset__<agent>.call_tool:act', 'a__model.request']
+        assert _span_names(capfire) == snapshot(['execute_tool act', 'chat function:model_fn:', 'invoke_agent a'])
+        assert _token_usage_points(capfire) == 1
+
+    def test_a_step_that_ran_before_a_suspension_is_live_work(self, capfire: CaptureLogfire) -> None:
+        """A failed attempt that ends the invocation to wait for its retry still ran."""
+
+        class Suspend(BaseException):
+            pass
+
+        class RetryLaterContext(FakeDurableContext):
+            def step(self, func, name=None, config=None):  # type: ignore[no-untyped-def]
+                if name is not None and 'call_tool' in name:
+                    with suppress(RuntimeError):
+                        func(None)
+                    raise Suspend('retry scheduled')
+                return super().step(func, name=name, config=config)
+
+        def flaky() -> str:
+            raise RuntimeError('503')
+
+        agent = _instrumented_agent(flaky)
+        first = FakeDurableContext()
+        with pytest.raises(RuntimeError):
+            run_durable(lambda: agent.run('go'), context=first)
+        capfire.exporter.clear()
+
+        resumed = RetryLaterContext(journal=first.operations[:1])
+        with pytest.raises(Suspend):
+            run_durable(lambda: agent.run('go'), context=resumed)
+
+        # The model request was replayed; the attempt ran, so it and its run are reported.
+        assert _span_names(capfire) == snapshot(['execute_tool act', 'invoke_agent a'])
+
+    def test_a_replayed_fallback_emits_no_attempt_spans(self, capfire: CaptureLogfire) -> None:
+        """The failed attempt before a fallback was recorded when it ran."""
+
+        def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('primary', 'unavailable')
+
+        agent = Agent(
+            FunctionModel(primary, model_name='primary'),
+            name='a',
+            capabilities=[
+                ModelFallback('backup'),
+                AWSLambdaDurability(
+                    models={'backup': FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('ok')]))}
+                ),
+                Instrumentation(),
+            ],
+        )
+        first = FakeDurableContext()
+        run_durable(lambda: agent.run('go'), context=first)
+        assert any(name.startswith('model request attempt') for name in _span_names(capfire))
+        capfire.exporter.clear()
+
+        result = run_durable(lambda: agent.run('go'), context=FakeDurableContext(journal=first.operations))
+
+        assert result.output == 'ok'
+        assert _span_names(capfire) == []
+
+    def test_parallel_tools_are_told_apart(self, capfire: CaptureLogfire) -> None:
+        """A tool that runs on every invocation keeps its span while a replayed sibling's is dropped."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('durable', {}), ToolCallPart('live', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), name='a', capabilities=[AWSLambdaDurability(), Instrumentation()])
+
+        @agent.tool_plain
+        async def durable() -> str:
+            return 'checkpointed'
+
+        @agent.tool_plain(metadata={'aws_lambda': False})
+        async def live() -> str:
+            await asyncio.sleep(0)
+            return 'runs every time'
+
+        first = FakeDurableContext()
+        run_durable(lambda: agent.run('go'), context=first)
+        capfire.exporter.clear()
+
+        run_durable(lambda: agent.run('go'), context=FakeDurableContext(journal=first.operations))
+
+        assert _span_names(capfire) == snapshot(['execute_tool live', 'invoke_agent a'])

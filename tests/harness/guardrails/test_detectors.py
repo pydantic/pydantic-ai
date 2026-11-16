@@ -148,6 +148,33 @@ class TestSecretRedaction:
         """A body line ending in CRLF ends the run at the first line, leaving the rest of the key."""
         assert redact_secrets(text).replacement == expected
 
+    @pytest.mark.parametrize(('newline', 'lines'), [('\\n', 20), ('\r\n', 24)])
+    def test_a_run_of_header_lines_is_scanned_in_linear_time(self, newline: str, lines: int):
+        """Each header line is read once, so the lines before it are never split again, however the match ends.
+
+        A time bound, like `test_scanning_a_large_paste_is_linear`'s: `re` reports no step count to assert on. On
+        the lines here, a pattern that splits each line several ways takes seconds.
+        """
+        text = '-----BEGIN PRIVATE KEY-----' + newline + ('-: ' + newline) * lines
+        start = time.perf_counter()
+        result = redact_secrets(text)
+
+        assert time.perf_counter() - start < 1.0
+        assert result.replacement == '[redacted:private_key]'
+
+    def test_a_run_of_backslashes_in_a_header_is_scanned_in_linear_time(self):
+        """A header value takes a backslash run in one step, so the run is not scanned again from each backslash.
+
+        A time bound, as in `test_a_run_of_header_lines_is_scanned_in_linear_time`. On this run, a pattern that looks
+        ahead from each backslash takes seconds.
+        """
+        text = '-----BEGIN PRIVATE KEY-----\nX: ' + '\\' * 50_000 + '\n'
+        start = time.perf_counter()
+        result = redact_secrets(text)
+
+        assert time.perf_counter() - start < 1.0
+        assert result.replacement == '[redacted:private_key]'
+
     def test_prose_naming_both_markers_is_not_a_key(self):
         """The newline after the header is what separates a real block from a sentence about one."""
         text = 'Paste everything between -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- in the field.'
@@ -256,6 +283,77 @@ class TestKeyPastedFromAFile:
         line = f'key=-----BEGIN PRIVATE KEY-----\\n{self._BODY}'
 
         assert self._BODY not in str(redact_secrets(line).replacement)
+
+    def test_an_escaped_encrypted_key_with_no_end_marker_is_still_taken(self):
+        """The blank line after its headers is escaped too, and the body after it is still key material."""
+        line = f'key="-----BEGIN RSA PRIVATE KEY-----\\nProc-Type: 4,ENCRYPTED\\nDEK-Info: AES-256-CBC,AB\\n\\n{self._BODY}"'
+
+        assert redact_secrets(line).replacement == 'key="[redacted:private_key]"'
+
+    @pytest.mark.parametrize('newline', ['\\n', '\n', '\r\n'])
+    def test_a_key_with_a_header_value_broken_across_lines_is_taken_to_its_end_marker(self, newline: str):
+        """A line inside the header section that is not a header does not end the match before the END marker."""
+        lines = [
+            '-----BEGIN RSA PRIVATE KEY-----',
+            'Proc-Type: 4,ENCRYPTED',
+            'DEK-Info: DES-EDE3-CBC',
+            ',0123456789ABCDEF',
+            '',
+            self._BODY,
+            '-----END RSA PRIVATE KEY-----',
+        ]
+        line = f'key="{newline.join(lines)}"'
+
+        assert redact_secrets(line).replacement == 'key="[redacted:private_key]"'
+
+    @pytest.mark.parametrize('newline', ['\\n', '\n', '\r\n'])
+    @pytest.mark.parametrize('end', [True, False])
+    def test_end_marker_text_in_a_header_value_does_not_end_the_key(self, newline: str, end: bool):
+        """Only an END marker at the start of a line ends the block, not one quoted inside a header value."""
+        lines = [
+            '-----BEGIN RSA PRIVATE KEY-----',
+            'Comment: ends with -----END RSA PRIVATE KEY-----',
+            '',
+            self._BODY,
+            *(['-----END RSA PRIVATE KEY-----'] if end else []),
+        ]
+
+        assert self._BODY not in str(redact_secrets(newline.join(lines)).replacement)
+
+    @pytest.mark.parametrize('newline', ['\n', '\r\n'])
+    def test_a_backslash_n_in_a_header_of_a_key_with_real_line_breaks_is_text(self, newline: str):
+        """In a key whose lines end in real line breaks, the two characters `\\n` in a value, as in a path, are text."""
+        lines = ['-----BEGIN RSA PRIVATE KEY-----', 'Comment: C:\\new\\keys,x', '', self._BODY, 'next line']
+
+        assert self._BODY not in str(redact_secrets(newline.join(lines)).replacement)
+
+    def test_a_key_mixing_real_and_escaped_line_breaks_is_taken(self):
+        """The line break after BEGIN says how the key's lines end; an escaped one inside its header is text."""
+        text = (
+            '"-----BEGIN RSA PRIVATE KEY-----\t\nComment: tab\there\nProc-Type: 4,ENCRYPTED\\nBad header\r\n'
+            f'{self._BODY}\\n{self._BODY}\\n'
+        )
+
+        assert self._BODY not in str(redact_secrets(text).replacement)
+
+    def test_end_marker_text_after_a_key_with_no_end_marker_leaves_the_prose_alone(self):
+        """A key without its END marker ends with its body, so a marker mentioned in later prose does not extend it."""
+        text = '\n'.join(
+            [
+                '-----BEGIN RSA PRIVATE KEY-----',
+                'Proc-Type: 4,ENCRYPTED',
+                '',
+                self._BODY,
+                '',
+                'Here is the rest of my message.',
+                '',
+                'Keys end with -----END RSA PRIVATE KEY-----. Thanks.',
+            ]
+        )
+
+        assert redact_secrets(text).replacement == (
+            '[redacted:private_key]\nHere is the rest of my message.\n\nKeys end with -----END RSA PRIVATE KEY-----. Thanks.'
+        )
 
 
 class TestPatternOrder:

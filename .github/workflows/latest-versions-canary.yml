@@ -73,7 +73,7 @@ env:
 jobs:
   latest-versions:
     name: resolve and test at latest versions (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
       # Both ends are wanted whichever one breaks, so neither cancels the other.

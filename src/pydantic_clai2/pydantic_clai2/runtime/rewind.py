@@ -12,6 +12,7 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     SystemPromptPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai_harness.compaction._summary import summary_time
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
@@ -67,18 +68,21 @@ def rewind_points(messages: Sequence[ModelMessage]) -> list[RewindPoint]:
         prompts = [part for part in message.parts if is_typed_prompt(part)]
         if not prompts:
             continue
-        content = [
-            item for part in prompts for item in ([part.content] if isinstance(part.content, str) else part.content)
-        ]
-        text = '\n'.join(item for item in content if isinstance(item, str))
-        images = tuple(item for item in content if isinstance(item, BinaryContent))
-        reason = ''
-        if context_time is not None and any(part.timestamp < context_time for part in prompts):
-            reason = 'predates rewritten context'
-        elif not all(isinstance(item, (str, BinaryContent)) for item in content):
-            reason = 'unsupported attachment'
-        points.append(RewindPoint(message_index=index, text=text, images=images, reason=reason))
+        points.append(_rewind_point(message_index=index, prompts=prompts, context_time=context_time))
     return points
+
+
+def _rewind_point(*, message_index: int, prompts: list[UserPromptPart], context_time: datetime | None) -> RewindPoint:
+    """The point for the typed `prompts` of one request, with why it cannot be rewound to when it cannot."""
+    content = [item for part in prompts for item in ([part.content] if isinstance(part.content, str) else part.content)]
+    text = '\n'.join(item for item in content if isinstance(item, str))
+    images = tuple(item for item in content if isinstance(item, BinaryContent))
+    reason = ''
+    if context_time is not None and any(part.timestamp < context_time for part in prompts):
+        reason = 'predates rewritten context'
+    elif not all(isinstance(item, (str, BinaryContent)) for item in content):
+        reason = 'unsupported attachment'
+    return RewindPoint(message_index=message_index, text=text, images=images, reason=reason)
 
 
 def _compaction_time(part: CompactionPart, message: ModelMessage) -> datetime | None:

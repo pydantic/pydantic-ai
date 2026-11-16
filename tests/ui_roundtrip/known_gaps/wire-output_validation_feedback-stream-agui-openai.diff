@@ -9,7 +9,7 @@
 -  },
 -  {
 -   "role": "user",
--   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>"
+-   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<pyai:retry_feedback>\nThat was a draft; answer for real.\n</pyai:retry_feedback>"
 -  },
 -  {
 -   "role": "assistant",
@@ -24,7 +24,7 @@
 -  },
 -  {
 -   "role": "user",
--   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>"
+-   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<pyai:retry_feedback>\nThat was a draft; answer for real.\n</pyai:retry_feedback>"
 -  },
 -  {
 -   "role": "assistant",

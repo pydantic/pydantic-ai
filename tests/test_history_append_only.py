@@ -162,8 +162,15 @@ EXEMPT: dict[str, Exempt] = {
         "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
         '`batch_encode` tests).'
     ),
+    'RequestInput': Exempt(
+        "Deprecated alias of `HandleDeferredToolCalls` with a handler that takes a resume token, which that class's "
+        'case covers; constructing it warns.'
+    ),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
+    ),
+    'WindowsWorkspace': Exempt(
+        "Builds only on Windows; it's `LocalWorkspace` with another backend, which adds nothing to the conversation."
     ),
 }
 

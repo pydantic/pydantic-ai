@@ -30,19 +30,22 @@ def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | N
 
     Binary content that is neither an image, audio, video nor a document is left to the model adapter.
     """
-    if isinstance(item, ImageUrl) or (isinstance(item, BinaryContent) and item.is_image):
-        return None if profile.get('supports_image_input', True) else 'images'
-    if isinstance(item, AudioUrl) or (isinstance(item, BinaryContent) and item.is_audio):
-        return None if profile.get('supports_audio_file_input', True) else 'audio files'
-    if isinstance(item, VideoUrl) or (isinstance(item, BinaryContent) and item.is_video):
-        return None if profile.get('supports_video_input', True) else 'video'
-    if isinstance(item, DocumentUrl) or (isinstance(item, BinaryContent) and item.is_document):
-        if not profile.get('supports_document_input', True):
-            return 'documents'
-        media_type = inferred_media_type(item)
-        supported = profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
-        if media_type in KNOWN_DOCUMENT_MEDIA_TYPES and media_type not in supported:
-            return f'{media_type} documents'
+    match item:
+        case ImageUrl() | BinaryContent(is_image=True):
+            return None if profile.get('supports_image_input', True) else 'images'
+        case AudioUrl() | BinaryContent(is_audio=True):
+            return None if profile.get('supports_audio_file_input', True) else 'audio files'
+        case VideoUrl() | BinaryContent(is_video=True):
+            return None if profile.get('supports_video_input', True) else 'video'
+        case DocumentUrl() | BinaryContent(is_document=True):
+            if not profile.get('supports_document_input', True):
+                return 'documents'
+            media_type = inferred_media_type(item)
+            supported = profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
+            if media_type in KNOWN_DOCUMENT_MEDIA_TYPES and media_type not in supported:
+                return f'{media_type} documents'
+        case _:
+            pass
     return None
 
 
