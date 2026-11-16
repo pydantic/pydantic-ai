@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import anyio
 import pytest
@@ -14,7 +12,7 @@ from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
@@ -27,6 +25,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
 from pydantic_ai_harness.docker_sandbox._backend import _WRAPPER  # pyright: ignore[reportPrivateUsage]
+from tests.harness.conftest import Instrumented
 
 from ._fake_docker import FakeDocker, install_fake_docker
 
@@ -352,7 +351,7 @@ async def test_a_run_without_instrumentation_traces_nothing_even_under_instrumen
 async def test_the_containers_lifecycle_is_traced(
     docker: FakeDocker,
     container_dir: Path,
-    instrumented: Callable[[bool], tuple[Instrumentation, Any]],
+    instrumented: Instrumented,
 ) -> None:
     """Creating, reattaching to and destroying the container each get a span, under the call or tool that needed it."""
     tracing, exporter = instrumented(False)

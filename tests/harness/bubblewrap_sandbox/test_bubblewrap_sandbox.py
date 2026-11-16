@@ -15,13 +15,12 @@ import socket
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
@@ -39,6 +38,7 @@ from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
+from tests.harness.conftest import Instrumented
 
 from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
 
@@ -686,7 +686,7 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
 
 
 async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
-    tools: FakeRemoteTools, tmp_path: Path, instrumented: Callable[[bool], tuple[Instrumentation, Any]]
+    tools: FakeRemoteTools, tmp_path: Path, instrumented: Instrumented
 ) -> None:
     """The wrapped workspace only sees the `bwrap` launcher, whose arguments carry the call's `env` values."""
     tracing, exporter = instrumented(True)
@@ -696,7 +696,7 @@ async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
     )
 
     @agent.tool
-    async def greet(ctx: RunContext[Any]) -> str:
+    async def greet(ctx: RunContext[object]) -> str:
         result = await ctx.workspace.run(['printf', '%s', 'hi'], env={'TOKEN': 'SENTINEL-env'})
         await ctx.workspace.write_text('notes.txt', 'hello')
         return result.stdout
