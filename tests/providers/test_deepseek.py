@@ -130,10 +130,11 @@ def test_deep_seek_reasoner_model_profile():
     assert profile.get('thinking_enabled_by_default', False) is True
 
 
-def test_deep_seek_v4_future_sku_inherits_tool_choice_restriction():
-    """Future deepseek-v4-* SKUs must inherit the thinking-conditional restriction via the startswith predicate."""
+@pytest.mark.parametrize('model_name', ['deepseek-v4-turbo', 'deepseek-v4.1-turbo'])
+def test_deep_seek_v4_future_sku_inherits_tool_choice_restriction(model_name: str):
+    """Future V4 SKUs and point releases must inherit the thinking-conditional restriction via the shared V4 pattern."""
     provider = DeepSeekProvider(api_key='api-key')
-    profile = provider.model_profile('deepseek-v4-turbo')
+    profile = provider.model_profile(model_name)
     assert profile is not None
     assert isinstance(profile, dict)
     assert profile.get('supports_forced_tool_choice_with_thinking', True) is False

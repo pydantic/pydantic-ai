@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents, TaskControl
-from tests.conftest import detach_dbos_logging, try_import, without_admin_server
+from tests.conftest import try_import
 from tests.harness.sub_agents._background import (
     WORKER_CALLS,
     EventKinds,
@@ -41,13 +41,12 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         'name': 'subagents_dynamic',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 async def test_created_agent_survives_recovery(dbos: DBOS) -> None:
