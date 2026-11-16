@@ -397,6 +397,18 @@ def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
     return found
 
 
+def _contains(toolset: AbstractToolset[AgentDepsT], target: AbstractToolset[AgentDepsT]) -> bool:
+    """Whether `toolset`'s tree contains `target`."""
+    found = False
+
+    def visit(node: AbstractToolset[AgentDepsT]) -> None:
+        nonlocal found
+        found = found or node is target
+
+    toolset.apply(visit)
+    return found
+
+
 def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
     """The task `resume` names, if the delegating run, and not another task, started it.
 
@@ -1166,15 +1178,24 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Resume a finished task through the delegate tool, so the hooks, guards and approvals on it apply."""
         tool_manager = ctx.tool_manager
         assert tool_manager is not None, 'Tools run with the run step tool manager set'
+        # A wrapper such as `PrefixedToolset` may expose the delegate tool under another name.
+        names = [
+            name
+            for name, tool in (tool_manager.tools or {}).items()
+            if name.endswith(self._tool_name) and _contains(tool.toolset, self)
+        ]
+        retry = (
+            f'To resume task {record.id}, call the delegate tool with `agent_name={record.agent_name!r}` '
+            f'and `resume={record.id!r}`.'
+        )
+        if len(names) != 1:
+            raise ModelRetry(retry)
         args = {'agent_name': record.agent_name, 'task': message, 'background': record.background, 'resume': record.id}
-        call = ToolCallPart(self._tool_name, args, tool_call_id=f'{ctx.tool_call_id}-resume')
+        call = ToolCallPart(names[0], args, tool_call_id=f'{ctx.tool_call_id}-resume')
         try:
             result = await tool_manager.handle_call(call, wrap_validation_errors=False)
         except (ApprovalRequired, CallDeferred):
-            raise ModelRetry(
-                f'Resuming task {record.id} needs approval. Call `{self._tool_name}` with '
-                f'`agent_name={record.agent_name!r}` and `resume={record.id!r}` instead.'
-            ) from None
+            raise ModelRetry(f'Resuming needs approval. {retry}') from None
         if isinstance(result, ToolDenied):
             return f'Task {record.id} was not resumed: {result.message}'
         return result
