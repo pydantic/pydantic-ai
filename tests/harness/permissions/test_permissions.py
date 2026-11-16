@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.permissions import (
     DEFAULT_ASK_COMMANDS,
     PermissionDecision,
@@ -34,7 +34,7 @@ from pydantic_ai_harness.permissions import (
     permission_requests,
 )
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents
 
 
 def _calls(*calls: tuple[str, Mapping[str, object]]) -> FunctionModel:

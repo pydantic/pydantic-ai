@@ -21,6 +21,7 @@ from httpx2 import (
     AsyncByteStream as HTTPX2AsyncByteStream,
     AsyncClient as HTTPX2AsyncClient,
     ConnectError as HTTPX2ConnectError,
+    HTTPStatusError as HTTPX2HTTPStatusError,
     MockTransport as HTTPX2MockTransport,
     ReadError as HTTPX2ReadError,
     Request as HTTPX2Request,
@@ -68,7 +69,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -77,6 +78,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
     UnexpectedModelBehavior,
     UserError,
@@ -6077,6 +6079,45 @@ async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: No
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
+@pytest.mark.parametrize(
+    ('transport_error', 'expected'),
+    [
+        pytest.param(HTTPX2HTTPStatusError, ModelRateLimitError, id='gave-up-status'),
+        pytest.param(HTTPX2ConnectError, ModelConnectionError, id='connect'),
+    ],
+)
+async def test_google_count_tokens_transport_error_is_wrapped(
+    allow_model_requests: None,
+    transport_error: type[HTTPX2HTTPStatusError | HTTPX2ConnectError],
+    expected: type[ModelAPIError],
+):
+    """A transport failure from `count_tokens` is mapped like one from the request, not raised as the raw `httpx2` error.
+
+    Not a VCR test: a retrying transport that gave up on a status, or a refused connection, raises before
+    `google.genai` sees a response, so there is nothing to record.
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        if transport_error is HTTPX2ConnectError:
+            raise HTTPX2ConnectError('connection refused', request=request)
+        response = HTTPX2Response(429, request=request)
+        raise HTTPX2HTTPStatusError('Client error 429', request=request, response=response)
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert isinstance(exc_info.value, expected)
+    assert isinstance(exc_info.value.__cause__, transport_error)
+
+
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
@@ -6518,7 +6559,10 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
 
     assert system_instruction == {
         'role': 'user',
-        'parts': [{'text': SYSTEM_VOICE_ANNOUNCEMENT}, {'text': 'You are helpful.'}],
+        'parts': [
+            {'text': lookalike_note_announcement(system_role=False)},
+            {'text': 'You are helpful.'},
+        ],
     }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
@@ -6903,9 +6947,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
+                    {'text': '<pyai:tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]

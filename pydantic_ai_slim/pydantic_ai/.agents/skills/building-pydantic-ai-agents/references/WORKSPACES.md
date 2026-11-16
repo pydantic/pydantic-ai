@@ -34,6 +34,12 @@ configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
 `workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
 durable execution; see below).
+`LocalWorkspace` needs POSIX. On Windows, use `WindowsWorkspace(working_dir, ...)`, with the same parameters
+and the same lack of isolation. Commands run in PowerShell and inherit only the variables Windows tools need
+to start (`PATH`, `PATHEXT`, `SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like) plus `env`. Paths
+are Windows paths: `ctx.workspace.platform` is `'windows'`, and `ctx.workspace.paths` (`ntpath`) joins them.
+Its ref is `WorkspaceRef(provider='windows', id=<absolute working_dir>)`, and it claims only that exact ref,
+as `LocalWorkspace` does. For a single run, pass `workspace=WindowsWorkspaceBackend('.')`.
 Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
@@ -94,8 +100,8 @@ in it; after `workspace='new'` nothing is carried forward.
 The core does not create or destroy environments at run boundaries; the application owns
 SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches
 the concrete backend for provider-specific methods (not from workflow code under durable
-execution). Sandbox providers (Modal, E2B, Sprites, Daytona, boxd, local smolvm microVMs, local Docker containers, and self-hosted OpenSandbox servers), `SSHWorkspace` for a remote host, and `BubblewrapSandbox`
-for sandboxing another workspace's commands ship as capabilities in the
+execution). Sandbox providers (Modal, E2B, Sprites, Daytona, boxd, Kubernetes agent-sandbox, local smolvm microVMs, local Docker containers, and self-hosted OpenSandbox servers), `SSHWorkspace` for a remote host, and `BubblewrappedWorkspace`
+for confining another workspace's commands to its working directory ship as capabilities in the
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
 subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its `backend`
 fixture.

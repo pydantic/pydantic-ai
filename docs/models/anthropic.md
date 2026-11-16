@@ -629,7 +629,9 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 !!! note "Placement"
     Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
 
-    Claude Haiku 5.5 can read a system message that comes right after a tool result as part of the tool output and ignore it, as [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results) warn. That's where a loaded [on-demand capability](../capabilities/on-demand.md)'s instructions and an instruction change during a tool loop land, so on Haiku 5.5 Pydantic AI ends those tool results with a short text block saying they end there and the system message comes from the application. The profile flag is [`anthropic_distrusts_system_after_tool_result`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_distrusts_system_after_tool_result].
+    Claude Sonnet 5.5 and Claude Haiku 5.5 accept the native entry, but Pydantic AI sends them the sealed `<system>` rendering instead (see [mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts)). Haiku 5.5 followed it as well or better in every case measured: instruction changes, changes next to text that looks like one, and request-scoped prompts. Sonnet 5.5 credited the native entry to the user when asked who said what, and with the sealed rendering it attributed the application's instructions correctly and followed steering after a tool result more reliably. To use the native entry anyway, pass `profile={'supports_inline_system_prompts': True, 'needs_sealed_system_blocks': False}`.
+
+    With the native entry, Claude Haiku 5.5 can read a system message that comes right after a tool result as part of the tool output and ignore it, as [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results) warn. That's where a loaded [on-demand capability](../capabilities/on-demand.md)'s instructions and an instruction change during a tool loop land, so there Pydantic AI ends those tool results with a short text block saying they end there and the system message comes from the application. The profile flag is [`anthropic_distrusts_system_after_tool_result`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_distrusts_system_after_tool_result].
 
 ### Refusals on repeated prompts
 
@@ -641,7 +643,7 @@ A [request-scoped](../message-history.md#request-scoped-system-prompts) `SystemP
 
 That matters most on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), such as Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 and 5.2: they tie each thinking block to the exact conversation it was produced in, so deleting an earlier reminder from a later request invalidates every thinking block after it, while a cleared one left in place doesn't. A cleared entry costs no input tokens and is never part of a cache key, so `anthropic_cache_messages` and `anthropic_cache` put their breakpoints on the content before it.
 
-Support follows mid-conversation system messages, on the same models and transports. Elsewhere, including on models that don't take the `system` role, a request-scoped prompt is sent as `<system>`-tagged user text with its own request only, and the cache breakpoint goes before it. To opt out of the beta on a model that has it, for example if your account doesn't have access, turn the profile flag off; request-scoped prompts are then sent only while they're current:
+Support follows mid-conversation system messages, on the same transports and models, plus Claude Sonnet 5.5 and Haiku 5.5: their lasting system messages are sealed `<system>` blocks, and a request-scoped prompt is the same sealed block inside the `clear_at` entry. Elsewhere, including on models that don't take the `system` role, a request-scoped prompt is sent as `<system>`-tagged user text with its own request only, and the cache breakpoint goes before it. To opt out of the beta on a model that has it, for example if your account doesn't have access, turn the profile flag off; request-scoped prompts are then sent only while they're current:
 
 ```python {title="request_scoped_opt_out.py"}
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -675,6 +677,28 @@ Responses that ran in fast mode carry `provider_details['speed'] == 'fast'`, so 
 
 !!! note "Bedrock, Vertex, and Foundry"
     Fast mode is only available on the direct Anthropic API. Bedrock, Vertex, and Foundry clients do not support the `speed` parameter, so `anthropic_speed='fast'` is ignored with a `UserWarning` on those clients.
+
+## Data residency
+
+To control where model inference runs, set [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]: `'us'` keeps inference on US-based infrastructure, and `'global'` lets it run in any available geography. When it's unset, the workspace's default inference geo applies. US-only inference is priced at 1.1x the standard rate, which [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], `usage.cost` and [usage limits](../agent.md#usage-limits) don't include yet. The setting is sent on the Claude API, Claude Platform on AWS and Claude on Google Cloud (Anthropic managed), including in [Message Batches](#batch-api). See the [Anthropic data residency docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for supported models, pricing and workspace-level restrictions.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    model_settings=AnthropicModelSettings(anthropic_inference_geo='us'),
+)
+...
+```
+
+When the setting is used, where the request ran is reported in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
+
+Models that don't support data residency (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 and older) reject the setting with a 400 error, which Pydantic AI raises rather than dropping the setting.
+
+!!! note "Bedrock, Vertex AI, and Foundry"
+    On Bedrock and Vertex AI, the endpoint or inference profile decides the inference region, and on Foundry the deployment type does, so `anthropic_inference_geo` is ignored with a `UserWarning` on those clients.
 
 ## Forced tool choice
 

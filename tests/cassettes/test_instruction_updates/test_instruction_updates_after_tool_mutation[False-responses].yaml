@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "637"
+      - "700"
       content-type:
       - application/json
       host:
@@ -19,6 +19,8 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.6
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -27,16 +29,14 @@ interactions:
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
-        model: gpt-5.6
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         reasoning:
           effort: none
           context: all_turns
         store: true
-        stream: false
         tool_choice: auto
         tools:
         - name: finish_todo
@@ -51,7 +51,7 @@ interactions:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -61,7 +61,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1054"
+      - "852"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -71,36 +71,38 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b823caa2f872c6a006abc23451c2c87d197b41f89351d73d4
+        id: resp_06cd8cb9bd0a1f6b006af39af52e0487d1b26c735053391d6c
         object: response
-        created_at: 1790714693
+        created_at: 1794349813
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1790714693
+        completed_at: 1794349813
         error: null
         frequency_penalty: 0.0
+        image:
+          context_compression: disabled
         incomplete_details: null
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
         moderation: null
         output:
-        - id: fc_0b823caa2f872c6a006abc2345d4f087d19c0d35a69777131b
+        - id: fc_06cd8cb9bd0a1f6b006af39af5bd8087d18d1b12a8e24bff7c
           type: function_call
           status: completed
           arguments: "{}"
-          call_id: call_IFAR1iRDBVfd7nzO4IC0jGYR
+          call_id: call_OWnvqrBABppFrcetLuOZB8vI
           name: finish_todo
         parallel_tool_calls: true
         presence_penalty: 0.0
@@ -148,17 +150,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 96
+          input_tokens: 114
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
           output_tokens: 15
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 111
+          total_tokens: 129
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T20:44:54.213164+00:00
+  recorded_at: 2026-11-10T22:30:14.038461+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -170,7 +172,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "997"
+      - "1178"
       content-type:
       - application/json
       host:
@@ -178,6 +180,8 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.6
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -185,30 +189,30 @@ interactions:
           content: Process the todo.
         - name: finish_todo
           arguments: "{}"
-          call_id: call_IFAR1iRDBVfd7nzO4IC0jGYR
+          call_id: call_OWnvqrBABppFrcetLuOZB8vI
           type: function_call
-          id: fc_0b823caa2f872c6a006abc2345d4f087d19c0d35a69777131b
+          id: fc_06cd8cb9bd0a1f6b006af39af5bd8087d18d1b12a8e24bff7c
         - type: function_call_output
-          call_id: call_IFAR1iRDBVfd7nzO4IC0jGYR
+          call_id: call_OWnvqrBABppFrcetLuOZB8vI
           output: Saved.
         - role: system
           content: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: done.
-            </context>
+            </pyai:context>
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
-        model: gpt-5.6
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        prompt_cache_options:
+          comparison_response_id: resp_06cd8cb9bd0a1f6b006af39af52e0487d1b26c735053391d6c
         reasoning:
           effort: none
           context: all_turns
         store: true
-        stream: false
         tool_choice: auto
         tools:
         - name: finish_todo
@@ -223,7 +227,7 @@ interactions:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -233,7 +237,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "955"
+      - "1119"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -243,32 +247,34 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b823caa2f872c6a006abc2346544c87d193c26ed0af113ecd
+        id: resp_06cd8cb9bd0a1f6b006af39af6205487d19cb25231a29986e6
         object: response
-        created_at: 1790714694
+        created_at: 1794349814
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1790714695
+        completed_at: 1794349815
         error: null
         frequency_penalty: 0.0
+        image:
+          context_compression: disabled
         incomplete_details: null
         instructions: |-
           When the todo is pending, call finish_todo once. When it is done, reply DONE.
 
-          <context id="capability:todos:state">
+          <pyai:context id="capability:todos:state">
           Todo status: pending.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
         moderation: null
         output:
-        - id: msg_0b823caa2f872c6a006abc2346fb4487d1b228d2fadec5f632
+        - id: msg_06cd8cb9bd0a1f6b006af39af6f86487d1b1399193851c97f1
           type: message
           status: completed
           content:
@@ -281,7 +287,13 @@ interactions:
         parallel_tool_calls: true
         presence_penalty: 0.0
         previous_response_id: null
+        prompt_cache_diagnostics:
+          type: cache_hit
         prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_06cd8cb9bd0a1f6b006af39af52e0487d1b26c735053391d6c
+          mode: implicit
+          ttl: 30m
         prompt_cache_retention: 24h
         reasoning:
           context: all_turns
@@ -324,14 +336,14 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 147
+          input_tokens: 172
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 152
+          total_tokens: 177
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T20:44:55.350140+00:00
+  recorded_at: 2026-11-10T22:30:15.244155+00:00

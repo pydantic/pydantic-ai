@@ -46,7 +46,7 @@ from pydantic_ai_harness.compaction import (
     pin,
 )
 from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.sub_agents import DelegationTask
 
 from ...conftest import try_import
 
@@ -448,9 +448,9 @@ This file is off limits; read the copy instead.
 </message>
 <message role="retry_feedback" cause="model_retry">
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-&lt;retry_feedback>
+&lt;pyai:retry_feedback>
 Say more.
-&lt;/retry_feedback>
+&lt;/pyai:retry_feedback>
 </message>
 </earlier_step>\
 """)
