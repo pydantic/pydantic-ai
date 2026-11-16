@@ -272,6 +272,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # `gemini-2.5-flash-image` doesn't think either: verified live 2026-10-23, the Gemini API 400s any thinking
     # config with `Thinking is not enabled for this model`, and Vertex rejects `include_thoughts` and any nonzero
     # budget with `thinking is not supported by this model`.
+    # `gemma4` is Ollama's spelling. `_MODEL_THINKING_LEVELS` lists only `gemma-4`: its level sets matter only to
+    # `GoogleModel`, and the Gemini API names the model `gemma-4-*`.
     is_gemma_4 = model_name.startswith(('gemma-4', 'gemma4'))
     if (is_gemma and not is_gemma_4) or is_pre_gemini_2_5 or 'gemini-2.5-flash-image' in model_name:
         supports_thinking = False
