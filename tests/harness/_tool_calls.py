@@ -11,6 +11,7 @@ from pydantic_ai.workspaces import WorkspaceBackend
 WORKSPACE_TOOL_CALLS: list[tuple[str, dict[str, object]]] = [
     ('write_file', {'path': 'note.txt', 'content': 'one'}),
     ('edit_file', {'path': 'note.txt', 'old_text': 'one', 'new_text': 'two'}),
+    ('create_directory', {'path': 'sub'}),
     ('read_file', {'path': 'note.txt'}),
     ('shell', {'command': 'echo shell-$(cat note.txt)'}),
 ]

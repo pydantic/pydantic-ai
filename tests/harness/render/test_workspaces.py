@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
 from pydantic_ai_harness.file_system import (
+    DirectoryCreatedEvent,
     FileChangeRequestedEvent,
     FileEditedEvent,
     FileReadEvent,
@@ -120,9 +121,10 @@ async def test_file_system_and_shell_tools(tmp_path: Path, veto: bool) -> None:
     )
     events: list[str] = []
 
-    @agent.on_event(FileChangeRequestedEvent, FileWrittenEvent, FileEditedEvent, FileReadEvent)
+    @agent.on_event(FileChangeRequestedEvent, FileWrittenEvent, FileEditedEvent, DirectoryCreatedEvent, FileReadEvent)
     async def record(
-        ctx: RunContext[None], event: FileChangeRequestedEvent | FileWrittenEvent | FileEditedEvent | FileReadEvent
+        ctx: RunContext[None],
+        event: FileChangeRequestedEvent | FileWrittenEvent | FileEditedEvent | DirectoryCreatedEvent | FileReadEvent,
     ) -> None:
         events.append(type(event).__name__)
         if veto and isinstance(event, FileChangeRequestedEvent) and event.operation == 'edit':
@@ -138,6 +140,9 @@ async def test_file_system_and_shell_tools(tmp_path: Path, veto: bool) -> None:
         'FileWrittenEvent',
         'FileChangeRequestedEvent',
         *edited,
+        'FileChangeRequestedEvent',
+        'DirectoryCreatedEvent',
         'FileReadEvent',
     ]
     assert (tmp_path / 'note.txt').read_text() == content
+    assert (tmp_path / 'sub').is_dir()

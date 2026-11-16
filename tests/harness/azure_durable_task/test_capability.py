@@ -235,24 +235,37 @@ class TestAzureDurableTaskDurability:
         assert f'shell-{content}' in result.output
         assert ("'note.txt' was not edited: denied" in result.output) is veto
         # The orchestrator, and so its listeners, re-run on every replay.
-        assert set(requests) == {'write', 'edit'}
+        assert set(requests) == {'write', 'edit', 'create_directory'}
         assert (tmp_path / 'note.txt').read_text() == content
+        assert (tmp_path / 'sub').is_dir()
 
-    def test_file_change_in_an_activity_fails_closed(self, durable_worker: InMemoryWorker, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        'tool_name,args',
+        [
+            ('write_file', {'path': 'note.txt', 'content': 'changed'}),
+            ('edit_file', {'path': 'note.txt', 'old_text': 'original', 'new_text': 'changed'}),
+            ('create_directory', {'path': 'sub'}),
+        ],
+    )
+    def test_file_change_in_an_activity_fails_closed(
+        self, durable_worker: InMemoryWorker, tmp_path: Path, tool_name: str, args: dict[str, object]
+    ) -> None:
+        (tmp_path / 'note.txt').write_text('original')
         agent = Agent(
-            scripted_model([('write_file', {'path': 'note.txt', 'content': 'changed'})]),
+            scripted_model([(tool_name, args)]),
             name='coder',
             capabilities=[
                 LocalWorkspace(tmp_path),
                 FileSystem(),
-                SetToolMetadata(tools=['write_file'], azure_durable_task=None),
+                SetToolMetadata(tools=[tool_name], azure_durable_task=None),
                 AzureDurableTaskDurability(),
             ],
         )
         with registered_agent(durable_worker, agent):
             with pytest.raises(OrchestrationFailedError, match='cannot ask listeners about a change'):
                 run_agent(durable_worker, agent, deps=None)
-        assert not (tmp_path / 'note.txt').exists()
+        assert (tmp_path / 'note.txt').read_text() == 'original'
+        assert not (tmp_path / 'sub').exists()
 
     @pytest.mark.parametrize('same_agent', [False, True])
     def test_multiple_runs_have_distinct_replay_stable_ids(
