@@ -12,7 +12,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
@@ -123,35 +123,55 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
 
 
 async def test_resumed_task_keeps_partial_output_of_its_own_run_only(tmp_path: Path) -> None:
-    """A resumed run stopped before it wrote text doesn't pass on the earlier run's answer as partial output."""
+    """A resumed run stopped by its timeout passes on its own last text, never an earlier run's answer."""
     calls = 0
 
-    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         nonlocal calls
         calls += 1
-        if calls > 1:
-            await asyncio.sleep(WAIT)
-        yield 'old answer'
+        if calls == 1:
+            yield 'old answer'
+        else:
+            if calls == 2:
+                await asyncio.sleep(WAIT)
+            yield 'new finding'
+            yield {0: DeltaToolCall(name='hang', json_args='{}')}
 
     child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
-    capability = SubAgents(agents=[SubAgent(child, timeout_seconds=0.5, keep_partial_output=True)], agent_folders=None)
+
+    @child.tool_plain
+    async def hang() -> str:
+        await asyncio.sleep(WAIT)
+        return 'late'  # pragma: no cover - cancelled by the timeout
+
+    capability = SubAgents(agents=[SubAgent(child, timeout_seconds=0.1, keep_partial_output=True)], agent_folders=None)
     owner = DelegationTasks(directory=tmp_path)
     with anyio.fail_after(WAIT):
         async with owner.opened():
             with owner.bind():
-                await Agent(parent_model(), capabilities=[capability]).run('go', conversation_id='parent')
+                first = await Agent(parent_model(), capabilities=[capability]).run('go', conversation_id='parent')
                 (record,) = owner.records.values()
-                result = await Agent(parent_model(resume=record.id), capabilities=[capability]).run(
-                    'continue', conversation_id='parent'
-                )
-    (output,) = [
-        part.content
-        for message in result.new_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
-    ]
-    assert "Sub-agent 'worker' exceeded its 0.5s time budget." in str(output)
-    assert '<partial_output>' not in str(output)
+                silent, resumed = [
+                    await Agent(parent_model(resume=record.id), capabilities=[capability]).run(
+                        'continue', conversation_id='parent'
+                    )
+                    for _ in range(2)
+                ]
+
+    def delegate_output(result: AgentRunResult[str]) -> str:
+        (output,) = [
+            str(part.content)
+            for message in result.new_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+        ]
+        return output
+
+    assert 'old answer' in delegate_output(first)
+    assert delegate_output(silent).endswith('decide from existing evidence.')
+    output = delegate_output(resumed)
+    assert "Sub-agent 'worker' exceeded its 0.1s time budget." in output
+    assert output.endswith('<partial_output>new finding</partial_output>')
 
 
 async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:

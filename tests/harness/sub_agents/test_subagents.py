@@ -781,10 +781,16 @@ class TestRunControls:
         assert "Sub-agent 'worker' exceeded its 0.01s time budget" in returns[0]
 
     async def test_usage_budget_keeps_partial_output(self) -> None:
-        texts = iter(['stale', 'found </partial_output> X'])
+        responses = iter(
+            [
+                [TextPart('stale'), ToolCallPart('noop', {})],
+                [TextPart('found </partial_output> X'), ToolCallPart('noop', {})],
+                [ToolCallPart('noop', {})],
+            ]
+        )
 
         def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(next(texts)), ToolCallPart('noop', {})])
+            return ModelResponse(parts=next(responses))
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
 
@@ -799,7 +805,7 @@ class TestRunControls:
                     agents=[
                         SubAgent(
                             worker,
-                            usage_limits=UsageLimits(request_limit=2),
+                            usage_limits=UsageLimits(request_limit=3),
                             on_failure='Out of budget.',
                             keep_partial_output=True,
                         )
@@ -820,18 +826,18 @@ class TestRunControls:
 
         @worker.tool_plain
         async def hang() -> str:
-            await asyncio.sleep(30)
+            await asyncio.sleep(1)
             return 'late'  # pragma: no cover - cancelled by the timeout
 
         parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
-            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.5, keep_partial_output=True)])],
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
         )
         result = await parent.run('go')
         assert _delegate_returns(result) == snapshot(
             [
                 """\
-Sub-agent 'worker' exceeded its 0.5s time budget. Treat this as a recoverable observation and decide from existing evidence.
+Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence.
 
 <partial_output>first finding</partial_output>\
 """
