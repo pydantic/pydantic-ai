@@ -288,7 +288,7 @@ with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
 `ARGUMENTS: ...` is appended (indexed forms like `$0` and `$ARGUMENTS[0]` are left as-is).
 `catalog.skipped` lists the `SKILL.md` files and library paths left out as `SkippedSkill(path,
 reason, message)`, `reason` one of `'invalid'`, `'duplicate_name'`, `'not_a_directory'`,
-`'skill_package'`, `'unreadable'`, for the host to show; `load` emits no warnings itself.
+`'skill_package'`, `'unreadable'`, `'flagged'` (the `scanner=` skip), for the host to show; `load` emits no warnings itself.
 `catalog.advice` holds the run's other warnings (overlong descriptions, unimplemented
 frontmatter fields), for a host that hides warnings to show.
 
