@@ -44,14 +44,16 @@ from pydantic_ai.native_tools import (
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.minimax import minimax_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     openai_model_profile,
 )
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers import Provider, infer_provider_class
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -67,6 +69,7 @@ with try_import() as bedrock_imports:
         _BedrockAnthropicJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _BedrockGlm53JsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
+        _BedrockMiniMaxJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
 
 with try_import() as cohere_imports:
@@ -959,6 +962,7 @@ def test_gateway_zai_glm_5_3_inline_defs():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'may_tokenize_special_tokens_in_content': True,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
@@ -1060,6 +1064,7 @@ def test_gateway_zai_glm_other_versions_unchanged():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'may_tokenize_special_tokens_in_content': True,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
     assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/glm-4p6')) == snapshot(
@@ -1551,6 +1556,34 @@ def test_bedrock_zai_glm_5_3():
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
             'bedrock_thinking_variant': 'zai_effort',
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_minimax():
+    """MiniMax via Bedrock: upstream `minimax_model_profile` plus Bedrock's tool and output overrides.
+
+    The family profile adds the thinking flags, and the Bedrock transformer keeps its `$defs` inlining.
+    """
+    assert _normalize(BedrockProvider.model_profile('us.minimax.minimax-m2.5')) == snapshot(
+        {
+            'json_schema_transformer': _BedrockMiniMaxJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'supported_native_tools': frozenset(),
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'supports_video_input': False,
+        }
+    )
+    # An id the family profile doesn't describe keeps Bedrock's own transformer.
+    assert _normalize(BedrockProvider.model_profile('minimax.minimax-m3.5')) == snapshot(
+        {
+            'supported_native_tools': frozenset(),
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
             'supports_video_input': False,
         }
     )
@@ -2524,8 +2557,28 @@ def test_ollama_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_max_completion_tokens': False,
             'openai_supports_strict_tool_definition': False,
             'supports_forced_tool_choice': False,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['kimi-k3:cloud', 'kimi-k2-thinking:cloud'])
+def test_ollama_kimi(model_name: str):
+    """Kimi ids get the Moonshot family profile, and keep Ollama's `reasoning` thinking field."""
+    assert _normalize(OllamaProvider.model_profile(model_name)) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'openai_chat_supports_max_completion_tokens': False,
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -2540,6 +2593,7 @@ def test_ollama_unknown_falls_back_to_overlay_only():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_max_completion_tokens': False,
             'openai_supports_strict_tool_definition': False,
             'may_tokenize_special_tokens_in_content': True,
         }
@@ -2667,6 +2721,7 @@ def test_cerebras_kimi_k3_always_on_reasoning():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
             'openai_unsupported_model_settings': ('logit_bias',),
             'supports_thinking': True,
             'thinking_always_enabled': True,
@@ -2769,9 +2824,38 @@ def test_fireworks_llama():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_fireworks_unprofiled():
-    profile = FireworksProvider.model_profile('accounts/fireworks/models/kimi-k3')
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/minimax-m3')
     assert _normalize(profile) == snapshot(
         {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name', ['accounts/fireworks/models/kimi-k3', 'accounts/fireworks/routers/kimi-k3-fast', 'kimi-k2p6']
+)
+def test_fireworks_kimi(model_name: str):
+    """Kimi ids get the Moonshot family profile, with Fireworks' `p` spelling read as a version dot."""
+    assert _normalize(FireworksProvider.model_profile(model_name)) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'supports_json_schema_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_fireworks_kimi_non_reasoning():
+    """A non-reasoning Kimi id gets the family's streaming fact but no thinking support."""
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/kimi-k2-instruct-0905')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_json_schema_output': True,
+        }
     )
 
 
@@ -2955,8 +3039,44 @@ def test_together_qwen():
                 }
             ),
         ),
+        # MiniMax documents no `response_format` for these models, so `NativeOutput` is unsupported here:
+        # https://platform.minimax.io/docs/api-reference/text-openai-api
         (
             'MiniMaxAI/MiniMax-M3',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'minimax/minimax-m3.1-flash',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'minimaxai/minimax-m2.7',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        # A MiniMax id the family profile doesn't describe keeps the OpenAI-compatible default.
+        (
+            'MiniMaxAI/MiniMax-M2-her',
             snapshot(
                 {
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -3047,7 +3167,23 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
         (
             'MiniMaxAI/MiniMax-M3',
             snapshot(
-                {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'MiniMaxAI/MiniMax-M2.7',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
             ),
         ),
     ],
@@ -3256,6 +3392,19 @@ def test_vercel_unknown_bare_name():
     profile = VercelProvider.model_profile('gpt-5.4')
     assert _normalize(profile) == snapshot(
         {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': False}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['moonshotai/kimi-k3', 'moonshotai/kimi-k3.1-pro'])
+def test_vercel_moonshotai_kimi(model_name: str):
+    assert _normalize(VercelProvider.model_profile(model_name)) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
@@ -3785,6 +3934,68 @@ def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_na
     assert profile.get('supports_forced_tool_choice') is False
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'minimax-m3.1-flash',
+        'minimax-m2.7',
+        'minimax-m2.7-highspeed',
+        'minimax-m2.5',
+        'minimax-m2.5-highspeed',
+        'minimax-m2.1',
+        'minimax-m2.1-highspeed',
+        'minimax-m2',
+    ],
+)
+def test_minimax_always_thinking(model_name: str):
+    """M3.1-Flash and the M2 family reject turning thinking off; the `-highspeed` ids take their base model's flags."""
+    profile = minimax_model_profile(model_name)
+    assert profile is not None
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
+
+
+def test_minimax_m3_hybrid_thinking():
+    profile = minimax_model_profile('minimax-m3')
+    assert profile is not None
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_enabled_by_default': True,
+        }
+    )
+
+
+@pytest.mark.parametrize('model_name', ['minimax-m1', 'minimax-m1-80k'])
+def test_minimax_m1_no_thinking(model_name: str):
+    profile = minimax_model_profile(model_name)
+    assert profile is not None
+    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'minimax-m2-her',
+        'minimax-01',
+        # Unpublished ids, and spellings other than MiniMax's own, get no flags.
+        'minimax-m3.5',
+        'minimax-m3.1',
+        'minimax-m2.9',
+        'minimax-m10',
+        'minimax-m3p1-flash',
+    ],
+)
+def test_minimax_unmatched(model_name: str):
+    assert minimax_model_profile(model_name) is None
+
+
 def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:
     """Whether a route lets a forced tool choice through while the model thinks.
 
@@ -3850,7 +4061,6 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
             _DEEPSEEK_V4_1,
             ('together', 'deepseek-ai/DeepSeek-V4.1-Flash'),
             id='deepseek-v4.1-together',
-            marks=_diverges('#12069', "Together's DeepSeek V4 guard keys on `deepseek-v4-`, which V4.1 ids miss"),
         ),
         # OpenRouter's `/models` lists both `deepseek/deepseek-v4.1-flash` and this dated id (checked 2026-11-04).
         pytest.param(
@@ -3902,3 +4112,34 @@ def test_forced_tool_choice_guard_agrees_across_routes(
     as soon as it regresses.
     """
     assert _forcing_allowed_while_thinking(*route) == _forcing_allowed_while_thinking(*reference)
+
+
+@pytest.mark.skipif(not (huggingface_imports() and openai_imports()), reason='extras not installed')
+@pytest.mark.parametrize(
+    ('provider_name', 'model_name', 'supports_thinking'),
+    [
+        ('deepseek', 'deepseek-flash', True),
+        ('together', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('nebius', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('huggingface', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('vllm', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('vercel', 'deepseek/deepseek-v4.1-flash-1017', True),
+        ('litellm', 'deepseek/deepseek-v4.1-flash-1017', True),
+        ('ollama', 'deepseek-v4.1-flash:1017', True),
+        ('fireworks', 'accounts/fireworks/models/deepseek-v4p1-flash', True),
+        ('crusoe', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('together', 'deepseek-ai/DeepSeek-V3.2', False),
+    ],
+)
+def test_deepseek_v4_point_release_thinks_on_every_route(provider_name: str, model_name: str, supports_thinking: bool):
+    """DeepSeek V4.1 thinks on every route, whether the route spells its version `v4.1` or `v4p1`; V3.2 does not."""
+    profile = infer_provider_class(provider_name).model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') is supports_thinking
+
+
+def test_deepseek_v4_hyphenated_point_release_spelling():
+    """Pins existing behavior: Mistral's V4.1 spelling `deepseek-v4-1-flash-1017` already starts with `deepseek-v4-`."""
+    profile = deepseek_model_profile('deepseek-v4-1-flash-1017')
+    assert profile is not None
+    assert profile.get('supports_thinking') is True
