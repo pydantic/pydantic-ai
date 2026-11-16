@@ -4,6 +4,7 @@ import errno
 import hashlib
 import posixpath
 import shlex
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +99,9 @@ def is_unattached(workspace: Workspace) -> bool:
     return innermost_backend(workspace) is NO_WORKSPACE
 
 
+_LOCAL_CAPABILITIES = {'local': 'LocalWorkspace', 'windows': 'WindowsWorkspace'}
+"""The capability for a host workspace's ref provider, which takes the ref's directory."""
+
 _PROVIDER_CAPABILITIES = {
     'modal': 'ModalSandbox()',
     'e2b': 'E2BSandbox()',
@@ -105,6 +109,7 @@ _PROVIDER_CAPABILITIES = {
     'sprites': 'SpritesSandbox()',
     'daytona': 'DaytonaSandbox()',
     'boxd': 'BoxdSandbox()',
+    'kubernetes': 'KubernetesSandbox(warm_pool=...)',
     'opensandbox': 'OpenSandbox()',
 }
 """The capability that provides each first-party provider's workspaces, to name in an error."""
@@ -128,8 +133,8 @@ def require_workspace(workspace: Workspace, owner: str, messages: Sequence[Model
     if isinstance(backend, UnavailableWorkspace) and not is_unattached(workspace):
         raise UserError(f'`{owner}` cannot use this workspace: {backend.reason}')
     if not workspace.attached and (ref := _history_ref(messages)) is not None:
-        if ref.provider == 'local':
-            example = f' (such as `LocalWorkspace({ref.id!r})`)'
+        if (local := _LOCAL_CAPABILITIES.get(ref.provider)) is not None:
+            example = f' (such as `{local}({ref.id!r})`)'
         elif (capability := _PROVIDER_CAPABILITIES.get(ref.provider)) is not None:
             example = f' (such as `{capability}`)'
         else:
@@ -140,10 +145,11 @@ def require_workspace(workspace: Workspace, owner: str, messages: Sequence[Model
             f'{example} to continue there, or pass `workspace=` to the run.'
         )
     if not workspace.attached:
+        local = 'WindowsWorkspace' if sys.platform == 'win32' else 'LocalWorkspace'
         raise UserError(
             f'`{owner}` needs a workspace, but none is attached to this run. '
-            "Add `LocalWorkspace('.')` (this machine; `from pydantic_ai.capabilities import LocalWorkspace`, "
-            'or `- LocalWorkspace: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
+            f"Add `{local}('.')` (this machine; `from pydantic_ai.capabilities import {local}`, "
+            f'or `- {local}: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
             "to the agent's capabilities, or pass `workspace=` to the run. "
             'See https://pydantic.dev/docs/ai/workspace/'
         )
@@ -202,29 +208,32 @@ async def metadata_dir(workspace: Workspace, name: str, *, temp_fallback: bool =
     argument's fault, so a retry cannot fix it. So does a symlink in place of either directory, or a
     dangling `.gitignore`: it could lead outside the working directory.
 
-    With `temp_fallback`, a working directory the workspace user cannot write to (a root-owned `/app`
-    in a container that runs as `nobody`, or a read-only mount) gets the directory from
+    With `temp_fallback`, a working directory the workspace user cannot write to on a POSIX workspace
+    (a root-owned `/app` in a container that runs as `nobody`, or a read-only mount) gets the directory from
     `_temp_metadata_dir` instead. That runs a command, so only callers that already need commands
     pass it; the directory is outside the working directory, so `FileSystem` tools cannot read it.
     """
+    join = workspace.paths.join
     working_dir = await workspace.working_dir()
-    root = posixpath.join(working_dir, METADATA_DIR)
-    directory = posixpath.join(root, name)
-    gitignore = posixpath.join(root, '.gitignore')
-    real_root = posixpath.join(await workspace.realpath(working_dir), METADATA_DIR)
-    if await workspace.realpath(directory) != posixpath.join(real_root, name):
+    root = join(working_dir, METADATA_DIR)
+    directory = join(root, name)
+    gitignore = join(root, '.gitignore')
+    real_root = join(await workspace.realpath(working_dir), METADATA_DIR)
+    if await workspace.realpath(directory) != join(real_root, name):
         raise WorkspaceError(f'`{METADATA_DIR}/{name}` in the workspace is a symlink, so it is not used.')
     try:
         await workspace.make_dir(directory)
         if not await workspace.exists(gitignore):
             # A dangling symlink reads as missing; writing it would create its target.
-            if await workspace.realpath(gitignore) != posixpath.join(real_root, '.gitignore'):
+            if await workspace.realpath(gitignore) != join(real_root, '.gitignore'):
                 raise WorkspaceError(f'`{METADATA_DIR}/.gitignore` in the workspace is a symlink, so it is not used.')
             await workspace.write_text(gitignore, '*\n')
     except WorkspaceError:
         raise
     except OSError as error:
-        if temp_fallback and (isinstance(error, PermissionError) or error.errno == errno.EROFS):
+        # The temp directory is found with a POSIX shell script.
+        posix = workspace.platform == 'posix'
+        if temp_fallback and posix and (isinstance(error, PermissionError) or error.errno == errno.EROFS):
             return await _temp_metadata_dir(workspace, real_root, name, error)
         raise WorkspaceError(f'Cannot create `{METADATA_DIR}/{name}` in the workspace: {error.strerror}') from error
     return directory

@@ -25,11 +25,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionDef, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.advisor import Advisor
 from tests.conftest import try_import
-from tests.harness.conftest import agent_run_names
+from tests.harness.conftest import CountingModel, agent_run_names
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -476,6 +476,60 @@ class TestAdvisor:
 
         with pytest.raises(UsageLimitExceeded, match='request_limit'):
             await agent.run('Ask for advice.', usage_limits=UsageLimits(request_limit=1))
+
+    async def test_local_advisor_drops_token_counting_its_model_cannot_do(self) -> None:
+        advisor = TestModel(custom_output_text='advice')
+        agent = Agent(CountingModel(TestModel(custom_output_text='done')), capabilities=[Advisor(advisor)])
+
+        result = await agent.run('Ask for advice.', usage_limits=UsageLimits(count_tokens_before_request=True))
+
+        assert result.output == 'done'
+        assert advisor.last_model_request_parameters is not None
+        assert result.usage.requests == 3
+
+    async def test_local_advisor_counts_tokens_before_its_request_when_its_model_can(self) -> None:
+        advisor = TestModel(custom_output_text='advice')
+        agent = Agent(
+            CountingModel(TestModel(custom_output_text='done')),
+            capabilities=[Advisor(CountingModel(advisor, input_tokens=5_000))],
+        )
+
+        with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit'):
+            await agent.run(
+                'Ask for advice.',
+                usage_limits=UsageLimits(count_tokens_before_request=True, per_request_input_tokens_limit=1_000),
+            )
+
+        assert advisor.last_model_request_parameters is None
+
+    async def test_local_advisor_is_not_rerun_after_a_request_is_counted_when_it_raises_not_implemented(self) -> None:
+        advisor = TestModel(custom_output_text='advice')
+        usage = RunUsage()
+
+        @dataclass(init=False)
+        class ConcurrentRequestBeforeFailModel(CountingModel):
+            async def count_tokens(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> RequestUsage:
+                usage.requests += 1
+                raise NotImplementedError('no token counting after sibling request')
+
+        agent = Agent(
+            CountingModel(TestModel(custom_output_text='done')),
+            capabilities=[Advisor(ConcurrentRequestBeforeFailModel(advisor))],
+        )
+
+        with pytest.raises(NotImplementedError, match='no token counting after sibling request'):
+            await agent.run(
+                'Ask for advice.',
+                usage=usage,
+                usage_limits=UsageLimits(count_tokens_before_request=True),
+            )
+
+        assert advisor.last_model_request_parameters is None
 
     async def test_local_unexpected_model_behavior_retries_executor(self) -> None:
         def advisor_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:

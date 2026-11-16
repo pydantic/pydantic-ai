@@ -7,14 +7,16 @@ and composes their results -- fan-out, chaining, voting, loops -- in one step.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import copy
 import json
+import sys
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Annotated, Any, Generic, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -23,6 +25,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
@@ -59,6 +62,10 @@ from pydantic_ai_harness._sub_agent_output import (
     without_resumable_outputs,
 )
 from pydantic_ai_harness._warn import renamed_duration_limit
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.aws_lambda._bridge import StepBridge
+    from pydantic_ai_harness.aws_lambda._operation_backend import AWSLambdaOperationConfig
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -139,16 +146,16 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     return resolved
 
 
-class _WorkflowArguments(TypedDict):
+class _WorkflowArgs(TypedDict):
     code: Annotated[str, Field(description='The Python orchestration script to execute in the sandbox.')]
 
 
-_WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArguments)
+_WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArgs)
 _WORKFLOW_ARGS_JSON_SCHEMA = _WORKFLOW_ARGS_ADAPTER.json_schema()
 _WORKFLOW_ARGS_VALIDATOR: SchemaValidatorProt = _WORKFLOW_ARGS_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 
 
-class _BudgetExhausted(RuntimeError):
+class _BudgetExhaustedError(RuntimeError):
     """The run's `max_agent_calls` budget is spent; no further sub-agent runs are allowed."""
 
     def __init__(self, max_agent_calls: int) -> None:
@@ -209,6 +216,85 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
     'properties': {'task': {'type': 'string'}},
     'required': ['task'],
 }
+
+
+def _lambda_bridge() -> StepBridge | None:
+    """The AWS Lambda step bridge of the durable handler this runs in, if any."""
+    # Only `run_durable` publishes a bridge, so a process that never imported it has none.
+    if 'pydantic_ai_harness.aws_lambda._bridge' not in sys.modules:
+        return None  # pragma: lax no cover - whether a test imported it first depends on test order
+    from pydantic_ai_harness.aws_lambda._bridge import current_bridge
+
+    return current_bridge()
+
+
+@dataclass
+class _Branch:
+    run: Callable[[], Awaitable[Any]]
+    config: AWSLambdaOperationConfig
+    future: asyncio.Future[Any]
+
+
+@dataclass
+class _LambdaBranches:
+    """Collects sub-agent runs and runs them as the branches of a Lambda `parallel` operation.
+
+    Lambda numbers a context's steps in the order they start, so the steps of concurrent sub-agents
+    would interleave by timing, and replay could hand one sub-agent's checkpoints to another. In a
+    branch of their own, a sub-agent's steps are numbered within the branch, and a branch's ID derives
+    from its position, which is the order the script dispatched the calls.
+    """
+
+    bridge: StepBridge
+    name: str
+    _pending: list[_Branch] = field(default_factory=list[_Branch])
+
+    def submit(
+        self, agent: AbstractAgent[Any, object], operation: Callable[[], Awaitable[Any]]
+    ) -> asyncio.Future[Any] | None:
+        """Add the run to the batch if `agent` runs under `AWSLambdaDurability`, else return `None`."""
+        # The bridge is only active in a durable handler, which imported this.
+        from pydantic_ai_harness.aws_lambda._capability import AWSLambdaDurability, operation_config
+
+        durability = BaseDurabilityCapability.from_agent(agent)
+        if not isinstance(durability, AWSLambdaDurability) or not durability.in_durable_context:
+            return None
+        branch = _Branch(operation, operation_config(durability), asyncio.get_running_loop().create_future())
+        self._pending.append(branch)
+        return branch.future
+
+    async def flush(self) -> None:
+        """Run the runs collected so far. `MontyExecutor` calls this before it resolves futures."""
+        # Let a call dispatched in the last loop iteration reach `submit`.
+        await asyncio.sleep(0)
+        pending, self._pending = self._pending, []
+        # One `parallel` operation per serializer, so each run's result is checkpointed with its agent's.
+        groups: dict[int, list[_Branch]] = {}
+        for branch in pending:
+            groups.setdefault(id(branch.config.serdes), []).append(branch)
+        for group in groups.values():
+            # If this raises, `MontyExecutor` cancels the dispatches waiting on these futures.
+            results = await self.bridge.run_parallel(
+                self.name, [branch.run for branch in group], group[0].config.parallel_config
+            )
+            for branch, result in zip(group, results):
+                if not branch.future.done():  # pragma: no branch - only a cancelled dispatch is done early
+                    branch.future.set_result(result)
+
+
+def _runs_under_dbos(agent: AbstractAgent[Any, object]) -> bool:
+    """Whether the agent runs under `DBOSDurability` in a workflow.
+
+    DBOS numbers steps in the order they start, so the steps of concurrent sub-agents would
+    interleave by timing, and recovery could replay one sub-agent's results into another call.
+    """
+    durability = BaseDurabilityCapability.from_agent(agent)
+    # Only an agent with `DBOSDurability` attached has imported it, so other engines import nothing.
+    if durability is None or 'pydantic_ai.durable_exec.dbos' not in sys.modules:
+        return False
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+    return isinstance(durability, DBOSDurability) and durability.in_durable_context
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
@@ -709,7 +795,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             )
         }
 
-    async def _run_one(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> Any:
+    async def _run_one(
+        self, agent_name: str, task: str, ctx: RunContext[AgentDepsT], branches: _LambdaBranches | None = None
+    ) -> Any:
         """Run one sub-agent against the shared per-run budget.
 
         The budget check + increment must stay suspension-free: there must be no `await`
@@ -726,8 +814,27 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         caps stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
         """
         if self._call_count >= self.max_agent_calls:
-            raise _BudgetExhausted(self.max_agent_calls)
+            raise _BudgetExhaustedError(self.max_agent_calls)
         self._call_count += 1
+        agent = self._by_name[agent_name].agent
+        # Also suspension-free: concurrent dispatches join the batch in dispatch order.
+        branch = branches.submit(agent, partial(self._run_recorded, agent_name, task, ctx)) if branches else None
+        if branch is not None:
+            recorded = await branch
+            if 'error' in recorded:
+                raise RuntimeError(recorded['error'])
+            return recorded['output']
+        return await self._run_sub_agent(agent_name, task, ctx)
+
+    async def _run_recorded(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> dict[str, Any]:
+        """Run one sub-agent with its failure carried as data, so its branch records it rather than failing."""
+        try:
+            return {'output': await self._run_sub_agent(agent_name, task, ctx)}
+        except RuntimeError as exc:
+            return {'error': str(exc)}
+
+    async def _run_sub_agent(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> Any:
+        """Run one sub-agent and return its output as JSON-compatible data."""
         # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
         # run. A realtime run's model isn't one, so fall back to the sub-agent's own default rather
         # than forwarding a model it cannot run with. Bind to a local, then `cast` to recover
@@ -803,14 +910,17 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             nonlocal budget_exhausted
             task = _dispatched_task(agent_name, kwargs)
             try:
-                output = await self._run_one(agent_name, task, ctx)
-            except _BudgetExhausted:
+                output = await self._run_one(agent_name, task, ctx, branches)
+            except _BudgetExhaustedError:
                 budget_exhausted = True
                 raise
             completed_dispatches.append(_CompletedDispatch(agent_name=agent_name, task=task, result=output))
             return output
 
         in_temporal = in_temporal_workflow()
+        bridge = _lambda_bridge()
+        branches = _LambdaBranches(bridge, self.tool_name) if bridge is not None else None
+        sequential = any(_runs_under_dbos(w.agent) for w in self._by_name.values())
         limits = _resolve_resource_limits(self.resource_limits)
         capture = PrintCapture()
         type_check_stubs = self._build_type_check_stubs()
@@ -822,11 +932,13 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
-            # the whole script. Sub-agents always run concurrently (the executor's defaults);
-            # durable ordering (global_sequential) lands with durability.
+            # the whole script.
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
+                # Exclusive: under `global_sequential`, calls start only after `flush`.
+                flush=branches.flush if branches is not None and not sequential else None,
+                global_sequential=sequential,
                 portal=monty.portal,
                 max_sleep_seconds=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))

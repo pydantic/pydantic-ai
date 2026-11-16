@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -100,6 +100,12 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
     path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
     See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+    secrets: Sequence[str] | None = None
+    """Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in
+    its machine spec. A secret bound to domains is set in the machine's environment as a placeholder that
+    boxd's proxy, outside the machine, replaces with the real value on requests to those domains, so the
+    agent's commands can send it without it being in their environment; a secret without domains is set
+    as its real value. An attached machine keeps the ones it was created with."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
@@ -111,6 +117,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
         if self.snapshot is not None and self.vcpu is not None:
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
+        if isinstance(self.secrets, str):
+            raise UserError(f'`secrets` takes a list of secret names, such as [{self.secrets!r}], not a string.')
         check_env(self.env)
 
     @classmethod
@@ -128,6 +136,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
+        secrets: Sequence[str] | None = None,
     ) -> BoxdSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -147,6 +156,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             env=env,
             authority=authority,
             path_authority=path_authority,
+            secrets=secrets,
         )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
@@ -194,6 +204,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=self.auto_suspend_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            secrets=self.secrets,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
