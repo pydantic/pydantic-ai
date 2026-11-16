@@ -176,8 +176,8 @@ attributes:
 - `smart_search.matches` and `.omitted_matches`: how many matches were returned and cut.
 - `smart_search.query`: the query, only when the run includes content in traces.
 
-A failed search marks this span failed with the exception's type, and its message only when the run includes
-content in traces. The judge runs themselves are not instrumented. Their prompts carry source snippets, so global
+A failed search records no exception on this span; the enclosing tool span reports it, redacted by the run's
+`include_content`. The judge runs themselves are not instrumented. Their prompts carry source snippets, so global
 instrumentation must not export them past the host agent's own `instrument` or `include_content` settings. Their
 usage is still added to the run's.
 

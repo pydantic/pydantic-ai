@@ -82,8 +82,8 @@ Each search opens a `smart search` span under its tool call, on the run's tracer
 | `smart_search.matches`, `.omitted_matches` | matches returned, and matches cut by `limit` |
 | `smart_search.query` | the query, only when the run includes content in traces |
 
-A failed search marks this span failed with the exception's type, and its message only when the run includes
-content in traces. The judge runs themselves are not instrumented, as their prompts carry source, but their usage
+A failed search records no exception on this span; the enclosing tool span reports it, redacted by the run's
+`include_content`. The judge runs themselves are not instrumented, as their prompts carry source, but their usage
 is added to the run's.
 
 See the [Smart Search docs](https://pydantic.dev/docs/ai/harness/smart-search/) for the search
