@@ -293,7 +293,9 @@ async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -
         assert result.stdout.splitlines() == ['1', path]
 
 
-async def test_a_desktop_below_1024x768_keeps_its_size(client: daytona.AsyncDaytona) -> None:
+async def test_a_new_desktop_sandbox_below_1024x768_gets_that_size(client: daytona.AsyncDaytona) -> None:
+    """Creates a new sandbox. Validates the fake-encoded assumption that `VNC_RESOLUTION` gives a new sandbox a
+    display below Daytona's 1024x768 default, which the display and its screenshots then report."""
     async with _owned(client, desktop=(800, 600)) as backend:
         display = backend.display
         assert display is not None

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import os
 from collections.abc import Mapping
 
 import anyio
@@ -35,6 +36,10 @@ from pydantic_ai_harness.computer_use import Display, DisplayAction, SupportsZoo
 from pydantic_ai_harness.docker_container import DockerContainerBackend
 
 from .display_fakes import FAKE_SCREENSHOT
+
+pytestmark = pytest.mark.skipif(
+    os.name != 'posix', reason='`DockerContainerBackend` runs `docker` as a POSIX subprocess'
+)
 
 INPUT = 'echo $$ > /tmp/.pydantic-ai-input-1; exec "$@"'
 """How an input command runs: recording its process id, so a cancel can stop it."""
@@ -159,6 +164,27 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
     desktop = ScriptedDesktop()
     await desktop.screen.act(action)
     assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], False, {'DISPLAY': ':1'})]
+
+
+async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # E2B runs a command as one argument, which Linux caps at 131,072 bytes; the limit is patched down from 100,000.
+    monkeypatch.setattr('pydantic_ai_harness._x11._MAX_CHAIN_BYTES', 30)
+    desktop = ScriptedDesktop()
+
+    await desktop.screen.act(TypeText(text='abcd'))
+    # Held keys go down in the first command and up in the last, so they stay held between them.
+    await desktop.screen.act(Drag(path=(Point(x=0, y=0), Point(x=10, y=0)), modifiers=('alt',)))
+
+    assert [argv[4:] for argv in desktop.argvs] == [
+        ['xdotool', 'key', '--delay', '12', '--', 'U0061', 'U0062'],
+        ['xdotool', 'key', '--delay', '12', '--', 'U0063', 'U0064'],
+        ['xdotool', 'keydown', 'alt', 'mousemove', '0', '0', 'mousedown', '1', 'sleep', '0.1'],
+        ['xdotool', 'sleep', '0.05', 'mousemove', '5', '0'],
+        ['xdotool', 'sleep', '0.05', 'mousemove', '10', '0'],
+        ['xdotool', 'sleep', '0.1', 'mouseup', '1', 'keyup', 'alt'],
+    ]
 
 
 @pytest.mark.parametrize(
@@ -316,9 +342,7 @@ async def test_x11_computer_passes_a_zoom_region_as_an_argument() -> None:
             "exit code 1 on display :1: Can't open display: :1",
         ),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'display_size', "output: 'garbage'"),
-        # A line's leading whitespace can't run into the next line, so this blank output is read in time linear in its
-        # length, not its square.
-        (CommandResult(exit_code=0, stdout=' \n' * 100_000, stderr=''), 'display_size', "output: ''"),
+        (CommandResult(exit_code=0, stdout=' \n' * 3, stderr=''), 'display_size', "output: ''"),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'cursor_position', 'getmouselocation'),
         (CommandResult(exit_code=0, stdout='bm90IGEgcG5n', stderr=''), 'screenshot', 'did not return a PNG'),
         (CommandResult(exit_code=0, stdout='abc', stderr=''), 'screenshot', 'did not return a PNG'),

@@ -67,8 +67,8 @@ _T = TypeVar('_T')
 DISPLAY = ':0'
 """The X display of every Daytona sandbox's desktop."""
 
-_REQUEST_TIMEOUT = 30
-"""As `_backend._REQUEST_TIMEOUT`, which imports this module."""
+REQUEST_TIMEOUT = 30
+"""Maximum time for one Daytona API request."""
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
@@ -80,7 +80,7 @@ _TYPED_PER_REQUEST = 2_000
 """Characters typed by one request, well inside `_TYPE_TIMEOUT`: 2,000 take about 11 seconds."""
 
 _SCROLLED_PER_REQUEST = 500
-"""Wheel clicks scrolled by one request, well inside `_REQUEST_TIMEOUT`: 1,000 take about 21 seconds."""
+"""Wheel clicks scrolled by one request, well inside `REQUEST_TIMEOUT`: 1,000 take about 21 seconds."""
 
 _MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'cmd'})
 """Daytona's names for the modifier keys."""
@@ -175,25 +175,25 @@ class DaytonaDesktop:
         self._computer_use = computer_use
 
     async def display_size(self) -> tuple[int, int]:
-        displays = (await self._computer_use().display.get_info(request_timeout=_REQUEST_TIMEOUT)).displays or []
+        displays = (await self._computer_use().display.get_info(request_timeout=REQUEST_TIMEOUT)).displays or []
         display = next((display for display in displays if display.is_active), None)
         if display is None or not display.width or not display.height:
             raise WorkspaceError(f'Daytona reported no display size: {displays!r}')
         return display.width, display.height
 
     async def screenshot(self) -> bytes:
-        response = await self._computer_use().screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
+        response = await self._computer_use().screenshot.take_full_screen(request_timeout=REQUEST_TIMEOUT)
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def zoom(self, region: Region) -> bytes:
         area = ScreenshotRegion(
             x=region.left, y=region.top, width=region.right - region.left, height=region.bottom - region.top
         )
-        response = await self._computer_use().screenshot.take_region(area, request_timeout=_REQUEST_TIMEOUT)
+        response = await self._computer_use().screenshot.take_region(area, request_timeout=REQUEST_TIMEOUT)
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def cursor_position(self) -> Point:
-        position = await self._computer_use().mouse.get_position(request_timeout=_REQUEST_TIMEOUT)
+        position = await self._computer_use().mouse.get_position(request_timeout=REQUEST_TIMEOUT)
         if position.x is None or position.y is None:
             raise WorkspaceError(f'Daytona reported no pointer position: {position!r}')
         return Point(x=position.x, y=position.y)
@@ -216,13 +216,13 @@ class DaytonaDesktop:
         try:
             for key in keys:
                 pressed.append(key)  # before the request, which can press the key and still fail
-                await _send_input(partial(keyboard.down, key, request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
             yield
             while pressed:
-                await _send_input(partial(keyboard.up, pressed[-1], request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(keyboard.up, pressed[-1], request_timeout=REQUEST_TIMEOUT))
                 pressed.pop()  # only once it's up, so a failed release is retried below
         except BaseException as error:
-            await _let_go(error, pressed, partial(keyboard.up, request_timeout=_REQUEST_TIMEOUT))
+            await _let_go(error, pressed, partial(keyboard.up, request_timeout=REQUEST_TIMEOUT))
             raise
 
     async def _scroll(self, x: int, y: int, direction: str, amount: int, modifiers: list[str]) -> None:
@@ -236,7 +236,7 @@ class DaytonaDesktop:
                 direction,
                 clicks,
                 modifiers=modifiers,
-                request_timeout=_REQUEST_TIMEOUT,
+                request_timeout=REQUEST_TIMEOUT,
             )
             # The one call that reports a failure in its result rather than raising.
             if not await _send_input(scroll):
@@ -258,18 +258,18 @@ class DaytonaDesktop:
                 held = _keys(modifiers)
                 x, y = await self._at(x, y)
                 await _send_input(
-                    partial(mouse.click, x, y, button, clicks=count, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
+                    partial(mouse.click, x, y, button, clicks=count, modifiers=held, request_timeout=REQUEST_TIMEOUT)
                 )
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 async with self._holding(_keys(modifiers)):
-                    await _send_input(partial(mouse.move, x, y, request_timeout=_REQUEST_TIMEOUT))
+                    await _send_input(partial(mouse.move, x, y, request_timeout=REQUEST_TIMEOUT))
             case Drag(path=path, modifiers=modifiers):
                 async with self._holding(_keys(modifiers)):
                     await self._drag(path)
             case MouseDown(button=button):
-                await _send_input(partial(mouse.down, button=button, request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.down, button=button, request_timeout=REQUEST_TIMEOUT))
             case MouseUp(button=button):
-                await _send_input(partial(mouse.up, button=button, request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.up, button=button, request_timeout=REQUEST_TIMEOUT))
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 held = _keys(modifiers)
                 await self._scroll(*await self._at(x, y), direction, amount, held)
@@ -286,15 +286,15 @@ class DaytonaDesktop:
     async def _drag(self, path: Sequence[Point]) -> None:
         mouse, start, end = self._computer_use().mouse, path[0], path[-1]
         try:
-            await _send_input(partial(mouse.down, start.x, start.y, request_timeout=_REQUEST_TIMEOUT))
+            await _send_input(partial(mouse.down, start.x, start.y, request_timeout=REQUEST_TIMEOUT))
             await anyio.sleep(DRAG_PRESS_PAUSE)
             for point in drag_steps(path):
                 await anyio.sleep(DRAG_STEP_PAUSE)
-                await _send_input(partial(mouse.move, point.x, point.y, request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.move, point.x, point.y, request_timeout=REQUEST_TIMEOUT))
             await anyio.sleep(DRAG_PRESS_PAUSE)
-            await _send_input(partial(mouse.up, end.x, end.y, request_timeout=_REQUEST_TIMEOUT))
+            await _send_input(partial(mouse.up, end.x, end.y, request_timeout=REQUEST_TIMEOUT))
         except BaseException as error:
-            await _let_go(error, ['the left mouse button'], lambda _: mouse.up(request_timeout=_REQUEST_TIMEOUT))
+            await _let_go(error, ['the left mouse button'], lambda _: mouse.up(request_timeout=REQUEST_TIMEOUT))
             raise
 
     async def _press(self, names: list[str], repeat: int) -> None:
@@ -303,7 +303,7 @@ class DaytonaDesktop:
         for _ in range(repeat):
             if len(others) == 1:
                 keyboard = self._computer_use().keyboard
-                await _send_input(partial(keyboard.press, others[0], modifiers, request_timeout=_REQUEST_TIMEOUT))
+                await _send_input(partial(keyboard.press, others[0], modifiers, request_timeout=REQUEST_TIMEOUT))
             else:  # only modifiers, or several other keys: `press` takes one
                 async with self._holding(names):
                     pass

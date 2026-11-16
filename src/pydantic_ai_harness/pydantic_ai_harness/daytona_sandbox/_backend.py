@@ -62,7 +62,7 @@ except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
 from pydantic_ai_harness._display import LazyDisplay, desktop_size
-from pydantic_ai_harness.daytona_sandbox._desktop import DISPLAY, DaytonaDesktop
+from pydantic_ai_harness.daytona_sandbox._desktop import DISPLAY, REQUEST_TIMEOUT as _REQUEST_TIMEOUT, DaytonaDesktop
 
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
@@ -73,7 +73,6 @@ _MISSING_CREDENTIALS_MESSAGE = (
 _OUTPUT_LIMIT_MESSAGE = (
     'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead'
 )
-_REQUEST_TIMEOUT = 30
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 # For create, start, and delete.

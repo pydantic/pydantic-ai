@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .detect_loops import DetectLoops
-    from .docker_container import DESKTOP_DOCKERFILE, DockerContainer, DockerContainerBackend
+    from .docker_container import DockerContainer, DockerContainerBackend
 
     # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
     from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend  # pyright: ignore[reportDeprecated]
@@ -128,7 +128,6 @@ __all__ = [
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
     'DetectLoops',
-    'DESKTOP_DOCKERFILE',
     'DockerContainer',
     'DockerContainerBackend',
     'DynamicWorkflow',
@@ -234,7 +233,6 @@ _LAZY_EXPORTS = {
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
-    'DESKTOP_DOCKERFILE': 'docker_container',
     'DeduplicateFileReads': 'compaction',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',

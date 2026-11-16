@@ -11,15 +11,10 @@ import pytest
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.computer_use import Click, Point
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
-from pydantic_ai_harness.computer_use import (
-    Display,
-    SupportsCursorPosition,
-    SupportsDisplay,
-)
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE, DockerContainer, DockerContainerBackend
 
-from ..display_fakes import FAKE_SCREENSHOT
+from ..display_fakes import FAKE_SCREENSHOT, screen
 from ._fake_docker import FakeDocker, install_fake_docker
 
 pytestmark = pytest.mark.skipif(
@@ -46,13 +41,6 @@ def _run_image(docker: FakeDocker) -> str:
 
 def _desktop(container_dir: Path, image: str | None = None) -> DockerContainerBackend:
     return DockerContainerBackend(image=image, working_dir=str(container_dir), desktop=True)
-
-
-def _screen(backend: WorkspaceBackend) -> Display:
-    assert isinstance(backend, SupportsDisplay)
-    display = backend.display
-    assert display is not None
-    return display
 
 
 async def test_the_desktop_image_is_built_once_and_runs_the_container(docker: FakeDocker, container_dir: Path) -> None:
@@ -95,7 +83,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
 ) -> None:
     docker.remove_display()
     backend = DockerContainerBackend(image='my-desktop', working_dir=str(container_dir), desktop=desktop)
-    workspace = _screen(backend)
+    workspace = screen(backend)
 
     assert await workspace.display_size() == size
     await workspace.act(Click(x=3, y=4))
@@ -119,13 +107,12 @@ async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, cont
         'do sleep 0.1; i=$((i+1)); done\n'
     )
 
-    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert (bin_dir / 'xprop-probes').read_text().splitlines() == ['probe', 'probe']
 
 
 async def test_screenshots_and_the_pointer_come_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
-    workspace = _screen(_desktop(container_dir, image='my-desktop'))
-    assert isinstance(workspace, SupportsCursorPosition)
+    workspace = screen(_desktop(container_dir, image='my-desktop'))
 
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=640, y=400)
@@ -140,7 +127,7 @@ async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, co
     backend = DockerContainerBackend(
         image='my-desktop', working_dir=str(container_dir), desktop=True, env={'DISPLAY': ':0'}
     )
-    await _screen(backend).act(Click(x=3, y=4))
+    await screen(backend).act(Click(x=3, y=4))
 
     # Starting the display checks the same X server the actions go to.
     assert {call.split(' ')[0] for call in docker.xdotool_calls} == {':1'}
@@ -148,7 +135,7 @@ async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, co
 
 async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
-    workspace = _screen(backend)
+    workspace = screen(backend)
     await workspace.display_size()
     assert docker.xvfb_starts == 0  # the display was already up
 
@@ -175,7 +162,7 @@ async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
     docker.remove_display()
     docker.leave_x_lock(backend.ref.id)
 
-    assert await _screen(backend).display_size() == (1280, 800)
+    assert await screen(backend).display_size() == (1280, 800)
     assert not docker.x_lock_exists(backend.ref.id)
 
 
@@ -188,27 +175,27 @@ async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_d
     docker.leave_x_lock(backend.ref.id, owner='Xvnc')
 
     with pytest.raises(WorkspaceUnavailableError, match='Server is already active'):
-        await _screen(backend).display_size()
+        await screen(backend).display_size()
     assert docker.x_lock_exists(backend.ref.id)
 
 
 async def test_the_start_opens_the_panel_unless_it_shows(docker: FakeDocker, container_dir: Path) -> None:
-    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 1
 
-    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 1
 
     # As a panel that died, or a start cancelled before it, leaves the display.
     docker.close_panel()
-    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 2
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
     # Missing as the shell reports it, not unlinked: a host's own `scrot` further along PATH would answer.
     (docker.bin_dir / 'scrot').write_text('#!/bin/sh\necho "scrot: not found" >&2\nexit 127\n')
-    workspace = _screen(_desktop(container_dir, image='my-desktop'))
+    workspace = screen(_desktop(container_dir, image='my-desktop'))
 
     with pytest.raises(WorkspaceUnavailableError, match='A display command is missing'):
         await workspace.screenshot()
@@ -216,7 +203,7 @@ async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, contai
 
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display(can_start=False)
-    workspace = _screen(_desktop(container_dir, image='my-desktop'))
+    workspace = screen(_desktop(container_dir, image='my-desktop'))
 
     with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xwininfo, scrot and setsid') as error:
         await workspace.screenshot()
@@ -239,7 +226,7 @@ async def test_a_desktop_capability_gives_a_new_run_a_display(docker: FakeDocker
 
     @agent.tool
     async def probe(ctx: RunContext[object]) -> str:
-        return 'x'.join(map(str, await _screen(ctx.workspace.backend).display_size()))
+        return 'x'.join(map(str, await screen(ctx.workspace.backend).display_size()))
 
     result = await agent.run('go')
 
