@@ -36,7 +36,7 @@ async def _delete_if_live(sandbox_id: str) -> None:  # pragma: no cover - live t
     await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=sandbox_id))
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeDaytonaSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_daytona: FakeDaytona, tmp_path: Path) -> DaytonaSandboxBackend:

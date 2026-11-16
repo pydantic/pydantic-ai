@@ -31,7 +31,7 @@ async def _terminate(backend: WorkspaceBackend) -> None:
     await sandbox.terminate.aio()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeModalSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_modal: FakeModal, tmp_path: Path) -> ModalSandboxBackend:

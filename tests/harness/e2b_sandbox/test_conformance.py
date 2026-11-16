@@ -30,7 +30,7 @@ async def _kill(backend: WorkspaceBackend) -> None:
     await sandbox.kill()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeE2BSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_e2b: FakeE2B, tmp_path: Path) -> E2BSandboxBackend:

@@ -20,7 +20,7 @@ from .fake_opensandbox import FakeOpenSandbox
 from .test_opensandbox_live import LIVE_IMAGE, live_capability
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeOpenSandboxBackend(WorkspaceBackendSuite):
     @pytest.mark.skip(reason='the shell filesystem pages a large file at a command per 64 KiB; the live tier runs it')
     async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None: ...

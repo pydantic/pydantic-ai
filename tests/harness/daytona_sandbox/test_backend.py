@@ -49,6 +49,7 @@ from pydantic_ai_harness.daytona_sandbox import (
 from .fake_daytona import CreateParams, FakeClient, FakeDaytona, FakeSandbox
 
 pytestmark = pytest.mark.anyio(backends=['asyncio'])
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 @pytest.fixture
@@ -197,6 +198,7 @@ class TestCommands:
         await backend.run(['true'], env={'B': '3'})
         assert _unmarked(fake_daytona.sandboxes[0].process_command) == f'{_WRAPPER} env -- A=1 B=3 true'
 
+    @posix_only
     async def test_env_names_that_are_not_shell_identifiers_reach_the_command(
         self, fake_daytona: FakeDaytona, tmp_path: Path
     ) -> None:
@@ -206,6 +208,7 @@ class TestCommands:
         result = await backend.run(['env'], env={'C-D': 'command'})
         assert {'A.B=sandbox', 'C-D=command'} <= set(result.stdout.splitlines())
 
+    @posix_only
     async def test_command_stdin_is_at_eof(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
         fake_daytona.host_root = tmp_path.resolve()
         backend = DaytonaSandboxBackend()
@@ -403,6 +406,7 @@ class TestCommands:
         assert sandbox.process_sessions == set()
         assert fake_daytona.closed_clients == 1
 
+    @posix_only
     async def test_a_missing_working_dir_is_a_workspace_error(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
         fake_daytona.host_root = tmp_path.resolve()
         missing = f'{tmp_path.resolve()}/missing'
@@ -835,6 +839,7 @@ class TestErrorsAndFilesystem:
         with pytest.raises(NotADirectoryError, match=r"^Not a directory in the Daytona sandbox: '/pkg'$"):
             await backend.make_dir('/pkg')
 
+    @posix_only
     async def test_write_follows_symlink_and_preserves_mode(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
         fake_daytona.host_root = tmp_path.resolve()
         backend = await started()

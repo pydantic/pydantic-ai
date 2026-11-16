@@ -27,6 +27,7 @@ from .._tool_calls import call_tools
 from .fake_daytona import FakeDaytona
 
 pytestmark = pytest.mark.anyio(backends=['asyncio'])
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def test_capability_repr_hides_command_environment() -> None:
@@ -323,6 +324,7 @@ async def test_a_child_run_leaves_the_parent_runs_client_open(fake_daytona: Fake
     assert fake_daytona.closed_clients == 1
 
 
+@posix_only
 async def test_coder_works_in_the_sandbox(fake_daytona: FakeDaytona, tmp_path: Path) -> None:
     fake_daytona.host_root = tmp_path.resolve()
     results = await call_tools(

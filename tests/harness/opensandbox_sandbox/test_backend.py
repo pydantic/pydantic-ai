@@ -39,6 +39,8 @@ from ...conftest import no_leaked_tasks
 from . import fake_opensandbox
 from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
 
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
+
 _MODULE = 'pydantic_ai_harness.opensandbox_sandbox._backend'
 
 

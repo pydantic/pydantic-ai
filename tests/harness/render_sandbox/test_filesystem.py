@@ -27,7 +27,7 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='render not installed'),
-    pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host'),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
 ]
 
 

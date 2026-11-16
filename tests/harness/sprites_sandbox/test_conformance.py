@@ -43,7 +43,7 @@ async def _teardown(backend: SpritesSandboxBackend) -> None:  # pragma: no cover
     await backend.aclose()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='the fake runs commands as POSIX processes on the host')
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeSpritesSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, transport: SpriteTransport) -> SpritesSandboxBackend:

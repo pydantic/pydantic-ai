@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
 from .._tool_calls import call_tools
 from .fake_e2b import FakeE2B
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def test_env_is_not_shown_in_repr() -> None:
@@ -477,6 +480,7 @@ async def test_agent_history_attaches_same_workspace(fake_e2b: FakeE2B) -> None:
     assert fake_e2b.connect_calls == [('sbx-1', 3_600)]
 
 
+@posix_only
 async def test_coder_works_in_the_sandbox(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     # Host mode: the fake sandbox runs commands and file calls under `tmp_path`, so the model's
     # shell and file tools are observable end to end.
