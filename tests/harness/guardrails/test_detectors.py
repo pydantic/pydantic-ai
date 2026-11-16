@@ -103,6 +103,10 @@ class TestSecretRedaction:
         """Google AI Studio now issues `AQ.` keys alongside legacy `AIza` keys."""
         assert redact_secrets(f'k={key}').replacement == 'k=[redacted:google_api_key]'
 
+    def test_a_long_aq_key_is_redacted_whole(self):
+        """A capped length would redact the first 55 characters and leave the tail of the key in the text."""
+        assert redact_secrets('k=AQ.' + 'a' * 60 + ' done').replacement == 'k=[redacted:google_api_key] done'
+
     def test_an_anthropic_key_keeps_its_own_label(self):
         """Allowing hyphens makes the OpenAI shape a prefix of this one, so it is excluded explicitly."""
         result = redact_secrets('k=sk-ant-abcdefghijklmnopqrstuvwx')
