@@ -389,21 +389,22 @@ async def test_delegates_that_carry_the_sessions_permissions_are_not_refused(
 
 
 @pytest.mark.parametrize(
-    ('tool_name', 'task_id', 'bound', 'refused'),
+    ('tool_name', 'task_id', 'bound', 'shared', 'refused'),
     [
-        ('message_task', 'finished', True, True),
-        ('message_task', 'running', True, False),
-        ('message_task', 'unknown', True, False),
-        ('message_task', 'finished', False, False),
-        ('cancel_task', 'finished', True, False),
+        ('message_task', 'finished', True, False, True),
+        ('message_task', 'finished', True, True, False),
+        ('message_task', 'running', True, False, False),
+        ('message_task', 'unknown', True, False, False),
+        ('message_task', 'finished', False, False, False),
+        ('cancel_task', 'finished', True, False, False),
     ],
 )
 async def test_a_message_that_resumes_an_unchecked_delegate_is_refused(
-    tool_name: str, task_id: str, bound: bool, refused: bool
+    tool_name: str, task_id: str, bound: bool, shared: bool, refused: bool
 ) -> None:
     """`message_task` on a finished task resumes it, so it is checked like the delegation it repeats."""
-    _, _, keep = session_permissions(lambda: 'read-only')
-    sub_agents = SubAgents[None](agent_folders=None)
+    permissions, _, keep = session_permissions(lambda: 'read-only')
+    sub_agents = SubAgents[None](agent_folders=None, shared_capabilities=[permissions] if shared else [])
     ctx = RunContext[None](
         deps=None, model=TestModel(), usage=RunUsage(), agent=Agent(TestModel()), capabilities={'subagents': sub_agents}
     )
