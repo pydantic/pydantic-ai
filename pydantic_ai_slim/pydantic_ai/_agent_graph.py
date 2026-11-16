@@ -579,7 +579,7 @@ class _AttemptBaseline:
         """
         if not self.native_tool_factories or _unwrap_model(request_context.model) is _unwrap_model(self.model):
             return
-        attempt_context = replace(run_context, model=request_context.model)
+        attempt_context = _attempt_run_context(run_context, request_context)
         parameters = request_context.model_request_parameters
         native_tools: list[AbstractNativeTool | None] = list(parameters.native_tools)
         for factory, index in self.native_tool_factories:
@@ -727,6 +727,11 @@ class _StepRecording:
             else:
                 _apply_instruction_parts(target, sent)
         return sent
+
+
+def _attempt_run_context(run_context: RunContext[DepsT], request_context: ModelRequestContext) -> RunContext[DepsT]:
+    """The run context the hooks resolved again for an attempt at another model see: that model as `ctx.model`."""
+    return replace(run_context, model=request_context.model, _model_id=request_context.model_id)
 
 
 def _copy_settings(settings: ModelSettings | None) -> ModelSettings | None:
@@ -3492,7 +3497,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 self._recorded_for_other_model = False
             return
-        attempt_context = replace(run_context, model=request_context.model, _model_id=request_context.model_id)
+        attempt_context = _attempt_run_context(run_context, request_context)
         # A resumed suspended response is continued with the instructions it was sent (see `_prepare_resume_request`),
         # and instruction parts a hook changed stay as it left them.
         resolve_instructions = recording is not None and recording.parameters is not None

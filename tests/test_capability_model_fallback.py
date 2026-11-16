@@ -3299,3 +3299,45 @@ async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_
         for part in message.parts
         if isinstance(part, _messages.ModelSettingsDeltaPart)
     ] == snapshot([_messages.ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True)])
+
+
+async def test_hooks_resolved_again_see_the_model_id_of_the_model_fallen_back_to():
+    """Native tool factories, instructions and settings resolved again for a model see its `ctx.model_id`."""
+    seen: list[tuple[str, str | None]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    models = {'primary': _sent('primary', sent, fails=True), 'backup': _sent('backup', sent)}
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        seen.append(('instructions', ctx.model_id))
+        return 'Be brief.'
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        seen.append(('settings', ctx.model_id))
+        return {}
+
+    def web_search(ctx: RunContext[Any]) -> None:
+        seen.append(('native tool', ctx.model_id))
+
+    agent = _with_noop(
+        Agent(
+            'primary',
+            instructions=instructions,
+            model_settings=settings,
+            capabilities=[
+                ResolveModelId(lambda ctx, model_id: models.get(model_id)),
+                NativeTool(web_search),
+                ModelFallback('backup'),
+            ],
+        )
+    )
+    assert (await agent.run('x')).output == 'backup'
+    assert seen[:6] == snapshot(
+        [
+            ('instructions', 'primary'),
+            ('native tool', 'primary'),
+            ('settings', 'primary'),
+            ('native tool', 'backup'),
+            ('instructions', 'backup'),
+            ('settings', 'backup'),
+        ]
+    )
