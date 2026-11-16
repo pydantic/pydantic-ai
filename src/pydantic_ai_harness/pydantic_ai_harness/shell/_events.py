@@ -6,8 +6,13 @@ traces the tool call.
 """
 
 from dataclasses import dataclass
+from typing import Annotated
+
+from pydantic import AliasChoices, Field
+from typing_extensions import deprecated
 
 from pydantic_ai import CapabilityEvent
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 SHELL_EVENTS = 'shell'
 
@@ -40,5 +45,11 @@ class CommandFinishedEvent(CapabilityEvent, namespace=SHELL_EVENTS):
     exit_code: int | None
     truncated: bool
     """Whether output beyond the per-call event budget was left in the log, or `max_log_bytes` emptied it."""
-    total_lines: int | None = 0
+    line_count: Annotated[int | None, Field(validation_alias=AliasChoices('line_count', 'total_lines'))] = 0
     """Logical lines in the log up to 1 MiB; `None` for larger logs, which are not scanned, and emptied ones."""
+
+    @property
+    @deprecated('`total_lines` is deprecated, use `line_count` instead.', category=HarnessDeprecationWarning)
+    def total_lines(self) -> int | None:
+        """Deprecated alias for `line_count`."""
+        return self.line_count

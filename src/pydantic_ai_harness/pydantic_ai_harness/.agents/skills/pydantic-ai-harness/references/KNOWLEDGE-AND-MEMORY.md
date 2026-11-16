@@ -17,7 +17,7 @@ demand). `Skills` and the optional Pixeltable integration require extras.
 
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
-protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
+protected), and `search_memory(query)`. With a `FileMemoryStore` in the run's workspace (no `workspace=`,
 relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
 (`unless_tool_kind=READ_FILE_KIND`, fixed for the run) and an instruction block named `directory`
 (`on_change='append'`, present and empty from the first request until a file reader is on the run; its text
@@ -36,20 +36,20 @@ loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
-agent = Agent('test', capabilities=[Memory(InMemoryStore())])
+agent = Agent('test', capabilities=[Memory(InMemoryMemoryStore())])
 ```
 
-The first positional argument is the store; it defaults to `InMemoryStore()` (process lifetime
+The first positional argument is the store; it defaults to `InMemoryMemoryStore()` (process lifetime
 only).
 
 ### Stores
 
 | Store | Persistence | Notes |
 |---|---|---|
-| `InMemoryStore()` | Process lifetime | Tests, ephemeral agents |
-| `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
+| `InMemoryMemoryStore()` | Process lifetime | Tests, ephemeral agents |
+| `FileMemoryStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
 | `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
 | `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared (Pixeltable catalog) | Install `[pixeltable]` on Python 3.11 to 3.14; creates the table on first use |
@@ -59,11 +59,11 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     'test',
-    capabilities=[LocalWorkspace('.'), Memory(FileStore('.agent-memory'))],
+    capabilities=[LocalWorkspace('.'), Memory(FileMemoryStore('.agent-memory'))],
 )
 ```
 
@@ -80,14 +80,14 @@ async def build_memory() -> tuple[Memory[None], asyncpg.Pool]:
 ```
 
 Gotchas:
-- `FileStore` without an attached workspace fails the run at start (`UserError`). To keep memory
+- `FileMemoryStore` without an attached workspace fails the run at start (`UserError`). To keep memory
   on the host while the agent works in a sandbox, pass
-  `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/app/memory'))` (a backend, not the
+  `FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/app/memory'))` (a backend, not the
   `LocalWorkspace` capability). With a read-only run workspace, write/delete tools are hidden.
 - Writes use optimistic compare-and-swap plus an idempotency id derived from run and tool call;
   a stale write returns a conflict to the model instead of overwriting. Custom stores must
   implement `MemoryStore` mutations atomically.
-- `FileStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
+- `FileMemoryStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
   processes use `SqliteMemoryStore` or `PostgresMemoryStore`.
 
 ### Pixeltable catalog
@@ -112,7 +112,7 @@ from dataclasses import dataclass
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
 
 @dataclass
@@ -123,7 +123,7 @@ class AppDeps:
 agent = Agent(
     'test',
     deps_type=AppDeps,
-    capabilities=[Memory(InMemoryStore(), namespace=lambda ctx: ctx.deps.user_id)],
+    capabilities=[Memory(InMemoryMemoryStore(), namespace=lambda ctx: ctx.deps.user_id)],
 )
 ```
 
@@ -134,7 +134,7 @@ I/O.
 ### Write metadata (who wrote a file)
 
 When the app's UI also edits memory, record provenance with the write instead of in the note.
-`InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`:
+`InMemoryMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`:
 `store.write_with_metadata(path, content, expected_version=..., metadata={'updated_by': 'ui'})`
 stores a `Mapping[str, str]` (at most 4,096 characters as JSON) in the content's transaction
 (Postgres: a queryable `write_metadata JSONB` column), and
@@ -146,7 +146,7 @@ with the model's writes.
   `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
   Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
 - Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
-- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`,
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileMemoryStore`,
   `PixeltableMemoryStore`, or a custom store implementing only `MemoryStore`) raises `UserError` at construction or run start.
 - A custom store opts in by implementing `write_with_metadata` (checked structurally, like
   `search`), writing metadata atomically with the content; its `write` must record none.
@@ -177,9 +177,9 @@ names do not collide:
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
-store = InMemoryStore()
+store = InMemoryMemoryStore()
 agent = Agent(
     'test',
     capabilities=[

@@ -120,6 +120,26 @@ def kernel_clock(monkeypatch: pytest.MonkeyPatch) -> _KernelClock:
     return clock
 
 
+@pytest.fixture
+def entered(monkeypatch: pytest.MonkeyPatch) -> Tool[None]:
+    """A tool the code calls once it is running. Until then, the clock `IPythonKernel` times cells by stands still.
+
+    The timeout counts from when the cell is sent, so on a slow kernel it could pass, and the interrupt land, before
+    the code under test starts.
+    """
+    frozen = time.monotonic()
+    entered_at: list[float] = []
+
+    def monotonic() -> float:
+        return frozen + time.monotonic() - entered_at[0] if entered_at else frozen
+
+    def entered() -> None:
+        entered_at.append(time.monotonic())
+
+    monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.time', SimpleNamespace(monotonic=monotonic))
+    return Tool(entered)
+
+
 def _assert_process_gone(pid: int) -> None:
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
@@ -261,33 +281,26 @@ class TestIPythonCodeMode:
         )
         assert after == 'yes'
 
-    async def test_timeout_interrupts_code_that_keeps_printing(self, kernel: IPythonKernel) -> None:
+    async def test_timeout_interrupts_code_that_keeps_printing(
+        self, kernel: IPythonKernel, entered: Tool[None]
+    ) -> None:
+        # An interrupt that reaches the kernel before it starts the cell doesn't stop the cell.
         (retry,) = await _run(
             IPythonCodeMode(kernel=kernel, timeout=0.5),
-            "import time\nfor _ in range(50):\n    print('tick')\n    time.sleep(0.1)",
+            "import time\nentered()\nfor _ in range(50):\n    print('tick')\n    time.sleep(0.1)",
+            tools=[entered],
         )
         assert 'KeyboardInterrupt' in retry
         assert 'The code ran longer than the 0.5-second timeout and was interrupted.' in retry
 
     async def test_timeout_is_reported_when_the_code_catches_the_interrupt(
-        self, kernel: IPythonKernel, monkeypatch: pytest.MonkeyPatch
+        self, kernel: IPythonKernel, entered: Tool[None]
     ) -> None:
-        # The timeout counts from when the cell is sent, so a slow kernel could take the interrupt before
-        # it reaches the `try:`. The timeout's clock stands still until the code reports it is inside.
-        frozen = time.monotonic()
-        entered_at: list[float] = []
-
-        def monotonic() -> float:
-            return frozen + time.monotonic() - entered_at[0] if entered_at else frozen
-
-        def entered() -> None:
-            entered_at.append(time.monotonic())
-
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.time', SimpleNamespace(monotonic=monotonic))
+        # An interrupt that reaches the code before the `try:` isn't caught.
         (retry,) = await _run(
             IPythonCodeMode(kernel=kernel, timeout=0.5),
             "import time\ntry:\n    entered()\n    time.sleep(30)\nexcept KeyboardInterrupt:\n    print('caught')",
-            tools=[Tool(entered)],
+            tools=[entered],
         )
         assert retry.startswith('caught\n\nThe code ran longer than the 0.5-second timeout and was interrupted.')
 

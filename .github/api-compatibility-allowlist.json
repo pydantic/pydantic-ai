@@ -61,6 +61,10 @@
       "symbol": "LatestGoogleModelNames"
     },
     {
+      "path": "pydantic_ai_slim/pydantic_ai/models/google_decisions.py",
+      "symbol": "GoogleDecisionsModelName"
+    },
+    {
       "path": "pydantic_ai_slim/pydantic_ai/models/groq.py",
       "symbol": "PreviewGroqModelNames"
     },

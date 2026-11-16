@@ -12,7 +12,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeGuard
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
@@ -537,12 +537,13 @@ class LLMReminder(Generic[AgentDepsT]):
         if agent is None:
             agent = Agent(self.model, name='system_reminders', instructions=self.instructions, output_type=str)
             self._agent = agent
-        result = await agent.run(
-            transcript,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-        )
+        with second_model_prompt():
+            result = await agent.run(
+                transcript,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+            )
         text = result.output.strip()
         return text or None
 
@@ -655,10 +656,10 @@ def _is_reminder_data(part: UserPromptPart) -> bool:
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:
-    for msg in messages:
-        if not isinstance(msg, ModelRequest):
+    for message in messages:
+        if not isinstance(message, ModelRequest):
             continue
-        for part in msg.parts:
+        for part in message.parts:
             if not isinstance(part, UserPromptPart) or _is_reminder_data(part):
                 continue
             if text := user_prompt_text(part):
@@ -701,8 +702,8 @@ def _opening_compaction(window: Sequence[ModelMessage]) -> CompactionPart | None
 def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[str]:
     """The recent user and assistant texts, each quoted in a `<message>` element with its role."""
     fragments: list[str] = []
-    for msg in messages:
-        for part in msg.parts:
+    for message in messages:
+        for part in message.parts:
             if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
                 text = user_prompt_text(part)
                 if text:

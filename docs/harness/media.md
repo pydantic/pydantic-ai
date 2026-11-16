@@ -14,7 +14,7 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 
     ```python
     from pydantic_ai_harness.media import (
-        DiskMediaStore,
+        FileMediaStore,
         S3MediaStore,
         SqliteMediaStore,
         externalize_media,
@@ -24,7 +24,24 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![externalize_media walks the JSON form of a message history. Each binary or text payload at or above threshold_bytes is written to a MediaStore with put and replaced by a media+sha256:// URI derived from its hash, so the same image referenced twice is stored once. restore_media reads each URI back with get and puts the original payload in place. Disk, SQLite, S3, MongoDB and PostgreSQL stores are available.](../img/harness/media.svg)
+```mermaid
+flowchart TB
+    accTitle: Media Externalization: store large payloads once, keep a URI in the history
+    accDescr: externalize_media takes binary and text payloads at or above threshold_bytes out of a message history and puts each, once per hash, in a MediaStore on disk, SQLite, S3, MongoDB or PostgreSQL. A media+sha256:// URI replaces each payload, leaving a lean history. From it, restore_media gets the payloads from the MediaStore and puts them back in place in the message history.
+    history["message history<br/>binary and text payloads"]
+    ext["externalize_media<br/>payloads at or above<br/>threshold_bytes"]:::capability
+    store[("MediaStore<br/>disk, SQLite, S3,<br/>MongoDB or PostgreSQL")]:::external
+    lean["lean history<br/>media+sha256:// URIs"]
+    restore["restore_media"]:::capability
+    history --> ext
+    ext -->|"put, once per hash"| store
+    ext -->|"URI replaces payload"| lean
+    lean --> restore
+    restore <-->|"get"| store
+    restore -->|"payloads back in place"| history
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Consumers
 
@@ -40,7 +57,7 @@ Every store implements the `MediaStore` protocol -- `put`, `get`, `exists`, `pub
 
 | Store | Backed by | Use when |
 |---|---|---|
-| `DiskMediaStore(directory=...)` | A directory on disk | Local runs and tests |
+| `FileMediaStore(directory=...)` | A directory on disk | Local runs and tests |
 | `SqliteMediaStore(database=...)` | A SQLite database | A single-file store that travels with the data |
 | `S3MediaStore(bucket=, endpoint=, region=, ...)` | S3 or an S3-compatible bucket | Shared or production storage |
 | `MongoMediaStore(client= or db_url=, database=, ...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document |
@@ -95,9 +112,9 @@ Close the returned pool during application shutdown. The store does not manage i
 ```python
 from pydantic_ai import ModelMessagesTypeAdapter
 
-from pydantic_ai_harness.media import DiskMediaStore, externalize_media, restore_media
+from pydantic_ai_harness.media import FileMediaStore, externalize_media, restore_media
 
-store = DiskMediaStore(directory='./media')
+store = FileMediaStore(directory='./media')
 
 # Replace binary and text payloads at or above the threshold with media+sha256:// URIs.
 tree = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
@@ -164,14 +181,14 @@ class MediaContext:
     metadata: Mapping[str, str] = field(default_factory=dict)  # user-supplied tags
 ```
 
-All fields default, so you pass what you have and ignore the rest; new fields are added non-breakingly as use cases emerge. `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores (S3 lowercases keys) and raises `FileNotFoundError` for a blob that was never stored. On `DiskMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
+All fields default, so you pass what you have and ignore the rest; new fields are added non-breakingly as use cases emerge. `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores (S3 lowercases keys) and raises `FileNotFoundError` for a blob that was never stored. On `FileMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
 
 ## `KeyStrategy`
 
-The default on-store key layout is `<sha256>.bin`. `DiskMediaStore` and `S3MediaStore` accept a `key_strategy=` override to fit an existing layout. `SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` do not, since the digest is their primary key -- use `table=` / `collection=` to move the rows or documents instead:
+The default on-store key layout is `<sha256>.bin`. `FileMediaStore` and `S3MediaStore` accept a `key_strategy=` override to fit an existing layout. `SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` do not, since the digest is their primary key -- use `table=` / `collection=` to move the rows or documents instead:
 
 ```python
-from pydantic_ai_harness.media import DiskMediaStore, MediaContext
+from pydantic_ai_harness.media import FileMediaStore, MediaContext
 
 
 def by_media_type(uri: str, ctx: MediaContext) -> str:
@@ -180,17 +197,17 @@ def by_media_type(uri: str, ctx: MediaContext) -> str:
     return f'images/{digest}{ext}'
 
 
-store = DiskMediaStore('runs', key_strategy=by_media_type)
+store = FileMediaStore('runs', key_strategy=by_media_type)
 ```
 
-If your strategy depends on `ctx.media_type`, the same context must be supplied at read time for `get`/`exists` to find the blob. `DiskMediaStore` rejects a URI that is not `media+sha256://<hex>` before calling the strategy, and strategies that produce absolute paths or `..` segments, to keep reads and writes inside the store directory. `default_key_strategy` is exported if you want to build on it.
+If your strategy depends on `ctx.media_type`, the same context must be supplied at read time for `get`/`exists` to find the blob. `FileMediaStore` rejects a URI that is not `media+sha256://<hex>` before calling the strategy, and strategies that produce absolute paths or `..` segments, to keep reads and writes inside the store directory. `default_key_strategy` is exported if you want to build on it.
 
 ## API
 
 | Symbol | Purpose |
 |---|---|
 | `MediaStore` | Async content-addressed store protocol (`put` / `get` / `exists` / `public_url` / `get_metadata`) |
-| `DiskMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore`, `PostgresMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
+| `FileMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore`, `PostgresMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
 | `PostgresPool`, `PostgresConnection` | The asyncpg-compatible pool and connection protocols `PostgresMediaStore` accepts |
 | `MediaContext` | Per-operation context (media type, filename, tags) threaded through store operations |
 | `KeyStrategy`, `default_key_strategy` | On-store key layout |

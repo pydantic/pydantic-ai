@@ -10,6 +10,7 @@ from typing import Generic, TypeVar
 
 import pytest
 from prompt_toolkit.styles import BaseStyle
+from prompt_toolkit.utils import Event
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
@@ -47,6 +48,8 @@ PromptT = TypeVar('PromptT')
 def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -> None:
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
             style = kwargs['style']
             assert isinstance(style, BaseStyle)
             for selector in ('class:bottom-toolbar', 'class:bottom-toolbar.text'):

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .._durable_replay import record_durable_unit, replay_scope
+    from ..external_events import ExternalEventError, ExternalEventWaiter, external_event_scope
     from ._base import BaseDurabilityCapability, conversation_id_from_run_id
     from ._capability_operation import (
         CapabilityMethodDeclaration,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
         ModelCancelSuspendedResponseParams,
         ModelCompactMessagesId,
         ModelCompactMessagesParams,
+        ModelCountTokensId,
         ModelRequestId,
         ModelRequestParams,
         OperationConfigRole,
@@ -73,6 +75,7 @@ __all__ = [
     'ModelCancelSuspendedResponseId',
     'CapabilityOperationId',
     'ModelCompactMessagesId',
+    'ModelCountTokensId',
     'DurabilityCodec',
     'DurabilityEngineSpec',
     'DurableOperationBackend',
@@ -117,6 +120,9 @@ __all__ = [
     'WorkspaceCall',
     'WorkspaceCallParams',
     'WorkspaceCallResult',
+    'ExternalEventError',
+    'ExternalEventWaiter',
+    'external_event_scope',
     'record_durable_unit',
     'replay_scope',
 ]
@@ -134,6 +140,7 @@ _exports = {
     'ModelCancelSuspendedResponseId': ('._operation', 'ModelCancelSuspendedResponseId'),
     'CapabilityOperationId': ('._operation', 'CapabilityOperationId'),
     'ModelCompactMessagesId': ('._operation', 'ModelCompactMessagesId'),
+    'ModelCountTokensId': ('._operation', 'ModelCountTokensId'),
     'DurableOperationId': ('._operation', 'DurableOperationId'),
     'EventStreamHandlerId': ('._operation', 'EventStreamHandlerId'),
     'ToolsetGetInstructionsId': ('._operation', 'ToolsetGetInstructionsId'),
@@ -175,6 +182,9 @@ _exports = {
     'WorkspaceCall': ('._workspace', 'WorkspaceCall'),
     'WorkspaceCallParams': ('._workspace', 'WorkspaceCallParams'),
     'WorkspaceCallResult': ('._workspace', 'WorkspaceCallResult'),
+    'ExternalEventError': ('..external_events', 'ExternalEventError'),
+    'ExternalEventWaiter': ('..external_events', 'ExternalEventWaiter'),
+    'external_event_scope': ('..external_events', 'external_event_scope'),
 }
 
 
