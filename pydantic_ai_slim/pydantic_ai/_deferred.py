@@ -62,11 +62,16 @@ class DeferredToolRequests:
     as the model sent them. These are the same arguments once validated against the tool's schema and
     passed through any [tool validation hooks](../hooks.md#tool-validation-hooks): values coerced, keys the
     schema doesn't accept dropped, and any rewrite by a hook such as `after_tool_validate` applied. They are
-    keyed by the tool's Python parameter names and stored in their JSON-compatible form, so they survive
-    serialization unchanged.
+    keyed by the tool's Python parameter names and stored in their JSON-compatible form, a nested model's
+    fields under their aliases, so they survive serialization unchanged. They are stored and shown wherever
+    the requests are, so a validation hook shouldn't add a value the approver may not see.
 
     When an approved call resumes, its recorded arguments are validated again, so a validation hook whose
     output isn't determined by its input can give the tool different arguments than these.
+
+    A call that [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] ends on because its tool requires
+    approval or is external has none: that path doesn't validate the call
+    ([#13690](https://github.com/pydantic/pydantic-ai/issues/13690)).
     """
     # Internal, not part of the public API: read a call's kind with `kind()`. The calls in `calls` that are
     # questions, keyed by `tool_call_id`. Serialized as `_kinds` only when there are any, so a

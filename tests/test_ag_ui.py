@@ -10137,7 +10137,7 @@ async def test_run_finished_interrupt_message_shows_validated_args() -> None:
 async def test_run_finished_interrupt_message_without_validated_args() -> None:
     """A request without `validated_args`, such as one built by hand, shows the model's arguments.
 
-    Not a run through the adapter: every request a run builds carries its validated arguments.
+    Not a run through the adapter: the adapter runs the agent with `run_stream_events()`, whose requests always carry them.
     """
 
     async def event_generator():
