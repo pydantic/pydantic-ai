@@ -31,8 +31,8 @@ from pydantic_ai_harness.spend_limits._budget import (
     Ceilings,
     bucket,
     delimited,
+    plain_ceilings,
     resolve_ceilings,
-    resolves_from_run,
     scope_key,
     store_key,
 )
@@ -609,19 +609,18 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 'Drop `scope=` to read the run, or drop `ctx` to read another partition.'
             )
         now = await self._now()
-        keyed: list[tuple[Budget[AgentDepsT], str]] = []
+        keyed: list[tuple[Budget[AgentDepsT], str, Ceilings]] = []
         unresolved: list[str] = []
         for budget in self.budgets:
-            if ctx is None and (
-                budget.window in _RUN_SCOPED_WINDOWS
-                or resolves_from_run(budget)
-                or (budget.scope is not None and scope is None)
+            limits = plain_ceilings(budget) if ctx is None else resolve_ceilings(budget, ctx)
+            if limits is None or (
+                ctx is None and (budget.window in _RUN_SCOPED_WINDOWS or (budget.scope is not None and scope is None))
             ):
                 unresolved.append(budget.name)
                 continue
-            keyed.append((budget, self._key(budget, ctx, now, scope)))
-        read = await self._read(list(dict.fromkeys(key for _, key in keyed)))
-        statuses = tuple(_status(budget, key, read[key], resolve_ceilings(budget, ctx)) for budget, key in keyed)
+            keyed.append((budget, self._key(budget, ctx, now, scope), limits))
+        read = await self._read(list(dict.fromkeys(key for _, key, _ in keyed)))
+        statuses = tuple(_status(budget, key, read[key], limits) for budget, key, limits in keyed)
         return statuses, tuple(unresolved)
 
     async def exhausted(

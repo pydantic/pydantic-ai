@@ -89,9 +89,8 @@ class Budget(Generic[AgentDepsT]):
     ```
 
     A callable ceiling is resolved from the run alongside `scope` whenever the budget is read, so
-    each partition can carry its own allowance. It returns a positive amount, or `None` for no
-    ceiling on that partition.
-    Under durable execution it must return the same value when replayed with the same run
+    each partition can carry its own allowance. `None` means no ceiling on that partition, and zero
+    or less means nothing is allowed. Under durable execution it must return the same value when replayed with the same run
     context: it is read in orchestration, so a changed value can flip a replayed refusal.
     """
 
@@ -273,11 +272,6 @@ def scope_key(budget: Budget[Any], ctx: RunContext[Any] | None, explicit: str | 
     return resolved
 
 
-def resolves_from_run(budget: Budget[Any]) -> bool:
-    """Whether a ceiling of `budget` is a callable, which only a run context can resolve."""
-    return callable(budget.usd) or callable(budget.tokens)
-
-
 class Ceilings(NamedTuple):
     """The ceilings a budget applies to one reading, with any callable resolved for the run."""
 
@@ -293,10 +287,20 @@ class Ceilings(NamedTuple):
 _CeilingT = TypeVar('_CeilingT', Decimal, int)
 
 
-def resolve_ceilings(budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT] | None) -> Ceilings:
-    """The ceilings `budget` applies in this run, a callable one resolved and validated as a plain one is.
+def plain_ceilings(budget: Budget[Any]) -> Ceilings | None:
+    """`budget`'s ceilings, or `None` when either is a callable, which only a run context can resolve."""
+    usd, tokens = budget.usd, budget.tokens
+    if callable(usd) or callable(tokens):
+        return None
+    return Ceilings(usd, tokens)
 
-    `ctx` is `None` only for a budget with plain ceilings: without a run, callers omit the rest.
+
+def resolve_ceilings(budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT]) -> Ceilings:
+    """The ceilings `budget` applies in this run, with a callable one resolved.
+
+    A resolved zero or less is kept rather than refused: unlike a configured `usd: 0`, which more
+    likely means "no limit", an allowance of zero read from `deps` means nothing is allowed, and
+    `None` already says "no limit". It reads as exhausted.
     """
     return Ceilings(
         _resolve_ceiling(budget.name, 'usd', budget.usd, ctx, Decimal),
@@ -308,13 +312,11 @@ def _resolve_ceiling(
     name: str,
     kind: str,
     ceiling: _CeilingT | Callable[[RunContext[AgentDepsT]], _CeilingT | None] | None,
-    ctx: RunContext[AgentDepsT] | None,
+    ctx: RunContext[AgentDepsT],
     expected: type[_CeilingT],
 ) -> _CeilingT | None:
     if not callable(ceiling):
         return ceiling
-    if ctx is None:  # pragma: no cover - callers filter these budgets out first
-        raise UserError(f'Budget {name!r} resolves its `{kind}` ceiling from the run, which needs a run context.')
     resolved: object = ceiling(ctx)
     if resolved is None:
         return None
@@ -324,7 +326,8 @@ def _resolve_ceiling(
             f'The `{kind}` ceiling of budget {name!r} must return {expected.__name__} or None; '
             f'got {type(resolved).__name__}.'
         )
-    _check_ceiling(kind, resolved)
+    if isinstance(resolved, Decimal) and not resolved.is_finite():
+        raise UserError(f'The `{kind}` ceiling of budget {name!r} must return a finite amount or None; got {resolved}.')
     return resolved
 
 

@@ -622,8 +622,7 @@ class TestResolvedCeiling:
         ('allowance', 'match'),
         [
             (6.5, 'must return Decimal or None; got float'),
-            (Decimal('0'), 'Budget.usd must be positive'),
-            (Decimal('NaN'), 'Budget.usd must be a finite amount'),
+            (Decimal('NaN'), "`usd` ceiling of budget 'account' must return a finite amount or None; got NaN"),
         ],
     )
     async def test_a_resolved_ceiling_is_validated(self, allowance: object, match: str):
@@ -632,6 +631,16 @@ class TestResolvedCeiling:
 
         with pytest.raises(UserError, match=match):
             await _gate(guard, ctx=_run_ctx(deps=account))
+
+    @pytest.mark.parametrize('allowance', [Decimal('0'), Decimal('-3')])
+    async def test_an_allowance_of_zero_or_less_allows_nothing(self, allowance: Decimal):
+        """A suspended account or a used-up plan is data, not a configuration error."""
+        guard = SpendLimits(budgets=[_account_budget()])
+        ctx = _run_ctx(deps=_Account('u1', allowance_usd=allowance))
+
+        with pytest.raises(SpendLimitExceeded, match=rf'spent \$0 of \${allowance}'):
+            await _gate(guard, ctx=ctx)
+        assert await guard.exhausted(ctx) is True
 
     async def test_a_failing_ceiling_still_records_the_spend(self):
         """The response was billed whatever the callable does, so it is accrued before the ceiling is read."""
