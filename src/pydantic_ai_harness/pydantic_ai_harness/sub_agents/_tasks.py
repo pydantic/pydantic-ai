@@ -77,6 +77,15 @@ def preview(text: str) -> str:
     return text if len(text) <= PREVIEW_CHARS else f'{text[:PREVIEW_CHARS]}...'
 
 
+@dataclass(kw_only=True, frozen=True)
+class DelegationToolCall:
+    """A tool call in a `DelegationSnapshot`."""
+
+    tool_name: str
+    args: str
+    """The arguments as JSON, cut short."""
+
+
 @dataclass(kw_only=True)
 class DelegationSnapshot:
     """What a task is doing right now, read from its history without waiting on it."""
@@ -88,13 +97,15 @@ class DelegationSnapshot:
     elapsed_seconds: float
     """Time since the task last started, up to when it finished if it has."""
     usage: RunUsage | None
-    """The requests and tokens of the model responses in the task's current run so far; other counts stay `0`.
+    """The requests, tool calls and tokens of the task's current run so far; other counts stay `0`.
+
+    `tool_calls` counts the calls `recent_tool_calls` lists the last few of, including any still running.
 
     `None` when this owner doesn't see the run's history as it streams: before the child's first model request,
     for a remote or durable task, and once the task settles. Its tool calls and text are then empty too.
     """
-    recent_tool_calls: list[str]
-    """The child's last few tool calls other than `ask_parent`, as `name(arguments)` with the arguments cut short."""
+    recent_tool_calls: list[DelegationToolCall]
+    """The child's last few tool calls other than `ask_parent`, oldest first."""
     latest_text: str | None
     """The child's latest text, cut at `MAX_EVENT_TEXT_CHARS`. It is never from the response that ends the run."""
     pending_question: str | None
@@ -526,26 +537,28 @@ class DelegationTasks:
         """
         record = self.records[task_id]
         if task_id not in self._live:
-            return self._snapshot(record, None, [])
+            return self._snapshot(record, None, ())
         final = self._live[task_id]
         responses = _run_responses(record)
-        usage = RunUsage(requests=len(responses))
-        for response in responses:
-            usage.incr(response.usage)
         parts = [
             part
             for index, response in enumerate(responses)
             for part in _without_result(response, final[1] if final is not None and final[0] == index else None)
         ]
-        return self._snapshot(record, usage, parts)
+        return self._snapshot(record, responses, parts)
 
     @staticmethod
     def _snapshot(
-        record: DelegationTask, usage: RunUsage | None, parts: Sequence[ModelResponsePart]
+        record: DelegationTask, responses: Sequence[ModelResponse] | None, parts: Sequence[ModelResponsePart]
     ) -> DelegationSnapshot:
         # A question's arguments are left out: `pending_question` holds it as listeners rewrote it.
         calls = [part for part in parts if isinstance(part, ToolCallPart) and part.tool_name != ASK_PARENT_TOOL_NAME]
         texts = [part.content for part in parts if isinstance(part, TextPart)]
+        usage = None
+        if responses is not None:
+            usage = RunUsage(requests=len(responses), tool_calls=len(calls))
+            for response in responses:
+                usage.incr(response.usage)
         return DelegationSnapshot(
             task_id=record.id,
             agent_name=record.agent_name,
@@ -554,7 +567,8 @@ class DelegationTasks:
             elapsed_seconds=(record.finished_at or time.time()) - record.started_at,
             usage=usage,
             recent_tool_calls=[
-                f'{call.tool_name}({preview(call.args_as_json_str())})' for call in calls[-RECENT_TOOL_CALLS:]
+                DelegationToolCall(tool_name=call.tool_name, args=preview(call.args_as_json_str()))
+                for call in calls[-RECENT_TOOL_CALLS:]
             ],
             latest_text=bounded_text(texts[-1])[0] if texts else None,
             pending_question=record.pending_question,
@@ -791,6 +805,7 @@ class DelegationTasks:
         finally:
             _CHILD.reset(token)
             self._unsteered.pop(record.id, None)
+            self._live.pop(record.id, None)
             self._stops.discard(record.id)
             record.status, record.finished_at = 'finished', time.time()
             # A cancelled/failed parent cannot leave descendants without an observer.
@@ -807,7 +822,6 @@ class DelegationTasks:
                     except Exception:
                         logging.getLogger(__name__).exception('Task completion observer failed for %s', record.id)
                 self._release(record)
-                self._live.pop(record.id, None)
                 self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         return f'Task {record.id} ({record.outcome}):\n{record.output}'
 

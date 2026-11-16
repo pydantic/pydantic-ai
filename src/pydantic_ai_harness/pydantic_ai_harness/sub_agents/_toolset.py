@@ -470,7 +470,8 @@ def _snapshot_text(snapshot: DelegationSnapshot) -> str:
         requests = snapshot.usage.requests
         lines = [f'{task} has been running for {elapsed}, with {requests} model request{"s" if requests != 1 else ""}.']
     if snapshot.recent_tool_calls:
-        lines.append(f'Recent tool calls: {", ".join(snapshot.recent_tool_calls)}')
+        calls = ', '.join(f'{call.tool_name}({call.args})' for call in snapshot.recent_tool_calls)
+        lines.append(f'Recent tool calls: {calls}')
     if snapshot.latest_text is not None:
         lines.append(f'Latest text, not its final result: {snapshot.latest_text!r}')
     if snapshot.pending_question is not None:

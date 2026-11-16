@@ -53,6 +53,7 @@ from pydantic_ai_harness.sub_agents._tasks import (
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
+    DelegationToolCall,
     SavedTaskProblem,
     SavedTasks,
 )
@@ -88,6 +89,7 @@ __all__ = [
     'DelegationTaskEvent',
     'DelegationWorkspaceRequest',
     'DelegationTasks',
+    'DelegationToolCall',
     'DynamicAgentFactory',
     'DynamicAgentSpec',
     'DynamicAgents',

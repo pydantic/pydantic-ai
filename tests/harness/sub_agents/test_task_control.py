@@ -1,6 +1,6 @@
 """`SubAgents(task_control=TaskControl())`: background tasks, task-control tools, questions, events, remote agents.
 
-Every scenario runs real agent runs on `FunctionModel`/`TestModel`, in process.
+Scenarios run real agent runs on `FunctionModel`/`TestModel`, in process, except where a test needs a hand-built history.
 """
 
 from __future__ import annotations
@@ -705,6 +705,7 @@ class TestSubAgentsTaskControl:
     @pytest.mark.parametrize('structured', [False, True])
     async def test_a_snapshot_never_shows_a_result_its_listeners_are_processing(self, structured: bool) -> None:
         snapshots: list[DelegationSnapshot] = []
+        owners: list[DelegationTasks] = []
 
         @dataclass
         class Redactor(AbstractCapability[object]):
@@ -712,6 +713,7 @@ class TestSubAgentsTaskControl:
             async def redact(self, ctx: RunContext[object], event: TaskCompletedEvent) -> None:
                 owner = DelegationTasks.current()
                 assert owner is not None
+                owners.append(owner)
                 snapshots.append(owner.snapshot(event.task_id))
                 event.output = '[redacted]'
 
@@ -736,6 +738,8 @@ class TestSubAgentsTaskControl:
         # Text next to the output tool call is not the result.
         assert (snapshot.latest_text, snapshot.recent_tool_calls) == ('Done looking.' if structured else None, [])
         assert result.output.endswith('[redacted]')
+        # A settled task's history is in its file, not in the owner's view of the run.
+        assert owners[0].snapshot(snapshot.task_id).usage is None
 
     async def test_check_task_on_a_durable_task_shows_no_activity(self) -> None:
         gate = Gate()
@@ -792,9 +796,9 @@ class TestSubAgentsTaskControl:
         owner.follow(task)
         snapshot = owner.snapshot(task.id)
         assert snapshot.usage is not None
-        assert (snapshot.usage.requests, snapshot.usage.input_tokens, snapshot.usage.output_tokens) == (2, 30, 5)
-        assert [call.split('(')[0] for call in snapshot.recent_tool_calls] == [f'tool{i}' for i in range(2, 7)]
-        assert snapshot.recent_tool_calls[0] == f'tool2({{"arg":"{"x" * 72}...)'
+        assert snapshot.usage == RunUsage(requests=2, tool_calls=7, input_tokens=30, output_tokens=5)
+        assert [call.tool_name for call in snapshot.recent_tool_calls] == [f'tool{i}' for i in range(2, 7)]
+        assert snapshot.recent_tool_calls[0].args == f'{{"arg":"{"x" * 72}...'
         assert snapshot.latest_text == 'y' * MAX_EVENT_TEXT_CHARS
         assert snapshot.pending_question == 'Which branch?'
         assert snapshot.status == 'running'
