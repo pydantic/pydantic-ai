@@ -2176,7 +2176,10 @@ def test_durability_override_capabilities_must_keep_the_bound_durability():
     assert str(unbound.value) == message
 
     with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
-        pass
+        result = agent.run_sync('Hello')
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'extra'
 
 
 def test_durability_override_capabilities_keeps_a_wrapped_durability():
