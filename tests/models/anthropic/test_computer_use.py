@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile, merge_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -66,7 +67,6 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.anthropic._computer import map_computer_member
-    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -335,7 +335,7 @@ def test_the_computer_use_tool_is_sent_only_on_the_clients_it_is_recorded_on() -
     ):
         provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
         model = AnthropicModel('claude-opus-5-5', provider=provider)
-        supported[name] = ComputerTool in model.profile.get('supported_native_tools', frozenset[Any]())
+        supported[name] = ComputerTool in model.profile.get('supported_native_tools', ())
     assert supported == {
         'direct': True,
         'bedrock': True,
@@ -466,7 +466,9 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('type', {'text': 'hi', 'delay': 5}, {'type': 'type', 'unsupported_fields': ['delay']}),
     ],
 )
-def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, Any], action: Any) -> None:
+def test_toolset_members_map_onto_the_computer_tool(
+    name: str, input: dict[str, Any], action: dict[str, Any] | list[dict[str, Any]]
+) -> None:
     """Every member Anthropic documents, including ones no recording has: a VCR test would pin only what Claude sent."""
     assert map_computer_member(name, input) == (action if isinstance(action, list) else [action])
 
@@ -642,12 +644,13 @@ def _cut_off(blocks: list[BetaContentBlock], partial_json: str) -> list[BetaRawM
     return [event for event in events if not (isinstance(event, BetaRawContentBlockStopEvent) and event.index == last)]
 
 
+# Built in the test, as collection runs without the anthropic SDK too.
 @pytest.mark.parametrize(
     'model_name, blocks',
     [
         pytest.param(
             'claude-sonnet-4-6',
-            [
+            lambda: [
                 BetaTextBlock(text='Typing it.', type='text'),
                 BetaToolUseBlock.model_validate({'id': 'toolu_2', 'type': 'tool_use', 'name': 'computer', 'input': {}}),
             ],
@@ -656,7 +659,7 @@ def _cut_off(blocks: list[BetaContentBlock], partial_json: str) -> list[BetaRawM
         # The batch's part sits at its first call, so the cut-off call must still come last.
         pytest.param(
             'claude-sonnet-5-5',
-            [
+            lambda: [
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
                 _tool_use('toolu_2', 'type', {}),
             ],
@@ -665,9 +668,9 @@ def _cut_off(blocks: list[BetaContentBlock], partial_json: str) -> list[BetaRawM
     ],
 )
 async def test_a_streamed_computer_call_cut_off_mid_input_stops_the_run(
-    allow_model_requests: None, model_name: str, blocks: list[BetaContentBlock]
+    allow_model_requests: None, model_name: str, blocks: Callable[[], list[BetaContentBlock]]
 ) -> None:
-    events = _cut_off(blocks, '{"text": "word0 wo')
+    events = _cut_off(blocks(), '{"text": "word0 wo')
     model = AnthropicModel(
         model_name, provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
     )
@@ -766,22 +769,25 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
 async def _sent_results(
     blocks: list[dict[str, Any]],
     counts: list[int],
-    content: list[Any] | str,
+    content: list[str | BinaryImage] | str,
     metadata: dict[str, Any] | None,
     outcome: Literal['success', 'denied'] = 'success',
 ) -> list[dict[str, Any]]:
     """The results a request sends for a toolset call whose result is `content`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    details: dict[str, Any] = {
-        'computer_blocks': blocks,
-        'computer_tool': 'computer_toolset_20260801',
-        'computer_action_counts': counts,
-    }
     # One action per count, as the call was mapped; what they are doesn't matter to how the result is split.
     actions = [{'type': 'screenshot'}] * sum(counts)
     call = ComputerCallPart(
-        'computer', {'actions': actions}, tool_call_id='toolu_1', provider_name='anthropic', provider_details=details
+        'computer',
+        {'actions': actions},
+        tool_call_id='toolu_1',
+        provider_name='anthropic',
+        provider_details={
+            'computer_blocks': blocks,
+            'computer_tool': 'computer_toolset_20260801',
+            'computer_action_counts': counts,
+        },
     )
     result = ToolReturnPart(
         'computer', content, tool_call_id='toolu_1', metadata=metadata, tool_kind=COMPUTER_KIND.id, outcome=outcome
@@ -821,7 +827,7 @@ _HOOK_IMAGE = BinaryImage(data=b'picture', media_type='image/png')
     'outcome', ['all-ran', 'partial', 'failed-first', 'failed-middle', 'denied', 'changed', 'no-metadata']
 )
 async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole(
-    allow_model_requests: None, outcome: str, content: list[Any], members: int
+    allow_model_requests: None, outcome: str, content: list[str | BinaryImage], members: int
 ) -> None:
     blocks = _MEMBERS[:members]
     # Two actions per call, so a call can fail part way.
@@ -911,7 +917,7 @@ async def test_a_result_answers_each_member_call(
     allow_model_requests: None,
     blocks: list[dict[str, Any]],
     counts: list[int],
-    content: list[Any] | str,
+    content: list[str | BinaryImage] | str,
     metadata: dict[str, Any] | None,
     results: list[tuple[bool, list[str]]],
 ) -> None:
@@ -941,17 +947,16 @@ async def test_kept_counts_that_do_not_match_the_actions_send_the_call_back_plai
         {'id': 'toolu_1', 'name': 'left_click', 'input': {'coordinate': [1, 2]}},
         {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
     ]
-    details: dict[str, Any] = {
-        'computer_blocks': blocks,
-        'computer_tool': 'computer_toolset_20260801',
-        'computer_action_counts': counts,
-    }
     call = ComputerCallPart(
         'computer',
         {'actions': [{'type': 'screenshot'}] * actions},
         tool_call_id='toolu_1',
         provider_name='anthropic',
-        provider_details=details,
+        provider_details={
+            'computer_blocks': blocks,
+            'computer_tool': 'computer_toolset_20260801',
+            'computer_action_counts': counts,
+        },
     )
     result = ToolReturnPart(
         'computer',
