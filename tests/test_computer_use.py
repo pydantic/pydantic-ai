@@ -1,4 +1,8 @@
-"""The `computer` tool's typed parts, and how a request sends `ComputerTool` in place of that tool."""
+"""The `computer` tool's typed parts, and how a request sends `ComputerTool` in place of that tool.
+
+Not VCR tests: the parts, the request preparation and the labels the agent adds are all built before or after any
+provider request, so `FunctionModel` reaches them and a recording would add nothing.
+"""
 
 from __future__ import annotations
 
@@ -172,20 +176,29 @@ def test_computer_tool_counts_a_computer_tool_kept_because_an_empty_tool_search_
         _prepare(ModelRequestParameters(function_tools=[stand_in, _computer_tool_def()], native_tools=natives))
 
 
-async def test_a_grid_model_is_told_its_grid_in_every_computer_tool() -> None:
+def _lookup() -> str:
+    """Look something up."""
+    return 'found'
+
+
+async def test_a_grid_model_is_told_its_grid_in_every_computer_tool_and_no_other() -> None:
     descriptions: list[list[str | None]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         descriptions.append([tool.description for tool in info.function_tools])
         if len(messages) > 1:
             return ModelResponse(parts=[TextPart('ok')])
-        return ModelResponse(parts=[ToolCallPart(name, {'actions': []}) for name in ('left', 'right')])
+        calls = [ToolCallPart(name, {'actions': []}) for name in ('left', 'right')]
+        return ModelResponse(parts=[*calls, ToolCallPart('_lookup', {})])
 
     tools = [Tool(lambda actions: ['Done.', SCREEN], name=name, tool_kind=COMPUTER_KIND) for name in ('left', 'right')]
-    agent = Agent(FunctionModel(respond, profile=GRID_PROFILE), tools=tools)
+    agent = Agent(FunctionModel(respond, profile=GRID_PROFILE), tools=[*tools, Tool(_lookup)])
     messages = (await agent.run('Click.')).all_messages()
-    assert descriptions == [[GRID_SENTENCE, GRID_SENTENCE]] * 2
+    assert descriptions == [[GRID_SENTENCE, GRID_SENTENCE, 'Look something up.']] * 2
     assert [call.coordinate_grid for call in _computer_calls(messages)] == [1000, 1000]
+    response = messages[1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts[2].provider_details is None
 
 
 GRID_PROFILE = ModelProfile(computer_use_coordinate_grid=1000)

@@ -21,6 +21,7 @@ from pydantic_ai import (
     ApprovalRequired,
     DeferredToolRequests,
     DeferredToolResults,
+    IncompleteToolCall,
     RunContext,
     Tool,
     ToolCallPart,
@@ -128,6 +129,7 @@ def _computer_request(*extra_tools: str) -> ModelRequestParameters:
 async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
+    """The recording's `gpt-5.5` resolved to the `gpt-5.5-2026-04-23` snapshot."""
     provider = ScreenProvider()
     agent = Agent(_gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse()])
 
@@ -135,8 +137,9 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
         async for _ in events:
             pass
 
-    await agent.run(TASK, event_stream_handler=drain)
+    result = await agent.run(TASK, event_stream_handler=drain)
 
+    assert result.response.model_name == 'gpt-5.5-2026-04-23'
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/responses')
     # The capability's `computer` tool went out as OpenAI's own, not as a function.
@@ -350,6 +353,26 @@ async def test_claude_drives_the_screen_through_the_streamed_computer_toolset(
     results = content_blocks(last, 'tool_result')
     assert calls and all(call['toolset_name'] == 'computer' for call in calls)
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
+
+
+@needs_anthropic
+@pytest.mark.vcr
+async def test_claude_computer_call_cut_off_by_the_token_limit_stops_the_run(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    model = _claude('claude-sonnet-4-6', anthropic_api_key, request_capture)
+    task = 'Without a screenshot, type this exact text in one type action: ' + ' '.join(f'word{i}' for i in range(200))
+
+    async def drain(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
+    # Claude's input stops part way and no block stop follows, as for any tool call, so the run stops as for one.
+    with pytest.raises(IncompleteToolCall, match=r'Model token limit \(60\) exceeded while generating a tool call'):
+        await agent.run(task, model_settings=ModelSettings(max_tokens=60), event_stream_handler=drain)
+    assert provider.actions == []
 
 
 @needs_anthropic
@@ -580,6 +603,31 @@ async def test_claude_toolset_calls_go_back_to_a_computer_20251124_model(
 
 
 @needs_anthropic
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='the second agent is on a model with another computer use tool')
+async def test_claude_computer_20251124_calls_go_back_to_a_toolset_model(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    provider = ScreenProvider()
+    capabilities = [provider.capability(), ComputerUse()]
+    earlier_model = _claude('claude-sonnet-4-6', anthropic_api_key, request_capture)
+    result = await Agent(earlier_model, capabilities=capabilities).run(TASK)
+
+    model = _claude('claude-haiku-5-5', anthropic_api_key, request_capture)
+    await Agent(model, capabilities=capabilities).run(
+        'Now click at x=10 y=10, then reply "done". Do nothing else.', message_history=result.all_messages()
+    )
+
+    assert provider.actions == [*DONE, Click(x=10, y=10)]
+    last = request_capture.bodies('/v1/messages')[-1]
+    assert _tools(last) == [{'type': 'computer_toolset_20260801'}]
+    # `computer_20251124`'s calls went back as plain `computer` calls, and the new one as a toolset member's.
+    calls = content_blocks(last, 'tool_use')
+    assert 'actions' in json_objects([calls[0]['input']])[0] and 'toolset_name' not in calls[0]
+    assert calls[-1]['toolset_name'] == 'computer'
+
+
+@needs_anthropic
 @needs_bedrock
 @pytest.mark.vcr
 async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
@@ -725,6 +773,7 @@ async def test_gpt_compacts_computer_and_function_calls_through_the_compact_endp
     assert 'computer_call_output' in kinds and 'function_call' in kinds and 'function_call_output' in kinds
 
 
+@needs_openai
 @pytest.mark.vcr
 async def test_gpt_gets_only_the_outputs_in_a_conversation(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
@@ -745,6 +794,7 @@ async def test_gpt_gets_only_the_outputs_in_a_conversation(
     )
 
 
+@needs_openai
 @pytest.mark.vcr
 async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_endpoint(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
@@ -771,6 +821,7 @@ async def test_gpt_compacts_computer_calls_the_server_holds_through_the_compact_
     assert _kinds(compact) == ['computer_call_output']
 
 
+@needs_openai
 @pytest.mark.vcr
 @pytest.mark.moves_cache_prefix(reason='compaction replaces the history')
 async def test_gpt_compacts_a_history_of_computer_calls_on_the_server(
@@ -935,9 +986,9 @@ async def test_gpt_is_told_how_a_pixel_scroll_ran(
     )
     await agent.run('Scroll down by exactly 250 pixels at x=640 y=400 in one scroll action, then reply "done".')
 
-    assert provider.actions == [Scroll(x=640, y=400, direction='down', amount=3)]
+    assert provider.actions == [Scroll(x=640, y=400, direction='down', amount=2)]
     last = request_capture.bodies('/responses')[-1]
-    assert 'scroll_y=250 ran as 3 wheel clicks of about 100 pixels each.' in str(_objects(last, 'input')[-1])
+    assert 'scroll_y=250 ran as 2 wheel clicks of about 114 pixels each.' in str(_objects(last, 'input')[-1])
 
 
 @needs_openai
@@ -954,6 +1005,9 @@ async def test_gpt_computer_call_cut_off_by_the_token_limit_has_no_actions(
     (call,) = [part for part in response.parts if isinstance(part, ComputerCallPart)]
     # OpenAI sends the cut-off call with no actions.
     assert call.actions is None
+    stored = (call.provider_details or {})['computer_call']
+    assert stored['status'] == 'incomplete'
+    assert 'actions' not in stored
 
 
 @needs_openai

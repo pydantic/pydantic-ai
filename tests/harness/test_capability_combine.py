@@ -218,7 +218,7 @@ def _check_sub_agents(merged: Any) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
-def _check_computer_use(merged: ComputerUse[Any]) -> None:
+def _check_computer_use(merged: ComputerUse[None]) -> None:
     # One display: the later configuration wins, defaults included.
     assert (merged.settle_seconds, merged.native) == (1, True)
 
@@ -272,8 +272,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ComputerUse': Combines(
         'an agent has one display: the later configuration wins',
         lambda: (
-            ComputerUse[Any](native=False),
-            ComputerUse[Any](settle_seconds=1),
+            ComputerUse[None](native=False),
+            ComputerUse[None](settle_seconds=1),
         ),
         _check_computer_use,
     ),

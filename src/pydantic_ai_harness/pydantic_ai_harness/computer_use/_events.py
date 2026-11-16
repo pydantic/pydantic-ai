@@ -1,7 +1,7 @@
 """Events the `computer` tool emits, so an application can follow the screen without parsing results.
 
-Each is emitted once per finished call, outside its durable unit, so durable execution doesn't repeat it. They add no
-telemetry spans, since core already traces the tool call.
+Each is emitted once per call that finishes and returns a screenshot, outside its durable unit, so durable execution
+doesn't repeat it. They add no telemetry spans, since core already traces the tool call.
 """
 
 from dataclasses import dataclass

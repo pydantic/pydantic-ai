@@ -1,4 +1,9 @@
-"""OpenAI Responses' native `computer` tool, sent for a tool of the `computer` kind."""
+"""OpenAI Responses' native `computer` tool, sent for a tool of the `computer` kind.
+
+Most tests here use a mocked SDK client rather than recordings: they pin the exact request items, cover actions and
+histories GPT doesn't produce on demand, and check guards that refuse before any request. The recorded runs are in
+`tests/harness/computer_use/test_computer_use_live.py`, with the real capability.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ import json
 import struct
 import zlib
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
@@ -434,14 +439,11 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
     assert after == ([{'role': 'user', 'content': expected}] if note else [])
 
 
-@pytest.mark.parametrize('call_status', ['incomplete', 'in_progress'])
-async def test_an_unfinished_call_runs_nothing(
-    allow_model_requests: None, call_status: Literal['incomplete', 'in_progress']
-) -> None:
+async def test_an_unfinished_call_runs_nothing(allow_model_requests: None) -> None:
     response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
     item = response.output[0]
     assert isinstance(item, resp.ResponseComputerToolCall)
-    item.status = call_status
+    item.status = 'incomplete'
     provider, computer = InMemoryProvider(), FakeComputer()
     client = MockOpenAIResponses.create_mock([response, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
@@ -544,9 +546,19 @@ def test_an_azure_client_and_the_gateway_keep_the_function_tool() -> None:
     assert ComputerTool not in (gateway.profile.get('supported_native_tools') or ())
 
 
-async def test_computer_calls_from_another_provider_replay_as_function_calls(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'model_name, detail',
+    [
+        pytest.param('gpt-5.5', 'original', id='a-model-with-the-native-tool'),
+        # A model without the native tool gets the image as any tool return sends one.
+        pytest.param('gpt-5.2', 'auto', id='a-model-without-it'),
+    ],
+)
+async def test_computer_calls_from_another_provider_replay_as_function_calls(
+    allow_model_requests: None, model_name: str, detail: str
+) -> None:
     client = MockOpenAIResponses.create_mock(_done())
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
     history = [
         ModelRequest(parts=[UserPromptPart('Look.')]),
         ModelResponse(
@@ -570,7 +582,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
     )
     # As in a `computer_call_output`, so OpenAI doesn't downscale the screenshot the model points on.
     [image] = [item for item in request['input'][2]['output'] if item['type'] == 'input_image']
-    assert image['detail'] == 'original'
+    assert image['detail'] == detail
 
 
 @pytest.mark.parametrize(
@@ -596,12 +608,12 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         ),
         # Rounded half up, in whole numbers, so any JSON integer maps.
         (
-            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 250},
-            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 3, 'modifiers': []},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 171},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 2, 'modifiers': []},
         ),
         (
-            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 10**400},
-            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 10**398, 'modifiers': []},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 114 * 10**400},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 10**400, 'modifiers': []},
         ),
         # A scroll by nothing only moves the pointer there.
         (
@@ -609,14 +621,14 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             {'type': 'move', 'x': 1, 'y': 2, 'modifiers': []},
         ),
         (
-            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 200, 'scroll_y': 0},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 228, 'scroll_y': 0},
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'right', 'amount': 2, 'modifiers': []},
         ),
         # A diagonal scroll scrolls both ways.
         (
-            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': -9000, 'scroll_y': 10},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': -9120, 'scroll_y': 10},
             [
-                {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 90, 'modifiers': list[str]()},
+                {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 80, 'modifiers': list[str]()},
                 {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': list[str]()},
             ],
         ),
@@ -646,13 +658,21 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         ({'type': 'drag', 'path': 42}, {'type': 'drag', 'unsupported_fields': ['path']}),
     ],
 )
-def test_openai_actions_map_onto_the_computer_tool(
-    action: dict[str, Any], mapped: dict[str, Any] | list[dict[str, Any]]
+async def test_openai_actions_map_onto_the_computer_tool(
+    allow_model_requests: None, action: dict[str, Any], mapped: dict[str, Any] | list[dict[str, Any]]
 ) -> None:
     """Every action OpenAI documents, including ones no recording has: a VCR test would pin only what GPT sent."""
-    assert [tool_action for tool_action, _ in _map_computer_action(action)] == (
-        mapped if isinstance(mapped, list) else [mapped]
+    response = _computer_call()
+    # Unvalidated, as the SDK builds a response, so actions it would refuse reach the mapping too.
+    response.output = [response.output[0].model_copy(update={'actions': [action]})]
+    model = OpenAIResponsesModel(
+        'gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(response))
     )
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    (call,) = (await model.request([ModelRequest.user_text_prompt('Go.')], None, params)).parts
+    assert isinstance(call, ToolCallPart)
+    assert call.args_as_dict() == {'actions': mapped if isinstance(mapped, list) else [mapped]}
 
 
 def _is_a_valid_png(data_uri: str) -> bool:
@@ -699,7 +719,7 @@ _COMPUTER_ITEM = {'type': 'computer_call', 'id': 'cu_1', 'call_id': 'call_1', 's
             0,
             {'performed': 1},
             'Ran 1 action.',
-            ' scroll_y=340 ran as 3 wheel clicks of about 100 pixels each.',
+            ' scroll_y=340 ran as 3 wheel clicks of about 114 pixels each.',
             id='ran',
         ),
         pytest.param(
@@ -724,10 +744,10 @@ _COMPUTER_ITEM = {'type': 'computer_call', 'id': 'cu_1', 'call_id': 'call_1', 's
             id='without-its-outcome',
         ),
         pytest.param(
-            150,
+            250,
             {'performed': 2, 'error': 'The display stopped.'},
             'Ran 2 of 3 actions. The next one failed: The display stopped.',
-            ' scroll_x=150 ran as 2 wheel clicks of about 100 pixels each.',
+            ' scroll_x=250 ran as 2 wheel clicks of about 114 pixels each.',
             id='only-its-first-axis-ran',
         ),
     ],
@@ -788,7 +808,7 @@ async def test_a_pixel_scroll_note_is_made_from_the_call_not_from_text_kept_on_i
     assert request['input'][-1] == {
         'role': 'user',
         'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">Ran 1 action.'
-        ' scroll_y=340 ran as 3 wheel clicks of about 100 pixels each.</pyai:tool_result>',
+        ' scroll_y=340 ran as 3 wheel clicks of about 114 pixels each.</pyai:tool_result>',
     }
 
 

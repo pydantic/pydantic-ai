@@ -406,9 +406,9 @@ so Claude and GPT get their own computer tool, run by this one; `False` sends th
 GPT can zoom). Every request carries every earlier screenshot; nothing drops them, so long runs reach provider image
 limits (100 images on 200k-context Claude).
 
-Reading a run: calls and results are `ComputerCallPart` (`actions`) and `ComputerReturnPart`
-(`result`, a `ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the
-tool name. Each finished call emits `ActionsPerformedEvent` (`result`, the call's `ComputerResult`) in the
+Reading a run: calls and results are `ComputerCallPart` (`actions`) and `ComputerReturnPart` (`result`, a
+`ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the tool name. Each
+call that finishes and returns a screenshot emits `ActionsPerformedEvent` (`result`, the call's `ComputerResult`) in the
 `computer_use` namespace.
 
 A workspace backend with a screen implements `SupportsDisplay` (a `display` property returning a `Display` or `None`);

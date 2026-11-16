@@ -70,8 +70,9 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- Claude Haiku 4.5, Opus 4.5, Sonnet 4.6 and later get Anthropic's own computer use tool through `AnthropicModel`,
-  and the function tool through other APIs such as Bedrock Converse; see
+- Claude Haiku 4.5, Opus 4.5, Sonnet 4.6 and later get Anthropic's own computer use tool through `AnthropicModel` on
+  the Claude API and Amazon Bedrock, and the function tool on Google Vertex AI, Microsoft Foundry and other APIs such
+  as Bedrock Converse; see
   [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
 - GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
@@ -126,18 +127,22 @@ The same hook can refuse a call instead, such as one that waits or types more th
 Some models only take screenshots up to a size, set by `computer_use_screenshot_max_side` and
 `computer_use_screenshot_max_pixels` in their profile:
 
+- Claude Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and about 3.75 megapixels (2576x1456).
 - Claude Opus 4.7: 2576 pixels on the longer side and 3.6 megapixels.
 - Claude Opus 4.5 and 4.6, Sonnet 4.6 and Haiku 4.5: 1568 pixels and about 1.15 megapixels.
 
-Their computer use tools scale a larger screenshot down, and Claude then clicks in the smaller image's pixels.
+Claude's earlier computer use tools, and the function tool Claude gets on other APIs, scale a larger screenshot down,
+and Claude then clicks in the smaller image's pixels. The computer toolset of Opus 4.8 and the Claude 5 models refuses
+one instead.
 
 `ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
 largest size that fits. A 1280x800 screen fits every model.
 
-Claude Opus 4.8 and the Claude 5 models refuse a screenshot larger than 2576 pixels on the longer side or 4784 image
-tokens, and the run stops with Anthropic's error.
+The toolset also counts image tokens, 28x28 pixels each, and refuses a screenshot over 4784 of them, such as
+2549x1457, so the run stops with Anthropic's error.
 
-GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 clicked within a pixel up to 2560x1440 and missed by hundreds of pixels at 3840x2160, while GPT-5.4 already missed one target by 40 pixels at 2560x1440. Keep the screen at or below 2560x1440 for GPT-5.5 and 1920x1200 for GPT-5.4.
+GPT-5.5 clicks accurately up to 2560x1440 and GPT-5.4 up to 2048x1280; larger screens make them miss. Keep the screen at
+or below those sizes.
 
 ## When something goes wrong
 
@@ -152,14 +157,15 @@ GPT-5.4 and GPT-5.5 take any size; measured on three targets per size, GPT-5.5 c
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](https://pydantic.dev/docs/ai/core-concepts/agent/#streaming-all-events) can save or show them as the run goes.
 
-Each finished call also emits [capability events](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) in
-the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events()`:
+Each call that finishes and returns a screenshot also emits
+[capability events](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) in the `computer_use` namespace, read with
+`@agent.on_event` or `run_stream_events()`:
 
 | Event | Payload |
 |---|---|
 | `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
-They are emitted once per call, also under durable execution, and add no telemetry spans, since core already traces
+They are emitted once per such call, also under durable execution, and add no telemetry spans, since core already traces
 the tool call. The history keeps the same facts: each result is a `ComputerReturnPart` whose `result` is the call's
 `ComputerResult`.
 
@@ -184,9 +190,9 @@ the tool call. The history keeps the same facts: each result is a `ComputerRetur
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.
-- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that takes over is told its
-  own coordinates (pixels or a grid), and screenshots are sized for it too. One that can't take images, or would
-  see the latest screenshot scaled down, ends the run with an error before its request. In a
+- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that takes over is told
+  its own coordinates (pixels or a grid). One that can't take images, or would see the latest screenshot scaled down,
+  ends the run with an error before its request. In a
   [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every
   model in it does.
 

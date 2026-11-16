@@ -29,26 +29,26 @@ def _grid_hint(grid: int) -> str:
     )
 
 
-def _candidate_models(model: AbstractModel) -> list[Model]:
+def candidate_models(model: AbstractModel) -> list[Model]:
     """The models that may answer a request to `model`: itself, a `FallbackModel`'s models, or those a wrapper wraps."""
     if isinstance(model, FallbackModel):
-        return [answering for inner in model.models for answering in _candidate_models(inner)]
+        return [answering for inner in model.models for answering in candidate_models(inner)]
     if not isinstance(model, Model):  # pragma: no cover - a model outside `Model`, such as a realtime one
         return []
     try:
         model.profile
     except NotImplementedError:
-        return _candidate_models(model.wrapped) if isinstance(model, WrapperModel) else []
+        return candidate_models(model.wrapped) if isinstance(model, WrapperModel) else []
     return [model]
 
 
 def shared_grid(model: Model) -> int | None:
     """The grid `model` points on, when every model that may answer it uses the same one."""
-    grids = {answering.profile.get('computer_use_coordinate_grid') for answering in _candidate_models(model)}
+    grids = {answering.profile.get('computer_use_coordinate_grid') for answering in candidate_models(model)}
     return grids.pop() if len(grids) == 1 else None
 
 
-def _smallest_limit(
+def smallest_limit(
     models: list[Model], key: Literal['computer_use_screenshot_max_side', 'computer_use_screenshot_max_pixels']
 ) -> int | None:
     """The smallest of the models' screenshot limits under `key`, so every one of them can see the screenshot."""
@@ -76,11 +76,11 @@ def label_calls(model: Model, params: ModelRequestParameters, response: _message
     names = {tool.name for tool in params.function_tools if tool.tool_kind == COMPUTER_KIND.id}
     if not names:
         return
-    models = _candidate_models(model)
+    models = candidate_models(model)
     labels = {
         _COORDINATE_GRID: shared_grid(model),
-        _SCREENSHOT_MAX_SIDE: _smallest_limit(models, 'computer_use_screenshot_max_side'),
-        _SCREENSHOT_MAX_PIXELS: _smallest_limit(models, 'computer_use_screenshot_max_pixels'),
+        _SCREENSHOT_MAX_SIDE: smallest_limit(models, 'computer_use_screenshot_max_side'),
+        _SCREENSHOT_MAX_PIXELS: smallest_limit(models, 'computer_use_screenshot_max_pixels'),
     }
     labels = {key: value for key, value in labels.items() if value is not None}
     if not labels:

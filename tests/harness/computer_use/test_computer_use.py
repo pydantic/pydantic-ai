@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import struct
 import threading
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import replace
-from typing import Any
 
 import anyio
 import pytest
@@ -91,13 +90,13 @@ Only a hang reaches it, so it allows for a slow, loaded CI runner."""
 
 
 @pytest.fixture(params=['in-process', 'durable'])
-def durability(request: pytest.FixtureRequest) -> list[AbstractCapability[Any]]:
+def durability(request: pytest.FixtureRequest) -> list[AbstractCapability[object]]:
     """Nothing, or a durability that runs each `computer` call as one durable unit in this process."""
     return [RecordingDurability()] if request.param == 'durable' else []
 
 
 def _scripted(
-    *calls: list[dict[str, Any]], profile: ModelProfile | None = None, tool: str = 'computer'
+    *calls: list[dict[str, object]], profile: ModelProfile | None = None, tool: str = 'computer'
 ) -> FunctionModel:
     """A model that calls `computer` once per action list, then answers `done`."""
 
@@ -141,7 +140,9 @@ def _unavailable(name: str, profile: ModelProfile, *, answers: int = 0) -> Funct
     return FunctionModel(respond, model_name=name, profile=profile)
 
 
-def _answering(name: str, profile: ModelProfile, seen: list[AgentInfo], *calls: list[dict[str, Any]]) -> FunctionModel:
+def _answering(
+    name: str, profile: ModelProfile, seen: list[AgentInfo], *calls: list[dict[str, object]]
+) -> FunctionModel:
     """A model that makes `calls`, one per response of its own, then answers `done`; `seen` gets what each of its
     requests carried."""
 
@@ -157,8 +158,13 @@ def _answering(name: str, profile: ModelProfile, seen: list[AgentInfo], *calls: 
 
 class TestComputerUse:
     async def test_actions_run_in_order_and_the_model_gets_a_summary_and_a_screenshot(
-        self, durability: list[AbstractCapability[Any]]
+        self, durability: list[AbstractCapability[object]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        async def no_wait(seconds: float) -> None:
+            pass
+
+        # The `wait` action would otherwise sleep for real.
+        monkeypatch.setattr(anyio, 'sleep', no_wait)
         provider = ScreenProvider()
         agent = Agent(
             _scripted(
@@ -203,7 +209,7 @@ class TestComputerUse:
         ],
     )
     async def test_a_failed_action_stops_the_rest_and_still_returns_a_screenshot(
-        self, actions: list[dict[str, Any]], ran: list[DisplayAction], summary: str
+        self, actions: list[dict[str, object]], ran: list[DisplayAction], summary: str
     ) -> None:
         provider = ScreenProvider()
         agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse()])
@@ -232,7 +238,11 @@ class TestComputerUse:
         ],
     )
     async def test_the_screen_settles_after_acting_before_the_screenshot(
-        self, actions: list[dict[str, Any]], settle: float | None, pauses: list[float], monkeypatch: pytest.MonkeyPatch
+        self,
+        actions: list[dict[str, object]],
+        settle: float | None,
+        pauses: list[float],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         slept: list[float] = []
 
@@ -276,7 +286,7 @@ class TestComputerUse:
         model = _scripted([{'type': 'click', 'x': 500, 'y': 500, 'extra': 'bad'}], profile=_GRID)
 
         async def correct(
-            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
         ) -> RawToolArgs:
             return {'actions': [{'type': 'click', 'x': 500, 'y': 500}]}
 
@@ -504,7 +514,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         await later.run('Thanks.', message_history=first.all_messages())
         assert reads == []
 
-    async def test_each_call_emits_what_it_did(self, durability: list[AbstractCapability[Any]]) -> None:
+    async def test_each_call_emits_what_it_did(self, durability: list[AbstractCapability[object]]) -> None:
         model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}])
         agent = Agent(
             model,
@@ -532,7 +542,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         [pytest.param([], id='no-workspace'), pytest.param([WorkspaceCapability()], id='no-display')],
     )
     async def test_a_run_without_a_display_fails_before_anything_acts(
-        self, workspace: list[AbstractCapability[Any]], native: bool
+        self, workspace: list[AbstractCapability[object]], native: bool
     ) -> None:
         # The native tool's size read before the first request reports it, or the call's own read.
         agent = Agent(
@@ -639,7 +649,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         ids=['act', 'look', 'size'],
     )
     async def test_an_environment_that_goes_away_mid_run_ends_it(
-        self, actions: list[dict[str, Any]], gone: str, durability: list[AbstractCapability[Any]]
+        self, actions: list[dict[str, object]], gone: str, durability: list[AbstractCapability[object]]
     ) -> None:
         class Vanishing(ScreenBackend):
             """Gone once the run has started, at the first call to `gone`."""
@@ -749,10 +759,10 @@ Each call runs a list of actions in order and returns a screenshot of the result
     )
     async def test_a_position_off_the_screen_fails_the_call_before_anything_runs(
         self,
-        actions: list[dict[str, Any]],
+        actions: list[dict[str, object]],
         profile: ModelProfile,
         message: str,
-        durability: list[AbstractCapability[Any]],
+        durability: list[AbstractCapability[object]],
     ) -> None:
         # The display would otherwise move the pointer to its edge and click there.
         provider = ScreenProvider()
@@ -830,7 +840,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
     async def test_a_screenshot_kept_without_its_result_is_sized_from_the_image(self) -> None:
         """A history rebuilt without metadata still scales positions by the screenshot the model last saw."""
 
-        def result(call_id: str, image: bytes, metadata: dict[str, Any] | None) -> ModelRequest:
+        def result(call_id: str, image: bytes, metadata: dict[str, object] | None) -> ModelRequest:
             screenshot = BinaryImage(data=image, media_type='image/png')
             return ModelRequest(
                 parts=[
@@ -877,9 +887,9 @@ Each call runs a list of actions in order and returns a screenshot of the result
     ) -> None:
         seen: list[CacheSetting | None] = []
 
-        class Spy(AbstractCapability[Any]):
+        class Spy(AbstractCapability[object]):
             async def before_model_request(
-                self, ctx: RunContext[Any], request_context: ModelRequestContext
+                self, ctx: RunContext[object], request_context: ModelRequestContext
             ) -> ModelRequestContext:
                 seen.append((request_context.model_settings or {}).get('cache'))
                 return request_context
@@ -954,6 +964,8 @@ Each call runs a list of actions in order and returns a screenshot of the result
         result = await agent.run('Go.', workspace=DisplayOnlyBackend(ScreenProvider().backend(None)))
         (tool_return,) = _returns(result.all_messages())
         assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
+        assert isinstance(tool_return, ComputerReturnPart)
+        assert tool_return.screenshot == SCREENSHOT
 
     async def test_a_screen_larger_than_the_model_takes_ends_the_run(self) -> None:
         provider = ScreenProvider()
@@ -984,7 +996,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         """However the runs reach the screen: one display object, with or without refs of their own, or one ref."""
         turns = _Turns()
         provider = ScreenProvider()
-        capabilities: list[AbstractCapability[Any]] = [turns.capability]
+        capabilities: list[AbstractCapability[object]] = [turns.capability]
         # What each run is given as its workspace; `None` lets the provider's capability supply it.
         workspaces: list[ScreenBackend | WorkspaceRef | None] = [None, None]
         if shared.startswith('display-object'):
@@ -1166,7 +1178,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert provider.actions == [Click(x=500, y=300)]
 
     async def test_a_button_stays_pressed_across_calls_until_mouse_up(
-        self, durability: list[AbstractCapability[Any]]
+        self, durability: list[AbstractCapability[object]]
     ) -> None:
         # Claude's earlier computer tools press, move and release in separate calls.
         provider = ScreenProvider()
@@ -1195,7 +1207,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert provider.actions == [MouseUp(button='right')]
 
     async def test_the_end_of_a_run_releases_the_buttons_it_still_holds(
-        self, durability: list[AbstractCapability[Any]]
+        self, durability: list[AbstractCapability[object]]
     ) -> None:
         provider = ScreenProvider()
         agent = Agent(
@@ -1242,7 +1254,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert provider.actions == [MouseDown(), MouseUp()]
 
     async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
-        self, durability: list[AbstractCapability[Any]]
+        self, durability: list[AbstractCapability[object]]
     ) -> None:
         provider = ScreenProvider()
         agent = Agent(
@@ -1506,7 +1518,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         ],
     )
     async def test_a_display_without_an_optional_ability_refuses_that_action_and_stops_there(
-        self, looking: dict[str, Any], error: str
+        self, looking: dict[str, object], error: str
     ) -> None:
         provider = ScreenProvider()
         agent = Agent(
@@ -1522,13 +1534,13 @@ Each call runs a list of actions in order and returns a screenshot of the result
         assert provider.actions == [Click(x=1, y=1)]
 
 
-def _ask_before_acting() -> Hooks[Any]:
+def _ask_before_acting() -> Hooks[object]:
     """The docs' recipe for asking a person before any call that does more than look."""
-    hooks = Hooks[Any]()
+    hooks = Hooks[object]()
 
     @hooks.on.before_tool_execute
     async def ask_before_acting(
-        ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
         looking = {'screenshot', 'zoom', 'wait', 'cursor_position'}
         if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
@@ -1539,9 +1551,9 @@ def _ask_before_acting() -> Hooks[Any]:
     return hooks
 
 
-class _AppLabel(AbstractCapability[Any]):
+class _AppLabel(AbstractCapability[object]):
     async def after_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
         return replace(response, metadata={**(response.metadata or {}), 'computer_use': 'app label'})
 
@@ -1574,10 +1586,10 @@ class _Turns:
                 log.append('screenshot')
                 return await super().screenshot()
 
-        class SaysWhenACallStarts(AbstractCapability[Any]):
+        class SaysWhenACallStarts(AbstractCapability[object]):
             async def before_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-            ) -> dict[str, Any]:
+                self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
                 if holding.is_set():
                     started.set()
                 return args
@@ -1585,7 +1597,11 @@ class _Turns:
         self.backend = HoldsItsFirstAction
         self.capability = SaysWhenACallStarts()
 
-    async def run(self, first: Callable[[], Any], second: Callable[[], Any]) -> None:
+    async def run(
+        self,
+        first: Callable[[], Coroutine[object, object, object]],
+        second: Callable[[], Coroutine[object, object, object]],
+    ) -> None:
         # Bounded, so a run that never reaches the step the other waits for fails the test instead of hanging it.
         with anyio.fail_after(READY_TIMEOUT):
             async with anyio.create_task_group() as tg:
