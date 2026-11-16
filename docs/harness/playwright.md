@@ -177,7 +177,7 @@ not raised to abort the agent run.
 | `max_content_tokens` | `4000` | Approximate token budget for every textual tool result. |
 | `action_timeout_ms` | `5000` | Default deadline for element actions (click, type, read, wait). `0` disables it. |
 | `navigation_timeout_ms` | `60000` | Default deadline for navigation and load settling, and for starting or attaching to the browser. `0` disables it. |
-| `chromium_sandbox` | `True` | Run the launched Chromium with its renderer sandbox. Turn it off only where the sandbox cannot start (a container without the kernel privileges it needs). Ignored with `cdp_url`. |
+| `chromium_sandbox` | `True` | Run the launched Chromium with its renderer sandbox. Turn it off only where the sandbox cannot start (a container without the kernel privileges it needs). Ignored when attaching over CDP (`cdp_url` or `cdp_url_factory`). |
 | `auto_install_chromium` | `False` | Fetch Chromium automatically when the binary is missing. |
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
 | `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
