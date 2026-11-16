@@ -337,9 +337,9 @@ class TestEstimateTokenCount:
             # cl100k_base: 226 tokens.
             pytest.param(base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode(), 232, id='base64'),
             # cl100k_base: 240 tokens.
-            pytest.param('{"id": 1, "name": "x", "tags": [1, 2, 3]}' * 10, 205, id='compact-json'),
+            pytest.param('{"id": 1, "name": "x", "tags": [1, 2, 3]}' * 10, 273, id='compact-json'),
             # cl100k_base: 801 tokens.
-            pytest.param('Привет, как дела? ' * 100, 1116, id='cyrillic'),
+            pytest.param('Привет, как дела? ' * 100, 991, id='cyrillic'),
             # cl100k_base: 800 tokens.
             pytest.param('日本語のテキスト' * 100, 800, id='cjk'),
             pytest.param('a' * 512, 128, id='repeated-letter'),
@@ -361,7 +361,7 @@ class TestEstimateTokenCount:
 
     def test_an_encoded_run_does_not_hide_compact_json(self):
         compact_json = '{"id": 1, "name": "x", "tags": [1, 2, 3]}' * 10
-        assert estimate_token_count([_user(compact_json + '"aB3dE5fG7hI9jK1lM3nO5pQ7"')]) == 222
+        assert estimate_token_count([_user(compact_json + '"aB3dE5fG7hI9jK1lM3nO5pQ7"')]) == 290
 
 
 # ---------------------------------------------------------------------------

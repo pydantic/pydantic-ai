@@ -234,9 +234,9 @@ _ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
 _JSON_PUNCTUATION = '{}[],:"'
 
 _DENSE_CHARS_PER_TOKEN = 1.5
-"""Characters per token of encoded runs and of non-ASCII text outside CJK (Cyrillic measures ~1.9)."""
+"""Characters per token of encoded runs, compact JSON, and non-ASCII text outside CJK (Cyrillic measures ~1.9)."""
 
-_JSON_CHARS_PER_TOKEN = 2
+_DENSE_SURCHARGE = 1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
 
 
 def _is_encoded(run: str) -> bool:
@@ -253,13 +253,11 @@ def _dense_surcharge(text: str) -> float:
     ascii_chars = len(text) if text.isascii() else len(text.encode('ascii', 'ignore'))
     non_ascii = len(text) - ascii_chars
     cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
-    surcharge = cjk * (1 - 1 / CHARS_PER_TOKEN) + (non_ascii - cjk) * (1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
     encoded = sum(len(run) for run in _ENCODED_RUN.findall(text) if _is_encoded(run))
-    surcharge += encoded * (1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
     plain = ascii_chars - encoded
-    if plain >= 32 and sum(text.count(c) for c in _JSON_PUNCTUATION) * 5 >= plain:
-        surcharge += plain * (1 / _JSON_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
-    return surcharge
+    is_json = plain >= 32 and sum(text.count(c) for c in _JSON_PUNCTUATION) * 5 >= len(text) - encoded
+    dense = non_ascii - cjk + encoded + (plain if is_json else 0)
+    return cjk * (1 - 1 / CHARS_PER_TOKEN) + dense * _DENSE_SURCHARGE
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
