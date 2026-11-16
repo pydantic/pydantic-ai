@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import pydantic_core
@@ -49,7 +50,7 @@ from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCall
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
-from ._computer import NativeComputer, takes_no_input
+from ._computer import ComputerBatch, NativeComputer, takes_no_input
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -105,18 +106,17 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
-    # A response's computer toolset calls are one batch: one `computer` call at the first one's place, started when
-    # another block or the response's end follows a member, so no later part's event comes before it.
-    _computer_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
     _computer_started: int = field(default=0, init=False)
     """How many of the batch's calls the `computer` call last started held."""
     _computer_input: list[str] = field(default_factory=list[str], init=False)
-    # Calls whose input didn't arrive whole, and the other tools called between the batch's calls.
-    _computer_incomplete: set[str] = field(default_factory=set[str], init=False)
-    _computer_between: list[str] = field(default_factory=list[str], init=False)
-    _computer_split: dict[str, list[str]] = field(default_factory=dict[str, list[str]], init=False)
     # Only a response that reached its end is known to hold every call it made.
     _ended: bool = field(default=False, init=False)
+
+    @cached_property
+    def _computer_batch(self) -> ComputerBatch:
+        # A response's computer toolset calls are one batch: one `computer` call at the first one's place, started when
+        # another block or the response's end follows a member, so no later part's event comes before it.
+        return ComputerBatch(self._native_computer, self.provider_name)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
@@ -128,7 +128,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             if (
                 native_computer
                 and not self._ended
-                and (self._computer_blocks or native_computer.answers(self._current_block))
+                and (self._computer_batch.blocks or native_computer.answers(self._current_block))
             ):
                 # The stream stopped early: a call after the ones that arrived may be missing, and they run as one.
                 # OpenAI doesn't raise here: its computer calls each arrive whole, while these toolset calls are a batch.
@@ -139,18 +139,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                 yield event_
 
     def _start_computer_batch(self) -> Iterator[ModelResponseStreamEvent]:
-        native_computer = self._native_computer
-        if native_computer and len(self._computer_blocks) > self._computer_started:
-            self._computer_started = len(self._computer_blocks)
-            yield self._parts_manager.handle_part(
-                vendor_part_id=self._computer_blocks[0]['id'],
-                part=native_computer.call_part(
-                    self._computer_blocks,
-                    self.provider_name,
-                    incomplete=self._computer_incomplete,
-                    split=self._computer_split,
-                ),
-            )
+        batch = self._computer_batch
+        if len(batch.blocks) > self._computer_started and (part := batch.call_part()) is not None:
+            self._computer_started = len(batch.blocks)
+            yield self._parts_manager.handle_part(vendor_part_id=batch.blocks[0]['id'], part=part)
 
     def _map_event(self, event: BetaRawMessageStreamEvent) -> Iterator[ModelResponseStreamEvent]:
         match event:
@@ -203,13 +195,10 @@ class AnthropicStreamedResponse(StreamedResponse):
         native_computer = self._native_computer
         if native_computer and native_computer.answers(current_block):
             self._computer_input = []
-            if self._computer_between:
-                self._computer_split[current_block.id] = self._computer_between
-                self._computer_between = []
             return
         yield from self._start_computer_batch()
-        if self._computer_blocks and isinstance(current_block, BetaToolUseBlock):
-            self._computer_between.append(current_block.name)
+        if isinstance(current_block, BetaToolUseBlock):
+            self._computer_batch.note_other(current_block.name)
         match current_block:
             case BetaTextBlock() if current_block.text:
                 yield from self._parts_manager.handle_text_delta(vendor_part_id=event.index, content=current_block.text)
@@ -449,18 +438,19 @@ class AnthropicStreamedResponse(StreamedResponse):
         except ValueError:
             # Cut off mid-input, as at `max_tokens`: what parsed is kept to send back, but none of it runs, as a
             # missing field such as a held key would change what the rest does.
-            self._computer_incomplete.add(current_block.id)
+            self._computer_batch.incomplete.add(current_block.id)
             try:
                 computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
             except ValueError:  # not even the start of a value, such as `n` of `null`
                 computer_args = {}
         block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
+        batch = self._computer_batch
         if native_computer.is_toolset:
-            self._computer_blocks.append(block)
+            batch.add(block)
         else:
             yield self._parts_manager.handle_part(
                 vendor_part_id=block['id'],
-                part=native_computer.call_part([block], self.provider_name, incomplete=self._computer_incomplete),
+                part=native_computer.call_part([block], self.provider_name, incomplete=batch.incomplete),
             )
 
     async def close_stream(self) -> None:

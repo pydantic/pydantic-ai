@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from ..._framing import TOOL_RESULT_TAG, frame
 from ...computer_use import (
     _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
+    COMPUTER_KIND,
     ComputerCallPart,
     ComputerResult,
     ComputerReturnPart,
@@ -18,6 +19,7 @@ from ...computer_use import (
     _safety_checks,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import BinaryImage, ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
+from .. import ModelRequestParameters
 
 _SCROLL_PIXELS_PER_CLICK = 100
 """OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far."""
@@ -87,7 +89,7 @@ class _OpenAIScreenshot(_Strict):
     type: Literal['screenshot']
 
 
-_OPENAI_ACTION: TypeAdapter[
+_OpenAIAction = (
     _OpenAIClick
     | _OpenAIDoubleClick
     | _OpenAIMove
@@ -97,21 +99,10 @@ _OPENAI_ACTION: TypeAdapter[
     | _OpenAIType
     | _OpenAIWait
     | _OpenAIScreenshot
-] = TypeAdapter(
-    Annotated[
-        _OpenAIClick
-        | _OpenAIDoubleClick
-        | _OpenAIMove
-        | _OpenAIScroll
-        | _OpenAIDrag
-        | _OpenAIKeypress
-        | _OpenAIType
-        | _OpenAIWait
-        | _OpenAIScreenshot,
-        Field(discriminator='type'),
-    ]
 )
 """The OpenAI computer actions the `computer` tool can run, each with only the fields it maps."""
+
+_OPENAI_ACTION: TypeAdapter[_OpenAIAction] = TypeAdapter(Annotated[_OpenAIAction, Field(discriminator='type')])
 
 _LIST = TypeAdapter(list[Any], config={'strict': True})
 
@@ -217,9 +208,17 @@ def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
 
 
 def map_computer_call(
-    item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
-) -> ComputerCallPart:
-    """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was."""
+    item: responses.ResponseComputerToolCall,
+    model_request_parameters: ModelRequestParameters,
+    tool_call_id: str,
+    provider_name: str,
+) -> ComputerCallPart | None:
+    """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was.
+
+    `None` when the request has no `computer` tool to run it.
+    """
+    if not (tool_name := model_request_parameters.tool_name_for_kind(COMPUTER_KIND)):
+        return None
     # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
     dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     provider_details: dict[str, Any] = {'computer_call': dumped}
@@ -287,14 +286,14 @@ def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCall
     return {call_id: part for call_id, part in latest.items() if 'computer_call' in (part.provider_details or {})}
 
 
-def _scroll_notes(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
+def _scroll_notes(call: ToolCallPart, result: ComputerResult | None) -> list[str]:
     """The notes on the pixel scrolls that ran, made again from the stored item's validated numbers.
 
     Not kept as text on the call, where a history from storage or a UI could put any text. Only the first `performed`
     actions ran. Nothing is said for a call changed before it ran (its summary covers it) or a result without its
     outcome.
     """
-    if call is None or result is None or result.get('changed') or not (stored := stored_computer_call(call)):
+    if result is None or result.get('changed') or not (stored := stored_computer_call(call)):
         return []
     notes = [note for _, note in _map_actions(stored, sent=set(stored))]
     return [note for note in notes[: result['performed']] if note]
@@ -310,7 +309,7 @@ def _needs_summary(result: ComputerResult | None) -> bool:
 
 
 def map_computer_call_output(
-    part: ToolReturnPart, call_id: str, call: ToolCallPart | None
+    part: ToolReturnPart, call_id: str, call: ToolCallPart
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a message when it needs more than an image.
 
@@ -333,17 +332,23 @@ def map_computer_call_output(
     }
     # Read from the stored details, as the approval gate does: a restored call whose arguments didn't validate is a
     # plain `ToolCallPart`, and may still have run with corrected arguments.
-    if computer_return and call is not None and (checks := _safety_checks(call.provider_details)):
+    if computer_return and (checks := _safety_checks(call.provider_details)):
         output['acknowledged_safety_checks'] = _acknowledged(checks)
     items: list[responses.ResponseInputItemParam] = [output]
     # A successful result is read as validated content, so content stored as a JSON string reads the same as a list.
     content = (computer_return.typed_content if computer_return else None) or part.content_items()
     # Images before the closing screenshot, such as a zoom, can't go in the output.
     images = [item for item in content if isinstance(item, BinaryImage)]
-    others = images[:-1] if image is not None else images
-    conversions = _scroll_notes(call, computer_return.result) if computer_return else []
-    if image is None or computer_return is None or _needs_summary(computer_return.result) or others or conversions:
-        items.append(_summary_message(part, content, others, conversions))
+    extra_images = images[:-1] if image is not None else images
+    scroll_notes = _scroll_notes(call, computer_return.result) if computer_return else []
+    if (
+        computer_return is None
+        or image is None
+        or _needs_summary(computer_return.result)
+        or extra_images
+        or scroll_notes
+    ):
+        items.append(_summary_message(part, content, extra_images, scroll_notes))
     return items
 
 
@@ -359,7 +364,7 @@ def _acknowledged(
 
 
 def _summary_message(
-    part: ToolReturnPart, content: Sequence[object], others: list[BinaryImage], conversions: list[str]
+    part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], scroll_notes: list[str]
 ) -> responses.EasyInputMessageParam:
     """The output can only carry an image: say what didn't run, or why the image is blank.
 
@@ -367,15 +372,15 @@ def _summary_message(
     natively.
     """
     texts = [item for item in content if isinstance(item, str)]
-    note = ' '.join([*texts, *conversions]) if texts or conversions else part.model_response_str(wrap_if_error=False)
+    note = ' '.join([*texts, *scroll_notes]) if texts or scroll_notes else part.model_response_str(wrap_if_error=False)
     framed = frame(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
-    if not others:
+    if not extra_images:
         return responses.EasyInputMessageParam(role='user', content=framed)
     message_content: list[responses.ResponseInputContentParam] = [
         responses.ResponseInputTextParam(type='input_text', text=framed),
         *(
-            responses.ResponseInputImageParam(type='input_image', image_url=other.data_uri, detail='original')
-            for other in others
+            responses.ResponseInputImageParam(type='input_image', image_url=extra_image.data_uri, detail='original')
+            for extra_image in extra_images
         ),
     ]
     return responses.EasyInputMessageParam(role='user', content=message_content)
