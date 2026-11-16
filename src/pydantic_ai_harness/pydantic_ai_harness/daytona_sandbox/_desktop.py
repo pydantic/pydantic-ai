@@ -60,6 +60,9 @@ from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionErr
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse
 
+DISPLAY = ':0'
+"""The X display of every Daytona sandbox's desktop."""
+
 _REQUEST_TIMEOUT = 30
 """As `_backend._REQUEST_TIMEOUT`, which imports this module."""
 

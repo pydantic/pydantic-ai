@@ -220,11 +220,6 @@ def _character(character: str) -> str:
     return f'U{ord(character):04X}'
 
 
-def _drag_moves(path: Sequence[Point]) -> list[list[str]]:
-    """The `xdotool` steps that move along `path` from its first point, in short moves with pauses between them."""
-    return [['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)] for point in drag_steps(path)]
-
-
 def _commands(steps: Sequence[list[str]]) -> list[list[str]]:
     """`steps`, each arguments that go together, packed in order into as few commands as keep within `_COMMAND_BYTES`."""
     commands: list[list[str]] = [[]]
@@ -331,6 +326,8 @@ class X11Computer:
         """Run `xdotool` command chains in turn with `hold` held down; if one fails or is cancelled, let go of everything.
 
         Several chains are one input split by `_commands`: what it holds stays down from the first to the last.
+        `release` is an `xdotool` chain that lets go of what the chains press; each command may take `pauses` on top of
+        the usual time limit.
         """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
@@ -338,19 +335,12 @@ class X11Computer:
         commands = [['xdotool', *chain] for chain in chains]
         commands[0][1:1] = [*_RELEASE_MODIFIERS, *keydown]
         commands[-1] += keyup
-        await self._input(commands, [list(release), keyup], pauses)
-
-    async def _input(self, commands: Sequence[list[str]], releases: list[list[str]], pauses: float = 0) -> None:
-        """Run input commands in turn; if one fails or is cancelled, stop it and let go of what they may hold.
-
-        Each command may take `pauses` on top of the usual time limit. Each of `releases` is an `xdotool` chain, run
-        on its own so one that fails doesn't keep the others from running.
-        """
         try:
             for command in commands:
                 await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)
         except BaseException as error:
-            failures = await self._release(releases)
+            # Each release runs on its own, so one that fails doesn't keep the other from running.
+            failures = await self._release([list(release), keyup])
             if failures and isinstance(error, WorkspaceError) and not isinstance(error, WorkspaceUnavailableError):
                 raise WorkspaceError(
                     f'{error}. Releasing what it pressed failed too, so a mouse button or key may still be held: '
@@ -374,9 +364,9 @@ class X11Computer:
             failures.append(f'releasing took longer than {_RELEASE_TIMEOUT} seconds')
         return failures
 
-    async def _capture(self, script: str, *args: str) -> bytes:
-        """Run a capture script with `args` and read the PNG it prints as base64."""
-        return png_from_base64((await self._run(['sh', '-c', script, 'sh', *args])).stdout, 'The screenshot command')
+    async def _capture(self, *args: str) -> bytes:
+        """Run `_CAPTURE` with `args` and read the PNG it prints as base64."""
+        return png_from_base64((await self._run(['sh', '-c', _CAPTURE, 'sh', *args])).stdout, 'The screenshot command')
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(_DISPLAY_SIZE)).stdout
@@ -390,11 +380,11 @@ class X11Computer:
         return int(width[1]), int(height[1])
 
     async def screenshot(self) -> bytes:
-        return await self._capture(_CAPTURE)
+        return await self._capture()
 
     async def zoom(self, region: Region) -> bytes:
         geometry = f'{region.left},{region.top},{region.right - region.left},{region.bottom - region.top}'
-        return await self._capture(_CAPTURE, '-a', geometry)
+        return await self._capture('-a', geometry)
 
     async def cursor_position(self) -> Point:
         output = (await self._run(['xdotool', 'getmouselocation', '--shell'])).stdout
@@ -415,14 +405,15 @@ class X11Computer:
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]
-                chains = _commands(_drag_moves(path))
+                steps = drag_steps(path)
+                chains = _commands([['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)] for point in steps])
                 chains[0][:0] = [*_move(start.x, start.y), 'mousedown', '1', 'sleep', str(DRAG_PRESS_PAUSE)]
                 chains[-1] += ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1']
                 await self._xdotool(
                     *chains,
                     hold=modifiers,
                     release=('mouseup', '1'),
-                    pauses=2 * DRAG_PRESS_PAUSE + len(drag_steps(path)) * DRAG_STEP_PAUSE,
+                    pauses=2 * DRAG_PRESS_PAUSE + len(steps) * DRAG_STEP_PAUSE,
                 )
             case MouseDown(button=button):
                 await self._xdotool(['mousedown', _BUTTONS[button]])
@@ -439,16 +430,20 @@ class X11Computer:
             case TypeText(text=text):
                 for part in _commands([[_character(character)] for character in text]):
                     # A cancel can land between a key's press and release, and X then repeats the key without end.
-                    release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(part)]
-                    command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *part]
-                    await self._input([command], [release], len(part) * _KEY_SECONDS)
+                    await self._xdotool(
+                        ['key', '--delay', _TYPING_DELAY_MS, '--', *part],
+                        release=('keyup', *_LEVEL_SHIFTS, *dict.fromkeys(part)),
+                        pauses=len(part) * _KEY_SECONDS,
+                    )
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
-                release = ['keyup', *reversed(keysyms)]
-                command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', _repeat(repeat), '--', '+'.join(keysyms)]
                 # xdotool pauses after each key of the chord, not once per repeat.
-                await self._input([command], [release], repeat * len(keysyms) * _KEY_SECONDS)
+                await self._xdotool(
+                    ['key', '--repeat', _repeat(repeat), '--', '+'.join(keysyms)],
+                    release=('keyup', *reversed(keysyms)),
+                    pauses=repeat * len(keysyms) * _KEY_SECONDS,
+                )
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys, pauses=seconds)
             case _:
