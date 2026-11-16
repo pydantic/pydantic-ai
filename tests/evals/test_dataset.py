@@ -7,6 +7,7 @@ import math
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +19,7 @@ from dirty_equals import HasRepr, IsNumber, IsOneOf
 from pydantic import BaseModel, TypeAdapter
 
 from .._inline_snapshot import snapshot
+from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsStr, try_import
 from .utils import render_table
 
@@ -34,10 +36,13 @@ with try_import() as imports_successful:
         EvaluatorFailure,
         EvaluatorOutput,
         EvaluatorSpec,
+        HasMatchingSpan,
         LLMJudge,
+        MaxDuration,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.generation import generate_dataset
+    from pydantic_evals.otel.span_tree import SpanQuery
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
 
     BareNoneDatasetCase = tuple[
@@ -1152,6 +1157,27 @@ def test_from_file_schema_mismatch(tmp_path: Path):
 
     with pytest.raises(ValueError, match=r'test_cases\.yaml contains data that does not match the schema for Dataset'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+def test_from_file_roundtrip_with_utf8_bom(tmp_path: Path, fmt: Literal['json', 'yaml']):
+    """A dataset file re-saved with a UTF-8 byte order mark still loads."""
+    dataset = Dataset[int, int, None](name='bom', cases=[Case(name='café ✓ 日本', inputs=1, expected_output=1)])
+    path = tmp_path / f'bom.{fmt}'
+    dataset.to_file(path)
+    path.write_bytes(b'\xef\xbb\xbf' + path.read_bytes())
+
+    assert Dataset[int, int, None].from_file(path) == dataset
+
+
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    path = tmp_path / 'truncated.json'
+    path.write_bytes(content)
+
+    with pytest.raises(UnicodeDecodeError):
+        Dataset[int, int, None].from_file(path)
 
 
 async def test_from_text():
@@ -2746,7 +2772,8 @@ async def test_task_timeout_validation(task_timeout: float):
         await dataset.evaluate(task, task_timeout=task_timeout)
 
 
-async def test_task_timeout_abandons_sync_task_thread():
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_task_timeout_abandons_sync_task_thread(anyio_backend: str, monkeypatch: pytest.MonkeyPatch):
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
@@ -2759,17 +2786,26 @@ async def test_task_timeout_abandons_sync_task_thread():
         finally:
             finished.set()
 
+    # A deadline that passes before a worker thread picks the task up abandons a task that never ran.
+    clock = Clock()
+    clock.install(monkeypatch)
+
+    async def pass_deadline_once_started() -> None:
+        assert await anyio.to_thread.run_sync(started.wait, READINESS_WAIT_TIMEOUT)
+        clock.advance()
+
     dataset = Dataset[str, str, None](name='timeout', cases=[Case(inputs='input')])
     try:
-        report = await dataset.evaluate(task, task_timeout=0.01, progress=False)
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(pass_deadline_once_started)
+            report = await dataset.evaluate(task, task_timeout=LONG_TIMEOUT, progress=False)
 
-        # The deadline is enforced before the worker thread returns: it is abandoned, not awaited.
-        assert not finished.is_set()
-        assert report.failures[0].error_message == 'TimeoutError: Task timed out after 0.01s'
+            # The deadline is enforced before the worker thread returns: it is abandoned, not awaited.
+            assert not finished.is_set()
+            assert report.failures[0].error_message == 'TimeoutError: Task timed out after 10s'
     finally:
         release.set()
     assert await anyio.to_thread.run_sync(finished.wait, READINESS_WAIT_TIMEOUT)
-    assert started.is_set()
 
 
 def test_task_timeout_sync_task_within_deadline():
@@ -2806,4 +2842,42 @@ async def test_task_timeout_recorded_on_spans(capfire: CaptureLogfire):
             'execute {task}': [('TimeoutError', 'Task timed out after 0.01s')],
             'case: {case_name}': [('TimeoutError', 'Task timed out after 0.01s')],
         }
+    )
+
+
+@needs_logfire
+@pytest.mark.parametrize('fmt', ['yaml', 'json'])
+def test_to_file_roundtrip_duration_evaluators(capfire: CaptureLogfire, tmp_path: Path, fmt: Literal['yaml', 'json']):
+    """Duration bounds still evaluate after `to_file` writes `timedelta` values as ISO-8601 strings."""
+    dataset_file = tmp_path / f'dataset.{fmt}'
+    dataset = Dataset[str, str, None](
+        name='durations',
+        cases=[Case(name='case', inputs='in', evaluators=(MaxDuration(seconds=timedelta(seconds=5)),))],
+        evaluators=[
+            MaxDuration(seconds=60.0),
+            HasMatchingSpan(
+                query=SpanQuery(name_equals='work span', min_duration=timedelta(0), max_duration=timedelta(hours=1)),
+                evaluation_name='bounded',
+            ),
+            HasMatchingSpan(
+                query=SpanQuery(
+                    name_equals='outer span',
+                    some_child_has=SpanQuery(name_equals='work span', max_duration=timedelta(0)),
+                ),
+                evaluation_name='nested_too_slow',
+            ),
+        ],
+    )
+    dataset.to_file(dataset_file)
+    serialized = dataset_file.read_text()
+    assert all(value in serialized for value in ('PT5S', 'PT0S', 'PT1H', '60.0'))
+
+    def run_task(inputs: str) -> str:
+        with logfire.span('outer span'), logfire.span('work span'):
+            return 'out'
+
+    case = Dataset[str, str, None].from_file(dataset_file).evaluate_sync(run_task, progress=False).cases[0]
+    assert case.evaluator_failures == []
+    assert {name: result.value for name, result in case.assertions.items()} == snapshot(
+        {'MaxDuration': True, 'MaxDuration_2': True, 'bounded': True, 'nested_too_slow': False}
     )

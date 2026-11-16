@@ -26,8 +26,9 @@ _MAX_IDLE_TICKS = 20_000
 
 
 _THREAD_WAIT_SECONDS = 0.05
-_MAX_THREAD_WAITS = 200
-"""How long (in real time) an idle loop waits for a worker thread before calling the simulation stuck."""
+_MAX_THREAD_WAITS = 6000
+"""How long (in real time) an idle loop waits for a worker thread before calling the simulation stuck: 300 seconds,
+longer than any stall seen on a CI runner, so that only a thread that never finishes waits this long."""
 
 
 class SimulationStuck(AssertionError):

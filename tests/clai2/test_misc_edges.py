@@ -36,6 +36,7 @@ RENAMED_MODULES = (
     'app',
     'builtin_plugins/herdr_client',
     'cli/cli',
+    'mcp/client',
     'mcp/command',
     'mcp/form',
     'mcp/menu',
@@ -43,6 +44,7 @@ RENAMED_MODULES = (
     'mcp/settings',
     'mcp/store',
     'mcp/tokens',
+    'models/retry_after',
     'plugins/factories',
     'plugins/git',
     'runtime/processes',
@@ -52,7 +54,7 @@ RENAMED_MODULES = (
     'ui/rendering/rendering',
     'ui/rendering/splash_art',
 )
-"""Modules #11326 moved off a leading underscore, as package paths relative to `pydantic_clai2`."""
+"""Modules #11326 and #12235 moved off a leading underscore, as package paths relative to `pydantic_clai2`."""
 
 
 def test_renamed_modules_are_not_underscore_prefixed() -> None:
@@ -61,6 +63,13 @@ def test_renamed_modules_are_not_underscore_prefixed() -> None:
         path = root / f'{module}.py'
         assert path.is_file(), module
         assert not path.with_name(f'_{path.name}').exists(), module
+
+
+def test_naming_conventions() -> None:
+    """Modules have no leading underscore and exception variables are named `exc`, as #13604 restored."""
+    root = Path(pydantic_clai2.__file__).parent
+    assert [path for path in root.rglob('_*.py') if not path.name.startswith('__')] == []
+    assert [path for path in root.rglob('*.py') if ' as error:' in path.read_text(encoding='utf-8')] == []
 
 
 def test_splash_broken_stream_and_replaced_output(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -23,6 +23,7 @@ SUPPORTED_FEATURES: frozenset[str] = frozenset(
         'logfire-variables-key',
         'compaction-background',
         'mcp-defer-loading',
+        'aoe-titles',
     }
 )
 """Feature names this build implements. Add a name in the change that adds the code behind it."""

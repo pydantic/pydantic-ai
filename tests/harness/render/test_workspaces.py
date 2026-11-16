@@ -43,7 +43,8 @@ class WorkspaceTaskContext(RecordingTaskContext):
             self.in_child_task.reset(token)
 
 
-@pytest.mark.parametrize('check', cases())
+# `prepare_reads` checks an in-process engine; Render rebuilds the backend from the ref at each task.
+@pytest.mark.parametrize('check', [case for case in cases() if case.id != 'prepare_reads'])
 async def test_workspace_scenario(check: Check, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('TMPDIR', str(tmp_path))
     app = Workflows()

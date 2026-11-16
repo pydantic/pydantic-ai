@@ -3,6 +3,7 @@
 import io
 import time
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 import anyio
@@ -24,11 +25,13 @@ from pydantic_ai.providers.github_copilot import (
     GitHubCopilotOAuthFlow,
 )
 from pydantic_clai2 import chat
+from pydantic_clai2.auth import CodexAuth, login_command
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot
 from pydantic_clai2.models.model_catalog import github_copilot_models
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, open_add_model_menu
+from tests.clai2.dialog_script import Back, ScriptedDialogs
 from tests.clai2.menu_script import QUIET, Script, make_context, pick, typed
 from tests.clai2.test_app_edges import inputs
 
@@ -219,11 +222,13 @@ async def test_connect(
     monkeypatch.setattr(github_copilot, 'discover', discover)
     context, _ = make_context(tmp_path)
     previous = context.settings.model
+    assert 'github-copilot:claude-haiku-4.5' not in context.store.models()
     output = io.StringIO()
     for _ in range(2):
         script = Script(lists=[pick('github-copilot'), selected, MenuResult(cancelled=True)], choices=[], texts=[])
         result = await open_add_model_menu(context, console=Console(file=output), runners=script.runners)
         assert 'Enter code: ABCD-EFGH' in output.getvalue(), 'the device code goes to the shell console'
+        assert 'github-copilot:claude-haiku-4.5' in context.store.models(), 'signing in adds every model'
         if selected.item and selected.item.value == 'github-copilot:claude-haiku-4.5':
             assert context.settings.model == 'github-copilot:claude-haiku-4.5'
             assert result == 'Saved model. Applied.'
@@ -265,13 +270,111 @@ async def test_provider_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert context.store.model_settings(name) == {'max_tokens': 42}
 
 
-async def test_login_command(device_flow: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    inputs(monkeypatch, ['/login github-copilot', '/login unknown', '/exit'])
+def serve_models(monkeypatch: pytest.MonkeyPatch, status: int = 200) -> list[httpx2.Request]:
+    """Answer `GET {base_url}/models` through the real discovery, recording each request."""
+    requests: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        served = [
+            {'id': name, 'supported_endpoints': ['/chat/completions'], 'model_picker_enabled': True}
+            for name in ('claude-haiku-4.5', 'gemini-4-argon', 'gpt-5.4')
+        ]
+        return httpx2.Response(status, json={'data': served})
+
+    transport = httpx2.MockTransport(respond)
+    monkeypatch.setattr(github_copilot, 'discover', partial(github_copilot.discover, transport=transport))
+    return requests
+
+
+@pytest.mark.parametrize(
+    ('target', 'current', 'selected'),
+    [
+        ('github-copilot', None, 'github-copilot:gemini-4-argon'),
+        ('github-copilot@work', None, 'github-copilot@work:gemini-4-argon'),
+        ('github-copilot', 'openai:gpt-5.4', 'openai:gpt-5.4'),
+    ],
+)
+async def test_login_command(
+    device_flow: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str, current: str | None, selected: str
+) -> None:
+    requests = serve_models(monkeypatch)
+    store = SettingsStore(tmp_path / 'config.db')
+    if current is not None:
+        store.set('model', current)
+    inputs(monkeypatch, [f'/login {target}', '/login unknown', '/exit'])
     output = io.StringIO()
-    await chat(Agent(TestModel()), deps=None, console=Console(file=output), store=SettingsStore(tmp_path / 'config.db'))
-    assert github_copilot.token() == 'fake-access'
+    await chat(
+        Agent(TestModel()), deps=None, console=Console(file=output, width=500), settings=store.load(), store=store
+    )
+    assert github_copilot.token(target) == 'fake-access'
+    assert [(request.url.path, request.headers['authorization']) for request in requests] == [
+        ('/models', 'Bearer fake-access')
+    ]
+    assert {f'{target}:{name}' for name in ('claude-haiku-4.5', 'gemini-4-argon', 'gpt-5.4')} <= set(store.models())
+    assert store.overrides()['model'] == selected
+    assert 'Added 3 GitHub Copilot models.' in output.getvalue()
+    assert (f'Selected {selected}.' in output.getvalue()) is (current is None)
     assert 'Usage: /login [openai-codex|github-copilot]' in output.getvalue()
     assert 'fake-access' not in output.getvalue()
+
+
+async def test_login_survives_failed_discovery(
+    device_flow: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    serve_models(monkeypatch, status=500)
+    store = SettingsStore(tmp_path / 'config.db')
+    store.add_model(name='openai:gpt-5.4')
+    inputs(monkeypatch, ['/login github-copilot', '/exit'])
+    output = io.StringIO()
+    await chat(
+        Agent(TestModel()), deps=None, console=Console(file=output, width=500), settings=store.load(), store=store
+    )
+    assert github_copilot.token() == 'fake-access'
+    assert 'openai:gpt-5.4' in store.models()
+    assert not [name for name in store.models() if name.startswith('github-copilot')]
+    assert 'model' not in store.overrides()
+    assert 'GitHub login saved.' in output.getvalue()
+    assert 'GitHub Copilot models were not added: Copilot model discovery failed' in output.getvalue()
+
+
+async def test_cancelled_login_adds_no_models(
+    device_flow: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def never_approved(self: GitHubCopilotOAuthFlow) -> GitHubCopilotCredentials:
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    monkeypatch.setattr(GitHubCopilotOAuthFlow, 'wait_for_authorization', never_approved)
+    requests = serve_models(monkeypatch)
+    save_codex_credentials(account='github-copilot', value='previous')
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command(
+        ['github-copilot'], codex=CodexAuth(QUIET), store=store, dialogs=ScriptedDialogs([Back()])
+    )
+    assert message == github_copilot.CANCELLED
+    assert requests == []
+    assert store.models() == []
+
+
+@pytest.mark.parametrize(
+    ('names', 'expected'),
+    [
+        (['claude-opus-5.5', 'claude-opus-6', 'gemini-4-argon', 'gpt-6-sol'], 'claude-opus-5.5'),
+        (['claude-opus-4.8', 'gemini-4-argon', 'gpt-6-sol'], 'gemini-4-argon'),
+        (['claude-opus-4.7', 'claude-opus-4.8', 'gemini-4.1-pro', 'gpt-6-sol'], 'claude-opus-4.8'),
+        (['claude-opus-41', 'claude-opus-4.8'], 'claude-opus-4.8'),
+        (['gemini-3.8-flash', 'gemini-4.1-pro', 'gpt-6-sol'], 'gemini-4.1-pro'),
+        (['gemini-3.1-pro', 'gpt-5.5', 'gpt-6-sol'], 'gpt-6-sol'),
+        (['gpt-4o', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'claude-sonnet-5'], 'gpt-5.5'),
+        (['claude-haiku-4.5', 'claude-sonnet-4.5', 'claude-sonnet-5'], 'claude-sonnet-5'),
+        (['claude-haiku-4.5', 'grok-4.7', 'mai-code-1.1-flash'], 'grok-4.7'),
+        (['gpt-5-mini', 'gpt-5.4-mini'], 'gpt-5.4-mini'),
+        (['auto', 'grok-4.7'], 'grok-4.7'),
+    ],
+)
+def test_default_model(names: list[str], expected: str) -> None:
+    assert github_copilot.default_model(names) == expected
 
 
 @pytest.mark.vcr

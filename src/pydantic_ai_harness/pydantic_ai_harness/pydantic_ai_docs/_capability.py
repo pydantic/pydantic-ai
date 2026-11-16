@@ -24,7 +24,7 @@ _DOCS_PATH_ENV = 'PYDANTIC_AI_HARNESS_DOCS_PATH'
 
 _INSTRUCTIONS = (
     'You have a `read_pyai_docs` tool that returns Pydantic AI documentation on demand. '
-    'Topics: capabilities, hooks, tools, tools-advanced, toolsets, agent. Read the relevant '
+    f'Topics: {", ".join(topic.value for topic in PydanticAIDocsTopic)}. Read the relevant '
     'topic before authoring or modifying a Pydantic AI capability, hook, tool, or toolset, '
     'rather than relying on memory.'
 )
@@ -37,7 +37,7 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     Exposes a single `read_pyai_docs(topic)` tool. Docs are located and returned
     when asked for -- never bundled into context. Each call resolves the topic
     from a configured local checkout first, then falls back to fetching the page
-    from `pydantic/pydantic-ai:main`, so it works in any environment.
+    from `pydantic/pydantic-ai:main`, which needs network access.
 
     The local checkout path comes from `local_docs_path`, or the
     `PYDANTIC_AI_HARNESS_DOCS_PATH` env var when that is unset; with neither set

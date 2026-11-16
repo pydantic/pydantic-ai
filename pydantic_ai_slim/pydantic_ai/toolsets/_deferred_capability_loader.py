@@ -58,6 +58,8 @@ LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE = (
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
+# History preserves extra arguments, but the model-facing schema must retain automatic strict-mode compatibility.
+_LOAD_CAPABILITY_SCHEMA.pop('additionalProperties', None)
 
 
 @dataclass

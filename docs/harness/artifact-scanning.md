@@ -57,14 +57,14 @@ print(result.summary())
 | `role_override` | "you are now a ...", "adopt a new persona", chat-template tokens like `<\|im_start\|>` and `[INST]`, a line starting `system:`, `assistant:`, or `developer:` |
 | `exfiltration` | `curl`/`wget` with a `$..._KEY`/`TOKEN`/`SECRET` variable, a URL interpolating one, `cat ~/.ssh/...` or `.env`, `env \| curl`, appending to `authorized_keys` |
 | `html_comment` | `<!--`, which Markdown renderers hide from a reviewer |
-| `invisible_unicode` | the zero-width space U+200B, U+2060 to U+2064, U+180E, bidirectional embeddings, overrides, and isolates (U+202A to U+202E, U+2066 to U+2069), a byte-order mark inside the text, Unicode tag characters outside the England, Scotland, and Wales flag emoji |
+| `invisible_unicode` | the zero-width space U+200B, U+2060 to U+2064, U+180E, bidirectional embeddings, overrides, and isolates (U+202A to U+202E, U+2066 to U+2069), a byte-order mark inside the text, Unicode tag characters outside the England, Scotland, and Wales flag emoji, the Hangul fillers U+3164 and U+FFA0, deprecated and unassigned format characters such as U+2065 and U+206A to U+206F, the Duployan shorthand and musical format controls, and variation selectors where text has no use for them (two in a row, a supplement selector after anything but an ideograph, a non-emoji selector after a character Unicode defines no variant of) |
 
-The built-in patterns are in `DEFAULT_ARTIFACT_PATTERNS`. Text is NFKC-normalized and stripped of invisible and joining characters before the phrase patterns run, so full-width letters or a zero-width character inside a phrase do not hide it. Characters ordinary text needs are not flagged themselves: the zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), the left-to-right and right-to-left marks, the soft hyphen, the tag characters of those three flags, and a byte-order mark at the very start, which is how some editors save UTF-8.
+The built-in patterns are in `DEFAULT_ARTIFACT_PATTERNS`. Text is NFKC-normalized and stripped of Unicode's default-ignorable characters before the phrase patterns run, so full-width letters or a zero-width character inside a phrase do not hide it. Characters ordinary text needs are not flagged themselves: the zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), the left-to-right and right-to-left marks, the soft hyphen, a single variation selector as in an emoji, the tag characters of those three flags, and a byte-order mark at the very start, which is how some editors save UTF-8.
 
 ## Options
 
 - `threats`: the built-in categories to look for, all of them by default. Narrow it where a category matches ordinary content, for example `ArtifactScanner(threats=['injection', 'exfiltration', 'invisible_unicode'])` for skill libraries that use HTML comments for linter directives.
-- `extra_patterns`: additional `name -> regex` patterns, reported under the `custom` threat and matched case-insensitively.
+- `extra_patterns`: additional `name -> regex` patterns, reported under the `custom` threat and matched case-insensitively against the normalized text, so a pattern containing a default-ignorable character such as an emoji's U+FE0F never matches.
 
 ```python
 from pydantic_ai_harness import ArtifactScanner

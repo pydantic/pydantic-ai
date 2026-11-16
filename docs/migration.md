@@ -11,6 +11,8 @@ The [Upgrade Guide](changelog.md) is the canonical source for *why* each change 
 !!! tip "Upgrade through the latest V1 first"
     Most of what V2 removes is deprecated as of v1.100.0, and each deprecation warning names its replacement. Upgrading to the latest V1 and resolving every warning applies the bulk of this page mechanically, and leaves you only the [default behavior changes](changelog.md#changes-not-covered-by-deprecation-warnings) to reason about. Message history serialized with V1 still deserializes in V2.
 
+Importing one of the most common removed names, such as `OpenAIModel`, `MCPServerStdio` or `pydantic_ai.usage.Usage`, raises an `ImportError` that names its replacement and links this page. `hasattr()` and `getattr(module, name, default)` on those names raise the same `ImportError`, so code that supports both V1 and V2 should detect the version with `try`/`except ImportError`.
+
 ## Agent configuration
 
 Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities](capabilities/overview.md), a single composable primitive that bundles an agent's tools, [hooks](hooks.md), instructions, and model settings.
@@ -45,8 +47,8 @@ Most V1 `Agent(...)` arguments that configured behavior moved onto [capabilities
 | `pydantic_ai.models.outlines.OutlinesModel`, `pydantic_ai.providers.outlines.OutlinesProvider` | Removed, no replacement |
 | `pydantic_ai.models.cached_async_http_client` | `pydantic_ai.models.create_async_http_client()` |
 | `pydantic_ai.providers.google.GoogleProvider(vertexai=, location=, project=, credentials=)` | `pydantic_ai.providers.google_cloud.GoogleCloudProvider(...)` |
-| `pydantic_ai.providers.google.GoogleGLAProvider` | `pydantic_ai.providers.google.GoogleProvider` |
-| `pydantic_ai.providers.google.GoogleVertexProvider` | `pydantic_ai.providers.google_cloud.GoogleCloudProvider` |
+| `pydantic_ai.providers.google_gla.GoogleGLAProvider` | `pydantic_ai.providers.google.GoogleProvider` |
+| `pydantic_ai.providers.google_vertex.GoogleVertexProvider` | `pydantic_ai.providers.google_cloud.GoogleCloudProvider` |
 | `pydantic_ai.providers.grok.GrokProvider`, `GrokModelName` | `pydantic_ai.providers.xai.XaiProvider` with `pydantic_ai.models.xai.XaiModel` / `XaiModelName` |
 | `GoogleModelSettings['google_vertex_service_tier']`, `['google_service_tier']` | `GoogleModelSettings['google_cloud_service_tier']` |
 | `StreamedResponse.usage()` (custom `Model` subclasses) | `StreamedResponse.usage` property |
