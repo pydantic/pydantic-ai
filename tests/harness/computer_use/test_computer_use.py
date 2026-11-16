@@ -942,7 +942,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         provider = ScreenProvider()
         capabilities: list[AbstractCapability[Any]] = [turns.capability]
         # What each run is given as its workspace; `None` lets the provider's capability supply it.
-        workspaces: list[Any] = [None, None]
+        workspaces: list[ScreenBackend | WorkspaceRef | None] = [None, None]
         if shared.startswith('display-object'):
             screen = turns.backend(provider, None)
 
@@ -951,11 +951,12 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 def display(self) -> ScreenBackend:
                     return screen
 
-            workspaces = [OnTheScreen(provider, None), OnTheScreen(provider, None)]  # a backend each
+            backends = [OnTheScreen(provider, None), OnTheScreen(provider, None)]  # a backend each
             if shared == 'display-object-from-two-environments':
-                for workspace in workspaces:
-                    await workspace.display_size()  # creates its own environment, with a ref of its own
-                assert workspaces[0].ref != workspaces[1].ref
+                for backend in backends:
+                    await backend.display_size()  # creates its own environment, with a ref of its own
+                assert backends[0].ref != backends[1].ref
+            workspaces = [*backends]
         else:  # one ref
 
             class Provider(ScreenProvider):
@@ -1540,5 +1541,5 @@ async def test_gemini_clicks_on_target_through_its_grid(
     clicks = [action for action in screen.actions if isinstance(action, Click)]
     assert len(clicks) == 1
     left, top, right, bottom = RED_SQUARE
-    assert clicks[0].x is not None and left <= clicks[0].x <= right
-    assert clicks[0].y is not None and top <= clicks[0].y <= bottom
+    assert clicks[0].x is not None and left <= clicks[0].x < right
+    assert clicks[0].y is not None and top <= clicks[0].y < bottom
