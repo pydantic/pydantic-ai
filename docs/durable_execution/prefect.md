@@ -277,7 +277,7 @@ agent = Agent(
 This opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
 their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `UserError`.
 
-To keep a tool out of its task on any engine, set the engine-neutral
+To keep an async function tool out of its task on any engine, set the engine-neutral
 [`durable=False`](overview.md#running-a-tool-outside-the-durable-unit) instead. A `'prefect'`
 key on the same tool wins. The deprecated `PrefectAgent` doesn't read `durable` on the tools it wraps, so use
 `'prefect': False` there.

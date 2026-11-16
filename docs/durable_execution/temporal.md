@@ -938,7 +938,7 @@ agent = Agent(
 The opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
 their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises a `UserError`.
 
-To keep a tool out of its activity on any engine, set the engine-neutral
+To keep an async function tool out of its activity on any engine, set the engine-neutral
 [`durable=False`](overview.md#running-a-tool-outside-the-durable-unit) instead. A `'temporal'`
 key on the same tool wins.
 
