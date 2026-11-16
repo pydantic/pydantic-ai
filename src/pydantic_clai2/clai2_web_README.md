@@ -15,13 +15,15 @@ To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web
 the address, opens it, and logs the session it started with to the terminal until Ctrl-C, which
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
-there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, a new worktree of a listed checkout's repository (**New worktree…** on its row, or
-**New worktree of …** for the row the arrow keys select: a branch name,
-generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
-or any directory by its absolute path, which it completes as you type, listing each repository's
-worktrees. The header shows where the session works.
+there; CLAI's own working directory never changes. **New session** asks where the session runs.
+It lists one row per project from the sidebar, the current one first, and a project's row starts
+in the checkout you are in, else the project's main one. A project's chevron, or →, shows its
+worktrees, including any other worktree Git lists for its repository; ← hides them.
+**New worktree…** on a row, or **New worktree of …** for the row the arrow keys select, checks out
+a new worktree of that row's repository: a branch name, generated if empty, and a base, `HEAD` if
+empty; it goes in `.worktrees/` as `--worktree` puts it. You can also type any directory's
+absolute path, which it completes as you type, listing each repository with its worktrees shown.
+The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
 turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser
@@ -99,14 +101,16 @@ disk now. A file the session wrote whole counts as created, unless the last comm
 content the session did not write, which it is then compared with. In Git, they also list files
 changed otherwise since the scope began, such as by a shell command, without a diff, as
 **Uncommitted** has it. These scopes read the
-conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
+conversation, so after `/compact` they start from the compacted summary; while a turn runs,
+**Last turn** is the running one. **Uncommitted** is
 `git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
 added, as `git status` and the git chip count them, and **Branch
 vs base** compares the files, uncommitted changes included, with where the branch left its base:
 `origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
 removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
-panel asks again when a turn ends, and **Refresh** asks at once. It shares one column with Monty
-and the plugin side panels, so opening one closes the others.
+panel, the button's count, and the git chip ask again as a running turn's tool calls finish, at
+most once a second, and when it ends; **Refresh** asks at once, during a turn too. It shares one
+column with Monty and the plugin side panels, so opening one closes the others.
 
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
@@ -396,7 +400,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 |---|---|
 | `GET /api/sessions/{id}/state` | its `snapshot` |
 | `GET /api/sessions/{id}/images/{image_id}` | an image of a prompt in its transcript, by an ID its `user` item lists in `images` (the SHA-256 of the bytes); 404 for one it does not hold |
-| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default; `diffs=false` leaves the diffs out, for a count (the session scopes then leave the line counts at 0 too) |
+| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default, with the running turn's calls so far; `diffs=false` leaves the diffs out, for a count (the session scopes then leave the line counts at 0 too) |
 | `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |

@@ -3,7 +3,9 @@
 A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] plus
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
-[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]. Every backend must:
+[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
+[`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform] and
+[`SupportsRunInDirectory`][pydantic_ai.workspaces.SupportsRunInDirectory]. Every backend must:
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
@@ -28,7 +30,7 @@ from __future__ import annotations as _annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from pydantic_ai.messages import WorkspaceRef
 
@@ -49,7 +51,10 @@ __all__ = (
     'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsFilesystem',
+    'SupportsPlatform',
     'SupportsRealpath',
+    'SupportsRunInDirectory',
+    'WorkspacePlatform',
 )
 
 
@@ -60,6 +65,13 @@ def validate_timeout(timeout: float | None) -> None:
 
 WorkspaceCommand: TypeAlias = str | Sequence[str]
 """An argv sequence (`['python', '-c', 'print(1)']`), or a shell string with `shell=True`."""
+
+WorkspacePlatform: TypeAlias = Literal['posix', 'windows']
+"""The shell and path syntax of a workspace.
+
+`'posix'`: `shell=True` runs POSIX `sh`, and paths are POSIX paths (`/home/me/project`).
+`'windows'`: `shell=True` runs PowerShell, and paths are Windows paths (`C:\\Users\\me\\project`).
+"""
 
 
 class WorkspaceError(RuntimeError):
@@ -216,6 +228,46 @@ class SupportsRealpath(Protocol):
         Relative link targets start in the link's directory; `..` after a link climbs from its
         target. Keep missing components as written. A loop must not hang; a returned path through a loop
         must stay inside the directory holding it (or raise `OSError`). Return an absolute, normalized path.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsPlatform(Protocol):
+    """Optional: a backend that says which shell and path syntax it has; without it, a backend is `'posix'`.
+
+    A `'windows'` backend's paths are absolute Windows paths wherever the rest of this module says POSIX.
+    It also implements [`SupportsRunInDirectory`][pydantic_ai.workspaces.SupportsRunInDirectory], since there
+    is no `sh` to change directory with.
+    """
+
+    @property
+    def workspace_platform(self) -> WorkspacePlatform:
+        """The workspace's shell and path syntax."""
+        ...
+
+
+@runtime_checkable
+class SupportsRunInDirectory(Protocol):
+    """Optional: a backend that starts a command in a directory itself.
+
+    Without it, [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] starts a command in a directory
+    through `sh`, which a `'windows'` backend has no use for.
+    """
+
+    async def run_in_directory(
+        self,
+        command: WorkspaceCommand,
+        *,
+        cwd: str,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        """[`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run], started in `cwd`.
+
+        `cwd` is an absolute directory that [`Workspace.run`][pydantic_ai.workspaces.Workspace.run] has
+        resolved and checked.
         """
         ...
 

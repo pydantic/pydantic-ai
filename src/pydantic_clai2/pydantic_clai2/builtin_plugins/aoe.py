@@ -505,9 +505,9 @@ class AoePlugin(Plugin[AoeSettings]):
             return
         try:
             notice = await conversation.resume(conversation_id, allow_other_workspace=True)
-        except (LookupError, ValueError, RuntimeError) as error:
+        except (LookupError, ValueError, RuntimeError) as exc:
             _LOGGER.debug('aoe: could not resume %s', conversation_id, exc_info=True)
-            notice = f'Could not resume conversation {conversation_id} of this AoE session: {error}'
+            notice = f'Could not resume conversation {conversation_id} of this AoE session: {exc}'
         self.host.console.print(notice, markup=False)
 
     async def on_turn_end(self, event: TurnEnd) -> None:
