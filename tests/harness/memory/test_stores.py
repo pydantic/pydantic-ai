@@ -1186,7 +1186,8 @@ class FakePostgresConnection:
         assert 'ORDER BY path COLLATE "C"' in query
         prefix, end = str(args[0]), str(args[1])
         files = sorted((path, file) for path, file in self._database.files.items() if prefix <= path < end)
-        if 'strpos' in query:
+        if query.startswith('SELECT path, left(content') or 'strpos' in query:
+            assert "strpos(substr(path, length($1) + 1), '/') = 0" in query
             files = [(path, file) for path, file in files if '/' not in path.removeprefix(prefix)]
         if query.startswith('SELECT path, left(content'):
             max_chars = int(str(args[2]))
