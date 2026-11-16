@@ -128,6 +128,7 @@ class _FakeFrameContent:
         wait_for_error: PlaywrightError | None = None,
         wait_delay: float = 0.0,
         loaded_url: str | None = None,
+        load_state_error: PlaywrightError | None = None,
     ) -> None:
         self.url = url
         self._text = text
@@ -135,9 +136,14 @@ class _FakeFrameContent:
         self._wait_for_error = wait_for_error
         self._wait_delay = wait_delay
         self._loaded_url = url if loaded_url is None else loaded_url
+        self._load_state_error = load_state_error
         self.wait_states: list[str | None] = []
+        self.load_state_timeouts: list[float | None] = []
 
     async def wait_for_load_state(self, state: Literal['domcontentloaded'], *, timeout: float | None = None) -> None:
+        self.load_state_timeouts.append(timeout)
+        if self._load_state_error is not None:
+            raise self._load_state_error
         self.url = self._loaded_url
 
     async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
@@ -2340,6 +2346,34 @@ class TestPlaywrightBrowserLifecycle:
             assert not page.closed and not inherited.closed
             inherited.url = 'https://example.com/'
             assert await tools.get_text() == 'Allowed content'
+
+    @pytest.mark.parametrize(
+        'load_state_error',
+        [None, PlaywrightTimeoutError('Timeout 1000ms exceeded.')],
+        ids=['returns_without_url', 'times_out'],
+    )
+    async def test_default_context_asks_to_retry_while_a_frame_has_no_url(
+        self, load_state_error: PlaywrightTimeoutError | None
+    ) -> None:
+        page = _FakePage(url='https://example.com/', body='Allowed content')
+        frame = _FakeFrameContent(
+            url='', loaded_url='', load_state_error=load_state_error, text='Late embedded content'
+        )
+        page.frames.append(frame)
+        session = PlaywrightBrowserSession(
+            cdp_url='http://localhost:9222',
+            cdp_context='default',
+            policy=EgressPolicy(block_private_addresses=False),
+        )
+        async with session:
+            tools = _toolset(page, session=session)
+            result = await tools.get_text()
+            assert 'still loading' in result and 'Retry the call' in result
+            assert 'blocked by the browser policy' not in result
+            # The documented one-second wait, not `launch_timeout_ms`.
+            assert frame.load_state_timeouts == [1_000]
+            frame.url = 'https://embed.example.com/'
+            assert 'Late embedded content' in await tools.get_text()
 
     async def test_default_context_reads_subframes_the_policy_allows(self) -> None:
         class MainFrameOnExampleCom(EgressPolicy):

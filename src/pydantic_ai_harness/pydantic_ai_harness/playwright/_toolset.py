@@ -201,6 +201,13 @@ frames, and an unresponsive one must not consume the action's deadline. Whatever
 was collected before the budget runs out is kept.
 """
 
+_FRAME_URL_WAIT_MS: int = 1_000
+"""How long the default-context document check waits for a frame that reports no URL yet.
+
+The check runs on every tool call, so the wait is kept short: a frame still loading
+costs each call at most this long before the call is refused as one to retry.
+"""
+
 _PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
 _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
 """Why the private-address block refused a URL, shared by the pre-check and the route guard."""
@@ -1277,25 +1284,34 @@ class PlaywrightBrowserSession:
         """
         for page in pages:
             for index, frame in enumerate(page.frames):
-                if not frame.url:
-                    # CDP can expose a cross-origin frame before its URL is populated.
-                    await self._bounded(frame.wait_for_load_state('domcontentloaded', timeout=self._launch_timeout_ms))
-                top_level = index == 0
-                if frame.url.startswith(_ERROR_PAGE_SCHEME) or (
-                    not top_level and frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)
-                ):
-                    # Chromium's error page holds nothing from the origin that failed to load, and an
-                    # inline subframe's document came from a page this loop checks, not a request.
-                    continue
-                document = EgressRequest(
-                    url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level
+                await self._check_inherited_frame(frame, top_level=index == 0)
+
+    async def _check_inherited_frame(self, frame: _Frame, *, top_level: bool) -> None:
+        """Refuse the call when `frame` holds a document the policy blocks, or has no URL to check yet."""
+        if not frame.url:
+            # CDP can expose a cross-origin frame before its URL is populated.
+            try:
+                await frame.wait_for_load_state('domcontentloaded', timeout=_FRAME_URL_WAIT_MS)
+            except PlaywrightTimeoutError:
+                pass
+            if not frame.url:
+                raise BrowserUnavailableError(
+                    'A frame in the default CDP context is still loading, so its document cannot be '
+                    'checked against the browser policy yet. Retry the call in a moment.'
                 )
-                if (reason := await self.decide(document)) is not None:
-                    raise BrowserUnavailableError(
-                        f'The default CDP context contains a document blocked by the browser policy '
-                        f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
-                        'or navigate that tab to an allowed URL, then retry.'
-                    )
+        if frame.url.startswith(_ERROR_PAGE_SCHEME) or (
+            not top_level and frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)
+        ):
+            # Chromium's error page holds nothing from the origin that failed to load, and an
+            # inline subframe's document came from a page this check covers, not a request.
+            return
+        document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
+        if (reason := await self.decide(document)) is not None:
+            raise BrowserUnavailableError(
+                f'The default CDP context contains a document blocked by the browser policy '
+                f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
+                'or navigate that tab to an allowed URL, then retry.'
+            )
 
     async def _launch(self) -> None:
         """Start the driver and Chromium, then open the guarded page.

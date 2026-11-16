@@ -297,7 +297,8 @@ before handlers are attached and before page operations. Chromium's error page
 and `srcdoc`, `data:` and `blob:` subframes load no document a request could
 carry, so they are not put to the policy. On refusal, close or
 navigate the blocked tab in the provider browser and retry; Pydantic AI leaves it
-unchanged.
+unchanged. A frame that reports no URL yet gets one second to load; if it still
+has none, the call returns a tool error asking the model to retry.
 
 For lazy provisioning, pass an async function that returns the CDP endpoint:
 
