@@ -252,6 +252,8 @@ _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode
 _X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
 _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 
+_PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
+
 _START_DESKTOP = (
     f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
     # A stale lock, such as one left by `docker stop`, stops Xvfb starting once its PID belongs to another process.
@@ -262,25 +264,25 @@ _START_DESKTOP = (
     # running: the pointer goes back to the middle and held buttons are let go.
     # `-nolisten local` closes Linux's abstract socket, which `--network host` would share with every host user; the
     # socket file in /tmp/.X11-unix stays for commands run in the container.
-    # The display is ours, so it gets the panel.
-    f': >{_PID_DIR}/panel; '
     f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset '
     f'>/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
     + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
     + 'fi; '
-    # Started apart from the X server, so a start cancelled between the two still gets its panel on the next one.
-    f'[ ! -e {_PID_DIR}/panel ] || kill -0 "$(cat {_PID_DIR}/panel)" 2>/dev/null '
-    f'|| {{ setsid tint2 >/dev/null 2>&1 9>&- & echo $! >{_PID_DIR}/panel; }}; '
     'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
-    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
+    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; '
+    # tint2 shows only once a window manager answers, so it starts after one.
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >{_PID_DIR}/panel.log 2>&1 9>&- & '
+    + wait_until_ready(_PANEL_SHOWS, '$!', 'the panel', f'{_PID_DIR}/panel.log')
+    + 'fi'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then the panel of a display it
-started unless that runs, then a window manager. A second start waits for the first, then finds its X server.
+"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, then a window manager, then the
+panel unless it shows. A second start waits for the first, then finds its X server.
 
 It fails once the X server exits, or after 10 seconds. A second `fluxbox` exits when one runs, so starting it every
 time recovers one that died. It then waits up to 10 seconds for the window manager to answer `xprop`, so the first
-click focuses and raises the window it lands on.
+click focuses and raises the window it lands on, and up to 10 seconds for the panel window, so the first screenshot
+isn't black.
 """
 
 
