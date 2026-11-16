@@ -1340,15 +1340,15 @@ class TestReadBack:
             body = '\n'.join(lines[max(0, end - 2) : end] if from_end else lines[offset : offset + 2])
             assert out.split('\n', 1)[1:] == ([body] if body else [])
 
-    async def test_read_slice_stops_reading_once_the_window_is_full(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_read_slice_streams_a_local_payload_in_chunks(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         class CountingReader(io.BufferedReader):
-            served = 0
+            def __init__(self, raw: io.RawIOBase) -> None:
+                super().__init__(raw)
+                self.reads: list[int] = []
 
             def read(self, size: int | None = -1, /) -> bytes:
                 data = super().read(size)
-                self.served += len(data)
+                self.reads.append(len(data))
                 return data
 
         monkeypatch.setattr('pydantic_ai_harness.tool_output_limits._store._CHUNK_SIZE', 8)
@@ -1364,13 +1364,23 @@ class TestReadBack:
 
         monkeypatch.setattr(LocalFileOverflowStore, '_open', spy)
         out = await _read_slice(store, 'h/1.0', offset=10, limit=3, from_end=False, pattern=None)
-        assert out == "[handle 'h/1.0': 13+ matching line(s); showing 3]\nline 10\nline 11\nline 12"
-        # Lines 0 to 13 and their newlines are 102 bytes, read in 8-byte chunks: line 13 shows more lines exist.
-        assert [(file.served, file.closed) for file in opened] == [(104, True)]
-
+        assert out == "[handle 'h/1.0': 1,000 matching line(s); showing 3]\nline 10\nline 11\nline 12"
         out = await _read_slice(store, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
         assert out == "[handle 'h/1.0': 1,000 matching line(s); showing 2]\nline 998\nline 999"
-        assert [(file.served, file.closed) for file in opened[1:]] == [(len(payload), True)]
+        for file in opened:
+            assert file.closed
+            assert sum(file.reads) == len(payload)
+            assert max(file.reads) == 8
+
+    async def test_read_slice_uses_an_overridden_read(self, tmp_path: Path):
+        class UpperStore(LocalFileOverflowStore):
+            async def read(self, handle: str) -> bytes:
+                return (await super().read(handle)).upper()
+
+        store = UpperStore(base_dir=tmp_path)
+        await store.write('h/1.0', b'a\nb')
+        out = await _read_slice(store, 'h/1.0', offset=0, limit=5, from_end=False, pattern=None)
+        assert out == "[handle 'h/1.0': 2 matching line(s); showing 2]\nA\nB"
 
     async def test_read_slice_reads_other_stores_whole(self):
         store = AsyncMock()

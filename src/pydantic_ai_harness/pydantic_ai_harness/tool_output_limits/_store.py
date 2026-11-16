@@ -167,8 +167,12 @@ _CHUNK_SIZE = 1 << 16
 
 
 async def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
-    """Yield a stored payload in chunks: streamed from a `LocalFileOverflowStore`, read whole from any other store."""
-    if not isinstance(store, LocalFileOverflowStore):
+    """Yield a stored payload in chunks.
+
+    A `LocalFileOverflowStore` is streamed from disk unless a subclass overrides `read`, such as to decode what it
+    wrote; any other store is read whole.
+    """
+    if not isinstance(store, LocalFileOverflowStore) or type(store).read is not LocalFileOverflowStore.read:
         yield await store.read(handle)
         return
     file = await anyio.to_thread.run_sync(store._open, handle)  # pyright: ignore[reportPrivateUsage]

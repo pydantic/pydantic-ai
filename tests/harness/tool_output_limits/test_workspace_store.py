@@ -123,7 +123,7 @@ class TestDefaultStore:
         assert handle.startswith(f'{work}/.pydantic-ai-harness/tool-output/')
         assert Path(handle).read_text(encoding='utf-8') == payload
         assert (work / '.pydantic-ai-harness' / '.gitignore').read_text() == '*\n'
-        assert result.output == f'[handle {handle!r}: 2+ matching line(s); showing 2]\nline 0\nline 1'
+        assert result.output == f'[handle {handle!r}: 500 matching line(s); showing 2]\nline 0\nline 1'
 
     async def test_host_store_spills_without_a_workspace(self, tmp_path: Path):
         payload = '\n'.join(f'line {i}' for i in range(500))
@@ -152,7 +152,7 @@ class TestDefaultStore:
         assert spilled.metadata is not None
         handle = spilled.metadata['overflow_handle']
         assert (tmp_path / handle).read_text() == payload
-        assert result.output == f'[handle {handle!r}: 2+ matching line(s); showing 2]\nline 0\nline 1'
+        assert result.output == f'[handle {handle!r}: 500 matching line(s); showing 2]\nline 0\nline 1'
 
     @pytest.mark.parametrize('store', [None, WorkspaceOverflowStore()], ids=['default', 'explicit'])
     async def test_spilling_without_a_workspace_fails_the_run(self, store: WorkspaceOverflowStore | None):

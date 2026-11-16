@@ -247,7 +247,7 @@ Available sub-agents:
                         tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
-\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 120\\+\\ matching\\ line\\(s\\);\\ showing\\ 120\\]\\
+\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 120\\]\\
 \\#\\ Free\\-threaded\\ CPython\\ 3\\.13\\
 \\
 \\#\\#\\ Executive\\ summary\\
@@ -424,7 +424,7 @@ Available sub-agents:
                         tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
-\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 260\\+\\ matching\\ line\\(s\\);\\ showing\\ 140\\]\\
+\\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 140\\]\\
 PYTHON_GIL=1\\ python3\\.13t\\ program\\.py\\
 ```\\
 \\

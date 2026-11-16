@@ -823,9 +823,8 @@ async def _read_slice(
 
     `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
     the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text. The payload is streamed:
-    a forward read stops after the requested lines, and a read from the end keeps only the
-    last `offset + limit` lines.
+    capped, so one call can never return an unbounded amount of text. The payload is streamed
+    and every matching line counted, keeping only the `offset + limit` lines the window needs.
     """
     if offset < 0:
         raise ModelRetry('`offset` must be >= 0.')
@@ -834,7 +833,7 @@ async def _read_slice(
     limit = min(limit, _MAX_READ_LINES)
 
     try:
-        total, kept = await _last_matching(store, handle, pattern, offset + limit, stop=not from_end)
+        total, kept = await _matching_lines(store, handle, pattern, offset + limit, from_end=from_end)
     except WorkspaceError as error:
         raise_tool_failure(error)
     except (OSError, UserError):
@@ -851,29 +850,27 @@ async def _read_slice(
         )
 
     window = kept[: max(0, len(kept) - offset)] if from_end else kept[offset:]
-    count = f'{offset + limit:,}+' if total > offset + limit and not from_end else f'{total:,}'
     body = '\n'.join(window)
     capped = ''
     if len(body) > _MAX_READ_CHARS:
         body = body[:_MAX_READ_CHARS]
         capped = ', output capped'
-    header = f'[handle {handle!r}: {count} matching line(s); showing {len(window)}{capped}]'
+    header = f'[handle {handle!r}: {total:,} matching line(s); showing {len(window)}{capped}]'
     return f'{header}\n{body}' if body else header
 
 
-async def _last_matching(
-    store: OverflowStore, handle: str, pattern: str | None, keep: int, *, stop: bool
+async def _matching_lines(
+    store: OverflowStore, handle: str, pattern: str | None, keep: int, *, from_end: bool
 ) -> tuple[int, list[str]]:
-    """Count the lines containing `pattern` and keep the last `keep`; with `stop`, stop once `keep` are kept."""
+    """Count the lines containing `pattern`, keeping the first `keep`, or with `from_end` the last `keep`."""
     total = 0
     kept: deque[str] = deque(maxlen=keep)
     async with aclosing(_payload_lines(store, handle)) as lines:
         async for line in lines:
             if pattern is None or pattern in line:
                 total += 1
-                if stop and total > keep:
-                    break
-                kept.append(line)
+                if from_end or total <= keep:
+                    kept.append(line)
     return total, list(kept)
 
 
