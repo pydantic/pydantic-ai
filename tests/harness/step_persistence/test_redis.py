@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -162,7 +162,7 @@ class FakeRedis:
         members = sorted(self.zsets[index], key=lambda member: self.zsets[index][member])
         complete = [i for i, member in enumerate(members) if member.endswith(':complete')]
         newest_complete = complete[-1] if complete else None
-        for i, member in enumerate(members[: len(members) - keep]):
+        for i, member in enumerate(members[: max(0, len(members) - keep)]):
             if i != newest_complete:
                 del self.hashes[payloads][member.split(':')[0]]
                 del self.zsets[index][member]
@@ -192,6 +192,20 @@ class RegisterDuringPruneRedis(FakeRedis):
         removed = await super().srem(name, *values)
         self.strings[self._run_key] = self._record
         return removed
+
+
+class SaveBeforePayloadReadRedis(FakeRedis):
+    """Runs `concurrent_save` once, between a read's index lookup and its first payload read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.concurrent_save: Callable[[], Awaitable[None]] | None = None
+
+    async def hget(self, name: str, key: str) -> object:
+        if self.concurrent_save is not None and ':snapshot_payloads:' in name:
+            save, self.concurrent_save = self.concurrent_save, None
+            await save()
+        return await super().hget(name, key)
 
 
 def _messages(content: str = 'hello') -> list[ModelMessage]:
@@ -471,6 +485,18 @@ class TestRedisStepStoreProtocol:
         snap = await store.latest_snapshot(run_id='r1')
         assert snap is not None and snap.step_index == 0
 
+    async def test_latest_snapshot_reads_the_save_that_pruned_its_candidate(self) -> None:
+        """A save between the index read and the payload read prunes the candidate; its own snapshot is returned."""
+        client = SaveBeforePayloadReadRedis()
+        store = RedisStepStore(client, max_snapshots_per_run=1)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=_messages()))
+        client.concurrent_save = lambda: store.save_snapshot(
+            ContinuableSnapshot(run_id='r1', step_index=1, messages=_messages())
+        )
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None and snap.step_index == 1
+
     async def test_snapshot_seq_monotonic_across_reset_step_index(self) -> None:
         """A reused `run_id` whose `step_index` restarts must not clobber the earlier snapshot."""
         store = RedisStepStore(FakeRedis())
@@ -620,6 +646,13 @@ class TestRedisStepStoreRetention:
             await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=_messages()))
 
         assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [0, 1, 2, 3]
+
+    async def test_keeps_every_snapshot_below_the_bound(self) -> None:
+        store = RedisStepStore(FakeRedis(), max_snapshots_per_run=5)
+        for step in range(3):
+            await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=step, messages=_messages()))
+
+        assert [s.step_index for s in await store.list_snapshots(run_id='r1')] == [0, 1, 2]
 
     async def test_prunes_to_the_newest_window(self) -> None:
         client = FakeRedis()

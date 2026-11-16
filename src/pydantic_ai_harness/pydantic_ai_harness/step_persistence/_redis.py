@@ -552,17 +552,19 @@ class RedisStepStore:
     async def latest_snapshot(self, *, run_id: str, include_interrupted: bool = False) -> ContinuableSnapshot | None:
         """The newest snapshot passing the state gate, or `None`.
 
-        Walks candidates newest-first, skipping one whose payload a concurrent
-        prune removed after the index was read. Retention keeps the newest
-        overall and the newest `complete`, so skipping still reaches the right
-        snapshot.
+        Walks candidates newest-first. A candidate whose payload is gone was pruned
+        by a save that landed after the index was read, so the snapshots that save
+        wrote are read from the index and walked first.
         """
-        for seq, state in reversed(await self._snapshot_entries(run_id)):
+        entries = await self._snapshot_entries(run_id)
+        while entries:
+            seq, state = entries.pop()
             if state == 'interrupted' and not include_interrupted:
                 continue
             snapshot = await self._load_snapshot(run_id, seq)
             if snapshot is not None:
                 return snapshot
+            entries.extend(entry for entry in await self._snapshot_entries(run_id) if entry[0] > seq)
         return None
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
