@@ -10,11 +10,11 @@ from typing import Any, get_args, overload
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend
-from pydantic_ai_harness._workspace import require_workspace, secondary_workspace
+from pydantic_ai.workspaces import SupportsCommands, SupportsRealpath, Workspace, WorkspaceBackend
+from pydantic_ai_harness._workspace import innermost_backend, require_workspace, secondary_workspace
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning._scanner import record_flagged
 from pydantic_ai_harness.skills._loader import (
@@ -220,8 +220,9 @@ class Skills(AbstractCapability[AgentDepsT]):
             read_files: Give the model a `read_skill_file` tool that reads a UTF-8 text file in the
                 directory of a skill it has loaded, from the workspace the skill was read from. It
                 works without file tools and for a `workspace=` library, and does not reach files
-                outside the skill's directory through `..`, or through a symlink where the workspace
-                resolves symlinks, as `FileSystem` does.
+                outside the skill's directory, through `..` or a symlink. A workspace whose backend
+                implements neither `SupportsRealpath` nor `SupportsCommands` cannot resolve symlinks,
+                so the tool reads nothing from it.
         """
         if include is not None and exclude is not None:
             raise ValueError('include and exclude cannot be used together.')
@@ -369,6 +370,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         if entry is None or not entry.source.read_files:
             raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
         workspace, directory = entry.workspace, entry.skill.directory
+        if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
+            raise ToolFailed(f'The workspace of skill {skill!r} cannot resolve symlinks, so its files are not read.')
         root = await workspace.realpath(directory)
         # Joined, not normalized: `link/..` climbs from the link's target, as it would in a shell.
         target = await workspace.realpath(workspace.paths.join(directory, path))

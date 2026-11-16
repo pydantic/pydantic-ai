@@ -35,6 +35,7 @@ from pydantic_ai_harness import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning import ArtifactFinding, ArtifactScanResult
 from pydantic_ai_harness.skills import Skills, SkippedSkill
 from tests.harness.conftest import IsStr
+from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 
 
 def _write_skill(
@@ -1099,10 +1100,10 @@ def _reader(results: list[str], load: str | None, reads: list[tuple[str, str]]) 
 
 
 async def _read(
-    skills: Skills[Any], workspace: Path | None, reads: list[tuple[str, str]], *, load: str | None = 'guide'
+    skills: Skills[None], workspace: Path | None, reads: list[tuple[str, str]], *, load: str | None = 'guide'
 ) -> list[str]:
     results: list[str] = []
-    agent: Agent[None, str] = Agent(_reader(results, load, reads), capabilities=[skills])
+    agent: Agent[None, str] = Agent(_reader(results, load, reads), deps_type=type(None), capabilities=[skills])
     await agent.run('go', workspace=None if workspace is None else LocalWorkspaceBackend(workspace))
     return results
 
@@ -1187,6 +1188,21 @@ class TestSkillFiles:
             IsStr(regex=r".*Skill 'guide' has no file 'references'.*"),
             IsStr(regex=r".*'image.png' in skill 'guide' is not a UTF-8 text file.*"),
         ]
+
+    async def test_a_workspace_that_cannot_resolve_symlinks_is_refused(self) -> None:
+        backend = FilesystemOnlyWorkspaceBackend(
+            FakeWorkspace(
+                'files',
+                {
+                    '/app/skills/guide/SKILL.md': b'---\ndescription: Help.\n---\n',
+                    '/app/skills/guide/notes.md': b'Notes.',
+                },
+            )
+        )
+
+        results = await _read(Skills('/app/skills', workspace=backend, read_files=True), None, [('guide', 'notes.md')])
+
+        assert results == [IsStr(regex=r".*The workspace of skill 'guide' cannot resolve symlinks.*")]
 
     async def test_a_skill_from_its_own_workspace_is_read_from_there(self, tmp_path: Path) -> None:
         # Skills shipped with the code, read with no run workspace and no file tools.
