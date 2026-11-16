@@ -4085,13 +4085,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _forces_the_computer(
         self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
-        """Whether `tool_choice` requires the Anthropic computer use tool and nothing else."""
+        """Whether the request requires a tool call and offers only the Anthropic computer use tool."""
         native_computer = self._native_computer(model_request_parameters)
-        match resolve_tool_choice(model_settings, model_request_parameters):
-            case ('required', tool_names):
-                return native_computer is not None and tool_names == {native_computer.name}
-            case _:
-                return False
+        tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
+        return (
+            native_computer is not None and tool_choice['type'] == 'any' and tool_defs.keys() == {native_computer.name}
+        )
 
     async def _map_computer_results(
         self, part: ToolReturnPart, replay: ComputerReplay, map_context: _MapMessagesContext

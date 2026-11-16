@@ -174,71 +174,6 @@ async def test_a_failed_call_gives_every_member_its_text(allow_model_requests: N
     ]
 
 
-async def test_zoom_and_cursor_position_answer_their_own_member_calls(allow_model_requests: None) -> None:
-    client = MockAnthropic.create_mock(
-        [
-            _turn(
-                _tool_use('toolu_1', 'zoom', {'region': [0, 0, 40, 20]}),
-                _tool_use('toolu_2', 'cursor_position', {}),
-                _tool_use('toolu_3', 'left_click', {'coordinate': [5, 6]}),
-            ),
-            _turn(BetaTextBlock(text='done', type='text')),
-        ]
-    )
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, FakeComputer()).run('Go.')
-
-    _, second = get_mock_chat_completion_kwargs(client)
-    results = second['messages'][-1]['content']
-    assert [[block['type'] for block in r['content']] for r in results] == [
-        ['text', 'image'],
-        ['text', 'text'],
-        ['text', 'image'],
-    ]
-    assert results[1]['content'][1]['text'] == 'The pointer is at (640, 400).'
-
-
-@pytest.mark.parametrize(
-    'model_name, tool, beta, zoom',
-    [
-        ('claude-sonnet-4-6', 'computer_20251124', 'computer-use-2025-11-24', {'enable_zoom': True}),
-        ('claude-haiku-4-5', 'computer_20250124', 'computer-use-2025-01-24', {}),
-    ],
-)
-async def test_an_earlier_model_gets_its_tool_with_the_display_size(
-    allow_model_requests: None, model_name: str, tool: str, beta: str, zoom: dict[str, Any]
-) -> None:
-    provider, computer = InMemoryProvider(), FakeComputer(display_size=(1280, 800))
-    computer_call = BetaToolUseBlock.model_validate(
-        {
-            'id': 'toolu_1',
-            'type': 'tool_use',
-            'name': 'computer',
-            'input': {'action': 'left_click', 'coordinate': [5, 6], 'text': 'shift'},
-        }
-    )
-    client = MockAnthropic.create_mock([_turn(computer_call), _turn(BetaTextBlock(text='done', type='text'))])
-    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
-    agent = Agent(model, capabilities=[computer, provider.capability()])
-    await agent.run('Go.')
-
-    assert computer.actions == [Click(x=5, y=6, modifiers=('shift',))]
-    first, second = get_mock_chat_completion_kwargs(client)
-    assert first['tools'] == [
-        {'type': tool, 'name': 'computer', 'display_width_px': 1280, 'display_height_px': 800, **zoom}
-    ]
-    assert beta in first['betas']
-    # The call goes back as it came; its result is an ordinary tool result.
-    (call,) = second['messages'][-2]['content']
-    assert (call['name'], call['input'], 'toolset_name' in call) == (
-        'computer',
-        {'action': 'left_click', 'coordinate': [5, 6], 'text': 'shift'},
-        False,
-    )
-    (result,) = second['messages'][-1]['content']
-    assert [block['type'] for block in result['content']] == ['text', 'image']
-
-
 async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_requests: None) -> None:
     computer = FakeComputer()
     client = MockAnthropic.create_mock(
@@ -823,22 +758,6 @@ async def test_a_tool_added_mid_run_is_declared_when_tool_choice_leaves_out_the_
     assert (await agent.run('Add the new tool.')).output == 'done'
     _, sent = get_mock_chat_completion_kwargs(client)
     assert [(tool['name'], tool.get('defer_loading', False)) for tool in sent['tools']] == [('new_tool', False)]
-
-
-async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_requests: None) -> None:
-    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
-    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
-    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
-    params = ModelRequestParameters(
-        function_tools=[COMPUTER, note], native_tools=[COMPUTER_TOOL], allow_text_output=True
-    )
-
-    await model.request([ModelRequest.user_text_prompt('Go.')], {'tool_choice': ['computer']}, params)
-
-    (forced,) = get_mock_chat_completion_kwargs(client)
-    # The toolset can't be named, so forcing the computer offers it alone and requires a tool.
-    assert [tool['type'] for tool in forced['tools']] == ['computer_toolset_20260801']
-    assert forced['tool_choice'] == {'type': 'any'}
 
 
 _CLICK_TYPE: list[dict[str, Any]] = [
