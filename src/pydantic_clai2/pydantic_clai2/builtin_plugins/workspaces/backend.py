@@ -70,7 +70,7 @@ class LocalWorktrees:
         commit = await to_thread.run_sync(lambda: commit_of(repo=source, ref=ref, remote=remote))
         root = Path(kind.root).expanduser() if kind.root else source / '.worktrees'
         path = root / workspace_id
-        if path.exists():
+        if await to_thread.run_sync(path.exists):
             raise ValueError(f'{path} already exists.')
         branch = f'{kind.branch_prefix}{workspace_id}'
 
@@ -85,5 +85,5 @@ class LocalWorktrees:
         path, root = workspace.path.resolve(), workspace.root.resolve()
         if path.parent != root or path.name != workspace.id:
             raise ValueError(f'Refusing to remove {path}: it is not the folder of workspace {workspace.id} in {root}.')
-        if path.exists():
+        if await to_thread.run_sync(path.exists):
             await to_thread.run_sync(lambda: remove_worktree(path=path))

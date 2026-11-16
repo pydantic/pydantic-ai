@@ -34,10 +34,10 @@ interactions:
           text: You are a concise assistant.
         - type: text
           text: |-
-            <context id="agent:sign_off">
+            <pyai:context id="agent:sign_off">
             End every reply with the sign-off '-- Team Alpha'.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -158,9 +158,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="agent:sign_off">
+              <pyai:context id="agent:sign_off">
               This context has been withdrawn.
-              </context>
+              </pyai:context>
             type: text
         model: claude-haiku-5-5
         stream: true
@@ -169,10 +169,10 @@ interactions:
           text: You are a concise assistant.
         - type: text
           text: |-
-            <context id="agent:sign_off">
+            <pyai:context id="agent:sign_off">
             End every reply with the sign-off '-- Team Alpha'.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:

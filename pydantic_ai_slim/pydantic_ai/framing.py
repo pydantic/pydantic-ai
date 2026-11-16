@@ -26,11 +26,16 @@ from .exceptions import UserError
 __all__ = ('DataTag', 'RegisteredTag', 'close_tag', 'neutralize_tags', 'open_tag', 'register_tag', 'wrap')
 
 
-def _refuse_voice_tag(tag: str) -> None:
+def _refuse_framework_tag(tag: str) -> None:
     if tag == _framing.SYSTEM_TAG:
         raise UserError(
             "`'system'` is the framework's voice tag, which only Pydantic AI renders: put instructions you wrote in a "
             '`SystemPromptPart`, and frame other content in a data tag.'
+        )
+    if tag.lower().startswith(_framing.FRAMEWORK_TAG_PREFIX):
+        raise UserError(
+            f"{tag!r} is one of the framework's own tags, which only Pydantic AI renders: "
+            f'tags starting with {_framing.FRAMEWORK_TAG_PREFIX!r} are reserved for it.'
         )
 
 
@@ -62,11 +67,11 @@ def wrap(tag: DataTag | RegisteredTag, body: str, /, **attrs: str | None) -> str
         **attrs: Attributes to put on the opening tag.
 
     Raises:
-        UserError: If `tag` is `'system'` or isn't registered, or an attribute name isn't lowercase
-            letters, digits and underscores. A name the earlier rule allowed but that isn't snake_case,
-            such as `_ref`, warns instead.
+        UserError: If `tag` is `'system'`, starts with the reserved `'pyai:'` or isn't registered, or an attribute
+            name isn't lowercase letters, digits and underscores. A name the earlier rule allowed but that isn't
+            snake_case, such as `_ref`, warns instead.
     """
-    _refuse_voice_tag(tag)
+    _refuse_framework_tag(tag)
     return _framing.wrap(tag, body, **attrs)
 
 
@@ -95,11 +100,11 @@ def open_tag(tag: DataTag | RegisteredTag, /, **attrs: str | None) -> str:
         **attrs: Attributes to put on the tag.
 
     Raises:
-        UserError: If `tag` is `'system'` or isn't registered, or an attribute name isn't lowercase
-            letters, digits and underscores. A name the earlier rule allowed but that isn't snake_case,
-            such as `_ref`, warns instead.
+        UserError: If `tag` is `'system'`, starts with the reserved `'pyai:'` or isn't registered, or an attribute
+            name isn't lowercase letters, digits and underscores. A name the earlier rule allowed but that isn't
+            snake_case, such as `_ref`, warns instead.
     """
-    _refuse_voice_tag(tag)
+    _refuse_framework_tag(tag)
     return _framing.open_tag(tag, **attrs)
 
 
@@ -107,7 +112,7 @@ def close_tag(tag: DataTag | RegisteredTag) -> str:
     """Render the closing data tag `tag`, ending a frame opened with [`open_tag`][pydantic_ai.framing.open_tag].
 
     Raises:
-        UserError: If `tag` is `'system'` or isn't registered.
+        UserError: If `tag` is `'system'`, starts with the reserved `'pyai:'`, or isn't registered.
     """
-    _refuse_voice_tag(tag)
+    _refuse_framework_tag(tag)
     return _framing.close_tag(tag)

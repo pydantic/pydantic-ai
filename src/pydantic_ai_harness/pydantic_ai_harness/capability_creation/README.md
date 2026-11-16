@@ -9,7 +9,25 @@ capabilities written or selected by application code, see
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/capability_creation/)
 
-![In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to <directory>/<name>.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.](https://pydantic.dev/docs/ai/img/harness/capability-creation.svg)
+```mermaid
+flowchart TB
+    accTitle: Capability Creation: the agent writes capabilities for its next run
+    accDescr: In this run, the model calls author_capability(name, code) on CapabilityCreation(directory=...) and gets a result. The capability writes, imports and checks the capability's .py file in the directory and writes manifest.json. Your loop calls creation.store.load_active() and passes the active capabilities as capabilities= to the next agent.run, where their tools, hooks and instructions are live.
+    subgraph thisrun["This run"]
+        model(["model"])
+        creation["CapabilityCreation(directory=...)<br/>author_capability(name, code)"]:::capability
+    end
+    files["&lt;directory&gt;/&lt;name&gt;.py<br/>manifest.json"]
+    subgraph nextrun["Your loop, then the next run"]
+        load["creation.store.load_active()"]
+        run["next agent.run<br/>its tools, hooks and<br/>instructions are live"]
+    end
+    model <-->|"tool call, result"| creation
+    creation -->|"writes, imports, checks"| files
+    files -->|"active capabilities"| load
+    load -->|"capabilities="| run
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -50,7 +68,8 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), cr
 ```
 
 `directory` is a path on the machine running the agent, relative to the process's current
-directory, not a workspace path.
+directory, not a workspace path, and it must have `'operator'` authority in the run's workspace
+(see [Trust boundary](#trust-boundary)).
 
 `CapabilityCreation` also contributes static, cache-stable system-prompt guidance
 explaining these tools. Leave `guidance=None` for the default text, or pass your own
@@ -147,6 +166,26 @@ machine. A run therefore refuses to start unless its
 [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is a writable `LocalWorkspace`: next to a
 sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
 model that it changes nothing.
+
+`directory` must hold only code the operator wrote or this capability authored, not a cloned
+repository or a user's upload. A run therefore also refuses to start unless
+[`authority_of`](https://pydantic.dev/docs/ai/core-concepts/workspace/) gives `directory`
+`'operator'` authority:
+
+- A workspace with `authority='user'` or `authority='none'` is refused, unless `path_authority`
+  gives `directory` `'operator'`.
+- A lower directory inside an operator workspace, such as one under
+  `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
+- A directory outside the workspace's working directory has `'none'` authority, so name it:
+  `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+
+With `defer_loading=True`, a run starts before the capability loads, so these checks, and the
+writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
+
+These checks can't cover a `store.load_active()` you call before the
+run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also
+only looks at who controls the directory, not what the model has read: to keep text in a lower
+workspace from steering what gets authored, require approval as shown below.
 
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files

@@ -17,7 +17,6 @@ from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
 from pydantic_clai2.ui.menus.chain_menu import ChainChange, chain_details, edit_chain, rename_chain
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldRow, Runners, first_error, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.menus.slash_search import KeyHandler
 from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 
@@ -92,10 +91,7 @@ def build_model_picker(context: CommandContext, *, message: str = '', focus: obj
     chains = context.store.chains()
     current = context.settings.model
     protected = _protected_models(context)
-
-    def row(name: str) -> MenuItem:
-        status = ' (current)' if name == current else ' (saved default)' if name in protected else ''
-        return MenuItem(f'{name}{status}', value=name)
+    row = partial(_picker_row, current=current, protected=protected)
 
     items = [row(name) for name in names if chain_name(name) is None]
     items.append(MenuItem('Add a model...', value=ModelPickerAction.ADD))
@@ -104,34 +100,6 @@ def build_model_picker(context: CommandContext, *, message: str = '', focus: obj
     items.append(MenuItem('New fallback chain...', value=ModelPickerAction.NEW_CHAIN))
     if message:
         items.append(MenuItem(message, disabled=True))
-
-    def delete(menu: Menu, item: MenuItem) -> MenuResult | None:
-        if not item.disabled and isinstance(item.value, str):
-            return MenuResult(item=MenuItem(item.label, value=DeleteModel(name=item.value)))
-        return None
-
-    def on_chain(action: type[EditChain] | type[RenameChain]) -> KeyHandler:
-        def handler(menu: Menu, item: MenuItem) -> MenuResult | None:
-            name = chain_name(item.value) if isinstance(item.value, str) else None
-            return None if name is None else MenuResult(item=MenuItem(item.label, value=action(name=name)))
-
-        return handler
-
-    def preview(item: MenuItem) -> str:
-        if item.disabled:
-            return item.label
-        if isinstance(item.value, str):
-            deletion = (
-                protected.get(item.value) or 'Ctrl+D or Delete removes this model and its settings after confirmation.'
-            )
-            if (chain := chain_name(item.value)) is not None:
-                lines = [item.value, '', *chain_details(chains.get(chain)), '', 'Enter selects this chain.']
-                lines += ['Ctrl+E changes its models,', 'Ctrl+R renames it.', '', fill(deletion, width=35)]
-                return '\n'.join(lines)
-            return f'{item.value}\n\nEnter selects this model\nfor the next prompt.\n\n{fill(deletion, width=35)}'
-        if item.value is ModelPickerAction.NEW_CHAIN:
-            return 'Create a fallback chain:\nmodels tried in order, each\ntaking over when the one\nbefore it fails.'
-        return 'Browse providers to add\nand select a model.'
 
     # Headings and the status row have no value, so neither `None` target can land on them.
     rows = [(index, item.value) for index, item in enumerate(items) if not item.disabled]
@@ -142,15 +110,48 @@ def build_model_picker(context: CommandContext, *, message: str = '', focus: obj
         .items(items)
         .searchable()
         .initial_index(initial)
-        .preview(preview)
-        .on_key('ctrl-d', delete)
-        .on_key('delete', delete)
-        .on_key('ctrl-e', on_chain(EditChain))
-        .on_key('ctrl-r', on_chain(RenameChain))
+        .preview(partial(_picker_preview, chains=chains, protected=protected))
+        .on_key('ctrl-d', _delete_key)
+        .on_key('delete', _delete_key)
+        .on_key('ctrl-e', partial(_chain_key, EditChain))
+        .on_key('ctrl-r', partial(_chain_key, RenameChain))
         .footer_hint(_HINT)
         .key_source(menu_key)
         .build()
     )
+
+
+def _picker_row(name: str, *, current: str | None, protected: dict[str, str]) -> MenuItem:
+    status = ' (current)' if name == current else ' (saved default)' if name in protected else ''
+    return MenuItem(f'{name}{status}', value=name)
+
+
+def _delete_key(menu: Menu, item: MenuItem) -> MenuResult | None:
+    if not item.disabled and isinstance(item.value, str):
+        return MenuResult(item=MenuItem(item.label, value=DeleteModel(name=item.value)))
+    return None
+
+
+def _chain_key(action: type[EditChain] | type[RenameChain], menu: Menu, item: MenuItem) -> MenuResult | None:
+    name = chain_name(item.value) if isinstance(item.value, str) else None
+    return None if name is None else MenuResult(item=MenuItem(item.label, value=action(name=name)))
+
+
+def _picker_preview(item: MenuItem, *, chains: dict[str, list[str]], protected: dict[str, str]) -> str:
+    if item.disabled:
+        return item.label
+    if isinstance(item.value, str):
+        deletion = (
+            protected.get(item.value) or 'Ctrl+D or Delete removes this model and its settings after confirmation.'
+        )
+        if (chain := chain_name(item.value)) is not None:
+            lines = [item.value, '', *chain_details(chains.get(chain)), '', 'Enter selects this chain.']
+            lines += ['Ctrl+E changes its models,', 'Ctrl+R renames it.', '', fill(deletion, width=35)]
+            return '\n'.join(lines)
+        return f'{item.value}\n\nEnter selects this model\nfor the next prompt.\n\n{fill(deletion, width=35)}'
+    if item.value is ModelPickerAction.NEW_CHAIN:
+        return 'Create a fallback chain:\nmodels tried in order, each\ntaking over when the one\nbefore it fails.'
+    return 'Browse providers to add\nand select a model.'
 
 
 def _chain_action(context: CommandContext, value: object, runners: Runners) -> ChainChange | None:
@@ -176,30 +177,36 @@ def _run_model_picker(
             except ValueError as exc:
                 message = str(exc)
                 continue
-            message = '' if change is None else change.message
-            if change is not None:
-                messages.append(message)
-                focus = f'chain:{change.name}'
+            if change is None:
+                message = ''
+                continue
+            message = change.message
+            messages.append(message)
+            focus = f'chain:{change.name}'
             continue
         if not isinstance(value, DeleteModel):
             return result, messages
-        name = value.name
-        if reason := _protected_models(context).get(name):
-            message = reason
-            continue
-        confirmation = runners.run_choice(
-            MenuBuilder(f'Delete {name}?')
-            .style(markdown_style())
-            .items([MenuItem('Keep model', value=False), MenuItem('Delete model', value=True)])
-            .preview(lambda item: _DELETE_DETAILS)
-            .footer_hint('Enter select - Esc keep model')
-            .key_source(menu_key)
-            .build()
-        )
-        if not confirmation.cancelled and confirmation.item is not None and confirmation.item.value is True:
-            removed, message = _remove(context, name)
-            if removed:
-                messages.append(message)
+        message = _confirm_delete(context, value.name, runners, message=message, messages=messages)
+
+
+def _confirm_delete(context: CommandContext, name: str, runners: Runners, *, message: str, messages: list[str]) -> str:
+    """Delete a saved model once confirmed, recording it in `messages`; the picker's next notice, `message` when kept."""
+    if reason := _protected_models(context).get(name):
+        return reason
+    confirmation = runners.run_choice(
+        MenuBuilder(f'Delete {name}?')
+        .style(markdown_style())
+        .items([MenuItem('Keep model', value=False), MenuItem('Delete model', value=True)])
+        .preview(lambda item: _DELETE_DETAILS)
+        .footer_hint('Enter select - Esc keep model')
+        .key_source(menu_key)
+        .build()
+    )
+    if not confirmation.cancelled and confirmation.item is not None and confirmation.item.value is True:
+        removed, message = _remove(context, name)
+        if removed:
+            messages.append(message)
+    return message
 
 
 def _remove(context: CommandContext, name: str) -> tuple[bool, str]:
@@ -227,33 +234,34 @@ async def model_command(
         return await open_add_model_menu(context, console=console, runners=runners)
     focus: object = None
     if args[:1] == ['chains']:
-        # Opens the picker on its fallback chains: the first one, or the row that creates one.
-        if args[1:]:
-            raise ValueError('Usage: /model chains. Create, edit, rename, and delete fallback chains in its picker.')
+        focus = _chains_focus(context, args[1:])
         args = []
-        chains = [name for name in context.store.models() if chain_name(name) is not None]
-        focus = chains[0] if chains else ModelPickerAction.NEW_CHAIN
     if args[:1] == ['add']:
         args = args[1:]
     if len(args) > 1:
         raise ValueError(_USAGE)
-    messages: list[str] = []
     if args:
-        name = args[0]
-    else:
-        result, messages = await run_worker(lambda: _run_model_picker(context, runners=runners, focus=focus))
-        if result.cancelled or result.item is None:
-            return '\n'.join(messages) or 'No changes.'
-        if result.item.value is ModelPickerAction.ADD:
-            from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
+        return context.set_setting(['model', args[0]])
+    result, messages = await run_worker(lambda: _run_model_picker(context, runners=runners, focus=focus))
+    if result.cancelled or result.item is None:
+        return '\n'.join(messages) or 'No changes.'
+    if result.item.value is ModelPickerAction.ADD:
+        from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
 
-            messages.append(await open_add_model_menu(context, console=console, runners=runners))
-            return '\n'.join(messages)
-        if not isinstance(result.item.value, str):
-            return '\n'.join(messages) or 'No changes.'
-        name = result.item.value
-    messages.append(context.set_setting(['model', name]))
+        messages.append(await open_add_model_menu(context, console=console, runners=runners))
+        return '\n'.join(messages)
+    if not isinstance(result.item.value, str):
+        return '\n'.join(messages) or 'No changes.'
+    messages.append(context.set_setting(['model', result.item.value]))
     return '\n'.join(messages)
+
+
+def _chains_focus(context: CommandContext, rest: list[str]) -> object:
+    """`/model chains` opens the picker on its fallback chains: the first one, or the row that creates one."""
+    if rest:
+        raise ValueError('Usage: /model chains. Create, edit, rename, and delete fallback chains in its picker.')
+    chains = [name for name in context.store.models() if chain_name(name) is not None]
+    return chains[0] if chains else ModelPickerAction.NEW_CHAIN
 
 
 _MODEL = 'model'

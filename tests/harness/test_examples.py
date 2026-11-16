@@ -34,6 +34,7 @@ def _load(path: Path) -> ModuleType:
 def test_examples_present():
     assert [path.name for path in EXAMPLE_FILES] == [
         'coding_agent.py',
+        'pixeltable_video.py',
         'research_agent.py',
     ]
 

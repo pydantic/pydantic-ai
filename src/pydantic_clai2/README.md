@@ -78,7 +78,7 @@ A few keys to know:
 | Key | What it does |
 |---|---|
 | <kbd>Enter</kbd> | Send. While CLAI works, <kbd>Enter</kbd> queues your message for after the current turn. |
-| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>) | Steer: send your message to the turn that is running now. |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
 | <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
@@ -87,8 +87,9 @@ A few keys to know:
 
 Type `/` to see every command, or `/help` for the full list.
 
-CLAI reads `AGENTS.md` or `CLAUDE.md` from the folder you start it in and follows what it
-says (not yet on Windows). If the folder (or a parent) has a `.env` file, CLAI loads it at startup.
+CLAI reads `AGENTS.md` (or `CLAUDE.md`) from the folder you start it in and the folders above
+it, then a subfolder's as it works there, and follows what they say (not yet on Windows). If
+the folder (or a parent) has a `.env` file, CLAI loads it at startup.
 
 ### Where CLAI keeps things
 
@@ -110,9 +111,11 @@ in the reference.
 ## Updating
 
 Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
-`/update now` installs without asking, and `clai2 --update` does it from your shell and exits
+`/update now` installs without asking, and `clai2 update` (or `clai2 --update`) does it from your shell and exits
 (on Windows, use `/update now` instead).
 CLAI installs the newest build, then restarts into it with the same conversation open.
+In the web UI, **Update…** in Settings › About installs from any session's page, and the
+restart reopens the session the terminal shows, or under `clai2 --web`, the one CLAI started with.
 While other live sessions run turns, as ones the browser opened can, `/update now`
 and `/reload` ask you to try again when they finish; bare `/update` still shows the
 menu. Installs and reloads restart CLAI in the folder it started in, so a session
@@ -204,8 +207,8 @@ Variables already set in your shell win. In a folder you do not trust, start CLA
 Shell commands the agent runs do not see your provider API keys.
 
 `/keys` keeps named API keys in an encrypted store. vLLM and OpenRouter connections,
-`/login PROVIDER@PROFILE`, and plugins such as Linear and Notion can use a saved key by
-name, so you change it in one place. The names are labels: CLAI does not set them as
+`/login PROVIDER@PROFILE`, a model's `api_key` in `/model settings`, and plugins such as
+Linear and Notion can use a saved key by name, so you change it in one place. The names are labels: CLAI does not set them as
 environment variables. Press <kbd>a</kbd> to add a key, <kbd>Enter</kbd> to replace one, <kbd>r</kbd> to rename, and
 <kbd>d</kbd> to delete. Values are never shown.
 
@@ -278,6 +281,11 @@ restores the most recent session in the current directory. `/resume claude` and
 With `/web` running, the browser can open other sessions while this one runs. `/resume`
 of one of them shows it here, even mid-turn, instead of copying it; the session you
 left keeps running in the browser.
+
+On Unix, `clai2 sessions` lists live sessions across your terminal tabs and processes,
+including idle sessions and those waiting for an answer. It shows unique session-ID
+prefixes and folder names without opening a session or starting a turn. See
+[Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#sessions).
 
 ### Work in the background: `/fork`
 
@@ -361,8 +369,9 @@ These are on from the start:
   Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
   specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
-- `repo_context`: reads `AGENTS.md` or `CLAUDE.md`
+- `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
+- `refinement`: `/refine`, which has the model review and revise its last answer
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`
 - `notifications`: a desktop notification when a turn finishes
@@ -376,7 +385,7 @@ path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The second line adds web search from

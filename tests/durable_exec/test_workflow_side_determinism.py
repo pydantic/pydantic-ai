@@ -177,9 +177,7 @@ _DENYLIST: dict[str, str] = {
 _PRAGMA = re.compile(r'#\s*workflow-nondeterminism-ok:(?P<reason>.*)$')
 
 _RUN_ID = 'fallback id when the run has none; `TemporalDurability` supplies one from `workflow.uuid4()`'
-_WAIT_ORDER = (
-    'whether replay can reorder the finished tasks is tracked in https://github.com/pydantic/pydantic-ai/issues/11182'
-)
+_WAIT_STATE = 'discards the `done` set and branches on task state, so its iteration order never reaches the run'
 _TIMESTAMP = 'stamps the `timestamp` of a message the run appends; the run reads it back only to match the message against a copy of itself (`_is_same_request`) or to carry it into a merged request'
 
 # (module, enclosing qualname, callee) -> how many such calls are accepted, and why.
@@ -209,9 +207,12 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
         1,
         'the heartbeat loop of a running activity, which is not workflow code',
     ),
-    (f'{CORE}/_agent_graph.py', '_serve_stream_offers', 'asyncio.wait'): (1, _WAIT_ORDER),
-    (f'{CORE}/_tool_execution.py', '_iter_completed_or_buffered', 'asyncio.wait'): (2, _WAIT_ORDER),
-    (f'{CORE}/agent/__init__.py', '_run_lifecycle_hooks', 'asyncio.wait'): (1, _WAIT_ORDER),
+    (f'{CORE}/_agent_graph.py', '_serve_stream_offers', 'asyncio.wait'): (1, _WAIT_STATE),
+    (f'{CORE}/_tool_execution.py', '_iter_completed_or_buffered', 'asyncio.wait'): (
+        2,
+        'yields the `done` set in call order, so tasks that finish in one wakeup replay in the order they were recorded',
+    ),
+    (f'{CORE}/agent/__init__.py', '_run_lifecycle_hooks', 'asyncio.wait'): (1, _WAIT_STATE),
     (f'{CORE}/durable_exec/temporal/_activity_execution.py', '_await_with_single_cancel', 'asyncio.wait'): (
         1,
         'waits on a single activity or child-workflow handle, so there is no completion order to reproduce',

@@ -17,6 +17,7 @@ from typing import IO, Any
 import anyio
 import anyio.lowlevel
 import pytest
+from e2b import SandboxNetworkOpts
 from e2b.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
@@ -134,6 +135,16 @@ class TestCreate:
         # The most E2B's Hobby plan allows, pausing rather than killing at the end of it.
         assert (call.template, call.timeout, call.envs, call.lifecycle) == (None, 3_600, None, {'on_timeout': 'pause'})
         assert call.allow_internet_access is True
+        assert call.network is None
+
+    async def test_network_options_pass_through(self, fake_e2b: FakeE2B) -> None:
+        network: SandboxNetworkOpts = {
+            'rules': {'api.github.com': [{'transform': {'headers': {'Authorization': 'token secret'}}}]}
+        }
+        await started(network=network)
+        assert fake_e2b.create_calls[-1].network == network
+        # The value never reaches the sandbox's environment.
+        assert fake_e2b.create_calls[-1].envs is None
 
     @pytest.mark.parametrize(
         ('error', 'message'),
@@ -1051,7 +1062,7 @@ async def test_auth_error_classifies_expired_key_without_leaking_it(fake_e2b: Fa
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
     assert str(exc.value) == (
-        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
     )
     assert 'sensitive-credential-value' not in str(exc.value)
 
@@ -1063,7 +1074,10 @@ async def test_missing_key_is_reported_as_not_found(fake_e2b: FakeE2B) -> None:
     )
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
-    assert str(exc.value) == 'No E2B API key found. Set E2B_API_KEY in the environment.'
+    assert (
+        str(exc.value)
+        == 'No E2B API key found. Set E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
+    )
 
 
 def test_missing_e2b_extra_has_an_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:

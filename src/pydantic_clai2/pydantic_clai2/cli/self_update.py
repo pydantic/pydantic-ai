@@ -21,6 +21,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -271,7 +272,7 @@ async def tool_executable(uv: str) -> str | None:
     """The `clai2` that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
     result = await run_process([uv, 'tool', 'dir', '--bin'], check=False)
     path = Path(result.stdout.decode().strip(), 'clai2')
-    return str(path) if result.returncode == 0 and path.is_file() else None
+    return str(path) if result.returncode == 0 and await to_thread.run_sync(path.is_file) else None
 
 
 def _in_thread(work: Callable[[], None]) -> None:
@@ -427,8 +428,8 @@ class Updates:
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
             return f'CLAI {self.current.label} is the newest on the {channel} channel.'
-        uv = self.find_uv()
-        overrides = _write_overrides(update.overrides()) if channel == 'main' else None
+        uv = await to_thread.run_sync(self.find_uv)
+        overrides = await to_thread.run_sync(_write_overrides, update.overrides()) if channel == 'main' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:
             self.failed = True
@@ -466,7 +467,8 @@ class Updates:
                 code = await self.run(command, line if report is not None and self.capture() else None)
         finally:
             if overrides is not None:
-                overrides.unlink(missing_ok=True)
+                with CancelScope(shield=True):
+                    await to_thread.run_sync(partial(overrides.unlink, missing_ok=True))
             if code != 0:  # Also when uv could not run at all.
                 await tell('failed')
         if code != 0:

@@ -67,7 +67,8 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     """
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
-        # The reasoning goes in as written; a lookalike tag in it gets a note instead of an escape.
+        # The reasoning goes in as written. A lookalike in it gets a note in the application's voice
+        # (`_note_lookalike_frames`).
         text = frame(ASSISTANT_THINKING_TAG, f'\n{content}\n')
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)

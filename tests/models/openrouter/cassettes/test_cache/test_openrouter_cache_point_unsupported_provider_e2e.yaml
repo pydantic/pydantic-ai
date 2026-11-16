@@ -38,7 +38,7 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -56,9 +56,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793320341-Nv6MewAWOx469TxWdxyZ
+        id: gen-1793763588-C1JdCy5jL9Kk3SBorJrk
         object: chat.completion
-        created: 1793320341
+        created: 1793763588
         model: openai/gpt-5-mini
         provider: OpenAI
         system_fingerprint: null
@@ -71,22 +71,32 @@ interactions:
           message:
             role: assistant
             content: >-
-              The passage consists of repeated placeholder lines ("Some context.") indicating
-              unspecified or missing contextual information.
+              The passage repeatedly states "Some context," emphasizing that contextual
+              information is present but without providing any specific details.
             refusal: null
-            reasoning: null
+            reasoning: |-
+              **Summarizing repeated context**
+
+              It seems the user is looking for a one-sentence summary of the content, which consists solely of the phrase "Some context" repeated 21 times. I could respond with something like: "The text emphasizes 'some context' repeatedly without providing any substantive details." I'll make sure to keep it concise and directly to the point as the user requested! I think that fits perfectly for what they're after.
             reasoning_details:
+            - type: reasoning.summary
+              summary: |-
+                **Summarizing repeated context**
+
+                It seems the user is looking for a one-sentence summary of the content, which consists solely of the phrase "Some context" repeated 21 times. I could respond with something like: "The text emphasizes 'some context' repeatedly without providing any substantive details." I'll make sure to keep it concise and directly to the point as the user requested! I think that fits perfectly for what they're after.
+              format: openai-responses-v1
+              index: 0
             - type: reasoning.encrypted
               data: >-
-                gAAAAABq4-WXRoji6RTDKebvJqq_8eENxVk_1RwO4GXF6nRAeP7lqZ976Y08irT1GvaMMYBupz00qlp-bjzMr5ozW5-x56LNjV9YBFVFNRMFl5qLaWPX21h0stcvESiC0_TTTE-gSn_PEjslyHs_zmAD87VekNwpyw09azOXfWoVE_5eDRUMBzcN6ktLE1PjuI2jxnUnyTfcqxUpu7Nily8RpCUIUbtF-7YhJ_koCkI5RrIcWwR_2Thma-32loeMkah8DcpcoBns7TiDOANconMIJa4wZEK_AY3gVONrfT5Gcn64Cu4Kpldj-cs6FfVE6deDKSuGSag9E4MYQ5-hgVNqk3O675R1rgb7wGqEMJisUSUYywS2audUS3OVIya8LFt0rr5irHQZaa1wPh6vwwQZXtnwBeSzhgmTTABEnYwZQmX3UzdizBj_0-xmBJcBeziFY7-yklMtQAjNIN3J8LnczW-sruJmC7W38-CyQ6GgNNBhj834a-rUIUpuTL-_Dzeg4DQAPMr6mhAow-Gdim9NGQLJ3XcDo_S7S4AlTJKv1_Vkg8Voz6jjT0IbOae8uZZKaReKMCnEBUP5oQ9dJrQaYOxjdnrfFy4YbdxicPfSy_lAw6ps58oOcmk_UnO-5KeeZ3h_5_je0fcKqEvnu5_9m30lbS4wC6i09MVuXNfillSVz7seDxxit13Ph0hbEVXqMhD4hpReppTYrHkIZTxsjFCUPOxtAtFaoEChMSoJrvNjRlIn5cu8t0O5fG4tOLqpGa83HD-9jh_lOf6Q4JmlE6TNPg-EvZMGXqe1ae1bkI-p5URfVsmZgDMrD8WdLpSRjslrNEWFfQ9G3G5n8s_ARkpMh2RJIwdcdY_uSkGMDK-Q1OB-QIHAgGaWZMN2IUogF1MCV6kTx0NhfYVWSJ7_DcXHdDkbFOqt9RixPGPP-wri3970n05vcEepRMBPCAFMTkvw-pmpBhO_Bf-o2KgRSHGcN21-UIktClU0ynMgSRyDLHNbKeyYh7yYLSkkq_xyGxhVre9l1IOWjIxy0e3UL8W1w-VCNnTQHGgZ6SP6CfMKz_6qap0iLGv73GUJvqp0QoV6IYNp5PViZKUL__3YXlmeSCfpTIZvcrLc7FN0iHtwqf_bkOgyhy-pUHszmQCMsAUkkNaiB37zCEeS-VagJtk43fzujlzv0_Q1ovyDaEqOa3K0kGEonpTXgARFb9vj8tURYIJEXNmxqjLQ_lADVGDRUMVeuyD3qMiZFjcKdwUQo_iRVep62xhtPUmJpFIcLZwBFEQDaaoK2Gowa_liLYhQv7cOsP-R6Q2bD-bKKsppHSxHq7Ze8rB0KZOTq9wlIp_wjxgJRVSTyGAycUKC6M6fv8LZbHEvcZTHsR5qXiasC4dT1JWOLhzLAPyV2eXcmnTPqZ3PO3JrmXfl6aogN7mynwScFjHmQnRW4WyNWHJ7pM14bXUfKxAzIhqVTb1PV3oklX1T_ZQklH2bSUnaQbDnHUhJ4Xc7D6Cj-yK7HqW0o-gmafWsG_toM0jo4OWo37E87wiLCvkRttDPyeeN6WIoluShPY3tnqTzBvYGbvRvrOptKHwzWO1LwXLyFQBmlDg7fVL0vlpTAb6kgT7nHTwG18QN9TsVT_5wfF4oDqyn0oD2JZTmlMRsw4fjF_65-JUzg5TXRd6oihVRzE47qEIVPvYy3tBBz0oMMJzejmdYbZVFZyc0DFeTuTzU3fhV-ZuMxNR0Cle79oLkNrdieY3x8mqPVZ4_gmp8Wqmz_LtU18iyN4oBLKaxp-O_eENjEzO_YcC9tBFFS88HmkOcKgVThoYgrhee6vZ83hy6f-CBS4ykcWPEdRP5gQlTCpkhZaPKxQajk3AQQ0UU-4-Dv-8S7jtdAgg0cuXleOW-8Kel9S9cxV8q2p3IBECxWmGuQ3js3fFiUZGVw18MnZstlLEYOQKBsRyFCb0bGs7SyvL7LmaRNebdUq8BKrKv4Z2Hz1B5zNj2_uLiOR5qY_essFbmQQJDyt_OWTzoKIDP4fJ5DykULDfxU0fieBn7a9bdMiRC2uUmfEZxBbtb7cwezSqd7-BU2TfIpGXcbI5xIzhk7CHmFYZB9ugsumM318rCbpOriUJrV4Om-1peozNEny9xhUFbWzU1Eo3jZBO53qjs0CVen9aPRXP1R-OPh0Vt5K8FHaSdyJ9W1uTYWUJ0-KXfDKJLMjV3nIGkWuvVDe8YiWxOUZkZW9wy-2UTImAhbIyRXk88hr4fZwM4LoVQmKdlhfShQ0afcHfS0I773NHftmNP4J_XCzFM-qDxfI0U1fZV9wyjIfSdicaEh3MmLZe0pR3YCaBYbOlYA1tXtCPPdssQQKyu9p6WxSjzDfQDfhEoc3_oLt3eRR6zZUBnUWu4_jlXCMVUxLkNzSDsn6U-pr-n8B80vZ_nmL01p8I8Ewbc-AN5Rf1L5zKw79GOWcC1qvXBincfcz2tB_fpMwOoRN1uk6ZSahXdD-nR_gRFOiIS0g1TyKdCdlZxCWVMlkFwd12-ePaIh7wpPXCU9hiZD3952fao88lSRbBoKRB71RrT2L0Qe9R-yxDuwAAr2ssnK_Lyz-zNNC65vCTlRuR8yaaiKehj679ScMkz6zzE9ps1JM6M-KmhuJOTEATne4Lvp35Bm0qbwYd6kDVE_WvbsDviLm2iftxXHXopzag-Bar3mPVlBDqtPUaCR-8oOwpP8_QfyqT3Pb8v-iHGrdMYHmaBhDb6nEyyMtf_4uffymLn4uQRqXbKuTklZILX3jcHim88cQQKP8qBMsB3SEg-Rqw5lpIwX8MUfcDdcapN7lDMN7hEaOiJBxp5nD3RM0J2-9EUP5jamwgzW6OdUdEOPQ3nNUoIsAeKKm2qU1T5WvosThKkAg7vkk2tLJBEGZ-R-fogKBMWBnpcjzAk64qMTcpATvLas1vxFUQiyxOOpOrtrlRh4DytpcDeG8I8-Uzbp1ATTVbvAVU_qqA59LDl7r1LgwJ-yraB3QXlXZXW-9Jl8VJL1LS-wY73bA_M1qhgv2VxwN108DY_ZsLIL6hAvrK8iVQR8roTo1G_MqqwQpeM3H5RZ0glwD7iOEuaU8rLM7S8olbOZQcFX0OCXDYfdH61Jr5GpvzbDx5xFWdD5u7-uvCBcclHKAs7KWEDRIkAkCR9xlPtaT1DNJ-jUuyppPxbDCyWi5nTNWXQATws_kdLa4W8CSOqVGJfjw1T03a3bVsDotOLiR3hY7weNYDhGpCj81LYJUn0PZgCz8cWwSFAhuWfyfh1RdYBFfHEGorNJo6IgxNq4isaNsBTJR01MF_JpCRvssdbvWRjElgy6GHIhuzlvZLBhw990SM2thyF7c5qgyuc9489O3z92s-ylZ9n7JmjjruYbCPH60v3hmHGIsO9ZyqTjR8dok03JxGv4wgtKHI0gSfH1DOvlDEedTNWx6Im3_jF66SwmqzQsqQwo4uBuGUEWr8ebztsMp1Ifgx4D_oGF6i-35vx7Zj3CwtLU9jDTn7b3Zt-ENOZhWHcVwR_pEUEV3AnptWhpY1z1R8pWBkA1GwKdXb-gDo1iTTEDK6eq8TnXJvIrxZ2GEBZEhGGZr96AcJAIqt3T8irII_GxEg0uRkstUwjRNvMywEHmfIhcdt3r0tZqAimYtecm0G2qVJTcSV20HAahPqsF7CadKaKLxd6SznbEC2WO8Lo98qMO3Z7hhxGZibuO4-96n2eoMuQn3Y73tMYXKfrkZwhXayRj_X3HM1N-sq43GpRbeU=.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LW1pbmktMjAyNS0wOC0wN3xvcGVuYWkifQ
+                gAAAAABq6qkHVEsohNytAx37Yij1L7mN14vLcfKlRsFgi9xbkJlwGOZZi1xEZoCMFKslpty9eu_2lfQvsmlieVSQ-g3J9JXdMWoK1M2N5U8Z12wzzuIc9Tb3Spxauu1FJL5tLlUYbkhKaWiGcGGNAtpdUWmPg0xfZ-2SA5zDBjp0o8YFmAqSG0MtfpI4WyixIo0WTCYRSq27tg3UjwgcU63s3SmxIB_hsVoxT5DK77P5BIP5djWfxEWDNwM9oMue7Vo2Lxai7bLLahk_ZSmmKNxrZ4PhiNbp8aILpZNR76enWHrJ2E_Zdbsh8zA4KyEJdSJMWLOE4k10f7KzUNadM19HT6HdwWdZ7F2zf8aMnmqHtVxW4lblnkL_-e5EqrWE5KWsai2F3qk8d4yIRXQJ53sHePnCjLvwNNYToQJrAXKRDkYfKY6LbZv6Ts_tTlEjQjIZTkbwDXUvzgUz3FHRJxjevdDnRzVL-XolIsHoDRngtnVyNrRfur6YTKzFeCiMoVw3XDRKQzq4ySsTZTb-cwJ83WVYOmALyhmAPtDmQk8wRvs1YkuKpzKr-xeIVrathbfmjQIEuja6ulCsrTz8u_84nf-Oa6k-k6YAs2R87PgoNJChOaVLv1q8l1H8xWv_Wh2B-1lJA4A3ECO9A5qt61DZMVItcKI_dCqSpCJ-7BlNQ1D8WUgcc1uQ6wIHDJbmbqvrC3oAjgcQ27gQtMcxjpGml4GHViGXVsD03NjRLvRcu5n3pvrZ8gDhqyby3tFX3kqBVCTW2m_Sx4qRIyro1feQTp-MbGPYHABGOXhCmrrkJuuprjSNB1F02slbZbg9FmiVczhqBvjVJCdebar_7oCUMiMQPoIK2uXnL1dD5P0I1HiI4MxvLjlcfyKYUPRTj-jcI2g7n1Ixk7-P3uijyGfON6YPz8BFf1ywWQYOkjFOfG23jrfZLihhyTdyJy6_hvfizHlnVdeMyNpU3qV0v0nHb9LJNlMIEQL4jYDcaR7rBMqbRasNwmdVhYJl2Wxd2Ii3tjj_N4x2fB2FCodHvRzdlSeABJ5bkzFtBJHWRdyFonBr0DZ0fY7yAqkoD1Sj4kjtH2aVuIntU-fokYvoqEP4YVjBaR1wyEv0nKn8nXAC5cbrmFxCDquC1xZ89bjESn14GD2vHBi2pcRyh88cfRGgPA9MJfW8Na_s02R-ihdrsDBGNWbEiuBcfWtP6eHEYv1YUhkJfreY2LZRtr5_4eX0DdFUBaA9zBsMJPj4Kt30VhdVxWkX72MG3mAGRz3nje459yzEcLnkji_Fu-btMuqZ3HO-SwtBbhez4SbCBLhY-LBs35a0lMcEEmdC5LDyGffkLi60FisjyugbjMfxhtZMJw6BaJqhjbmxCfKafFzjBz_yaPsuWGBtEPPC19G3tk61wykkWTt-U9CZbipEitROuKE-lCmzVH6Dq30bF4FbFH0FDRW7hChvCReSHhNtnp1piD0WpFIDvuq_LvUq2Mzs-BwBiFXHXmDPfUrC3EKRkCtxKkarLy7zq6MJjEXLdul1rkXT4GyfnLt0mz3G3hd327CGYnErW-x3G5TiVdY3hs0SkuWN596UXCqEHtCQe3kopuKSSEMszsWekPu-o2pKaEdEjHstaPM1mUK0-ZXaRRsF6utzO76J1tnNR-UFcoyazozUv7h_xS9h6GP52AbiLzoWS6lNrc8GsAnRsF0oRN7FhP3OPXB_gMe1BRmVI-xzdazVhUwaCQoYM-3RXmig5gDAFpto7ef9eAUv1Pd0lThszLmVWWd0WRtMQ6kbd9Wu4x9G7Vm6Sz5TbKhkD-s_GXpR5WSomxdlGcTvtnQypNSrVYaFlSmrAt9x1F36eJlN63ZY9BOyJauHg2tskhUDq7UB1Droug_7-G3si3XCf6vd-HIyDVVUpkrVclvH0-trIVPSlTv_B7wv6GAMo2GS41HU2Lx5gdOX7JsEyl8laQhDqHR7oFgGiLg5IQ5f4sgBhtp8YlyJjfmFn4KIMK3fU5bY7Z4TX---4g8jdGJkbDzd20lYx4IHvJeoDidTEoEWK-9vzVvtQPkNwPeJZDh5hgJ266_frkGNRgSsrst1OoxD4dh2yvwNL85E6GbICTll_Rowq1j5mDEPRER2khmbocI-qfrv1b1Lt6tP5_GiV1-Gx7OrEOJqHC1T8_xkRqtWIzBwu11gwDNWrXJReQaIJOrQ_YJgSUTBi_HX1WTFOeaMatWMDnU28Z_epFBcgt0ZCVG_3PDzJNwxPv535clrIfsJndBwjTHQNUZ-weIzCGoE0oGUekqceF-VoCjzNbekVJHflPyDVxFOzyLf7MAlG-Cfe2DR9L_7XIDhtQII1wxaZNBzpD_pIq-KgewND3mZG9-CY3_K7-m3WfcF86mDFQOmv3Y4yHUB3AuurEyQEo6oGIdc5_aZ4wBsYxyqjpS5tmgpzOk_ihV2Qx46WRCtq-tD49bi6RiwrT2XRKVShxBNAveRpUVdN9pDRaNZfzDC1InYrlRegkf_GtDomoPndbPBB7nOkNWNtdyZhYZQVZZYZn48A62PfcDfyHlvDkpcqTkDAyUnuQ4yDbMsJL53alec3CWUR4LzUmNszIAa-_KqgUyqKqWK4r4TxhTc8YGHFQDoY2nXiIbX1xf2QHbQR5XTRRkzZen8MkdkLJyizAVFvQUxjF6Pfx8d_kAuiY5_lFy1gtbBgiLZchRLjhQuS7aORg_Ox1SofeoUSrNJV6NIePZUf46B43LfJFYbVfLZJZEdrX0XCGaaQZeiVfkTKXHCIcONMCr1IWbt5CH6nHTTiIZlSAkiCMpKPh1Qogl94pedaW2Jbi_XuwRniFszfKwrKNk6KwxDGnJDVVgTUHJJz-isphFV7pys0uinx_zrBC1lvA_TYWL4oawZTc7z07pMLftdYdDGhZAPcqzTbcQ3jlNJ3ThO1v82E996p_ve0UKT4FyOMkJdgalhO88ACRh3G6I10RbD18Lx2m_vcTjSI5g3_PJXOXIx0mBpn_nInz-R8YEexEkY00AqjebH1Rzo-8f2iUskxvjhy14xAzINKQhTv1k=.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LW1pbmktMjAyNS0wOC0wN3xvcGVuYWkifQ
               format: openai-responses-v1
-              id: rs_0be7ad212d7fbce1016ae3e595d5cc87d1aefa57e8a07a79bf
-              index: 0
+              id: rs_073df8cfc2eb61e0016aeaa904f96487d1854dab8508808581
+              index: 1
         usage:
           prompt_tokens: 73
-          completion_tokens: 176
-          total_tokens: 249
-          cost: 0.00037025
+          completion_tokens: 130
+          total_tokens: 203
+          cost: 0.00027825
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -94,11 +104,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.00037025
+            upstream_inference_cost: 0.00027825
             upstream_inference_prompt_cost: 0.00001825
-            upstream_inference_completions_cost: 0.000352
+            upstream_inference_completions_cost: 0.00026
           completion_tokens_details:
-            reasoning_tokens: 128
+            reasoning_tokens: 64
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-30T00:32:24.030328+00:00
+  recorded_at: 2026-11-04T03:39:51.472870+00:00

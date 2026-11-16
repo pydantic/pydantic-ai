@@ -7,6 +7,7 @@ Claude Code and Codex sessions.
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
+from functools import partial
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -25,7 +26,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime.imported_sessions import (
@@ -68,6 +69,7 @@ class Sessions(Generic[DepsT, OutputT]):
         `tasks` is the process's task owner, which an imported session's sub-agents are saved to, open or not.
         """
         self.session = session
+        session.on_resumed = self.show_resumed
         self.store = store
         self.tasks = tasks
         self.context = context
@@ -130,7 +132,6 @@ class Sessions(Generic[DepsT, OutputT]):
                 unarchive=unarchive,
                 continuation=continuation,
             )
-        await self.show_resumed()
         return notice
 
     async def show_resumed(self) -> None:
@@ -275,7 +276,7 @@ class Sessions(Generic[DepsT, OutputT]):
             messages = interrupted_history(messages)
         copy = await self.store.save(summary=fork_summary(saved.summary), messages=messages)
         if self.session.repl_states is not None:
-            self.session.repl_states.copy(source=saved.summary.id, target=copy.id)
+            await run_sync(partial(self.session.repl_states.copy, source=saved.summary.id, target=copy.id))
         return copy
 
     async def archive(self, conversation_id: str) -> ConversationSummary:
@@ -321,16 +322,9 @@ class Sessions(Generic[DepsT, OutputT]):
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
-        def shown(
-            saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
-        ) -> list[ConversationSummary]:
-            # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
-            entries = merge(saved, imported, limit=limit)
-            return entries if archived else [entry for entry in entries if entry.archived_at is None]
-
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
             saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
-            return shown(saved, imports.listing(query, limit), limit=limit, archived=archived)
+            return self._browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
 
         retitled: dict[str, str] = {}
 
@@ -344,7 +338,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             return SessionBrowser(
-                entries=shown(entries, imports.listing(), limit=200, archived=False),
+                entries=self._browser_entries(entries, imports.listing(), limit=200, archived=False),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -372,12 +366,21 @@ class Sessions(Generic[DepsT, OutputT]):
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True, unarchive=unarchive)
 
+    @staticmethod
+    def _browser_entries(
+        saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+    ) -> list[ConversationSummary]:
+        """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
+        # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
+        entries = merge(saved, imported, limit=limit)
+        return entries if archived else [entry for entry in entries if entry.archived_at is None]
+
     async def _delete(self, source: ConversationSummary) -> None:
         """Delete a saved session, then the `run_code` REPL code mode kept for it; one another live session holds is refused."""
         with self.session.claim(source.id):
             await self.store.delete(source=source)
         if self.session.repl_states is not None:
-            self.session.repl_states.delete(source.id)
+            await run_sync(self.session.repl_states.delete, source.id)
 
     async def _preview(self, conversation_id: str, *, imports: ImportCatalog) -> str:
         try:

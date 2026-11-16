@@ -469,18 +469,18 @@ class KnownFinding:
 
 
 KNOWN_STABILITY_FINDINGS = [
-    # Strict expected failures: #12304 (the fix for #12261) and #12309 flip them, and each entry goes when its fix
-    # reaches this branch.
-    # `drop_capability_loads` runs before `instruction_state`, which folds the loads: once the second run opens a new
-    # instruction window, the code-loaded capability's statement in the first run's turns stops rendering.
-    KnownFinding(
-        'code-loaded-capability-across-instruction-windows',
-        None,
-        'https://github.com/pydantic/pydantic-ai/issues/12261',
+    # On a model without inline system prompts, the `'when_needed'` framing announcement joins the standing system
+    # prompt in the first request whose history needs it, so the requests before that one rendered it without (#12661
+    # chose that trade-off). Strict expected failures: each entry goes once the announcement keeps the earlier prefix.
+    *(
+        KnownFinding(
+            'code-loaded-capability-across-instruction-windows',
+            target,
+            'https://github.com/pydantic/pydantic-ai/pull/12661',
+        )
+        for target in ('openrouter', 'anthropic', 'google')
     ),
-    # `OpenAIChatModel._map_messages` backfills `reasoning: ''` on every tool-call turn once any response thinks,
-    # including turns earlier requests sent without it. The adapter does this after `prepare_messages`.
-    KnownFinding('thinking-after-a-tool-round', 'openrouter', 'https://github.com/pydantic/pydantic-ai/pull/12309'),
+    KnownFinding('thinking-after-a-tool-round', 'anthropic', 'https://github.com/pydantic/pydantic-ai/pull/12661'),
 ]
 
 
@@ -540,12 +540,7 @@ REMOVED_KINDS: frozenset[_PartKind] = frozenset(
 )
 """The part kinds some pass consumes or drops: the ones whose readers the declarations have to name."""
 
-KNOWN_ORDER_FINDINGS = [
-    # #12304, the fix for #12261, empties this list: drop the entry when it reaches this branch.
-    # https://github.com/pydantic/pydantic-ai/issues/12261: the instruction state folds code loads to keep their blocks
-    # rendered across instruction windows, but the records are dropped before it runs.
-    ('drop_capability_loads', 'instruction_state', 'CapabilityLoadDeltaPart'),
-]
+KNOWN_ORDER_FINDINGS: list[tuple[str, str, str]] = []
 
 
 def _reads(projection_pass: _ProjectionPass) -> frozenset[_PartKind]:

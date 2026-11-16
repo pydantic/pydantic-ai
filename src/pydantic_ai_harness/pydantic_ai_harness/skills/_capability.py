@@ -175,8 +175,8 @@ class Skills(AbstractCapability[AgentDepsT]):
                 do not all have every skill it names.
             workspace: A workspace backend to read the libraries from instead of the run's, such as
                 `LocalWorkspaceBackend('/app')` for skills shipped with the code while the agent
-                works in a sandbox. It is read in-process only in this release: a durable engine
-                does not route it through its workflow machinery.
+                works in a sandbox. It is read in-process: a durable engine does not route it
+                through its workflow machinery.
             scanner: An `ArtifactScanner` that checks each skill's description and body for prompt injection,
                 credential exfiltration, and hidden content. A flagged skill is left out of the catalog, with
                 a warning, as a `SkippedSkill` whose `reason` is `'flagged'`. Omit to load skills unscanned.
@@ -345,8 +345,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         return await self._load(run_workspace)
 
     async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
+        # Where each name's first `SKILL.md` is, whether it was kept or flagged.
         claimed: dict[str, tuple[Workspace, str]] = {}
-        """Where each name's first `SKILL.md` is, whether it was kept or flagged."""
         by_name: dict[str, SkillDefinition] = {}
         messages: list[SkippedSkill] = []
         for source in self._sources:

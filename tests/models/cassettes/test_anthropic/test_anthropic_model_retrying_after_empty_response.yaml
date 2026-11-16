@@ -27,7 +27,7 @@ interactions:
             type: text
         - role: user
           content:
-          - text: <system seal="pydantic-ai">Please return text.</system>
+          - text: <system verified>Please return text.</system>
             type: text
         model: claude-haiku-5-5
         stream: true

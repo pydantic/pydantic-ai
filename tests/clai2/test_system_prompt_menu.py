@@ -109,7 +109,7 @@ async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_
     assert first.endswith('\n\nSaved before launch.')
     assert first.count('Saved before launch.') == 1, 'bound into a stock agent or passed to the run, never both'
     agent = shell.session.agent
-    assert shell.fork_session(None, []).instructions == 'Saved before launch.'
+    assert (await shell.fork_session(None, [])).instructions == 'Saved before launch.'
 
     async def menu(*lists: MenuResult, replies: tuple[str | None, ...] = ()) -> str:
         _, editor = replying(*replies)

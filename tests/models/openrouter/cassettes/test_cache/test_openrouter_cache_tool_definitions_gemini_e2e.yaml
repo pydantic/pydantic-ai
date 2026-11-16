@@ -45,7 +45,7 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -63,9 +63,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793320356-CyvWByQRl3Sb3HbasiNm
+        id: gen-1793763601-y9M3KeQZUHvYpbtquWTN
         object: chat.completion
-        created: 1793320356
+        created: 1793763601
         model: google/gemini-2.5-flash
         provider: Google AI Studio
         system_fingerprint: null
@@ -77,16 +77,14 @@ interactions:
           native_finish_reason: STOP
           message:
             role: assistant
-            content: >-
-              I have a weather tool. I can use it to fetch weather information for a given
-              city.
+            content: I have a "get_weather" tool that provides weather information for a given city.
             refusal: null
             reasoning: null
         usage:
           prompt_tokens: 43
-          completion_tokens: 19
-          total_tokens: 62
-          cost: 0.0000604
+          completion_tokens: 18
+          total_tokens: 61
+          cost: 0.0000579
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -94,11 +92,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0000604
+            upstream_inference_cost: 0.0000579
             upstream_inference_prompt_cost: 0.0000129
-            upstream_inference_completions_cost: 0.0000475
+            upstream_inference_completions_cost: 0.000045
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-30T00:32:36.656907+00:00
+  recorded_at: 2026-11-04T03:40:01.889328+00:00

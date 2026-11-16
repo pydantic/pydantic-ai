@@ -5,19 +5,23 @@ from __future__ import annotations
 import copy
 import inspect
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Self
 
+from typing_extensions import TypeIs
+
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import KnownModelName, ModelRequestContext, parse_model_id
+from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool, durable_operation
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import AbstractModel, KnownModelName, Model, ModelRequestContext, parse_model_id
 from pydantic_ai.native_tools import AdvisorTool
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
+from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
+from pydantic_ai_harness._durable import RetryRequest, raise_retry
+from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 _LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
@@ -39,6 +43,29 @@ def _caller_stacklevel() -> int:
         frame = frame.f_back
         stacklevel += 1
     return stacklevel
+
+
+@dataclass
+class _Advice:
+    """A consultation's output, wrapped so a journaled output can't be read back as a `RetryRequest`."""
+
+    output: object
+
+
+def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
+    """Narrow a run's model without losing its provider client type."""
+    return isinstance(model, Model)
+
+
+def _executor_service(model: AbstractModel) -> str:
+    """The service the executor reaches, which decides the native advisor's model-ID namespace.
+
+    The provider's canonical system rather than its name, so a provider subclass that only renames
+    itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
+    model's, which `BedrockConverseModel` reports as `'anthropic'` for Claude's thinking signatures.
+    """
+    provider = model.provider if _is_request_response_model(model) else None
+    return provider.canonical_system if provider is not None else model.system
 
 
 @dataclass(init=False)
@@ -85,11 +112,14 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     validated output directly to the executor.
     """
 
-    max_uses: int | None
+    max_uses: int | Callable[[RunContext[AgentDepsT]], int] | None
     """Maximum consultations in one executor model request.
 
-    The limit resets on the next executor request. OpenRouter's native advisor
-    does not honor this option, so setting it selects the local fallback there.
+    The limit resets on the next executor request. A callable is called with the
+    run context for each request and returns that request's limit, for example
+    what is left of a budget shared by several runs. Below 1, the native advisor
+    is omitted and the local tool returns its limit message. OpenRouter's native
+    advisor does not honor this option, so setting it selects the local fallback there.
     """
 
     max_tokens: int | None
@@ -100,10 +130,9 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     """
 
     caching: Literal['5m', '1h'] | None
-    """Anthropic-native advisor prompt caching.
+    """Anthropic-native advisor prompt-cache TTL.
 
-    This is an opportunistic optimization. OpenRouter and the local fallback do
-    not provide an equivalent cache control.
+    OpenRouter and the local fallback have no equivalent cache control.
     """
 
     forward_history: bool
@@ -120,6 +149,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     """
 
     _local_uses: int = field(init=False, repr=False, compare=False, default=0)
+    _local_max_uses: int | None = field(init=False, repr=False, compare=False, default=None)
 
     def __init__(
         self,
@@ -127,14 +157,14 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         *,
         mode: Literal['auto', 'native', 'local'] = 'auto',
         output_type: OutputSpec[object] = str,
-        max_uses: int | None = None,
+        max_uses: int | Callable[[RunContext[AgentDepsT]], int] | None = None,
         max_tokens: int | None = None,
         caching: Literal['5m', '1h'] | None = None,
         forward_history: bool = False,
     ) -> None:
         if mode not in {'auto', 'native', 'local'}:
             raise ValueError("Advisor.mode must be 'auto', 'native', or 'local'")
-        if max_uses is not None and max_uses < 1:
+        if isinstance(max_uses, int) and max_uses < 1:
             raise ValueError('Advisor.max_uses must be at least 1')
         if max_tokens is not None and max_tokens < 1024:
             raise ValueError('Advisor.max_tokens must be at least 1024')
@@ -190,8 +220,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
     def _build_tools(self) -> None:
         """Build the native factory and local tool from the fields, and initialise the base capability."""
-        model, mode, output_type = self.model, self.mode, self.output_type
-        max_uses, max_tokens, forward_history = self.max_uses, self.max_tokens, self.forward_history
+        mode, output_type = self.mode, self.output_type
+        forward_history = self.forward_history
         native: AgentNativeTool[AgentDepsT] | bool
         local: Tool[AgentDepsT] | bool
         if mode == 'native':
@@ -200,41 +230,17 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         else:
 
             async def advisor(ctx: RunContext[AgentDepsT], prompt: str) -> object:
-                if max_uses is not None:
-                    if self._local_uses >= max_uses:
+                if self._local_max_uses is not None:
+                    if self._local_uses >= self._local_max_uses:
                         return _LIMIT_REACHED
                     self._local_uses += 1
 
-                settings = ModelSettings(max_tokens=max_tokens) if max_tokens is not None else None
-                advisor_agent = Agent(
-                    model,
-                    name='advisor',
-                    output_type=output_type,
-                    instructions=(
-                        'You are an expert advisor. '
-                        + (
-                            'Give concise, actionable advice to the executor model about the question it sends you. '
-                            if output_type is str
-                            else "Answer the executor model's question using the configured output format. "
-                        )
-                        + 'Do not address the end user.'
-                    ),
-                    model_settings=settings,
-                )
-                try:
-                    result = await advisor_agent.run(
-                        prompt,
-                        message_history=ctx.messages[:-1] if forward_history else None,
-                        conversation_id=ctx.conversation_id,
-                        usage=ctx.usage,
-                        usage_limits=ctx.usage_limits,
-                    )
-                except UnexpectedModelBehavior as e:
-                    raise ModelRetry(str(e)) from e
-                return result.output
+                history = ctx.messages[:-1] if forward_history else None
+                return raise_retry(await self._consult(ctx, prompt, history)).output
 
             local = Tool(
                 advisor,
+                prepare=self._prepare_local,
                 description=(
                     'Consult a stronger model about a difficult or high-impact decision. '
                     + ('' if output_type is str else 'Returns a validated answer in the configured output format. ')
@@ -248,6 +254,42 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             local=local,
             id=self.id,
         )
+
+    @durable_operation('consult')
+    async def _consult(
+        self, ctx: RunContext[AgentDepsT], prompt: str, message_history: list[ModelMessage] | None
+    ) -> _Advice | RetryRequest:
+        output_type = self.output_type
+        advisor_agent = Agent(
+            self.model,
+            name='advisor',
+            output_type=output_type,
+            instructions=(
+                'You are an expert advisor. '
+                + (
+                    'Give concise, actionable advice to the executor model about the question it sends you. '
+                    if output_type is str
+                    else "Answer the executor model's question using the configured output format. "
+                )
+                + 'Do not address the end user.'
+            ),
+            model_settings=ModelSettings(max_tokens=self.max_tokens) if self.max_tokens is not None else None,
+        )
+        try:
+            result = await run_with_count_tokens_fallback(
+                lambda limits: advisor_agent.run(
+                    prompt,
+                    message_history=message_history,
+                    conversation_id=ctx.conversation_id,
+                    usage=ctx.usage,
+                    usage_limits=limits,
+                ),
+                ctx.usage_limits,
+                ctx.usage,
+            )
+        except UnexpectedModelBehavior as exc:
+            return RetryRequest(str(exc))
+        return _Advice(result.output)
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -282,7 +324,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             return self
         return self._rebuilt(max_uses=self.max_uses)
 
-    def _rebuilt(self, *, max_uses: int | None) -> Self:
+    def _rebuilt(self, *, max_uses: int | Callable[[RunContext[AgentDepsT]], int] | None) -> Self:
         """Copy this capability and rebuild its native factory and local tool from its fields.
 
         Only `Advisor`'s tool building runs, so a subclass keeps its type and fields without its
@@ -312,30 +354,42 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         """Identify the native tool paired with the local fallback."""
         return AdvisorTool.kind
 
+    def _max_uses_for(self, ctx: RunContext[AgentDepsT]) -> int | None:
+        """The consultation limit for the executor request `ctx` belongs to."""
+        return self.max_uses(ctx) if callable(self.max_uses) else self.max_uses
+
+    async def _prepare_local(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
+        """Fix the local limit once per request, so parallel calls share it."""
+        self._local_max_uses = self._max_uses_for(ctx)
+        return tool_def
+
     def _native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build a native tool only when an explicit advisor model name is lossless."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        provider = ctx.model.system
+        provider = _executor_service(ctx.model)
         if provider != native_provider or native_model_name is None:
             return None
         if provider == 'openrouter' and self.max_uses is not None:
             return None
-        return self._advisor_tool(native_model_name)
+        return self._advisor_tool(ctx, native_model_name)
 
-    def _required_native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool:
+    def _required_native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build a required native tool or reject a cross-provider executor."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        if ctx.model.system != native_provider:
+        if _executor_service(ctx.model) != native_provider:
             raise UserError(f"Advisor(mode='native') requires a {native_provider} executor, not {ctx.model.system}")
         assert native_model_name is not None
-        return self._advisor_tool(native_model_name)
+        return self._advisor_tool(ctx, native_model_name)
 
-    def _advisor_tool(self, model_name: str) -> AdvisorTool:
+    def _advisor_tool(self, ctx: RunContext[AgentDepsT], model_name: str) -> AdvisorTool | None:
+        max_uses = self._max_uses_for(ctx)
+        if max_uses is not None and max_uses < 1:
+            return None
         return AdvisorTool(
             model=model_name,
-            max_uses=self.max_uses,
+            max_uses=max_uses,
             max_tokens=self.max_tokens,
-            caching=self.caching,
+            provider_settings={'anthropic': {'caching': self.caching}} if self.caching is not None else None,
         )
 
     @staticmethod
