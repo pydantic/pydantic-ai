@@ -406,7 +406,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'anthropic_max_output_tokens': None,
             'anthropic_rejects_max_tokens_beyond_context_window': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
+                {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -3242,7 +3242,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'anthropic_max_output_tokens': None,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
+                {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),

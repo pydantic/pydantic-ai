@@ -27,13 +27,18 @@ from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.toolsets import FunctionToolset
 
 
-def png(width: int, height: int) -> bytes:
-    """A complete black RGB PNG of the given size."""
+def png(
+    width: int, height: int, *, background: bytes = b'\x00\x00\x00', red_box: tuple[int, int, int, int] | None = None
+) -> bytes:
+    """A complete RGB PNG of the given size in `background`, with an optional red `(left, top, right, bottom)` box."""
 
     def chunk(tag: bytes, data: bytes) -> bytes:
         return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
 
-    rows = b''.join(b'\x00' + bytes(width * 3) for _ in range(height))
+    left, top, right, bottom = red_box or (0, 0, 0, 0)
+    plain = b'\x00' + background * width
+    marked = b'\x00' + background * left + b'\xff\x00\x00' * (right - left) + background * (width - right)
+    rows = b''.join(marked if top <= y < bottom else plain for y in range(height))
     header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
 
