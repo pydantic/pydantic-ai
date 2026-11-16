@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterable, Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Container, Coroutine, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
+from itertools import pairwise
 from typing import Any, Generic, TypeVar
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -32,7 +33,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import register_tag, wrap
-from pydantic_ai.messages import ModelMessage, ModelResponse, is_retry, repair_messages
+from pydantic_ai.messages import BaseToolReturnPart, ModelMessage, ModelResponse, is_retry, repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -1574,12 +1575,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 # crash handlers decide what the parent sees.
                 return self._crash_outcome(agent_name, sub_agent, exc)
             return self._stopped(
-                'timeout', sub_agent, f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget.', messages
+                'timeout',
+                sub_agent,
+                f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget.',
+                messages,
+                serving_model.output_tools,
             )
         except UsageLimitExceeded:
             if own_budget:
                 return self._stopped(
-                    'budget', sub_agent, f'Sub-agent {agent_name!r} reached its usage budget.', messages
+                    'budget',
+                    sub_agent,
+                    f'Sub-agent {agent_name!r} reached its usage budget.',
+                    messages,
+                    serving_model.output_tools,
                 )
             # A shared/parent usage limit means the whole tree is out of budget.
             raise
@@ -1630,12 +1639,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         sub_agent: SubAgent[AgentDepsT],
         reason: str,
         messages: Sequence[ModelMessage],
+        output_tools: Container[str],
     ) -> _Ended:
         """For a child stopped by its timeout or own usage budget: the steering message, plus its last text when kept."""
         output = self._steer(
             sub_agent.on_failure, f'{reason} Treat this as a recoverable observation and decide from existing evidence.'
         )
-        if sub_agent.keep_partial_output and (text := _last_text(messages)):
+        if sub_agent.keep_partial_output and (text := _last_text(messages, output_tools)):
             output = f'{output}\n\n{wrap(_PARTIAL_OUTPUT_TAG, text)}'
         return _Ended(outcome=outcome, output=output)
 
@@ -1647,20 +1657,27 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return default
 
 
-def _last_text(messages: Sequence[ModelMessage]) -> str | None:
+def _last_text(messages: Sequence[ModelMessage], output_tools: Container[str]) -> str | None:
     """The text of the last model response the run went on from without a retry.
 
-    A trailing response the run stopped before acting on, such as an answer still being validated, is skipped too.
+    A trailing response the run stopped before acting on, such as an answer still being validated, is skipped, and so
+    is one whose output tool call an interruption left without a verdict, which may have been a rejection.
     """
-    skip = True
-    for message in reversed(messages):
-        if isinstance(message, ModelResponse):
-            if message.text and not skip:
-                return message.text
-            skip = False
-        else:
-            skip = any(is_retry(part) for part in message.parts)
+    for response, request in reversed(list(pairwise(messages))):
+        if (
+            isinstance(response, ModelResponse)
+            and response.text
+            and not any(is_retry(part) for part in request.parts)
+            and (request.state != 'interrupted' or not _unsettled_output_call(response, request, output_tools))
+        ):
+            return response.text
     return None
+
+
+def _unsettled_output_call(response: ModelResponse, request: ModelMessage, output_tools: Container[str]) -> bool:
+    """Whether `response` called an output tool that `request` holds no return for."""
+    answered = {part.tool_call_id for part in request.parts if isinstance(part, BaseToolReturnPart)}
+    return any(call.tool_name in output_tools and call.tool_call_id not in answered for call in response.tool_calls)
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:

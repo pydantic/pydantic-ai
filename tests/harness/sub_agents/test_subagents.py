@@ -872,6 +872,34 @@ Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable o
             ]
         )
 
+    async def test_partial_output_skips_an_output_call_the_timeout_left_unsettled(self) -> None:
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart('secret'), ToolCallPart('final_result', {'response': 1}), ToolCallPart('hang', {})]
+            )
+
+        worker = Agent(FunctionModel(worker_fn), name='worker', output_type=int, end_strategy='exhaustive')
+
+        @worker.tool_plain
+        async def hang() -> str:
+            await asyncio.sleep(1)
+            return 'late'  # pragma: no cover - cancelled by the timeout
+
+        @worker.output_validator
+        def reject(output: int) -> int:
+            raise ModelRetry('not allowed')
+
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.05, keep_partial_output=True)])],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable observation and decide from existing evidence."
+            ]
+        )
+
     async def test_partial_output_skips_an_answer_still_being_validated(self) -> None:
         worker = Agent(
             FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('unchecked')])), name='worker'
