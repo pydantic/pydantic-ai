@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 __all__ = [
     'ModelProfile',
     'ModelProfileSpec',
+    'ModelTrait',
+    'ModelTraits',
     'ToolAdditionMode',
     'ToolDeferralMode',
     'DEFAULT_PROFILE',
@@ -51,6 +53,29 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
 
 DEFAULT_THINKING_TAGS: tuple[str, str] = ('<think>', '</think>')
 """Default `(start_tag, end_tag)` pair for parsing thinking content out of text responses."""
+
+
+class ModelTraits(TypedDict, total=False):
+    """How a model tends to behave on any route: the failure modes instructions can be gated on.
+
+    A trait names the failure, not the remedy or the model, so a new model inherits a remedy by behaving the same
+    way, and the remedy can change without renaming the trait. Each trait's docstring records the evidence for every
+    model family that sets it: what failed, on which model, when, and how often. A trait without recorded evidence
+    doesn't get added.
+    """
+
+    delegates_unprompted: bool
+    """Whether the model hands work to sub-agents the user didn't ask for. Default: `False`.
+
+    A delegate starts from a fresh context and explores the project again, so unrequested delegation multiplies tool
+    calls and cost. Set for OpenAI's own models (not gpt-oss). Evidence: observed in clai2 coding sessions on GPT
+    models and not on others (2026-11-04 team sync, not counted), and the rule Codex gives its own models for
+    `spawn_agent`. Read by Pydantic AI Harness `Coder`.
+    """
+
+
+ModelTrait: TypeAlias = Literal['delegates_unprompted']
+"""The name of a [`ModelTraits`][pydantic_ai.profiles.ModelTraits] key."""
 
 
 class ModelProfile(TypedDict, total=False):
@@ -467,6 +492,16 @@ class ModelProfile(TypedDict, total=False):
     [Configuring `ToolSearch`](../tools-advanced.md#configuring-toolsearch).
     """
 
+    traits: ModelTraits
+    """How the model tends to behave, whatever route serves it. Default: no traits.
+
+    Model traits, as opposed to the route facts the other keys describe: each is keyed by model family and version, and
+    records the evidence it rests on. Instructions read them through
+    [`TraitInstruction`][pydantic_ai.TraitInstruction], so text written for one kind of model reaches only the models
+    that need it, and follows the model through a fallback. [`merge_profile`][pydantic_ai.profiles.merge_profile]
+    merges this key by trait, so overriding one trait keeps the others.
+    """
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
@@ -619,14 +654,17 @@ def merge_profile(base: ModelProfile | None, *overrides: ModelProfile | None) ->
 
     This is the canonical way to layer profiles in providers and tests; replaces the old `ModelProfile.update()` method.
     Deprecated key spellings are translated per input before spreading, so a legacy key in an
-    override still overrides the base.
+    override still overrides the base. `traits` is merged by trait rather than replaced, so an override
+    that sets one trait keeps the ones it doesn't mention.
     """
     result: ModelProfile = {}
-    if base:
-        result = {**result, **_translate_legacy_profile_keys(base)}
-    for override in overrides:
-        if override:
-            result = {**result, **_translate_legacy_profile_keys(override)}
+    for profile in (base, *overrides):
+        if profile:
+            translated = _translate_legacy_profile_keys(profile)
+            traits: ModelTraits = {**result.get('traits', {}), **translated.get('traits', {})}
+            result = {**result, **translated}
+            if traits:
+                result['traits'] = traits
     return result
 
 
