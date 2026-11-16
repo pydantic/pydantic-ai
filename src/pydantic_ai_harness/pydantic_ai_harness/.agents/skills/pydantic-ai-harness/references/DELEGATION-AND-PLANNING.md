@@ -385,10 +385,10 @@ typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=De
 ```
 
 `Advisor(model, *, native=True, local=True, output_type=str, max_uses=None, max_tokens=None,
-caching=None, forward_history=False, id='advisor', defer_loading=False, description=None)`. By default it uses the provider tool where it applies
-(history gets provider-native parts) and the `advisor` function tool otherwise (history gets a
-`ToolCallPart` and `ToolReturnPart`). `local=False` requires the provider tool; `native=False` always
-uses the function tool. `mode=` is deprecated.
+caching=None, forward_history=False, id='advisor', defer_loading=False, description=None)`. By
+default it uses the provider tool where it applies (history gets provider-native parts) and the
+`advisor` function tool otherwise (history gets a `ToolCallPart` and `ToolReturnPart`). `local=False`
+requires the provider tool; `native=False` always uses the function tool. `mode=` is deprecated.
 
 <!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
 
@@ -417,8 +417,9 @@ Gotchas:
   `count_tokens` and retried once without the up-front count (limits checked after the response) on any
   pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
   consultation started, in which case the error propagates.
-- Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two list `output_type`s combining, and any other option the later one's.
-  With different `id`s, their built `advisor` tools conflict.
+- Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two
+  list `output_type`s combining, and any other option the later one's. With different `id`s, their
+  built `advisor` tools conflict.
 - Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
   deployed). Under Temporal and Prefect use `local=False`: their activity- or task-local usage doesn't merge
   back into the run, so local execution is unsupported there.

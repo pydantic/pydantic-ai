@@ -25,12 +25,48 @@ from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
+_LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
+
+
+def _caller_stacklevel() -> int:
+    """The `warnings.warn` stacklevel, from a function in this module, of the nearest frame in the user's code.
+
+    Skips this module, Pydantic AI, Pydantic Graph, and the `asyncio`, `contextlib` and `typing`
+    frames a call goes through, so the warning points at the caller whether they construct
+    `Advisor[None](...)`, call `combine` directly, build an `Agent`, or pass capabilities to a run.
+    """
+    frame = inspect.currentframe()
+    stacklevel = 0
+    while frame is not None and (
+        (module := frame.f_globals.get('__name__', '')) == __name__
+        or module.partition('.')[0] in {'pydantic_ai', 'pydantic_graph', 'asyncio', 'contextlib', 'typing'}
+    ):
+        frame = frame.f_back
+        stacklevel += 1
+    return stacklevel
+
 
 @dataclass
 class _Advice:
     """A consultation's output, wrapped so a journaled output can't be read back as a `RetryRequest`."""
 
     output: object
+
+
+def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
+    """Narrow a run's model without losing its provider client type."""
+    return isinstance(model, Model)
+
+
+def _executor_service(model: AbstractModel) -> str:
+    """The service the executor reaches, which decides the native advisor's model-ID namespace.
+
+    The provider's canonical system rather than its name, so a provider subclass that only renames
+    itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
+    model's, which `BedrockConverseModel` reports as `'anthropic'` for Claude's thinking signatures.
+    """
+    provider = model.provider if _is_request_response_model(model) else None
+    return provider.canonical_system if provider is not None else model.system
 
 
 # TODO(harness 1.0, #12997): remove `_Mode` along with the deprecated `Advisor.mode`.
@@ -192,7 +228,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 f'`Advisor(mode={mode!r})` is deprecated: {self._MODE_REPLACEMENTS[mode]}. '
                 '`mode` will be removed in pydantic-ai-harness 1.0.',
                 HarnessDeprecationWarning,
-                stacklevel=self._caller_stacklevel(),
+                stacklevel=_caller_stacklevel(),
             )
             native, local = self._MODE_DECLARATIONS[mode]
         self.model = model
@@ -353,7 +389,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         async def advisor(ctx: RunContext[AgentDepsT], prompt: str) -> object:
             if max_uses is not None:
                 if self._local_uses >= max_uses:
-                    return 'Advisor consultation limit reached for this model request. Continue without further advice.'
+                    return _LIMIT_REACHED
                 self._local_uses += 1
 
             history = ctx.messages[:-1] if forward_history else None
@@ -431,7 +467,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
                 'Remove `max_uses` or `local=False` to silence this warning.',
                 UserWarning,
-                stacklevel=cls._caller_stacklevel(),
+                stacklevel=_caller_stacklevel(),
             )
             capabilities = [replace_no_init(advisor, max_uses=None) for advisor in advisors]
         return super().combine(capabilities)
@@ -473,7 +509,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def _native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build a native tool only when an explicit advisor model name is lossless."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        provider = self._executor_service(ctx.model)
+        provider = _executor_service(ctx.model)
         if provider != native_provider or native_model_name is None:
             return None
         # OpenRouter's native advisor ignores `max_uses`, so the local tool enforces it there. Core has
@@ -488,7 +524,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         With no local fallback, omitting the native tool would leave the executor without an advisor.
         """
         native_provider, native_model_name = self._parse_native_model(self.model)
-        if self._executor_service(ctx.model) != native_provider:
+        if _executor_service(ctx.model) != native_provider:
             raise UserError(f'`Advisor(local=False)` requires a {native_provider} executor, not {ctx.model.system}')
         assert native_model_name is not None
         return self._advisor_tool(native_model_name)
@@ -500,40 +536,6 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             max_tokens=self.max_tokens,
             provider_settings={'anthropic': {'caching': self.caching}} if self.caching is not None else None,
         )
-
-    @staticmethod
-    def _caller_stacklevel() -> int:
-        """The `warnings.warn` stacklevel, from a function in this module, of the nearest frame in the user's code.
-
-        Skips this module, Pydantic AI, Pydantic Graph, and the `asyncio`, `contextlib` and `typing`
-        frames a call goes through, so the warning points at the caller whether they construct
-        `Advisor[None](...)`, call `combine` directly, build an `Agent`, or pass capabilities to a run.
-        """
-        frame = inspect.currentframe()
-        stacklevel = 0
-        while frame is not None and (
-            (module := frame.f_globals.get('__name__', '')) == __name__
-            or module.partition('.')[0] in {'pydantic_ai', 'pydantic_graph', 'asyncio', 'contextlib', 'typing'}
-        ):
-            frame = frame.f_back
-            stacklevel += 1
-        return stacklevel
-
-    @staticmethod
-    def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
-        """Narrow a run's model without losing its provider client type."""
-        return isinstance(model, Model)
-
-    @staticmethod
-    def _executor_service(model: AbstractModel) -> str:
-        """The service the executor reaches, which decides the native advisor's model-ID namespace.
-
-        The provider's canonical system rather than its name, so a provider subclass that only renames
-        itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
-        model's, which `BedrockConverseModel` reports as `'anthropic'` for Claude's thinking signatures.
-        """
-        provider = model.provider if Advisor._is_request_response_model(model) else None
-        return provider.canonical_system if provider is not None else model.system
 
     @staticmethod
     def _parse_native_model(
