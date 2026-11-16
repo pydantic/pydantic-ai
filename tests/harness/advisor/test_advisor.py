@@ -851,6 +851,21 @@ class TestAdvisor:
         }
         assert definitions['short_spec_Advisor']['properties']['Advisor']['anyOf'][-1] == {'type': 'string'}
 
+    def test_from_spec_forwards_its_fields(self) -> None:
+        advisor = Advisor[None].from_spec(
+            'test', native=False, id='team', description='The team.', defer_loading=True, max_uses=2
+        )
+        assert (advisor.id, advisor.description, advisor.defer_loading, advisor.max_uses) == (
+            'team',
+            'The team.',
+            True,
+            2,
+        )
+        assert (advisor.get_native_tools(), advisor.get_toolset() is not None) == ([], True)
+
+        native_only = Advisor[None].from_spec('anthropic:claude-opus-4-8', local=False)
+        assert (bool(native_only.get_native_tools()), native_only.get_toolset()) == (True, None)
+
     def test_agent_spec_passes_output_type_through(self) -> None:
         agent = Agent.from_spec(
             {'model': 'test', 'capabilities': [{'Advisor': {'model': 'test', 'native': False, 'output_type': int}}]},
