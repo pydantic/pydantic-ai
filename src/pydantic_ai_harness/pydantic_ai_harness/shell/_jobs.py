@@ -514,10 +514,15 @@ class Job:
 
 
 def _past_secrets(data: bytes, cut: int, secrets: Sequence[bytes]) -> int:
-    """`cut`, moved past the end of every occurrence of a secret in `data` that spans it."""
+    """`cut`, moved past the end of every occurrence of a secret in `data` that spans it, or that a move makes span."""
+    spans: list[tuple[int, int]] = []
     for secret in secrets:
         index = data.find(secret, max(0, cut - len(secret) + 1))
-        while 0 <= index < cut:
-            cut = max(cut, index + len(secret))
+        while index != -1:
+            spans.append((index, index + len(secret)))
             index = data.find(secret, index + 1)
+    # By start, so a span the cut moves into is still ahead of it.
+    for start, end in sorted(spans):
+        if start < cut < end:
+            cut = end
     return cut

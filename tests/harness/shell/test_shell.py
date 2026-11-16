@@ -2403,6 +2403,18 @@ class TestShellSecretEnv:
         assert output.startswith('[... output truncated, ')
         assert '123abc' not in output
 
+    async def test_persistent_tail_does_not_split_overlapping_secrets(self, tmp_path: Path) -> None:
+        # The cut lands after `X`; moving it past `SHORT` lands inside `LONG`, which also starts before it.
+        secret_env = {'LONG': 'abcdefghijk', 'SHORT': 'XYZabc'}
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env=secret_env), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "XYZabcdefghijk%15976sabcdefghijk"'},
+        )
+        assert output.startswith('[... output truncated, 14 earlier bytes omitted]\n')
+        assert 'defghijk' not in output
+        assert output.count('[REDACTED:LONG]') == 1
+
     def test_repr_hides_secret_env(self) -> None:
         assert _SECRET not in repr(Shell(secret_env={'TMP_TOKEN': _SECRET}))
 
