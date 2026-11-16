@@ -218,7 +218,7 @@ sandbox = BoxdSandbox(secrets=['GH_TOKEN'])
 git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
 ```
 
-A remote such as `git@github.com:owner/repo.git` gets no credential: use the `https://` URL. The agent can still use the token for anything it allows, on any repository it reaches. boxd scrubs the value from responses only in its plain form, so a host that echoes the Basic auth header back would return the real value: name only hosts that never echo request headers. `secrets` applies to a machine `BoxdSandbox` creates; an attached machine keeps the ones it was created with. Calling `secrets.set` again rotates the value at once, and the placeholder stays the same.
+A remote such as `git@github.com:owner/repo.git` gets no credential: use the `https://` URL. The agent can still use the token for anything it allows, on any repository it reaches. boxd scrubs the value back to the placeholder in responses, but may miss an encoded copy, such as an echoed Basic auth header: name only hosts that never echo request headers. `secrets` applies to a machine `BoxdSandbox` creates; an attached machine keeps the ones it was created with. Calling `secrets.set` again rotates the value at once, and the placeholder stays the same.
 
 ## Clean up
 

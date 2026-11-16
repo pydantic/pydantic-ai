@@ -62,6 +62,11 @@ class TestConstruction:
         with pytest.raises(ValueError, match=r'^pass either `snapshot` or `vcpu`, not both'):
             BoxdSandboxBackend(snapshot='golden', vcpu=2)
 
+    def test_a_string_of_secrets_is_refused(self) -> None:
+        # A `str` is a sequence of names too: `'GH_TOKEN'` would become eight one-letter secrets.
+        with pytest.raises(ValueError, match=r'^`secrets` takes a list of secret names'):
+            BoxdSandboxBackend(secrets='GH_TOKEN')
+
 
 class TestCreate:
     @pytest.mark.parametrize(

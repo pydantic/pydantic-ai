@@ -428,6 +428,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             _check_ref(ref)
         if snapshot is not None and vcpu is not None:
             raise ValueError('pass either `snapshot` or `vcpu`, not both: a snapshot keeps the size it was saved at')
+        if isinstance(secrets, str):
+            raise ValueError(f'`secrets` takes a list of secret names, such as [{secrets!r}], not a string')
         check_env(env)
         self._ref = ref
         self._client = client

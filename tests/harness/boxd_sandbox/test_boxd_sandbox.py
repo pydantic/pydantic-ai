@@ -66,6 +66,7 @@ def test_root_package_exports_the_capability_and_backend() -> None:
         ({'vcpu': '2'}, r"^vcpu must be 1, 2, 4, 8 or None, got '2'\.$"),
         ({'snapshot': 'golden', 'vcpu': 2}, r'^`snapshot` keeps the size it was saved at, so it cannot be combined'),
         ({'defer_loading': True, 'id': 'machine'}, 'does not support `defer_loading=True`'),
+        ({'secrets': 'GH_TOKEN'}, r"^`secrets` takes a list of secret names, such as \['GH_TOKEN'\], not a string\.$"),
     ],
 )
 def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message: str) -> None:

@@ -104,6 +104,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
         if self.snapshot is not None and self.vcpu is not None:
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
+        if isinstance(self.secrets, str):
+            raise UserError(f'`secrets` takes a list of secret names, such as [{self.secrets!r}], not a string.')
         check_env(self.env)
 
     @classmethod
