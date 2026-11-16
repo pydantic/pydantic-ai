@@ -73,8 +73,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     network: SandboxNetworkOpts | None = field(default=None, repr=False)
     """E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged; a spec cannot set them.
 
-    Their `rules` let E2B's proxy, outside the sandbox, set headers on requests to a host, so the agent's
-    commands can use a credential they cannot read.
+    Their `rules` have E2B add headers, such as a token, to requests as they leave the sandbox, so
+    commands can use the token without it ever being inside the sandbox.
     """
 
     def __post_init__(self) -> None:
