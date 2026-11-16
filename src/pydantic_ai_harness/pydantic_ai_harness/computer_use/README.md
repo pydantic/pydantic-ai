@@ -77,7 +77,6 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 | Setting | Default | What it does |
 |---|---|---|
 | `settle_seconds` | `0` | Wait this long after acting before the screenshot. Set it when screenshots show pages still loading or animating. |
-| `action_limits` | no limits | The most one action may ask for, as a `ComputerUseActionLimits`: `max_wait_seconds`, `max_hold_seconds`, `max_typed_chars`, `max_key_repeat`, `max_scroll_amount` and `max_drag_points`. A call over a limit is refused before any of its actions run, and the model is told which limit it went over. Two `ComputerUse` on one agent keep the smaller value of each limit. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a `ComputerTool` that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
 `ComputerUse` turns on [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/), since every request resends the screenshots. Set
@@ -105,6 +104,8 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
     return args
 ```
 
+The same hook can refuse a call instead, such as one that waits or types more than you allow: [raise `ToolFailed`](https://pydantic.dev/docs/ai/core-concepts/hooks/#triggering-retries-with-modelretry) with a message for the model, and no action runs.
+
 ## Screen size
 
 Some models only take screenshots up to a size, set by `computer_use_screenshot_max_side` and
@@ -119,7 +120,7 @@ GPT-5.4 and GPT-5.5 take any size, but click less accurately above 2560x1440 (me
 - A position outside the screen fails the whole call before anything runs.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A call releases every mouse button it presses with `mouse_down`, so the next call, perhaps another agent's, starts with none pressed. A call that doesn't is refused before any action runs, and a button pressed by a call that fails is released. If that release fails too, the call fails saying the button may still be held.
+- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run, whether it finishes, fails or is cancelled. If a release after a failed action fails too, the call fails saying the button may still be held.
 
 ## Watching a run
 
@@ -204,8 +205,6 @@ assert isinstance(MyDisplay(), Display)
 ## API reference
 
 ::: pydantic_ai_harness.computer_use.ComputerUse
-
-::: pydantic_ai_harness.computer_use.ComputerUseActionLimits
 
 ::: pydantic_ai_harness.computer_use.ActionsPerformedEvent
 
