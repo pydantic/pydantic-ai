@@ -57,7 +57,10 @@ def test_init_of_openai_with_base_url_env_var_and_without_api_key(env: TestEnv):
 
 
 async def test_async_api_key_callback_refreshes_per_request(allow_model_requests: None):
-    """An async `api_key` callable is resolved by the OpenAI SDK for every request."""
+    """An async `api_key` callable is resolved by the OpenAI SDK for every request.
+
+    Not a VCR test: a live recording cannot show two distinct valid keys.
+    """
     token = 'old-token'
 
     async def api_key() -> str:

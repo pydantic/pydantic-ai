@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, overload
 
@@ -32,6 +31,7 @@ except ImportError as _import_error:
 
 from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
+    OpenAIAPIKey as OpenAIAPIKey,
     _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -179,7 +179,7 @@ class OpenAIProvider(_OpenAISDKProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | Callable[[], Awaitable[str]] | None = None,
+        api_key: OpenAIAPIKey | None = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -187,7 +187,7 @@ class OpenAIProvider(_OpenAISDKProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | Callable[[], Awaitable[str]] | None = None,
+        api_key: OpenAIAPIKey | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
