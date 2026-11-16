@@ -80,15 +80,15 @@ it or its provider stops it; see [Cleaning up](#cleaning-up).
 | [`LocalWorkspace`](#your-machine-or-a-sandbox) | A directory on this machine (macOS, Linux) | No | Nothing |
 | [`WindowsWorkspace`](#platforms) | A directory on this machine, in PowerShell | No | Windows |
 | [Docker Container](harness/docker-container.md) | A local Docker or Podman container | Yes | Docker or Podman |
-| [Smol Sandbox](harness/smol-sandbox.md) | A smolvm microVM on this machine | Yes | smolvm |
-| [BoxLite Sandbox](harness/boxlite-sandbox.md) | A BoxLite micro-VM on this machine, with an optional egress allow-list | Yes | BoxLite |
+| [Smol Sandbox](harness/smol-sandbox.md) | A smolvm microVM on this machine | Yes | Apple silicon Mac, or Linux with KVM |
+| [BoxLite Sandbox](harness/boxlite-sandbox.md) | A BoxLite micro-VM on this machine, with an optional egress allow-list | Yes | Apple silicon Mac, or Linux with KVM |
 | [OpenSandbox](harness/opensandbox-sandbox.md) | A sandbox on your own OpenSandbox server, on Docker or Kubernetes | Yes | An OpenSandbox server |
 | [Kubernetes Sandbox](harness/kubernetes-sandbox.md) | A pod from an agent-sandbox warm pool | Yes | A cluster with agent-sandbox |
 | [Modal Sandbox](harness/modal-sandbox.md) | A Modal cloud sandbox | Yes | A Modal account |
 | [E2B Sandbox](harness/e2b-sandbox.md) | An E2B cloud sandbox | Yes | An E2B account |
 | [Daytona Sandbox](harness/daytona-sandbox.md) | A Daytona cloud sandbox | Yes | A Daytona account |
-| [Render Sandbox](harness/render-sandbox.md) | A Render sandbox | Yes | A Render account |
-| [Sprites Sandbox](harness/sprites-sandbox.md) | A persistent Fly.io Sprite | Yes | A Fly.io account |
+| [Render Sandbox](harness/render-sandbox.md) | A Render sandbox | Yes | A Render workspace with Sandboxes access |
+| [Sprites Sandbox](harness/sprites-sandbox.md) | A persistent Fly.io Sprite | Yes | A Sprites API token |
 | [boxd Sandbox](harness/boxd-sandbox.md) | A boxd cloud machine | Yes | A boxd account |
 | [SSH Workspace](harness/ssh-workspace.md) | Another machine, over your `ssh` client | No, commands run as your SSH user there | SSH access |
 | [Bubblewrapped Workspace](harness/bubblewrap-sandbox.md) | Wraps another workspace and runs its commands in Linux `bwrap` | Best effort, not a security boundary | Linux with `bwrap` on that host |
