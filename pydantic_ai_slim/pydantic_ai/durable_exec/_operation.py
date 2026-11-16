@@ -49,7 +49,7 @@ class ModelRequestId:
 
 @dataclass(frozen=True)
 class ModelRequestParams:
-    """Parameters of a model request operation; `model_id` selects the registered model."""
+    """Parameters of a model request or token-counting operation; `model_id` selects the registered model."""
 
     model_id: str | None = None
     _: KW_ONLY
@@ -102,6 +102,20 @@ class ModelCompactMessagesParams:
     request_context: ModelRequestContext
     instructions: str | None
     run_context: RunContext[Any]
+
+
+@dataclass(frozen=True)
+class ModelCountTokensId:
+    """Identifies a durable token-counting operation for engine configuration.
+
+    The count that [`UsageLimits.count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request]
+    runs ahead of a request takes the request's [`ModelRequestParams`][pydantic_ai.durable_exec.ModelRequestParams].
+    See the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
+    model_id: str | None = None
+    _: KW_ONLY
+    model_name: str
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -217,6 +231,7 @@ class DynamicToolsetCallToolParams:
 DurableOperationId: TypeAlias = (
     ModelRequestId
     | ModelCompactMessagesId
+    | ModelCountTokensId
     | ModelCancelSuspendedResponseId
     | CapabilityOperationId
     | EventStreamHandlerId
@@ -368,7 +383,7 @@ class ParameterTransports:
     """
 
     def model_request(self, result_type: object) -> ParameterTransport[ModelRequestParams, Any]:
-        """Transport for model requests; `result_type` is the type the request operation returns."""
+        """Transport for model requests and the token counts ahead of them; `result_type` is the type the operation returns."""
         return IdentityParameterTransport()
 
     def compact_messages(self) -> ParameterTransport[ModelCompactMessagesParams, Any]:

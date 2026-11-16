@@ -277,6 +277,7 @@ Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__model.request` | one model request segment |
 | `{name}__model.request_stream` | one streamed model request segment |
 | `{name}__model.compact_messages` | one model message-compaction operation |
+| `{name}__model.count_tokens` | one token count ahead of a model request, with `count_tokens_before_request` |
 | `{name}__model.cancel_suspended_response` | tearing down a suspended response |
 | `{name}__capability__{capability_id}.{operation}` | an operation contributed by another capability |
 | `{name}__function_toolset__{id}.validate_args` | validating a function tool call's arguments |
