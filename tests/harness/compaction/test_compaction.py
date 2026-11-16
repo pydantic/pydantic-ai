@@ -359,6 +359,10 @@ class TestEstimateTokenCount:
         payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
         assert estimate_token_count([_user(payload + 'é')]) == 232
 
+    def test_an_encoded_run_does_not_hide_compact_json(self):
+        compact_json = '{"id": 1, "name": "x", "tags": [1, 2, 3]}' * 10
+        assert estimate_token_count([_user(compact_json + '"aB3dE5fG7hI9jK1lM3nO5pQ7"')]) == 222
+
 
 # ---------------------------------------------------------------------------
 # estimate_context_tokens

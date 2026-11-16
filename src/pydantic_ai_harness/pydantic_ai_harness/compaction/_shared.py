@@ -254,10 +254,11 @@ def _dense_surcharge(text: str) -> float:
     non_ascii = len(text) - ascii_chars
     cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
     surcharge = cjk * (1 - 1 / CHARS_PER_TOKEN) + (non_ascii - cjk) * (1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
-    if encoded := sum(len(run) for run in _ENCODED_RUN.findall(text) if _is_encoded(run)):
-        surcharge += encoded * (1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
-    elif ascii_chars >= 32 and sum(text.count(c) for c in _JSON_PUNCTUATION) * 5 >= ascii_chars:
-        surcharge += ascii_chars * (1 / _JSON_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
+    encoded = sum(len(run) for run in _ENCODED_RUN.findall(text) if _is_encoded(run))
+    surcharge += encoded * (1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
+    plain = ascii_chars - encoded
+    if plain >= 32 and sum(text.count(c) for c in _JSON_PUNCTUATION) * 5 >= plain:
+        surcharge += plain * (1 / _JSON_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN)
     return surcharge
 
 
