@@ -253,8 +253,9 @@ Gotchas:
 ## Skills
 
 Loads Agent Skills (`<library>/<skill>/SKILL.md`) as deferred capabilities: the model sees each
-skill's name and description and loads the body by calling core's `load_capability` tool with
-`{'id': '<skill name>'}`.
+skill's name and description, followed by its `when_to_use` if set, and loads the body by
+calling core's `load_capability` tool with `{'id': '<skill name>'}`. Put when to load a skill in
+`when_to_use` (a whole clause such as "Use when ..."), not in the description.
 
 ```bash
 uv add "pydantic-ai-harness[skills]"
@@ -319,7 +320,8 @@ Gotchas:
   `Skills` never runs bundled files. `Skills(..., read_files=True)` adds a `read_skill_file(skill,
   path)` tool for a loaded skill's text files, confined to its directory and working for a
   `workspace=` library too, so no `FileSystem` is needed. Fields like `allowed-tools`, `model`,
-  `hooks` are accepted but not implemented (one aggregated `UserWarning`).
+  `hooks` are accepted but not implemented (one aggregated `UserWarning`); `when_to_use` is
+  honored.
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
   catalog selection, not access control.
 - Instructions that are not `SKILL.md` packages in a directory go in a core deferred
