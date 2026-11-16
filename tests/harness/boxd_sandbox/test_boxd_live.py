@@ -22,6 +22,7 @@ Run locally:
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -102,23 +103,58 @@ async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> N
         await check_display_contract(display)
 
 
+# A page that logs the `code` of each key Chromium gets (its `key` when it has none), and `=` plus each character
+# typed into it. It keeps the function keys, Tab and the menu key from Chromium, where they would move
+# the focus off the page or open a dialog.
+_KEY_LOG_PAGE = """<textarea autofocus style="width:600px;height:300px"></textarea><script>
+window.K = [];
+document.addEventListener('keydown', e => {
+  K.push(e.code || e.key);
+  if (/^F[0-9]+$/.test(e.key) || ['Tab', 'ContextMenu'].includes(e.code)) e.preventDefault();
+});
+document.addEventListener('input', e => e.data && K.push('=' + e.data));
+document.addEventListener('contextmenu', e => e.preventDefault());
+</script>"""
+
+# Each key name the driver takes, with the key Chromium gets for it.
+_KEY_CODES = {
+    **{'enter': 'Enter', 'escape': 'Escape', 'tab': 'Tab', 'backspace': 'Backspace', 'delete': 'Delete'},
+    **{'insert': 'Insert', 'home': 'Home', 'end': 'End', 'pageup': 'PageUp', 'pagedown': 'PageDown'},
+    **{'up': 'ArrowUp', 'down': 'ArrowDown', 'left': 'ArrowLeft', 'right': 'ArrowRight', 'space': 'Space'},
+    **{'printscreen': 'PrintScreen', 'pause': 'Pause', 'menu': 'ContextMenu', 'capslock': 'CapsLock'},
+    **{'numlock': 'NumLock', 'scrolllock': 'ScrollLock', **{f'f{n}': f'F{n}' for n in range(1, 13)}},
+    # Chromium gets F13 to F24 on this desktop as a key it cannot name, so only that a key arrives is checked.
+    **{f'f{n}': '\x00' for n in range(13, 25)},
+    **{f'numpad{n}': f'Numpad{n}' for n in range(10)},
+    **{'numpad_enter': 'NumpadEnter', 'numpad_add': 'NumpadAdd', 'numpad_subtract': 'NumpadSubtract'},
+    **{'numpad_multiply': 'NumpadMultiply', 'numpad_divide': 'NumpadDivide', 'numpad_decimal': 'NumpadDecimal'},
+    **{'volumemute': 'AudioVolumeMute', 'volumeup': 'AudioVolumeUp', 'volumedown': 'AudioVolumeDown'},
+    **{'mediaplay': 'MediaPlayPause', 'medianext': 'MediaTrackNext', 'mediaprev': 'MediaTrackPrevious'},
+    **{'a': 'KeyA', 'Z': 'KeyZ', '7': 'Digit7', '+': 'Equal', '!': 'Digit1', 'é': '=é', '\n': 'Enter', '\t': 'Tab'},
+    **{'super': 'MetaLeft'},
+}
+
+
 async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumption that boxd presses the key names listed, as the keysym the driver
-    sends for each, alone and held with a modifier."""
-    names = [
-        *('enter', 'escape', 'tab', 'backspace', 'delete', 'insert', 'home', 'end', 'pageup', 'pagedown'),
-        *('up', 'down', 'left', 'right', 'space', 'printscreen', 'pause', 'menu', 'capslock', 'numlock'),
-        *('scrolllock', *(f'f{n}' for n in range(1, 25)), *(f'numpad{n}' for n in range(10)), 'numpad_enter'),
-        *('numpad_add', 'numpad_subtract', 'numpad_multiply', 'numpad_divide', 'numpad_decimal'),
-        *('volumemute', 'volumeup', 'volumedown', 'mediaplay', 'medianext', 'mediaprev'),
-        *('a', 'Z', '7', '+', '!', 'é', '\n', '\t', 'super'),
-    ]
+    """Validates the fake-encoded assumption that the keysym the driver sends for each key name presses that key,
+    read back from Chromium (`agent-browser`, which boxd's image ships), alone and held with modifiers."""
     async with _owned(client, desktop=True) as backend:
         display = backend.display
         assert display is not None
-        for name in names:
-            await display.act(PressKeys(keys=(name,)))
-        await display.act(PressKeys(keys=('ctrl', 'shift', '+')))
+        await display.screenshot()
+        await backend.write_bytes('/tmp/keys.html', _KEY_LOG_PAGE.encode())
+        await backend.run(['agent-browser', 'open', 'file:///tmp/keys.html'], timeout=120)
+        await display.act(Click(x=300, y=250))
+
+        async def pressed(*keys: str) -> list[str]:
+            await display.act(PressKeys(keys=keys))
+            await anyio.sleep(0.2)
+            logged = await backend.run(['agent-browser', 'eval', 'JSON.stringify(K.splice(0))'], timeout=60)
+            return json.loads(json.loads(logged.stdout))
+
+        missed = {name: got for name, code in _KEY_CODES.items() if code not in (got := await pressed(name))}
+        assert missed == {}
+        assert await pressed('ctrl', 'shift', '+') == ['ControlLeft', 'ShiftLeft', 'Equal']
 
 
 # Starts a terminal on the desktop that saves what is typed into it, as an agent would start a program.
