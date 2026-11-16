@@ -345,10 +345,13 @@ Fields: `headless=True`, `allowed_domains=None` (exact host plus subdomains), `p
 either), `chromium_sandbox=True`, `auto_install_chromium=False`, `storage_state=None` (Playwright
 cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium).
 `cdp_url_factory` calls an async endpoint supplier on first browser use and caches its result per
-run; the caller owns provisioning and cleanup. `cdp_context='default'` reuses sign-ins and tabs
-instead of creating a `'new'` context. It requires a CDP endpoint and excludes `storage_state`.
-Loaded tabs and frames must pass the egress policy. Service workers and existing connections
-may bypass request guards; use a dedicated agent profile.
+run; a timeout is a tool error and is retried, an exception ends the run, and the caller owns
+provisioning and cleanup. `cdp_context='default'` reuses sign-ins and tabs instead of creating a
+`'new'` context. It requires a CDP endpoint and excludes `storage_state`. The agent can act as
+every signed-in account, so attach it to a profile dedicated to the agent, never an everyday
+browser, and set `allowed_domains` for untrusted pages. Loaded tabs and frames must pass the egress
+policy, and new service-worker registrations are refused; downloads follow the browser's settings.
+Service workers registered and connections opened before attachment bypass request guards.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,
@@ -380,8 +383,9 @@ Gotchas:
   `resolved_addresses`, as above.
 - `policy` together with `allowed_domains` or `block_private_addresses=False` raises `UserError`; put
   those on the `EgressPolicy` instead. A wildcard entry like `'*.example.com'` raises.
-- Chromium starts lazily on the first browser tool call and closes at run end. A missing binary returns
-  an install hint as the tool result and emits `BrowserUnavailableWarning`.
+- Chromium starts lazily on the first browser tool call. At run end a local browser closes and a CDP
+  connection disconnects; runs using `cdp_context='default'` on one browser share its pages. A missing
+  binary returns an install hint as the tool result and emits `BrowserUnavailableWarning`.
 - Durable execution (Temporal, DBOS, Prefect capabilities) is rejected with `UserError` at agent
   construction.
 - `storage_state` is credential material and is not accepted by agent-spec loading.

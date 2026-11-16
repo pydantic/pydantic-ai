@@ -272,10 +272,15 @@ class _FakeBrowserContext:
         self.route_handler: _FakeRouteHandler | None = None
         self.websocket_routes: list[str] = []
         self.websocket_handler: Callable[[_FakeWebSocketRoute], Awaitable[None]] | None = None
+        self.init_scripts: list[str] = []
 
     @property
     def pages(self) -> list[_FakePage]:
         return self.opened
+
+    async def add_init_script(self, script: str | None = None) -> None:
+        assert script is not None
+        self.init_scripts.append(script)
 
     async def new_page(self) -> _FakePage:
         if not self.opened:
@@ -392,6 +397,10 @@ class _FakePage:
     @property
     def url(self) -> str:
         return self._url
+
+    @url.setter
+    def url(self, value: str) -> None:
+        self._url = value
 
     @property
     def context(self) -> _FakeBrowserContext:
@@ -687,6 +696,7 @@ class _FakeChromium:
         self.launched: list[bool] = []
         self.sandboxed: list[bool] = []
         self.connected: list[str] = []
+        self.no_defaults: list[bool | None] = []
         self.launch_timeouts: list[int] = []
         self.browser: _FakePlaywrightBrowser | None = None
         self.browsers: list[_FakePlaywrightBrowser] = []
@@ -707,8 +717,11 @@ class _FakeChromium:
         self.browsers.append(self.browser)
         return self.browser
 
-    async def connect_over_cdp(self, endpoint_url: str, *, timeout: int | None = None) -> _FakePlaywrightBrowser:
+    async def connect_over_cdp(
+        self, endpoint_url: str, *, timeout: int | None = None, no_defaults: bool | None = None
+    ) -> _FakePlaywrightBrowser:
         self.connected.append(endpoint_url)
+        self.no_defaults.append(no_defaults)
         self.launch_timeouts.append(timeout if timeout is not None else -1)
         if self._launch_error is not None:
             raise self._launch_error
@@ -821,6 +834,26 @@ def _install_fake_driver(
     cm = _FakeDriverCM(_FakeDriver(chromium))
     monkeypatch.setattr(toolset_module, 'async_playwright', lambda: cm)
     return cm
+
+
+def _populate_default_context(
+    monkeypatch: pytest.MonkeyPatch, *, tabs: int, inherit: Callable[[_FakeBrowserContext], None] | None = None
+) -> None:
+    """Make the fake CDP browser arrive with a default context that already holds `tabs` pages."""
+    connect = _FakeChromium.connect_over_cdp
+
+    async def populated(
+        chromium: _FakeChromium, endpoint_url: str, *, timeout: int | None = None, no_defaults: bool | None = None
+    ) -> _FakePlaywrightBrowser:
+        browser = await connect(chromium, endpoint_url, timeout=timeout, no_defaults=no_defaults)
+        context = await browser.new_context()
+        for _ in range(tabs):
+            await context.new_page()
+        if inherit is not None:
+            inherit(context)
+        return browser
+
+    monkeypatch.setattr(_FakeChromium, 'connect_over_cdp', populated)
 
 
 # --- Tool behavior ----------------------------------------------------------
@@ -2155,6 +2188,11 @@ class TestPlaywrightBrowserHooks:
         assert 'cdp_url' not in rendered
         assert "allowed_domains=['example.com']" in rendered  # non-secret configuration still shows
 
+        async def provisioned() -> str:
+            return 'https://cloud.example.com/?token=s3cret'  # pragma: no cover
+
+        assert 'cdp_url_factory' not in repr(PlaywrightBrowser[None](cdp_url_factory=provisioned))
+
     def test_two_configured_alike_become_one(self) -> None:
         # Each instance builds its own session and toolset, which stay out of equality, so two browsers
         # configured the same way are one browser stated twice, and two that differ raise.
@@ -2168,6 +2206,11 @@ class TestPlaywrightBrowserHooks:
         # than moving cookies into whatever stores the spec.
         with pytest.raises(TypeError, match='storage_state'):
             PlaywrightBrowser[None].from_spec(storage_state=_STORAGE_STATE)  # pyright: ignore[reportCallIssue]
+
+    def test_from_spec_refuses_an_endpoint_factory(self) -> None:
+        # A callable has no serialized form, so a spec cannot name one.
+        with pytest.raises(TypeError, match='cdp_url_factory'):
+            PlaywrightBrowser[None].from_spec(cdp_url_factory=lambda: None)  # pyright: ignore[reportCallIssue]
 
 
 class TestDurabilityRejection:
@@ -2231,9 +2274,22 @@ class TestChromiumAutoInstall:
 # --- Lifecycle through Agent + wrap_run -------------------------------------
 
 
+_BLOCKED_DOCUMENT_PLACEMENTS: dict[str, Callable[[_FakeBrowserContext, str], None]] = {
+    'first_tab': lambda context, url: context.opened.insert(0, _FakePage(url=url, body='INHERITED_SECRET')),
+    'inactive_tab': lambda context, url: context.opened.append(_FakePage(url=url, title='INHERITED_SECRET')),
+    'frame': lambda context, url: context.opened[0].frames.append(_FakeFrameContent(url=url, text='INHERITED_SECRET')),
+    'loading_frame': lambda context, url: context.opened[0].frames.append(
+        _FakeFrameContent(url='', loaded_url=url, text='INHERITED_SECRET')
+    ),
+}
+"""Where a policy-blocked document sits in the inherited default context, given its URL."""
+
+
 class TestPlaywrightBrowserLifecycle:
     @pytest.mark.parametrize('tool_name', ['get_text', 'snapshot', 'screenshot', 'tabs'])
-    @pytest.mark.parametrize('location', ['first_tab', 'inactive_tab', 'frame', 'loading_frame'])
+    @pytest.mark.parametrize(
+        'inherit', [pytest.param(place, id=where) for where, place in _BLOCKED_DOCUMENT_PLACEMENTS.items()]
+    )
     @pytest.mark.parametrize(
         'blocked_url',
         [
@@ -2242,31 +2298,14 @@ class TestPlaywrightBrowserLifecycle:
         ],
     )
     async def test_default_context_refuses_loaded_documents_before_exposing_them(
-        self, monkeypatch: pytest.MonkeyPatch, tool_name: str, location: str, blocked_url: str
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tool_name: str,
+        inherit: Callable[[_FakeBrowserContext, str], None],
+        blocked_url: str,
     ) -> None:
-        page = _FakePage(url=blocked_url if location == 'first_tab' else 'about:blank', body='INHERITED_SECRET')
-        cm = _install_fake_driver(monkeypatch, page)
-        connect = _FakeChromium.connect_over_cdp
-
-        async def populated(
-            chromium: _FakeChromium, endpoint_url: str, *, timeout: int | None = None
-        ) -> _FakePlaywrightBrowser:
-            browser = await connect(chromium, endpoint_url, timeout=timeout)
-            context = await browser.new_context()
-            await context.new_page()
-            if location == 'inactive_tab':
-                context.opened.append(_FakePage(url=blocked_url, title='INHERITED_SECRET'))
-            elif location in ('frame', 'loading_frame'):
-                page.frames.append(
-                    _FakeFrameContent(
-                        url='' if location == 'loading_frame' else blocked_url,
-                        loaded_url=blocked_url,
-                        text='INHERITED_SECRET',
-                    )
-                )
-            return browser
-
-        monkeypatch.setattr(_FakeChromium, 'connect_over_cdp', populated)
+        cm = _install_fake_driver(monkeypatch, _FakePage(url='about:blank'))
+        _populate_default_context(monkeypatch, tabs=1, inherit=lambda context: inherit(context, blocked_url))
         agent = Agent(
             TestModel(call_tools=[tool_name]),
             capabilities=[
@@ -2284,9 +2323,13 @@ class TestPlaywrightBrowserLifecycle:
         assert 'inherited-secret' not in reported
         browser = cm.driver.chromium.browser
         assert browser is not None
-        assert all(not existing.closed and not existing.handlers for existing in browser.contexts[0].pages)
+        context = browser.contexts[0]
+        assert all(not existing.closed and not existing.handlers for existing in context.pages)
+        # The check can wait on a loading frame while the inherited pages run, so the guards are already on.
+        assert context.routes == ['**/*'] and context.websocket_routes == ['**/*']
+        assert len(context.init_scripts) == 1 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
 
-    async def test_default_context_rechecks_inactive_tabs_before_close(self) -> None:
+    async def test_default_context_rechecks_inactive_tabs_and_recovers_once_fixed(self) -> None:
         page = _FakePage(url='about:blank', body='Allowed content')
         session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default')
         async with session:
@@ -2296,50 +2339,53 @@ class TestPlaywrightBrowserLifecycle:
             session.pages.append(inherited)
             assert 'blocked by the browser policy' in await tools.tabs(action='close', index=0)
             assert not page.closed and not inherited.closed
+            inherited.url = 'https://example.com/'
+            assert await tools.get_text() == 'Allowed content'
 
-    async def test_default_context_preserves_subframe_policy(self) -> None:
+    async def test_default_context_reads_subframes_the_policy_allows(self) -> None:
+        class MainFrameOnExampleCom(EgressPolicy):
+            """Refuses any top-level document off example.com, so a subframe passes only as a subframe."""
+
+            def refuse(self, request: EgressRequest) -> str | None:
+                if request.top_level and not request.url.startswith('https://example.com/'):
+                    return 'top-level document off example.com'
+                return super().refuse(request)
+
         page = _FakePage(url='https://example.com/', body='Allowed content')
         page.frames.append(_FakeFrameContent(url='https://embed.example.org/', text='Allowed embedded content'))
+        page.frames.append(_FakeFrameContent(url='about:srcdoc', text='Inline srcdoc content'))
         session = PlaywrightBrowserSession(
             cdp_url='http://localhost:9222',
             cdp_context='default',
-            policy=EgressPolicy(allowed_domains=['example.com'], block_private_addresses=False),
+            policy=MainFrameOnExampleCom(allowed_domains=['example.com'], block_private_addresses=False),
         )
         async with session:
             result = await _toolset(page, session=session).get_text()
         assert 'Allowed embedded content' in result
+        assert 'Inline srcdoc content' in result
 
-    @pytest.mark.parametrize('page_count', [0, 2])
+    @pytest.mark.parametrize('tabs', [0, 2])
     async def test_default_cdp_context_keeps_pages_and_native_handlers(
-        self, monkeypatch: pytest.MonkeyPatch, page_count: int
+        self, monkeypatch: pytest.MonkeyPatch, tabs: int
     ) -> None:
-        page = _FakePage()
-        cm = _install_fake_driver(monkeypatch, page)
-        connect = _FakeChromium.connect_over_cdp
-
-        async def populated(
-            chromium: _FakeChromium, endpoint_url: str, *, timeout: int | None = None
-        ) -> _FakePlaywrightBrowser:
-            browser = await connect(chromium, endpoint_url, timeout=timeout)
-            context = await browser.new_context()
-            for _ in range(page_count):
-                await context.new_page()
-            return browser
-
-        monkeypatch.setattr(_FakeChromium, 'connect_over_cdp', populated)
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        _populate_default_context(monkeypatch, tabs=tabs)
         agent = Agent(
             TestModel(call_tools=['screenshot']),
             capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default')],
         )
         await agent.run('inspect the existing browser')
         chromium = cm.driver.chromium
+        # Playwright's defaults would redirect the user's downloads and emulate focus in their tabs.
+        assert chromium.no_defaults == [True]
         browser = chromium.browser
         assert browser is not None
         assert len(browser.contexts) == 1
         context = browser.contexts[0]
-        assert len(context.pages) == max(page_count, 1)
+        assert len(context.pages) == max(tabs, 1)
         assert context.routes == ['**/*']
         assert context.websocket_routes == ['**/*']
+        assert len(context.init_scripts) == 1 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
         assert context.accept_downloads is None
         for existing in context.pages:
             assert existing.popup_events == ['popup']
@@ -2365,18 +2411,7 @@ class TestPlaywrightBrowserLifecycle:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cm = _install_fake_driver(monkeypatch, _FakePage())
-        connect = _FakeChromium.connect_over_cdp
-
-        async def populated(
-            chromium: _FakeChromium, endpoint_url: str, *, timeout: int | None = None
-        ) -> _FakePlaywrightBrowser:
-            browser = await connect(chromium, endpoint_url, timeout=timeout)
-            context = await browser.new_context()
-            for _ in range(9):
-                await context.new_page()
-            return browser
-
-        monkeypatch.setattr(_FakeChromium, 'connect_over_cdp', populated)
+        _populate_default_context(monkeypatch, tabs=9)
         agent = Agent(
             TestModel(call_tools=['screenshot']),
             capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default')],
@@ -2476,6 +2511,24 @@ class TestPlaywrightBrowserLifecycle:
         assert cancelled and cm.exited
         assert cm.driver.chromium.connected == []
 
+    async def test_cdp_factory_is_called_again_after_a_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        calls = 0
+
+        async def endpoint() -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise PlaywrightTimeoutError('Timeout 1ms exceeded.')
+            return 'http://localhost:9222'
+
+        async with PlaywrightBrowserSession(cdp_url_factory=endpoint) as session:
+            with pytest.raises(PlaywrightTimeoutError):
+                await session.ensure_page()
+            await session.ensure_page()
+        assert calls == 2
+        assert cm.driver.chromium.connected == ['http://localhost:9222']
+
     @pytest.mark.parametrize(
         'kwargs, message',
         [
@@ -2488,6 +2541,7 @@ class TestPlaywrightBrowserLifecycle:
     )
     def test_cdp_options_reject_ambiguous_configuration(self, kwargs: dict[str, object], message: str) -> None:
         with pytest.raises(UserError, match=message):
+            # Each case is a combination the signature or the checks reject on purpose.
             PlaywrightBrowserSession(**kwargs)  # pyright: ignore[reportArgumentType]
 
     async def test_lazy_launch_and_cleanup(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2556,6 +2610,7 @@ class TestPlaywrightBrowserLifecycle:
         await agent.run('screenshot the page')
         chromium = cm._driver.chromium  # pyright: ignore[reportPrivateUsage]
         assert chromium.connected == ['http://localhost:9222']
+        assert chromium.no_defaults == [False]
         assert chromium.launched == []
         assert chromium.browser is not None and chromium.browser.closed is True
 
@@ -2588,6 +2643,7 @@ class TestPlaywrightBrowserLifecycle:
         assert [c.storage_state for c in browser.contexts] == [_STORAGE_STATE]
         assert [c.service_workers for c in browser.contexts] == ['block']
         assert page.context.routes == ['**/*']
+        assert page.context.init_scripts == []  # the context's own `service_workers='block'` covers it
 
     async def test_storage_state_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()

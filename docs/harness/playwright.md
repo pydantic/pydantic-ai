@@ -32,7 +32,7 @@ flowchart TB
     accDescr: The model calls PlaywrightBrowser tools (navigate, snapshot, click and 15 more), one call per action, for page text or screenshot. They run Chromium from the first call to run end. An egress guard passes every request to allowed sites, except navigation and data requests to other domains (allowed_domains) and loopback, private and metadata addresses (block_private_addresses).
     model(["model"])
     browser["PlaywrightBrowser()<br/>navigate, snapshot, click<br/>and 15 more tools"]:::capability
-    chromium["Chromium<br/>starts on the first call,<br/>closes at run end"]:::external
+    chromium["Chromium<br/>starts on the first call,<br/>closes or disconnects<br/>at run end"]:::external
     guard["egress guard"]:::capability
     web["allowed sites<br/>on the web"]:::external
     offlist["navigation and<br/>data requests<br/>to other domains"]:::blocked
@@ -286,16 +286,23 @@ CDP endpoints can contain authentication tokens and must be kept secret.
 ### Reusing the default context
 
 Set `cdp_context='default'` to reuse the browser's sign-ins, tabs, and in-memory
-state. Pydantic selects the first page or opens one if none exists. A missing
+state. Pydantic AI selects the first page or opens one if none exists. A missing
 default context or more than eight tabs returns a tool error. This mode cannot
 be combined with `storage_state`.
 
+This is the higher-risk mode: the agent can act as every account signed in to
+that browser, and one prompt injection reaches all of them. Attach it to a
+profile dedicated to the agent, never your everyday browser, and set
+`allowed_domains` when the agent reads pages you do not control.
+
 Loaded tab and frame URLs must pass the policy's navigation and subframe rules
 before handlers are attached and before page operations. On refusal, close or
-navigate the blocked tab in the provider browser and retry; Pydantic leaves it
+navigate the blocked tab in the provider browser and retry; Pydantic AI leaves it
 unchanged.
 
-For lazy provisioning, pass an async function that returns the CDP endpoint:
+For lazy provisioning, pass an async function, a
+[`CdpUrlFactory`][pydantic_ai_harness.playwright.CdpUrlFactory], that returns the
+CDP endpoint:
 
 ```python
 from pydantic_ai_harness.playwright import CdpUrlFactory, PlaywrightBrowser
@@ -306,18 +313,22 @@ def provider_browser(endpoint: CdpUrlFactory) -> PlaywrightBrowser[None]:
 ```
 
 The factory runs on first browser use, within `navigation_timeout_ms`. Its
-returned endpoint is cached for the run, including connection retries; failed
-calls are not cached. A later run calls it again. The caller owns provisioning
-and cleanup, including resources created before a failure or timeout.
+returned endpoint is cached for the run, including connection retries. A
+timeout is a tool error and the next browser call tries again; an exception the
+factory raises ends the run. A later run calls it again. The caller owns
+provisioning and cleanup, including resources created before a failure or
+timeout.
 
-Use a dedicated agent profile. Its download and service-worker settings stay
-with the browser owner; service workers and connections opened before attachment
-may bypass the request guards.
+While attached, the session refuses new service-worker registrations, and
+Playwright leaves the browser's download and emulation settings as they are.
+Service workers registered and connections opened before attachment bypass the
+request guards, and a page loaded before attachment can still register a worker.
 
 ## Lifecycle
 
-Each run gets a `PlaywrightBrowserSession` that starts or connects to Chromium
-on the first browser-tool call. A run with no browser use starts neither a
+Each run gets a
+[`PlaywrightBrowserSession`][pydantic_ai_harness.playwright.PlaywrightBrowserSession]
+that starts or connects to Chromium on the first browser-tool call. A run with no browser use starts neither a
 driver nor a browser. On success, error, or cancellation, a locally launched
 browser is closed; a CDP connection is disconnected. The caller decides when to
 retain, sleep, or delete the provider browser and save its profile.
@@ -336,6 +347,9 @@ async with PlaywrightBrowserSession() as session:
     page = await session.ensure_page()  # Chromium starts here, not on entry
     await page.goto('https://example.com')
 ```
+
+The session takes the same `cdp_url`, `cdp_url_factory` and `cdp_context`
+options as the capability, with the same checks.
 
 `PlaywrightBrowserToolset` is exported on the same basis: pass it a session to
 get the eighteen tools without the capability's hooks. The policy lives on the
@@ -430,8 +444,9 @@ redacted whichever tool returned them.
 
 - A session keeps up to eight tabs open; a page that opens more has the extras
   closed, which is recorded in the event log.
-- Uploads and downloads are not exposed: the context refuses downloads, and there
-  is no tool to put a file into a page. Both need an artifact contract between the
+- Uploads and downloads are not exposed: a new context refuses downloads (with
+  `cdp_context='default'` the browser's own setting applies), and there is no tool
+  to put a file into a page. Both need an artifact contract between the
   page and the host filesystem, tracked in
   [#590](https://github.com/pydantic/pydantic-ai-harness/issues/590).
 - CSS selectors cannot reach content inside iframes; reading and acting there
@@ -579,3 +594,7 @@ not a guarantee.
 ## API reference
 
 ::: pydantic_ai_harness.playwright.PlaywrightBrowser
+
+::: pydantic_ai_harness.playwright.PlaywrightBrowserSession
+
+::: pydantic_ai_harness.playwright.CdpUrlFactory

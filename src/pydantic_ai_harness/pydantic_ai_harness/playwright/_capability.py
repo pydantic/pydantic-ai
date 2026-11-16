@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
@@ -21,6 +21,7 @@ from pydantic_ai_harness.playwright._toolset import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_MAX_CONTENT_TOKENS,
     DEFAULT_NAVIGATION_TIMEOUT_MS,
+    CdpContextMode,
     CdpUrlFactory,
     EgressPolicy,
     PlaywrightBrowserSession,
@@ -243,20 +244,23 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     The function can create or resume a managed browser; the caller owns its
     provider-side lifetime. `navigation_timeout_ms` limits each factory call.
     A returned endpoint is reused for the rest of the run, including connection
-    retries. Calls that raise or time out are not cached.
+    retries. A call that times out is a tool error, and the next browser tool
+    call tries again; an exception the function raises ends the run.
 
     Cannot be combined with `cdp_url` or supplied through a serializable spec.
     """
 
-    cdp_context: Literal['new', 'default'] = 'new'
+    cdp_context: CdpContextMode = 'new'
     """Create an isolated context, or use the CDP browser's existing default context.
 
     `default` requires `cdp_url` or `cdp_url_factory` and excludes `storage_state`.
-    It inherits saved sign-ins and open tabs. Loaded tab and frame URLs must pass
-    the egress policy before handlers are attached and before tools read or act
-    on a page. Egress guards and native session handlers still apply, but the
-    browser owner controls service workers and downloads; those creation-time
-    settings cannot be changed on an existing context.
+    It inherits saved sign-ins and open tabs, so the agent can act as every account
+    signed in to that browser: attach it to a profile dedicated to the agent, not
+    an everyday browser. Loaded tab and frame URLs must pass the egress policy
+    before handlers are attached and before tools read or act on a page. Egress
+    guards and native session handlers still apply, and new service-worker
+    registrations are refused while attached. Downloads follow the browser's own
+    settings, and service workers registered before attachment are not guarded.
     """
 
     id: str | None = 'playwright_browser'
@@ -377,7 +381,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         cdp_url: str | None = None,
-        cdp_context: Literal['new', 'default'] = 'new',
+        cdp_context: CdpContextMode = 'new',
         id: str | None = 'playwright_browser',
         description: str | None = None,
         defer_loading: bool = False,
@@ -387,7 +391,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         A spec carries connection configuration, not session credentials:
         `storage_state` is deliberately absent, so a spec naming it raises rather
         than moving cookies into whatever stores the spec. Set it on the
-        constructed capability instead.
+        constructed capability instead. `cdp_context='default'` is configuration
+        too: it selects the browser's signed-in context without putting its
+        credentials in the spec.
         """
         return cls(
             headless=headless,

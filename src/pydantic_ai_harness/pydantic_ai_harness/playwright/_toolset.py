@@ -27,6 +27,19 @@ together when it changed. Pinned in the `[playwright]` extra as
   Source: <https://playwright.dev/python/docs/api/class-browsercontext>
   (`serviceWorkers` option). Re-check: inspect the `service_workers` parameter of
   `Browser.new_context`.
+- That `service_workers='block'` is an init script stubbing
+  `ServiceWorkerContainer.prototype.register`, which the default-context path
+  installs itself. Verified 2026-11-16 against the 1.64.1 driver source
+  (`addInitScript` in `BrowserContext._initialize`). Re-check: search the bundled
+  `coreBundle.js` for `Service Worker registration blocked by Playwright`.
+- `connect_over_cdp(no_defaults=True)` leaves the default context's downloads and
+  focus and media emulation at the browser's own settings; without it, Playwright
+  sends `Browser.setDownloadBehavior` with `allowAndName` into its temporary
+  artifacts directory. The parameter exists from 1.61.0. Verified 2026-11-16
+  against the 1.64.1 driver source (`_connectOverCDPImpl`,
+  `CRBrowserContext.initialize`). Source:
+  <https://playwright.dev/python/docs/api/class-browsertype#browser-type-connect-over-cdp>.
+  Re-check: `inspect.signature(BrowserType.connect_over_cdp)` lists `no_defaults`.
 - `new_context` accepts downloads by default; `accept_downloads=False` refuses
   them, so a page cannot write attachments to the host's temporary storage.
   Verified 2026-08-18 (parameter documented as "Defaults to `true` where all the
@@ -189,6 +202,19 @@ _BLANK_PAGE = 'about:blank'
 
 _ERROR_PAGE_SCHEME = 'chrome-error://'
 """Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
+
+_SRCDOC_FRAME = 'about:srcdoc'
+"""URL of an iframe whose document is its parent's `srcdoc` markup, so no request loads it."""
+
+_BLOCK_SERVICE_WORKER_REGISTRATION = (
+    'if (self.ServiceWorkerContainer) ServiceWorkerContainer.prototype.register = async () => {'
+    " console.warn('Service Worker registration blocked by PlaywrightBrowser'); };"
+)
+"""What `new_context(service_workers='block')` installs, for a context the session did not create.
+
+Playwright implements that option as this init script. Re-check: search the bundled
+driver's `coreBundle.js` for `Service Worker registration blocked by Playwright`.
+"""
 
 _MAX_TABS = 8
 """Pages one session keeps open at once.
@@ -1028,6 +1054,9 @@ class _FailedRequest(Protocol):
 CdpUrlFactory = Callable[[], Awaitable[str]]
 """Return a CDP endpoint asynchronously when a browser tool needs to connect."""
 
+CdpContextMode = Literal['new', 'default']
+"""Whether a CDP-attached session creates an isolated context or uses the browser's default one."""
+
 
 class PlaywrightBrowserSession:
     """One agent run's Chromium: how a page is obtained, guarded, and released.
@@ -1054,7 +1083,7 @@ class PlaywrightBrowserSession:
         storage_state: StorageState | None = None,
         cdp_url: str | None = None,
         cdp_url_factory: CdpUrlFactory | None = None,
-        cdp_context: Literal['new', 'default'] = 'new',
+        cdp_context: CdpContextMode = 'new',
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         launch_timeout_ms: int = DEFAULT_NAVIGATION_TIMEOUT_MS,
@@ -1243,7 +1272,13 @@ class PlaywrightBrowserSession:
                 if not frame.url:
                     # CDP can expose a cross-origin frame before its URL is populated.
                     await self._bounded(frame.wait_for_load_state('domcontentloaded', timeout=self._launch_timeout_ms))
-                document = EgressRequest(url=frame.url, kind='navigation' if index == 0 else 'subframe')
+                top_level = index == 0
+                if not top_level and frame.url == _SRCDOC_FRAME:
+                    # Its markup came from the parent document, which this loop checks.
+                    continue
+                document = EgressRequest(
+                    url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level
+                )
                 if (reason := await self.decide(document)) is not None:
                     raise BrowserUnavailableError(
                         f'The default CDP context contains a document blocked by the browser policy '
@@ -1292,9 +1327,14 @@ class PlaywrightBrowserSession:
                 raise BrowserUnavailableError(
                     f'The default CDP context has more than {_MAX_TABS} tabs. Close some first.'
                 )
+            self._context = context
+            # The inherited pages keep running while the check below waits on a loading
+            # frame, so the guards go on first.
+            await self._install_guards(context)
             await self._validate_default_context_pages(pages)
+            if not pages:
+                pages = [await self._bounded(context.new_page())]
         else:
-            # These creation-time controls cannot be applied to an existing context.
             # Service workers bypass routes; downloads have no tool-level contract.
             context = await self._bounded(
                 browser.new_context(
@@ -1303,18 +1343,29 @@ class PlaywrightBrowserSession:
                     accept_downloads=False,
                 )
             )
-            pages = []
-        self._context = context
-        if not pages:
+            self._context = context
             pages = [await self._bounded(context.new_page())]
-        if self.policy.enforced():
-            await self._bounded(context.route('**/*', self._route_guard))
-            # A network route never sees a WebSocket, so sockets get a guard of their own.
-            await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
+            await self._install_guards(context)
         for page in pages:
             self._wire_page(page)
             self.pages.append(page)
         self.page = pages[0]
+
+    async def _install_guards(self, context: PlaywrightBrowserContext) -> None:
+        """Route every request and WebSocket of `context` through the policy, when it enforces anything.
+
+        A context the session did not create keeps the service-worker setting it was
+        created with, and a worker's requests never reach a route, so new registrations
+        are refused the way `service_workers='block'` refuses them. Workers registered
+        before the session attached are out of its reach.
+        """
+        if not self.policy.enforced():
+            return
+        await self._bounded(context.route('**/*', self._route_guard))
+        # A network route never sees a WebSocket, so sockets get a guard of their own.
+        await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
+        if self._cdp_context == 'default':
+            await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))
 
     async def _bounded(self, awaitable: Awaitable[_T]) -> _T:
         """Run a setup step that has no `timeout` parameter under `launch_timeout_ms`.
@@ -1349,7 +1400,11 @@ class PlaywrightBrowserSession:
             self._cdp_url = await self._bounded(self._cdp_url_factory())
         if self._cdp_url is not None:
             try:
-                return await pw.chromium.connect_over_cdp(self._cdp_url, timeout=self._launch_timeout_ms)
+                # Without `no_defaults`, Playwright makes the default context save downloads to
+                # its own temporary directory and emulates focus in the user's tabs.
+                return await pw.chromium.connect_over_cdp(
+                    self._cdp_url, timeout=self._launch_timeout_ms, no_defaults=self._cdp_context == 'default'
+                )
             except PlaywrightError as exc:
                 raise PlaywrightError(_without_endpoint_credentials(str(exc), self._cdp_url)) from exc
         if await anyio.Path(pw.chromium.executable_path).exists():

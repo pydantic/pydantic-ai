@@ -101,11 +101,13 @@ A provider-resolved uploaded-file identifier or cloud-storage URL can exercise p
 
 Applications that opt into local/private destinations must authorize those destinations. Native provider tools and custom tools have the behavior and credentials of their provider or implementation. A domain list passed to a provider-native tool applies only where that provider supports it ([tracking issue](https://github.com/pydantic/pydantic-ai/issues/9706)). Browser capabilities are separate fetch transports with their own address checks; `BrowserUse` does not resolve hostnames before navigation, so sensitive networks need its domain allowlist.
 
-`PlaywrightBrowser(cdp_context='default')` inherits the browser's signed-in accounts and tabs.
-Loaded documents must pass the egress policy before handlers or page tools use them; refusal
-leaves them unchanged. The browser owner controls downloads and service workers, and workers
-or connections opened before attachment may bypass request guards. Use dedicated agent profiles.
-The application's `cdp_url_factory` owns provisioning and cleanup; its endpoint is not model input.
+`PlaywrightBrowser(cdp_context='default')` gives the agent the browser's signed-in accounts and
+tabs, so one prompt injection can act as each of them; attach it only to a profile dedicated to
+the agent. Loaded documents must pass the egress policy before handlers or page tools use them;
+refusal leaves them unchanged. While attached, the request and WebSocket guards apply and new
+service-worker registrations are refused. Downloads follow the browser's settings. Workers
+registered and connections opened before attachment bypass the request guards. The application's
+`cdp_url_factory` owns provisioning and cleanup; its endpoint is not model input.
 
 Canonical guidance: [web fetching](docs/capabilities/web-fetch.md), [multimodal input](docs/input.md), [adapter trust model](docs/ui/overview.md), [local download controls](pydantic_ai_slim/pydantic_ai/_ssrf.py), [Playwright egress](docs/harness/playwright.md#egress-and-ssrf), and [BrowserUse safety](docs/harness/browser-use.md#sessions-and-safety).
 
