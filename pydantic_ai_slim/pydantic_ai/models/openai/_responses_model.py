@@ -732,14 +732,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
-        if isinstance(self._provider.client, AsyncAzureOpenAI):
-            # The native computer tool isn't verified on Azure, so `ComputerUse` keeps its function tool there.
-            profile = merge_profile(profile, OpenAIModelProfile(openai_supports_computer_tool=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
-            # while HTTP succeeds (live, 2026-10-22).
-            return merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
+            # while HTTP succeeds (live, 2026-10-22). Nor is the native computer tool verified on either, so
+            # `ComputerUse` keeps its function tool.
+            return merge_profile(
+                profile,
+                OpenAIModelProfile(openai_responses_supports_websocket=False, openai_supports_computer_tool=False),
+            )
         return profile
 
     @classmethod
@@ -836,14 +837,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
         restored = self._restore_response_scoped_tool_call_ids(messages)
-        previous_response_id, messages = self._resolve_previous_response_id(
+        previous_response_id, new_messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'),
             messages,
             store=self._resolve_store(model_settings),
             allow_no_new_messages=True,
         )
-        # As in `_build_responses_request_params`: an output of a call the server holds is a `computer_call_output`.
-        calls = computer_calls_by_id(restored[: len(restored) - len(messages)])
+        calls = self._held_computer_calls(restored, new_messages, model_request_parameters)
+        messages = new_messages
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
         messages = _without_model_settings_deltas(messages)
@@ -1525,10 +1526,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = None
 
         restored = self._restore_response_scoped_tool_call_ids(messages)
-        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
-        # The calls the server holds in the stored response or conversation: an output of one is a
-        # `computer_call_output` even when the call itself isn't sent again.
-        calls = computer_calls_by_id(restored[: len(restored) - len(messages)])
+        previous_response_id, conversation_id, new_messages = self._resolve_server_side_state(model_settings, messages)
+        calls = self._held_computer_calls(restored, new_messages, wire_request_parameters)
+        messages = new_messages
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
 
@@ -2242,6 +2242,32 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
 
+    def _held_computer_calls(
+        self,
+        restored: list[ModelMessage],
+        new_messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, ToolCallPart]:
+        """The `computer_call`s the server holds before `new_messages`, whose outputs go as `computer_call_output`s.
+
+        The API refuses a `computer_call_output` without its computer tool, so answering a held call without it raises.
+        """
+        held = len(restored) - len(new_messages)
+        calls = computer_calls_by_id(restored[:held])
+        answered = any(
+            isinstance(part, ToolReturnPart) and part.tool_call_id in calls
+            for message in restored[held:]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if answered and self._native_computer_name(model_request_parameters) is None:
+            raise UserError(
+                'The stored response or conversation holds a native computer call, so its result must be sent with '
+                'the native computer tool: the API refuses it otherwise. Keep the native computer tool for this run, '
+                'or continue without `openai_previous_response_id` and `openai_conversation_id`.'
+            )
+        return calls
+
     @staticmethod
     def _native_computer_name(model_request_parameters: ModelRequestParameters) -> str | None:
         """The name of the `computer` tool when the request sends a `ComputerTool` in its place."""
@@ -2250,11 +2276,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
         computer = model_request_parameters.declared_tool_defs.get(name or '')
         if computer is not None and computer.defer_loading:
-            # The API refuses `defer_loading` on its computer tool, and one that tool search reveals never reaches the
-            # model, so the deferral would be dropped.
+            # Live: the API rejects `defer_loading` on its computer tool as an unknown parameter (pinned by
+            # `test_openai_rejects_defer_loading_on_its_computer_tool`), and given a computer tool in a
+            # `tool_search_output`, GPT searched again instead of calling it.
             raise UserError(
-                f'OpenAI sends the {name!r} tool as its native computer tool, which it cannot defer: the API refuses '
-                '`defer_loading` on it, and tool search cannot reveal it. Defer the whole capability with '
+                f'OpenAI sends the {name!r} tool as its native computer tool, which it cannot defer: the API rejects '
+                '`defer_loading` on it as an unknown parameter. Defer the whole capability with '
                 '`ComputerUse(defer_loading=True)` instead, or drop `defer_loading` from the tool.'
             )
         return name
