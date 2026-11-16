@@ -2944,34 +2944,6 @@ def test_boundary_scripts_import_only_the_stdlib_the_siblings_and_the_pinned_pac
             )
 
 
-def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolated():
-    workflow = Path(__file__).parent.parent / 'workflows' / 'weekly-maintainer-digest.yml'
-    text = workflow.read_text()
-    jobs = yaml.safe_load(text)['jobs']
-
-    assert "- cron: '23 14 * * 1'" in text
-    assert 'workflow_dispatch' in text
-    assert jobs['build']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
-    assert jobs['notify']['permissions'] == {}
-    assert jobs['alert']['permissions'] == {}
-    assert "github.event.schedule == '23 14 * * 1'" in jobs['build']['if']
-    assert "github.event_name == 'workflow_dispatch'" in jobs['build']['if']
-    checkout = next(step for step in jobs['build']['steps'] if step.get('uses', '').startswith('actions/checkout@'))
-    assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
-    assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
-    assert checkout['with']['persist-credentials'] is False
-    # The import-closure test asserts the sibling modules ride along.
-    assert '.github/scripts/issue_pr_attention_monitor.py' in checkout['with']['sparse-checkout']
-    build_text = json.dumps(jobs['build'])
-    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' not in build_text
-    assert 'issue_pr_attention_monitor.py weekly' in build_text
-    for job_name in ('notify', 'alert'):
-        assert 'environment' not in jobs[job_name]
-        action = jobs[job_name]['steps'][0]
-        assert action['uses'] == 'slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d'
-        assert action['with']['webhook'] == '${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}'
-
-
 class StubResponse(io.BytesIO):
     status = 200
     headers: dict[str, str] = {}

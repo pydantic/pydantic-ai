@@ -24,11 +24,6 @@ rules:
       # The sandbox provider tokens reach only the pytest step's `env:`, after checkout and
       # setup, and the job runs only for same-repo pull requests, pushes and the nightly.
       - sandbox-live.yml
-      # This reusable digest workflow deliberately consumes the named
-      # `workflow_call` webhook secret. A job-level environment can shadow that
-      # value with a caller-repository environment secret, breaking cross-repo
-      # callers; the webhook is passed only to trusted, SHA-pinned code/actions.
-      - weekly-maintainer-digest.yml
       # gh-aw-generated agentic workflow lockfiles (see
       # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /
       # GitHub secrets as job-level env by design; they are held by the AWF
