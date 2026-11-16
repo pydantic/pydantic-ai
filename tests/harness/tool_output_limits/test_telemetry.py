@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.messages import ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, Summarize, ToolOutputLimits, Truncate
+from tests.harness.conftest import Instrumented
 
 
 def agent_with_tool(
@@ -25,13 +25,13 @@ def agent_with_tool(
     agent: Agent[object, str] = Agent(TestModel(call_tools=['big_tool']), capabilities=capabilities)
 
     @agent.tool_plain
-    def big_tool() -> Any:
+    def big_tool() -> object:
         return output
 
     return agent
 
 
-def limits_attributes(exporter: InMemorySpanExporter) -> dict[str, Any]:
+def limits_attributes(exporter: InMemorySpanExporter) -> dict[str, AttributeValue]:
     """The `tool_output_limits.*` attributes on the `execute_tool big_tool` span."""
     [span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool big_tool']
     return {key: value for key, value in (span.attributes or {}).items() if key.startswith('tool_output_limits.')}
@@ -51,13 +51,15 @@ def failing_summarize(tool_name: str, text: str) -> str:
     raise ValueError('summarizer down')
 
 
+def short_summarize(tool_name: str, text: str) -> str:
+    return 'a short summary'
+
+
 TRUNCATE = ToolOutputLimits[object](bands=[Band(over=100, action=Truncate(max_chars=50))])
 
 
 class TestToolOutputLimitsTelemetry:
-    async def test_a_truncated_result_is_recorded(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_truncated_result_is_recorded(self, instrumented: Instrumented):
         instrumentation, exporter = instrumented(False)
         await agent_with_tool(TRUNCATE, 'x' * 500, instrumentation).run('go')
 
@@ -70,17 +72,13 @@ class TestToolOutputLimitsTelemetry:
             }
         )
 
-    async def test_a_result_under_every_band_records_nothing(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_result_under_every_band_records_nothing(self, instrumented: Instrumented):
         instrumentation, exporter = instrumented(False)
         await agent_with_tool(TRUNCATE, 'small', instrumentation).run('go')
 
         assert limits_attributes(exporter) == {}
 
-    async def test_a_truncate_that_cuts_nothing_records_nothing(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_truncate_that_cuts_nothing_records_nothing(self, instrumented: Instrumented):
         """The band matches, but the text already fits `max_chars`, so the model gets it unchanged."""
         limits = ToolOutputLimits[object](bands=[Band(over=100, action=Truncate(max_chars=1_000))])
         instrumentation, exporter = instrumented(False)
@@ -88,9 +86,7 @@ class TestToolOutputLimitsTelemetry:
 
         assert limits_attributes(exporter) == {}
 
-    async def test_sizes_are_in_tokens_with_over_tokens(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_sizes_are_in_tokens_with_over_tokens(self, instrumented: Instrumented):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Truncate(max_chars=100))],
             over_tokens=True,
@@ -108,9 +104,7 @@ class TestToolOutputLimitsTelemetry:
             }
         )
 
-    async def test_a_failed_spill_records_the_truncate_it_fell_back_to(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_failed_spill_records_the_truncate_it_fell_back_to(self, instrumented: Instrumented):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Spill(then=Truncate(max_chars=50)))], store=FailingStore()
         )
@@ -128,9 +122,7 @@ class TestToolOutputLimitsTelemetry:
             }
         )
 
-    async def test_a_failed_spill_is_recorded_even_when_its_fallback_cuts_nothing(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_failed_spill_is_recorded_even_when_its_fallback_cuts_nothing(self, instrumented: Instrumented):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Spill(then=Truncate(max_chars=1_000)))], store=FailingStore()
         )
@@ -149,7 +141,7 @@ class TestToolOutputLimitsTelemetry:
         )
 
     async def test_binary_that_cannot_be_truncated_records_the_spill_it_fell_back_to(
-        self, tmp_path: Path, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+        self, tmp_path: Path, instrumented: Instrumented
     ):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Truncate(then=Spill()))], store=LocalFileStore(base_dir=tmp_path)
@@ -165,9 +157,23 @@ class TestToolOutputLimitsTelemetry:
         # Truncate can't take binary, so no exception stopped it.
         assert 'tool_output_limits.fallback_error' not in attributes
 
-    async def test_a_failed_summary_records_its_error_type(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_summary_is_recorded(self, instrumented: Instrumented):
+        limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Summarize(summarize=short_summarize, then=Truncate(max_chars=50)))]
+        )
+        instrumentation, exporter = instrumented(False)
+        await agent_with_tool(limits, 'x' * 500, instrumentation).run('go')
+
+        assert limits_attributes(exporter) == snapshot(
+            {
+                'tool_output_limits.action': 'summarize',
+                'tool_output_limits.original_size': 500,
+                'tool_output_limits.reduced_size': 15,
+                'tool_output_limits.size_unit': 'chars',
+            }
+        )
+
+    async def test_a_failed_summary_records_its_error_type(self, instrumented: Instrumented):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Summarize(summarize=failing_summarize, then=Truncate(max_chars=50)))]
         )
@@ -180,9 +186,7 @@ class TestToolOutputLimitsTelemetry:
             'ValueError',
         )
 
-    async def test_a_chain_of_failures_records_the_bands_own_action_and_its_error(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_chain_of_failures_records_the_bands_own_action_and_its_error(self, instrumented: Instrumented):
         """The spill fails with `OSError`, then its summary with `ValueError`; the band's own spill is what's kept."""
         summarize = Summarize(summarize=failing_summarize, then=Truncate(max_chars=50))
         limits = ToolOutputLimits[object](bands=[Band(over=100, action=Spill(then=summarize))], store=FailingStore())
@@ -196,9 +200,7 @@ class TestToolOutputLimitsTelemetry:
             attributes['tool_output_limits.fallback_error'],
         ) == ('truncate', 'spill', 'OSError')
 
-    async def test_content_reduced_on_its_own_gets_its_own_attributes(
-        self, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_content_reduced_on_its_own_gets_its_own_attributes(self, instrumented: Instrumented):
         instrumentation, exporter = instrumented(False)
         await agent_with_tool(TRUNCATE, ToolReturn(return_value='small', content='y' * 300), instrumentation).run('go')
 
@@ -211,9 +213,7 @@ class TestToolOutputLimitsTelemetry:
             }
         )
 
-    async def test_a_spill_records_its_handle_only_with_content(
-        self, tmp_path: Path, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ):
+    async def test_a_spill_records_its_handle_only_with_content(self, tmp_path: Path, instrumented: Instrumented):
         spill = ToolOutputLimits[object](
             bands=[Band(over=100, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
         )
@@ -240,7 +240,7 @@ class TestToolOutputLimitsTelemetry:
         assert limits_attributes(exporter)['tool_output_limits.handle'] == part.metadata['overflow_handle']
 
     async def test_a_content_spill_records_its_handle_only_with_content(
-        self, tmp_path: Path, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+        self, tmp_path: Path, instrumented: Instrumented
     ):
         spill = ToolOutputLimits[object](
             bands=[Band(over=100, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
