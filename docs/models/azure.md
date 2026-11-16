@@ -119,6 +119,10 @@ Or initialise the model and provider directly, for example to process a document
     ])
     ```
 
+## Content filters
+
+When Azure's content filter rejects a request with a 400 `content_filter` error, [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] return a [`ModelResponse`][pydantic_ai.messages.ModelResponse] with `finish_reason='content_filter'` and the filter results in its [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details], which the agent raises as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. With a [retrying transport](../retries.md#a-retrying-client) whose `validate_response` rejects the 400, the request raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] instead, so a [fallback model](../retries.md#model-fallback-is-not-a-retry) moves on.
+
 ## Prompt caching
 
 On GPT-5.6 and later, Azure's v1 API honors OpenAI's explicit [prompt caching](openai.md#prompt-caching) settings: [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] markers, with both the Chat Completions and Responses APIs. Cache writes and reads are reported as [`cache_write_tokens`][pydantic_ai.usage.RequestUsage.cache_write_tokens] and [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens] in the response's usage, as on OpenAI. See [Monitoring cache efficiency](../capabilities/caching.md#monitoring-cache-efficiency).
