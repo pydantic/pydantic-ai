@@ -15,17 +15,14 @@ from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool, ToolCallPart, ToolDenied
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai import Agent, ToolCallPart
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
-    Click,
     ComputerCallPart,
     ComputerToolAction,
-    SafetyCheck,
     Screenshot,
 )
-from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -33,7 +30,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartStartEvent,
-    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -69,7 +65,7 @@ pytestmark = [
 ]
 
 
-def _computer_call(*actions: dict[str, Any], safety_checks: list[dict[str, Any]] | None = None) -> resp.Response:
+def _computer_call(*actions: dict[str, Any]) -> resp.Response:
     item = resp.ResponseComputerToolCall.model_validate(
         {
             'id': 'cu_1',
@@ -77,7 +73,8 @@ def _computer_call(*actions: dict[str, Any], safety_checks: list[dict[str, Any]]
             'type': 'computer_call',
             'status': 'completed',
             'actions': list(actions),
-            'pending_safety_checks': safety_checks or [],
+            # The SDK's type requires it, though the API no longer sends it.
+            'pending_safety_checks': [],
         }
     )
     response = response_message([item])
@@ -103,109 +100,6 @@ def _done() -> resp.Response:
 
 COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)
 
-CHECK = {'id': 'cu_sc_1', 'code': 'malicious_instructions', 'message': 'The page asks you to send a password.'}
-
-
-@pytest.mark.parametrize('approve', [True, False], ids=['approved', 'denied'])
-async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them(
-    allow_model_requests: None, approve: bool
-) -> None:
-    provider, computer = InMemoryProvider(), FakeComputer(requires_approval=True)
-    client = MockOpenAIResponses.create_mock(
-        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK]), _done()]
-    )
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    agent = Agent(
-        model,
-        capabilities=[computer, provider.capability()],
-        output_type=[str, DeferredToolRequests],
-        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
-    )
-
-    paused = await agent.run('Go.')
-    assert isinstance(paused.output, DeferredToolRequests)
-    (approval,) = paused.output.approvals
-    # What an app shows the person deciding.
-    assert isinstance(approval, ComputerCallPart)
-    assert approval.safety_checks == [SafetyCheck(code=CHECK['code'], message=CHECK['message'], id=CHECK['id'])]
-    assert computer.actions == []
-
-    decision = True if approve else ToolDenied('Not on this page.')
-    resumed = await agent.run(
-        message_history=paused.all_messages(),
-        deferred_tool_results=DeferredToolResults(approvals={approval.tool_call_id: decision}),
-    )
-    assert resumed.output == 'done'
-    _, second = get_mock_responses_kwargs(client)
-    # The flagged call stays in the stored response; its output alone acknowledges or refuses it.
-    assert second['previous_response_id'] == 'resp_1'
-    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    if approve:
-        assert output['acknowledged_safety_checks'] == [CHECK]
-        assert computer.actions == [Click(x=5, y=6)]
-    else:
-        assert 'acknowledged_safety_checks' not in output
-        note = second['input'][second['input'].index(output) + 1]
-        assert note == {
-            'role': 'user',
-            'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">Not on this page.</pyai:tool_result>',
-        }
-        assert computer.actions == []
-
-
-@pytest.mark.parametrize('checks', [{}, '', False, 0, None])
-async def test_malformed_safety_checks_make_the_call_wait_for_approval(allow_model_requests: None, checks: Any) -> None:
-    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
-    item = first.output[0]
-    assert isinstance(item, resp.ResponseComputerToolCall)
-    item.pending_safety_checks = checks
-    provider, computer = InMemoryProvider(), FakeComputer()
-    client = MockOpenAIResponses.create_mock([first, _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    agent = Agent(model, capabilities=[computer, provider.capability()], output_type=[str, DeferredToolRequests])
-
-    result = await agent.run('Go.')
-    assert isinstance(result.output, DeferredToolRequests)
-    assert computer.actions == []
-
-
-async def test_a_restored_call_approved_with_corrected_arguments_acknowledges_its_safety_checks(
-    allow_model_requests: None,
-) -> None:
-    from pydantic_ai import RunContext, ToolApproved
-    from pydantic_ai.capabilities import Hooks
-
-    # An option the `computer` tool lacks: once through JSON, the call is a plain `ToolCallPart`.
-    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'extra': 'bad'}, safety_checks=[CHECK])
-    client = MockOpenAIResponses.create_mock([first, _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    corrected = {'actions': [{'type': 'click', 'x': 5, 'y': 6}]}
-
-    async def correct(ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any) -> Any:
-        return corrected
-
-    computer = FakeComputer(requires_approval=True)
-    agent = Agent(
-        model,
-        capabilities=[computer, InMemoryProvider().capability(), Hooks(before_tool_validate=correct)],
-        output_type=[str, DeferredToolRequests],
-    )
-    paused = await agent.run('Click.')
-    assert isinstance(paused.output, DeferredToolRequests)
-    (approval,) = paused.output.approvals
-    history = ModelMessagesTypeAdapter.validate_json(paused.all_messages_json())
-
-    await agent.run(
-        message_history=history,
-        deferred_tool_results=DeferredToolResults(
-            approvals={approval.tool_call_id: ToolApproved(override_args=corrected)}
-        ),
-    )
-    assert computer.actions == [Click(x=5, y=6)]
-    _, second = get_mock_responses_kwargs(client)
-    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert output['acknowledged_safety_checks'] == [CHECK]
-
 
 @pytest.mark.parametrize(
     'response_scoped,stored_id,settings',
@@ -217,7 +111,7 @@ async def test_a_restored_call_approved_with_corrected_arguments_acknowledges_it
         pytest.param(False, 'call_1', {'openai_previous_response_id': 'auto'}, id='held-by-the-server'),
     ],
 )
-async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safety_checks(
+async def test_compacting_a_history_with_a_computer_call_enables_the_computer_tool(
     allow_model_requests: None, response_scoped: bool, stored_id: str, settings: OpenAIResponsesModelSettings | None
 ) -> None:
     profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=response_scoped)
@@ -229,7 +123,6 @@ async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safet
         tool_kind=COMPUTER_KIND.id,
         provider_name='openai',
         provider_details={
-            'safety_checks': [CHECK],
             'computer_call': {'type': 'computer_call', 'id': 'cu_1', 'call_id': 'call_1', 'status': 'completed'},
         },
     )
@@ -275,7 +168,8 @@ async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safet
 
     (output,) = [item for item in sent['input'] if item.get('type') == 'computer_call_output']
     assert output['call_id'] == 'call_1'
-    assert output['acknowledged_safety_checks'] == [CHECK]
+    # The endpoint refuses a `computer_call_output` unless the computer tool is enabled.
+    assert sent['extra_body'] == {'tools': [{'type': 'computer'}]}
 
 
 @pytest.mark.parametrize(
@@ -338,25 +232,6 @@ async def test_a_held_call_made_as_a_function_call_gets_a_function_call_output(a
     # The call stays in the stored response, as the function call it was.
     assert request['previous_response_id'] == 'resp_1'
     assert [item.get('type') for item in request['input'] if 'type' in item] == ['function_call_output']
-
-
-async def test_tool_choice_naming_the_computer_names_the_native_tool(allow_model_requests: None) -> None:
-    client = MockOpenAIResponses.create_mock([_done(), _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
-    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
-    other = ToolDefinition(name='other', parameters_json_schema={'type': 'object'})
-    params = ModelRequestParameters(
-        function_tools=[computer, note, other], native_tools=[COMPUTER_TOOL], allow_text_output=True
-    )
-    prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Look.')]
-
-    await model.request(prompt, {'tool_choice': ['computer']}, params)
-    await model.request(prompt, {'tool_choice': ['computer', 'note']}, params)
-
-    forced, allowed = get_mock_responses_kwargs(client)
-    assert forced['tool_choice'] == {'type': 'computer'}
-    assert allowed['tool_choice']['tools'] == [{'type': 'computer'}, {'type': 'function', 'name': 'note'}]
 
 
 async def test_a_computer_tool_waiting_to_be_loaded_is_not_sent(allow_model_requests: None) -> None:
@@ -425,51 +300,6 @@ async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_re
         'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">'
         'Ran 0 of 1 actions. The next one failed: This workspace is read-only.</pyai:tool_result>',
     }
-
-
-@pytest.mark.parametrize(
-    ('fields', 'runs'),
-    [
-        pytest.param({'pending_safety_checks': []}, True, id='with-a-checklist'),
-        pytest.param({}, False, id='without-a-checklist'),
-        pytest.param(
-            {
-                'pending_safety_checks': [],
-                'actions': [resp.response_computer_tool_call.ActionClick(type='click', x=7, y=8, button='left')],
-            },
-            False,
-            id='with-actions-too',
-        ),
-        pytest.param({'pending_safety_checks': [], 'actions': None}, False, id='with-null-actions'),
-        pytest.param(
-            {
-                'pending_safety_checks': [],
-                'action': None,
-                'actions': [resp.response_computer_tool_call.ActionClick(type='click', x=7, y=8, button='left')],
-            },
-            False,
-            id='actions-with-a-null-action',
-        ),
-    ],
-)
-async def test_a_call_with_a_single_action_runs_it_only_with_its_safety_checklist_and_no_actions(
-    allow_model_requests: None, fields: dict[str, Any], runs: bool
-) -> None:
-    # Built as the SDK builds a response, unvalidated: OpenAI's SDK refuses this shape without its checklist, with
-    # `actions` too, or with either sent as `null`.
-    action: dict[str, Any] = {
-        'action': resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left')
-    }
-    item = resp.ResponseComputerToolCall.model_construct(
-        id='cu_1', call_id='call_1', type='computer_call', status='completed', **{**action, **fields}
-    )
-    response = response_message([item])
-    provider, computer = InMemoryProvider(), FakeComputer()
-    client = MockOpenAIResponses.create_mock([response, _done()])
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    result = await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
-    assert result.output == 'done'
-    assert computer.actions == ([Click(x=5, y=6)] if runs else [])
 
 
 _DROPPED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
@@ -713,29 +543,6 @@ async def test_a_malformed_call_runs_nothing(allow_model_requests: None, actions
     assert call.args_as_dict() == {'actions': [{'type': None, 'unsupported_fields': []}]}
 
 
-async def test_a_failed_call_sends_a_blank_screenshot_and_says_why(allow_model_requests: None) -> None:
-    async def computer(actions: list[ComputerToolAction]) -> ToolReturn:
-        raise ToolFailed('Taking the screenshot failed: scrot: not found')
-
-    client = MockOpenAIResponses.create_mock(
-        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
-    )
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)], capabilities=[NativeTool(COMPUTER_TOOL)]).run(
-        'Go.'
-    )
-
-    _, second = get_mock_responses_kwargs(client)
-    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
-    assert _is_a_valid_png(output['output']['image_url'])
-    note = second['input'][second['input'].index(output) + 1]
-    assert note == {
-        'role': 'user',
-        'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">'
-        'Taking the screenshot failed: scrot: not found</pyai:tool_result>',
-    }
-
-
 def _without_native_tools(profile: ModelProfile) -> ModelProfile:
     """A profile that doesn't list its native tools, as for an OpenAI-compatible model, so it lists every type."""
     trimmed = profile.copy()
@@ -772,7 +579,7 @@ async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_fu
 
 
 def test_an_azure_client_keeps_the_function_tool_and_the_gateway_gets_the_native_one() -> None:
-    """Azure sends `pending_safety_checks: null`, which the native mapping can't read, so an Azure client opts out.
+    """The native computer tool isn't verified on Azure, so an Azure client opts out.
 
     The gateway shares Azure's other opt-outs but not this one.
     """
@@ -1166,44 +973,6 @@ async def test_a_held_computer_result_stays_one_when_a_later_call_reuses_its_id(
     ]
 
 
-async def test_a_reused_wire_id_acknowledges_the_checks_of_its_own_call(allow_model_requests: None) -> None:
-    """Two computer calls with one Bedrock Mantle ID: only the first was flagged, so only its output acknowledges."""
-    client = MockOpenAIResponses.create_mock(_done())
-    profile = OpenAIModelProfile(tool_call_ids_are_response_scoped=True)
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client), profile=profile)
-    history: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
-    for response_id, checks in [('resp_1', [CHECK]), ('resp_2', [])]:
-        call = ToolCallPart(
-            'computer',
-            {'actions': [{'type': 'screenshot'}]},
-            tool_call_id=f'{response_id}:call_1',
-            tool_kind=COMPUTER_KIND.id,
-            provider_name='openai',
-            provider_details={'safety_checks': checks, 'computer_call': _COMPUTER_ITEM},
-        )
-        result = ToolReturnPart(
-            'computer',
-            ['Ran 1 action.', _SCREEN],
-            tool_call_id=f'{response_id}:call_1',
-            metadata={'performed': 1},
-            tool_kind=COMPUTER_KIND.id,
-        )
-        history += [
-            ModelResponse(parts=[call], provider_name='openai', provider_response_id=response_id),
-            ModelRequest(parts=[result]),
-        ]
-    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
-    await model.request(
-        history,
-        None,
-        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
-    )
-
-    (request,) = get_mock_responses_kwargs(client)
-    outputs = [item for item in request['input'] if item.get('type') == 'computer_call_output']
-    assert [output.get('acknowledged_safety_checks') for output in outputs] == [[CHECK], None]
-
-
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out-since'])
 async def test_a_stored_computer_call_is_answered_as_one_whatever_its_arguments_or_the_tool_now(
     allow_model_requests: None, native: bool
@@ -1420,8 +1189,8 @@ def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, 
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 @given(
-    stored_item=st.fixed_dictionaries({}, optional={'actions': _JSON, 'pending_safety_checks': _JSON, 'extra': _JSON}),
-    details=st.dictionaries(st.sampled_from(['computer_call', 'safety_checks', 'other']), _JSON, max_size=3),
+    stored_item=st.fixed_dictionaries({}, optional={'actions': _JSON, 'extra': _JSON}),
+    details=st.dictionaries(st.sampled_from(['computer_call', 'other']), _JSON, max_size=3),
     metadata=_JSON,
     args=st.dictionaries(st.text(max_size=8), _JSON, max_size=3) | st.text(max_size=8),
 )

@@ -733,8 +733,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
         if isinstance(self._provider.client, AsyncAzureOpenAI):
-            # Azure's computer tool sends `pending_safety_checks: null`, which the native mapping reads as unreadable
-            # checks, so `ComputerUse` keeps its function tool on an Azure client.
+            # The native computer tool isn't verified on Azure, so `ComputerUse` keeps its function tool there.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_computer_tool=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
@@ -843,7 +842,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             store=self._resolve_store(model_settings),
             allow_no_new_messages=True,
         )
-        # As in `_build_responses_request_params`: an output acknowledges the checks of a call the server holds.
+        # As in `_build_responses_request_params`: an output of a call the server holds is a `computer_call_output`.
         calls = computer_calls_by_id(restored[: len(restored) - len(messages)])
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
@@ -866,6 +865,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if instructions_override is not None:
             instructions = instructions_override
+        # The endpoint refuses a `computer_call_output` unless the computer tool is enabled, and the SDK's method
+        # takes no `tools`.
+        computer_tools = (
+            {'tools': [{'type': 'computer'}]} if self._native_computer_name(model_request_parameters) else None
+        )
 
         try:
             with map_decode_errors(self.model_name):
@@ -874,6 +878,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     model=self.model_name,
                     instructions=instructions,
                     previous_response_id=previous_response_id or OMIT,
+                    extra_body=computer_tools,
                 )
         except APIStatusError as e:  # pragma: lax no cover
             if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
@@ -1521,8 +1526,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         restored = self._restore_response_scoped_tool_call_ids(messages)
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
-        # The calls the server holds in the stored response or conversation: an output acknowledges its call's checks
-        # even when the call itself isn't sent again, as OpenAI's guide shows.
+        # The calls the server holds in the stored response or conversation: an output of one is a
+        # `computer_call_output` even when the call itself isn't sent again.
         calls = computer_calls_by_id(restored[: len(restored) - len(messages)])
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -2232,7 +2237,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if not (client_tool_search and t.tool_kind == 'tool-search')
         ]
         # A `computer` tool revealed through history, as a loaded capability's is, isn't in `tools`, but the API only
-        # takes the computer tool there: `additional_tools` can't declare it, and a function can't be named `computer`.
+        # takes the computer tool there: `additional_tools` can't declare it, nor a function named `computer`.
         if computer_name and computer_name not in model_request_parameters.declared_tool_defs:
             tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
@@ -2949,7 +2954,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         should_send_item_id: bool,
     ) -> responses.ResponseComputerToolCallParam | None:
-        """A `computer_call` this API made, sent back as it came so the API can pair its output and safety checks."""
+        """A `computer_call` this API made, sent back as it came so the API can pair its output with it."""
         if not context.computer_is_native or item.provider_name != self.system:
             return None
         if not (computer_call := stored_computer_call(item)):

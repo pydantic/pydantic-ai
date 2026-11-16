@@ -554,11 +554,7 @@ class ModelRequestParameters:
         """
         kind_id = _tool_kind_id(kind)
         return next(
-            (
-                t.name
-                for t in self.function_tools
-                if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
-            ),
+            (t.name for t in self.function_tools if t.tool_kind == kind_id and _callable_now(t, self)),
             None,
         )
 
@@ -4087,15 +4083,18 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
+def _callable_now(tool: ToolDefinition, params: ModelRequestParameters) -> bool:
+    """Whether the model can call `tool` on this request: it isn't deferred, or history has revealed it."""
+    return not tool.defer_loading or tool.name in params.revealed_tool_names
+
+
 def _executor_kinds(params: ModelRequestParameters, sent_ids: set[str]) -> Counter[str | None]:
     """How many tools of each kind could run a native tool's calls: ones not deferred, or revealed by history.
 
     A tool dropped because a native tool in `sent_ids` is sent in its place can't run any calls.
     """
     return Counter(
-        t.tool_kind
-        for t in params.function_tools
-        if (not t.defer_loading or t.name in params.revealed_tool_names) and t.unless_native not in sent_ids
+        t.tool_kind for t in params.function_tools if _callable_now(t, params) and t.unless_native not in sent_ids
     )
 
 

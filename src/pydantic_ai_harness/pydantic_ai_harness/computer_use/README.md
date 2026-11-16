@@ -55,9 +55,10 @@ the same three cases. Pass `description=` to change when the model loads it.
 
 The model must accept images.
 
-- Claude 4 and later get Anthropic's own computer use tool through `AnthropicModel`, and the function tool
-  through other APIs such as Bedrock Converse; see [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
-- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
+- Claude Haiku 4.5, Opus 4.5, Sonnet 4.6 and later get Anthropic's own computer use tool through `AnthropicModel`,
+  and the function tool through other APIs such as Bedrock Converse; see
+  [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
+- GPT-5.4 (not nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool through `OpenAIResponsesModel` on OpenAI and Bedrock Mantle; see
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
@@ -84,45 +85,8 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
 ## Approving calls
 
-`ComputerUse` runs every call without asking, except one OpenAI flagged.
-
-OpenAI can attach safety checks to a call, such as `malicious_instructions` when the screen seems to carry instructions
-that could hijack the model. OpenAI asks that a person confirm each flagged call, so it waits for approval like any
-[deferred tool](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) call. Its `ComputerCallPart` lists the
-checks in `safety_checks`, each a
-[`SafetyCheck`](https://pydantic.dev/docs/ai/api/pydantic-ai/computer_use/#pydantic_ai.computer_use.SafetyCheck) with
-OpenAI's `code` and `message`. After an approved call runs, the model tells OpenAI the checks were acknowledged. Give
-the agent a deferred tool handler, or add
-`DeferredToolRequests` to its output types to ask a person; without either, a flagged call ends the run with an error.
-
-To decide in code instead, resolve flagged calls with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#resolving-deferred-calls-with-a-handler):
-
-```python {title="computer_use_safety_checks.py"}
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
-from pydantic_ai.capabilities import HandleDeferredToolCalls
-from pydantic_ai.computer_use import ComputerCallPart
-from pydantic_ai_harness import ComputerUse
-
-
-async def review(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
-    approvals: dict[str, bool | ToolDenied] = {}
-    for call in requests.approvals:
-        if isinstance(call, ComputerCallPart) and call.safety_checks:
-            if all(check.code == 'irrelevant_domain' for check in call.safety_checks):
-                approvals[call.tool_call_id] = True
-            else:
-                approvals[call.tool_call_id] = ToolDenied('This page needs a person to check it first.')
-    return requests.build_results(approvals=approvals)
-
-
-agent = Agent(
-    'openai:gpt-5.5',
-    capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=review)],
-)
-```
-
-To ask before every call that does more than look, raise `ApprovalRequired` from a
-[`before_tool_execute` hook](https://pydantic.dev/docs/ai/core-concepts/hooks/):
+`ComputerUse` runs every call without asking. To ask before every call that does more than look, raise
+`ApprovalRequired` from a [`before_tool_execute` hook](https://pydantic.dev/docs/ai/core-concepts/hooks/):
 
 ```python {title="computer_use_ask_before_acting.py"}
 from pydantic_ai import ApprovalRequired

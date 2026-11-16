@@ -407,7 +407,7 @@ so Claude and GPT get their own computer tool, run by this one; `False` sends th
 GPT can zoom). Every request carries every earlier screenshot; nothing drops them, so long runs reach provider image
 limits (100 images on 200k-context Claude, 20 MB on Gemini).
 
-Reading a run: calls and results are `ComputerCallPart` (`actions`, `safety_checks`) and `ComputerReturnPart`
+Reading a run: calls and results are `ComputerCallPart` (`actions`) and `ComputerReturnPart`
 (`result`, a `ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the
 tool name. Each finished call emits `ActionsPerformedEvent` (`result`, the call's `ComputerResult`) in the
 `computer_use` namespace.
@@ -418,10 +418,7 @@ A workspace backend with a screen implements `SupportsDisplay` (a `display` prop
 
 Gotchas:
 
-- Calls run without asking. A call OpenAI flagged (`ComputerCallPart.safety_checks`, each a `SafetyCheck` with
-  `code` and `message`) waits for approval, as OpenAI asks; resolve it with
-  `HandleDeferredToolCalls` (approve, or `ToolDenied`) or `DeferredToolRequests` output, or the run ends with an
-  error. To ask before every action, raise `ApprovalRequired` from a `before_tool_execute` hook when
+- Calls run without asking. To ask before every action, raise `ApprovalRequired` from a `before_tool_execute` hook when
   `tool_def.tool_kind == COMPUTER_KIND.id` (from `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false and an
   action in the validated `args['actions']` isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test
   `isinstance(call, ComputerCallPart)`: a call whose arguments a hook repaired arrives as a plain `ToolCallPart`.
