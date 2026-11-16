@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
@@ -366,29 +367,46 @@ class TestDetectLoops:
         class Text(str):
             def __getitem__(self, key: SupportsIndex | slice, /) -> str:
                 piece = super().__getitem__(key)
-                slices.append(len(piece))
+                caller = (frame := inspect.currentframe()) and frame.f_back
+                if caller and caller.f_code.co_name == '_feed':
+                    slices.append(len(piece))
                 return piece
 
         content = Text(PROGRESS * 20)
         agent = Agent(
-            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content)])), capabilities=[DetectLoops()]
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content)])),
+            capabilities=[DetectLoops(stream_check_every=64)],
         )
 
         await agent.run('Explain')
 
         assert sum(slices) == len(content)
-        assert max(slices) == 256
+        assert max(slices) == 64
 
-    async def test_a_pending_parallel_input_guard_decides_before_the_retry(self):
-        async def slow_block(prompt: str) -> GuardrailResult:
-            await asyncio.sleep(0.05)
-            return GuardrailResult.block('Not allowed.')
+    @pytest.mark.parametrize('allow', [False, True])
+    async def test_a_pending_parallel_input_guard_decides_before_the_loop_is_acted_on(self, allow: bool):
+        detected = asyncio.Event()
+
+        @dataclass
+        class Signalling(RepetitionDetector[object]):
+            async def detect(self, ctx: RunContext[object], sample: StreamSample) -> Repetition | None:
+                repetition = await super().detect(ctx, sample)
+                if repetition is not None:
+                    detected.set()
+                return repetition
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await detected.wait()
+            return GuardrailResult.allow() if allow else GuardrailResult.block('Not allowed.')
 
         reads: list[str] = []
         script = _script(
             [*(_thinking(LOOP) for _ in range(60)), 'answer'], [_args('{"path": "a.txt"}', name='read_file')]
         )
-        agent = Agent(script.model(), capabilities=[DetectLoops(), InputGuardrail(guard=slow_block, parallel=True)])
+        agent = Agent(
+            script.model(),
+            capabilities=[DetectLoops(stream_detector=Signalling()), InputGuardrail(guard=guard, parallel=True)],
+        )
 
         @agent.tool_plain
         def read_file(path: str) -> str:
@@ -397,9 +415,15 @@ class TestDetectLoops:
 
         result = await agent.run('Explain', event_stream_handler=_drain)
 
-        assert result.output == 'Not allowed.'
-        assert len(script.requests) == 1
-        assert reads == []
+        if allow:
+            assert result.output == 'done'
+            assert reads == ['a.txt']
+            nudged = ['Your thinking repeated the same passage' in str(messages) for messages in script.requests]
+            assert nudged == [False, True, False]
+        else:
+            assert result.output == 'Not allowed.'
+            assert len(script.requests) == 1
+            assert reads == []
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)
