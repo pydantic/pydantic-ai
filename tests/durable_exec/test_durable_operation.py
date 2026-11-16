@@ -597,7 +597,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
     assert backend is not None
 
-    # Rebuild the pre-backend registration list through the old ownership path: the four
+    # Rebuild the pre-backend registration list through the old ownership path: the
     # capability activities followed by each wrapped toolset's activities.
     legacy_registrations = [
         durability.request_activity,
