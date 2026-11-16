@@ -1,3 +1,7 @@
+---
+description: "Build and deploy a Pydantic AI agent on Modal that researches new Slack community members, qualifies them as leads, and posts daily summaries to Slack."
+---
+
 # Slack Lead Qualifier with Modal
 
 In this example, we're going to build an agentic app that:
@@ -30,7 +34,7 @@ If you just want to see the code without actually going through the effort of se
 
 You need to have a Slack workspace and the necessary permissions to create apps.
 
-2. Create a new Slack app using the instructions at <https://docs.slack.dev/quickstart>.
+1. Create a new Slack app using the instructions at <https://docs.slack.dev/quickstart>.
     1. In step 2, "Requesting scopes", request the following scopes:
         - [`users.read`](https://docs.slack.dev/reference/scopes/users.read)
         - [`users.read.email`](https://docs.slack.dev/reference/scopes/users.read.email)
@@ -226,7 +230,7 @@ The first thing we do is define the Modal app, by specifying the base image to u
 
 #### Set up Logfire
 
-Next, we define a function to set up Logfire instrumentation for Pydantic AI and HTTPX.
+Next, we define a function to set up Logfire instrumentation for Pydantic AI and HTTPX. Run `uvx logfire-cli wizard --task pydantic-ai` once from your project first; see [Using Logfire](../logfire.md#using-logfire) for details.
 
 We cannot do this at the top level of the file, as the requested packages (like `logfire`) will only be available within functions running on Modal (like the ones we'll define next). This file, `modal.py`, runs on your local machine and only has access to the `modal` package.
 

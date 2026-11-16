@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI data analyst agent example that loads a Hugging Face dataset into pandas and queries it with DuckDB SQL, sharing DataFrames between tools in deps."
+---
+
 # Data Analyst
 
 Sometimes in an agent workflow, the agent does not need to know the exact tool

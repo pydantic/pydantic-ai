@@ -10,9 +10,9 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Never, Self, get_origin
 
-from typing_extensions import Never, Self, TypeVar
+from typing_extensions import TypeVar
 
 from pydantic_graph import BaseNode
 from pydantic_graph.exceptions import GraphBuildingError
@@ -106,7 +106,8 @@ class DecisionBranch(Generic[SourceT]):
 
     If `None`, default logic is used which attempts to check the value for type-compatibility with the `source` type:
     * If `source` is `Any` or `object`, the branch will always match
-    * If `source` is a `Literal` type, this branch will match if the value is one of the parametrizing literal values
+    * If `source` is a `Literal` type, this branch will match if the value is one of the parametrizing literal values,
+      except that a `bool` value only matches `bool` literals and an `int` value only matches non-`bool` ones
     * If `source` is any other type, the value will be checked for matching using `isinstance`
 
     Inputs are tested against each branch of a decision node in order, and the path of the first matching branch is

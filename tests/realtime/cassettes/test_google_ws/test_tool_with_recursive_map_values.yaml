@@ -1,0 +1,249 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Use save_tree when asked to save a tree, then confirm it in one short
+            sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Save a tree of named nodes.
+          name: save_tree
+          parameters:
+            properties:
+              name:
+                type: STRING
+              children:
+                default: {}
+                type: OBJECT
+              children_by_slug:
+                default: {}
+                type: OBJECT
+            required:
+            - name
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.198
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.215
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Save a tree whose root is named "oak" and has no children.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.589
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.609
+  data:
+    toolCall:
+      functionCalls:
+      - name: save_tree
+        args:
+          name: oak
+        id: fc_8623479724673009081
+- kind: message
+  direction: sent
+  at: 0.616
+  data:
+    tool_response:
+      functionResponses:
+      - id: fc_8623479724673009081
+        name: save_tree
+        response:
+          output: Saved oak.
+- kind: message
+  direction: received
+  at: 0.989
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 1.002
+  data:
+    sessionResumptionUpdate:
+      newHandle: 0e4fc998-adbf-4e10-98b7-7db9e8e45be1
+      resumable: true
+- kind: message
+  direction: received
+  at: 1.231
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+      outputTranscription:
+        text: The tree
+- kind: message
+  direction: received
+  at: 1.402
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: CwALAAcAAQD8//b/8v/w/+7/7P/z//b/+P/8/wAAAwAE
+- kind: message
+  direction: received
+  at: 1.403
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: m/b/9k731fef+Gb5Pfrh+mD72fsv/K/8hf1G/iX/GgAZ
+- kind: message
+  direction: received
+  at: 1.404
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: HeLa3WrbQdoY2l/brdtr28ra7dp93fnfc+GS4tXii+WD
+- kind: message
+  direction: received
+  at: 1.431
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: HQKEARcAD/4c/BX7OPtN/J79X/5N/s/9Sv0w/dj9GP/g
+      outputTranscription:
+        text: ' named'
+- kind: message
+  direction: received
+  at: 1.518
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: LA0UDgAPnw8WEHoQuhDUEK4Q/g9OD6sOlw7FDskOoA5P
+- kind: message
+  direction: received
+  at: 1.519
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Jfqt+mv7KvwE/fH9z/65/5gAaQEqAssCPwOeA/QDVATE
+      outputTranscription:
+        text: ' "oak"'
+- kind: message
+  direction: received
+  at: 1.519
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GwAnAC8APwBJAFsAYABrAHIAdgB3AHYAdABuAGcAVgBE
+- kind: message
+  direction: received
+  at: 1.667
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: oP8VANkApQLpBFwFfwXdBSwG/gVkBacEJAXGBQsF5QSG
+      outputTranscription:
+        text: ' has been'
+- kind: message
+  direction: received
+  at: 1.722
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: dhIEEpgRJxGuEB4Qgw/vDm8O9g1aDYUMmwusCrsJwAiR
+      outputTranscription:
+        text: ' saved.'
+- kind: message
+  direction: received
+  at: 1.896
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: TfNw84v2DftmAM4D1AVWB2gHXAYrBXcF/QdFDBAQ8hAa
+- kind: message
+  direction: received
+  at: 1.896
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: SAHTAYwBu/9wAOMANQD4ASECRAAB/6T+MAKsB8kDYvxZ
+- kind: message
+  direction: received
+  at: 1.897
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8f/z//P/9P/0//b/9v/4//j/+P/6//n//v/4//X/+f/4
+- kind: message
+  direction: received
+  at: 1.897
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 2.961
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 526
+      responseTokenCount: 62
+      totalTokenCount: 588
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 386
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 50

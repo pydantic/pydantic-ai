@@ -1,3 +1,7 @@
+---
+description: "Use the Model Context Protocol with Pydantic AI: connect agents to MCP servers as a client, use provider-native MCP tools, or run agents inside an MCP server."
+---
+
 # Model Context Protocol (MCP)
 
 Pydantic AI supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io) in multiple ways:
@@ -28,7 +32,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[
         # Runs the MCP server locally by default
         MCP(url='https://mcp.example.com/api'),

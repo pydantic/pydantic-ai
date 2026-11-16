@@ -8,6 +8,7 @@ import functools
 import inspect
 import random
 import threading
+import uuid
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextvars import ContextVar
@@ -15,11 +16,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import anyio
-import sniffio
 from anyio.to_thread import run_sync
 from opentelemetry import context as otel_context
 
 from ._otel_emit import build_parent_context, emit_otel_events
+from ._utils import running_on_asyncio
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
@@ -137,10 +138,8 @@ def _remove_background_task(task: asyncio.Task[Any]) -> None:
 
 
 def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
-    library = sniffio.current_async_library()
-
-    if library == 'trio':  # pragma: no cover
-        import trio.lowlevel  # pyright: ignore[reportMissingImports]
+    if not running_on_asyncio():  # pragma: no cover
+        import trio.lowlevel
 
         done_event = anyio.Event()
         with _background_lock:
@@ -154,7 +153,7 @@ def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
                 with _background_lock:
                     _background_events.discard(done_event)
 
-        trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
+        trio.lowlevel.spawn_system_task(_trio_task)
     else:
         loop = asyncio.get_running_loop()
         task = loop.create_task(coro)
@@ -222,6 +221,17 @@ def _should_evaluate(
     return random.random() < resolved
 
 
+def may_sample(online_eval: OnlineEvaluator, config: OnlineEvalConfig) -> bool:
+    """Whether the evaluator's sample rate leaves any chance of it being sampled."""
+    rate = _resolve_sample_rate_field(online_eval, config)
+    return callable(rate) or rate > 0
+
+
+def evaluation_allowed(config: OnlineEvalConfig) -> bool:
+    """Whether `config` allows evaluation here, apart from the check for an enclosing task run."""
+    return config.enabled and not EVALUATION_DISABLED.get()
+
+
 def sample_evaluators(
     online_evals: Sequence[OnlineEvaluator],
     config: OnlineEvalConfig,
@@ -249,13 +259,12 @@ def sample_evaluators(
             handler = (
                 online_eval.on_sampling_error if online_eval.on_sampling_error is not None else config.on_sampling_error
             )
-            if handler is not None:
-                try:
-                    handler(exc, online_eval.evaluator)
-                except Exception:
-                    pass
-            else:
+            if handler is None:
                 raise
+            try:
+                handler(exc, online_eval.evaluator)
+            except Exception:
+                pass
     return sampled
 
 
@@ -292,6 +301,22 @@ async def _call_on_error(
         pass
 
 
+async def _call_on_max_concurrency(
+    on_max_concurrency: OnMaxConcurrencyCallback | None,
+    on_error: OnErrorCallback | None,
+    context: EvaluatorContext,
+    evaluator: Evaluator,
+) -> None:
+    if on_max_concurrency is None:
+        return
+    try:
+        result = on_max_concurrency(context)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
+
+
 @dataclass
 class _SinkGroup:
     """Evaluators that share a sink source, batched into one `submit` call per sink.
@@ -314,6 +339,7 @@ async def _run_and_collect(
     target: str,
     config: OnlineEvalConfig,
     group: _SinkGroup,
+    scoring_run_id: str,
 ) -> None:
     """Run a single evaluator, emit its OTel events, and stash the outcome on the group.
 
@@ -327,13 +353,7 @@ async def _run_and_collect(
     )
 
     if not online_eval.semaphore.acquire(blocking=False):
-        if on_max_concurrency is not None:
-            try:
-                result = on_max_concurrency(context)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception as exc:
-                await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
+        await _call_on_max_concurrency(on_max_concurrency, on_error, context, evaluator)
         return
 
     # Pair the acquire with a try/finally that always releases. The parent-context
@@ -365,6 +385,7 @@ async def _run_and_collect(
                     results=results,
                     failures=failures,
                     target=target,
+                    scoring_run_id=scoring_run_id,
                     include_baggage=config.include_baggage,
                 )
             except Exception as exc:  # pragma: no cover
@@ -409,13 +430,7 @@ async def _submit_group_to_sink(
             await _call_on_error(handler, exc, payload.context, online_eval.evaluator, 'sink')
 
 
-async def dispatch_evaluators(
-    online_evaluators: Sequence[OnlineEvaluator],
-    context: EvaluatorContext,
-    span_reference: SpanReference | None,
-    target: str,
-    config: OnlineEvalConfig,
-) -> None:
+def _group_by_sink(online_evaluators: Sequence[OnlineEvaluator], config: OnlineEvalConfig) -> dict[int, _SinkGroup]:
     # Group evaluators by raw sink source so evaluators sharing a source land a
     # single batched `submit` call per sink. Keyed by `id()` of the raw source
     # (default_sink or per-evaluator `sink=` override) so user-visible identity
@@ -435,9 +450,23 @@ async def dispatch_evaluators(
             group = _SinkGroup(sinks=sinks, evaluators=[], outcomes=[])
             groups[key] = group
         group.evaluators.append(online_eval)
+    return groups
 
+
+async def dispatch_evaluators(
+    online_evaluators: Sequence[OnlineEvaluator],
+    context: EvaluatorContext,
+    span_reference: SpanReference | None,
+    target: str,
+    config: OnlineEvalConfig,
+) -> None:
+    groups = _group_by_sink(online_evaluators, config)
     if not groups:
         return
+
+    # One scoring pass per target call: every event this dispatch emits shares this id,
+    # regardless of which sink group its evaluator landed in.
+    scoring_run_id = str(uuid.uuid4())
 
     # Phase 1: run every evaluator in parallel, collecting outcomes into their group.
     async with anyio.create_task_group() as eval_tg:
@@ -452,6 +481,7 @@ async def dispatch_evaluators(
                         target,
                         config,
                         group,
+                        scoring_run_id,
                     )
                 )
 
@@ -506,7 +536,7 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
         def _join_threads() -> None:
             for thread in threads_snapshot:
                 thread.join(timeout=timeout)
-                if thread.is_alive():  # pragma: no cover
+                if thread.is_alive():
                     warnings.warn(f'Background evaluation thread did not complete within {timeout:.1f}s timeout')
 
         await run_sync(_join_threads)

@@ -1,0 +1,694 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: event_EdJrxUgQ2BxCAi715MIKR
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EdJrxmNGCBvjLnhVw4pwp
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793043477
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: First say exactly "FIRST RESPONSE COMPLETE". After any later message,
+        follow its instruction exactly.
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-live-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  at: 0.064
+  data:
+    type: session.updated
+    event_id: event_EdJrxNQSnJBXBXDSTTgUd
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EdJrxmNGCBvjLnhVw4pwp
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: First say exactly "FIRST RESPONSE COMPLETE". After any later message,
+        follow its instruction exactly.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1793043477
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-live-transcribe
+            language: null
+            languages: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.065
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Begin.
+- kind: message
+  direction: sent
+  at: 0.065
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.105
+  data:
+    type: conversation.item.added
+    event_id: event_EdJrxiLrvyh7vGZCPWQvY
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Begin.
+- kind: message
+  direction: received
+  at: 0.105
+  data:
+    type: conversation.item.done
+    event_id: event_EdJrxSVKsfemQlz5K6Tbx
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Begin.
+- kind: message
+  direction: received
+  at: 0.116
+  data:
+    type: response.created
+    event_id: event_EdJrxogW4DcrvbxCNrdPt
+    response:
+      object: realtime.response
+      id: resp_EdJrxLs95CWt5TgpIKND0
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EdJrxa0T1SYTvvWc8fjh4
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.251
+  data:
+    type: response.output_item.added
+    event_id: event_EdJrxNPELufTEaSQaBjpW
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    output_index: 0
+    item:
+      id: item_EdJrxZFFXAr5pbSVbWGNv
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.251
+  data:
+    type: conversation.item.added
+    event_id: event_EdJrxxoPV78gAGJoE6deA
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_EdJrxZFFXAr5pbSVbWGNv
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.251
+  data:
+    type: response.content_part.added
+    event_id: event_EdJrxPZrivVA4KLNl0ghE
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 0.252
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrx8V57SAN4SPV8j3NS
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    output_index: 0
+    content_index: 0
+    delta: FIRST
+    obfuscation: Ax4MGO6bZvP
+- kind: message
+  direction: received
+  at: 0.26
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrx866o71Rui0nFo7B2
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    output_index: 0
+    content_index: 0
+    delta: ' RESPONSE'
+    obfuscation: uUCYvCM
+- kind: message
+  direction: received
+  at: 0.26
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrxwETGSDqnsFbGyWhR
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    output_index: 0
+    content_index: 0
+    delta: ' COMPLETE'
+    obfuscation: PIVPnRB
+- kind: message
+  direction: received
+  at: 0.277
+  data:
+    type: response.output_text.done
+    event_id: event_EdJrxv8NrRXiCVXZeH7HU
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    output_index: 0
+    content_index: 0
+    text: FIRST RESPONSE COMPLETE
+- kind: message
+  direction: received
+  at: 0.279
+  data:
+    type: response.content_part.done
+    event_id: event_EdJrxT6hCjRZPrQ8MjxEY
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: FIRST RESPONSE COMPLETE
+- kind: message
+  direction: received
+  at: 0.28
+  data:
+    type: conversation.item.done
+    event_id: event_EdJrxaOGQwRtTeco42oKO
+    previous_item_id: null
+    item:
+      id: item_EdJrxZFFXAr5pbSVbWGNv
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: FIRST RESPONSE COMPLETE
+- kind: message
+  direction: received
+  at: 0.281
+  data:
+    type: response.output_item.done
+    event_id: event_EdJrxGpVuut4ODy2WxYOL
+    response_id: resp_EdJrxLs95CWt5TgpIKND0
+    output_index: 0
+    item:
+      id: item_EdJrxZFFXAr5pbSVbWGNv
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: FIRST RESPONSE COMPLETE
+- kind: message
+  direction: received
+  at: 0.284
+  data:
+    type: response.done
+    event_id: event_EdJrxAIirUAz0Hyv6U9bz
+    response:
+      object: realtime.response
+      id: resp_EdJrxLs95CWt5TgpIKND0
+      status: completed
+      status_details: null
+      output:
+      - id: item_EdJrxZFFXAr5pbSVbWGNv
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: FIRST RESPONSE COMPLETE
+      conversation_id: conv_EdJrxa0T1SYTvvWc8fjh4
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 29
+        input_tokens: 24
+        output_tokens: 5
+        input_token_details:
+          text_tokens: 24
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 5
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: sent
+  at: 0.288
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: system
+      content:
+      - type: input_text
+        text: Say exactly "QUEUED MARKER RECEIVED".
+- kind: message
+  direction: sent
+  at: 0.288
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.292
+  data:
+    type: rate_limits.updated
+    event_id: event_EdJrxadFk1WVRJ2oMGCFU
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14999732
+      reset_seconds: 0.001
+- kind: message
+  direction: received
+  at: 0.327
+  data:
+    type: conversation.item.added
+    event_id: event_EdJrxkKCfp2B61mifTILj
+    previous_item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      status: completed
+      role: system
+      content:
+      - type: input_text
+        text: Say exactly "QUEUED MARKER RECEIVED".
+- kind: message
+  direction: received
+  at: 0.327
+  data:
+    type: conversation.item.done
+    event_id: event_EdJrxxJgWokfi3Lk76KCS
+    previous_item_id: item_EdJrxZFFXAr5pbSVbWGNv
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      status: completed
+      role: system
+      content:
+      - type: input_text
+        text: Say exactly "QUEUED MARKER RECEIVED".
+- kind: message
+  direction: received
+  at: 0.336
+  data:
+    type: response.created
+    event_id: event_EdJrxmUk3CMzxnq6KfvE5
+    response:
+      object: realtime.response
+      id: resp_EdJrxfE3vSnGpk343fFgb
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EdJrxa0T1SYTvvWc8fjh4
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.583
+  data:
+    type: response.output_item.added
+    event_id: event_EdJrxAEWfG93B865Mlepg
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    output_index: 0
+    item:
+      id: item_EdJrxnzegWFcEh8ZYpIEE
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.584
+  data:
+    type: conversation.item.added
+    event_id: event_EdJrxhAShdrcwvxzDzP97
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_EdJrxnzegWFcEh8ZYpIEE
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.584
+  data:
+    type: response.content_part.added
+    event_id: event_EdJrx0uX2mBJtjxJb9nAq
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 0.585
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrxK5Tx2ginuV14KpaD
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    delta: QUE
+    obfuscation: XfFiO5tgY3hkG
+- kind: message
+  direction: received
+  at: 0.588
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrxcm7S3ynqPH5aU6LQ
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    delta: U
+    obfuscation: ALs1si6NObLATb0
+- kind: message
+  direction: received
+  at: 0.59
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrxBhBX7V8CEJEY5a2q
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    delta: ED
+    obfuscation: R27FdZgG1D1fRd
+- kind: message
+  direction: received
+  at: 0.618
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrxHR35qQUsc9EeUJMX
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    delta: ' MARK'
+    obfuscation: 0to35qtAaWZ
+- kind: message
+  direction: received
+  at: 0.623
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrxs7Ddp9HOYuzvQOUS
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    delta: ER
+    obfuscation: GScOVKhD4nUcBj
+- kind: message
+  direction: received
+  at: 0.626
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrx9ddskm8Dr1QEs6ef
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    delta: ' RECE'
+    obfuscation: uA51G2i48zp
+- kind: message
+  direction: received
+  at: 0.626
+  data:
+    type: response.output_text.delta
+    event_id: event_EdJrx83Fb8htH1mJFSuZI
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    delta: IVED
+    obfuscation: dPLWxT9hTkpY
+- kind: message
+  direction: received
+  at: 0.658
+  data:
+    type: response.output_text.done
+    event_id: event_EdJrxUldDk9oIeIfLabY3
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    text: QUEUED MARKER RECEIVED
+- kind: message
+  direction: received
+  at: 0.66
+  data:
+    type: response.content_part.done
+    event_id: event_EdJrxn2NzGFM15gOdqzpw
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    item_id: item_EdJrxnzegWFcEh8ZYpIEE
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: QUEUED MARKER RECEIVED
+- kind: message
+  direction: received
+  at: 0.66
+  data:
+    type: conversation.item.done
+    event_id: event_EdJrxxhWM0JhR0BvFwWGd
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_EdJrxnzegWFcEh8ZYpIEE
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: QUEUED MARKER RECEIVED
+- kind: message
+  direction: received
+  at: 0.662
+  data:
+    type: response.output_item.done
+    event_id: event_EdJrxgrzXVk3UXB8CXAti
+    response_id: resp_EdJrxfE3vSnGpk343fFgb
+    output_index: 0
+    item:
+      id: item_EdJrxnzegWFcEh8ZYpIEE
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: QUEUED MARKER RECEIVED
+- kind: message
+  direction: received
+  at: 0.667
+  data:
+    type: response.done
+    event_id: event_EdJrxlDj9f8ZPjvpaZQkM
+    response:
+      object: realtime.response
+      id: resp_EdJrxfE3vSnGpk343fFgb
+      status: completed
+      status_details: null
+      output:
+      - id: item_EdJrxnzegWFcEh8ZYpIEE
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: QUEUED MARKER RECEIVED
+      conversation_id: conv_EdJrxa0T1SYTvvWc8fjh4
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 55
+        input_tokens: 46
+        output_tokens: 9
+        input_token_details:
+          text_tokens: 46
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 9
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '1'

@@ -1,3 +1,7 @@
+---
+description: "Namespace a capability's tool names with the Pydantic AI PrefixTools capability to avoid conflicts when composing capabilities with overlapping tool names."
+---
+
 # Prefix Tools
 
 [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] is a [capability](overview.md) that wraps another capability and prefixes all of its tool names, useful for namespacing when composing multiple capabilities that might have conflicting tool names:
@@ -7,7 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, PrefixTools
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[
         PrefixTools(MCP(url='https://api1.example.com', native=True), prefix='api1'),
         PrefixTools(MCP(url='https://api2.example.com', native=True), prefix='api2'),

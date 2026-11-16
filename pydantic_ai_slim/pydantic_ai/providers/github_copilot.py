@@ -1,0 +1,282 @@
+from __future__ import annotations as _annotations
+
+import os
+from collections.abc import Callable
+from types import MappingProxyType
+from typing import overload
+
+from pydantic_ai import ModelProfile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    openai_model_profile,
+)
+from pydantic_ai.providers import missing_api_key_error
+
+from ._github_copilot_oauth import (
+    GitHubCopilotCredentials as GitHubCopilotCredentials,
+    GitHubCopilotDeviceAuthorization as GitHubCopilotDeviceAuthorization,
+    GitHubCopilotOAuthFlow as GitHubCopilotOAuthFlow,
+)
+
+try:
+    from openai import AsyncOpenAI
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install the `openai` package to use the GitHub Copilot provider, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
+
+_ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS = ('temperature', 'top_p')
+"""What `anthropic_disallows_sampling_settings` means, expressed in OpenAI-shaped setting names.
+
+The flag marks the models that reject sampling settings, and `models/anthropic/` drops
+`temperature`, `top_p` and `top_k` for them — `top_k` has no OpenAI-shaped equivalent, so two names
+remain. Deliberately not `profiles.openai.SAMPLING_PARAMS`, which is a wider tuple carrying a
+different rationale (incompatible with OpenAI reasoning) and which reaches `openai_logprobs` and
+`openai_top_logprobs`: dropping a provider-namespaced setting the user opted into is what
+`models/AGENTS.md` forbids, and Copilot in fact answers 200 to all seven on a Claude id.
+"""
+
+_COPILOT_PLUGIN_VERSION = '0.26.7'
+"""Version reported to Copilot as the editor plugin build; see `_COPILOT_CLIENT_HEADERS`."""
+
+_COPILOT_CLIENT_HEADERS = MappingProxyType(
+    {
+        'editor-version': 'vscode/1.95.0',
+        'editor-plugin-version': f'copilot-chat/{_COPILOT_PLUGIN_VERSION}',
+        'openai-intent': 'conversation-panel',
+        'x-github-api-version': '2025-04-01',
+    }
+)
+"""Headers every Copilot client sends, for parity with them, apart from `copilot-integration-id`,
+which `GitHubCopilotProvider.__init__` adds because its value is configurable.
+
+None of these is documented as required, and none could be *made* required against
+`api.githubcopilot.com`: omitting `editor-version` still returns 200, as does an unknown
+`copilot-integration-id`, on a plain completion, a tool-call round trip, and an image request. They
+are sent as cheap insurance for the enterprise and GHE hosts we cannot reach, which are reported to
+enforce `editor-version`. Do not describe them as API requirements.
+
+The `User-Agent` is deliberately not among them: Copilot accepts `pydantic-ai/<version>`, which is
+what `OpenAIChatModel` sends, and posing as a Copilot chat client would buy nothing.
+"""
+
+
+def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None) -> OpenAIModelProfile:
+    """Facts about Copilot's own gateway, which the upstream family profile cannot know.
+
+    `model_name` is already lowercased and stripped of a leading `copilot/`.
+    """
+    overlay = OpenAIModelProfile(
+        # A body holding `max_tokens` gets a bare `400 Bad Request` — plain text, without the
+        # `message`/`code` JSON Copilot's other 400s carry, so nothing names the offending field —
+        # while the same body holding `max_completion_tokens` gets `200`. The gateway therefore pins
+        # the field regardless of what a family profile asks for.
+        # `test_github_copilot_sends_max_completion_tokens` and `test_github_copilot_rejects_max_tokens`
+        # record both sides.
+        openai_chat_supports_max_completion_tokens=True,
+    )
+
+    if model_name.startswith(('claude-', 'gemini-')):
+        # Copilot returns these families' reasoning in `reasoning_text`, which is neither of the two
+        # names `OpenAIChatModel` falls back to, so without this the reasoning is dropped — the exact
+        # defect this provider exists to fix. Probed live 2026-09-07 on `claude-sonnet-5`,
+        # `gemini-3.7-flash` and `gemini-3.8-flash`: all three return `reasoning_text` alongside
+        # `content`, on the streamed deltas as well as the non-streamed message. `GET /models` lists
+        # the Gemini ids when the request carries `copilot-integration-id: vscode-chat`, this
+        # provider's default; without the header the listing is shorter and hides them, and another
+        # id can change which models it returns.
+        #
+        # The other reachable families are deliberately left without a field name, because the same
+        # probes found they emit none: `gpt-5.4` and `kimi-k3` answer with `content`/`padding`/`role`
+        # only, at every effort level — `kimi-k3` bills `usage.reasoning_tokens` while surfacing no
+        # text. Naming a field a family does not emit is not free: it would route that family's
+        # `reasoning`/`reasoning_content` parts into tags mode when sending them back.
+        #
+        # `reasoning_opaque`, the signature Copilot returns alongside, is deliberately not carried:
+        # the probes round-tripped an assistant turn with it, without it, and with only one of the
+        # two, and Copilot answered 200 every time, on both families. Add signature plumbing when a
+        # probe shows it is needed.
+        #
+        # For the same reason `openai_chat_send_back_thinking_parts` is left at `'auto'`, which echoes
+        # the field when a part came from it. DeepSeek, Z.AI and MoonshotAI force `'field'` because
+        # their APIs 400 on a thinking turn that omits it; Copilot does not, so it follows `ollama`,
+        # the other provider that names a field without forcing the mode.
+        overlay['openai_chat_thinking_field'] = 'reasoning_text'
+
+    if family_profile and family_profile.get('anthropic_disallows_sampling_settings'):
+        overlay['openai_unsupported_model_settings'] = _ANTHROPIC_DISALLOWED_SAMPLING_SETTINGS
+
+    if model_name.startswith('gemini-'):
+        # Copilot speaks OpenAI tools and `response_format`, not Gemini `generateContent`, so the
+        # `GoogleJsonSchemaTransformer` that `google_model_profile` installs would be wrong here.
+        overlay['json_schema_transformer'] = OpenAIJsonSchemaTransformer
+
+    return overlay
+
+
+class GitHubCopilotProvider(_OpenAISDKProvider):
+    """Provider for [GitHub Copilot](https://docs.github.com/en/copilot).
+
+    Routes requests through Copilot's OpenAI-compatible Chat Completions API at
+    `https://api.githubcopilot.com/chat/completions`. Copilot serves Anthropic, OpenAI, Google, xAI and
+    MoonshotAI models under a subscription, but only the ids whose catalog entry lists `/chat/completions`
+    under `supported_endpoints` are reachable here; xAI's Grok ids, for one, are served on the Responses
+    API alone. Which ids you can reach also depends on your plan; list yours with
+    `GET https://api.githubcopilot.com/models`.
+
+    This is not [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider], which served the
+    retired GitHub Models API.
+    """
+
+    @property
+    def name(self) -> str:
+        return 'github-copilot'
+
+    @property
+    def base_url(self) -> str:
+        return str(self.client.base_url)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._client
+
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
+        # Copilot serves bare model ids with no provider-prefix delimiter, so match each to its family
+        # by prefix. A leading `copilot/` is tolerated here because other Copilot clients use it as an
+        # id namespace; it is never sent on the wire, where the id goes out exactly as given.
+        model_name = model_name.removeprefix('copilot/').casefold()
+
+        prefix_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
+            # The dot-to-hyphen rewrite is Anthropic-only, and that is load-bearing:
+            # `anthropic_model_profile` matches hyphenated ids (`claude-haiku-4-5`) while Copilot
+            # lists dotted ones, but `grok_model_profile` and `moonshotai_model_profile` match
+            # *dotted* ids (`grok-4.5`, `kimi-k3`), so normalizing globally would blank those two.
+            'claude-': lambda name: anthropic_model_profile(name.replace('.', '-')),
+            'gpt-': openai_model_profile,
+            'o1': openai_model_profile,
+            'o3': openai_model_profile,
+            'o4': openai_model_profile,
+            'gemini-': google_model_profile,
+            'grok-': grok_model_profile,
+            'kimi-': moonshotai_model_profile,
+            # GitHub's own models, served on the same OpenAI-shaped surface.
+            'mai-': openai_model_profile,
+            'oswe': openai_model_profile,
+            'raptor': openai_model_profile,
+            'exec-agent-': openai_model_profile,
+        }
+
+        family_profile: ModelProfile | None = None
+        for prefix, profile_func in prefix_to_profile.items():
+            if model_name.startswith(prefix):
+                family_profile = profile_func(model_name)
+                break
+        if family_profile is not None and 'openai_reasoning_efforts' in family_profile:
+            # The OpenAI family's accepted efforts were verified against OpenAI's API, while Copilot enforces its own
+            # per-id lists, so unified levels are forwarded unchanged rather than remapped to them.
+            family_profile = {k: v for k, v in family_profile.items() if k != 'openai_reasoning_efforts'}
+
+        # As `GitHubCopilotProvider` is always used with `GitHubCopilotModel`, which is based on
+        # `OpenAIChatModel`, we maintain the base `OpenAIJsonSchemaTransformer` unless the family
+        # profile sets one explicitly. An id from no known family gets that fallback alone: it is
+        # deliberately not told it can think, since we'd have no evidence that it can.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            family_profile,
+            _github_copilot_overlay(model_name, family_profile),
+        )
+
+    @overload
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        integration_id: str | None = None,
+        openai_client: None = None,
+        http_client: _OpenAIHTTPClient | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        integration_id: str | None = None,
+        openai_client: AsyncOpenAI | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
+    ) -> None:
+        """Create a new GitHub Copilot provider.
+
+        Args:
+            api_key: The Copilot token to authenticate with. Defaults to the `GITHUB_COPILOT_API_KEY`
+                environment variable, then to `GITHUB_COPILOT_API_TOKEN` and `COPILOT_GITHUB_TOKEN`,
+                the names GitHub's own tooling uses. The general-purpose `GITHUB_TOKEN`, `GH_TOKEN`
+                and `GITHUB_API_KEY` variables are deliberately not read, so a token meant for the
+                GitHub API is never sent to Copilot.
+            base_url: The base URL of the Copilot inference API, e.g. for an enterprise host or a
+                local proxy. Defaults to the `GITHUB_COPILOT_BASE_URL`, `COPILOT_API_URL` or
+                `GITHUB_COPILOT_API_BASE` environment variable, then to `https://api.githubcopilot.com`.
+            integration_id: The `copilot-integration-id` header sent on every request. Copilot
+                attributes the traffic to it and ties its quota and model allowlist to it. Defaults
+                to the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the Copilot CLI
+                reads, then to `vscode-chat`.
+            openai_client: An existing `AsyncOpenAI` client to use. Its `base_url` must already point
+                at the Copilot inference API, and it is used as-is, without the Copilot client
+                headers. If provided, `api_key`, `base_url`, `integration_id` and `http_client` must
+                be `None`.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
+        """
+        if openai_client is not None:
+            assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
+            assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+            assert integration_id is None, 'Cannot provide both `openai_client` and `integration_id`'
+            assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
+            self._client = openai_client
+            return
+
+        api_key = (
+            api_key
+            or os.getenv('GITHUB_COPILOT_API_KEY')
+            or os.getenv('GITHUB_COPILOT_API_TOKEN')
+            or os.getenv('COPILOT_GITHUB_TOKEN')
+        )
+        if not api_key:
+            raise missing_api_key_error(
+                'Set the `GITHUB_COPILOT_API_KEY` environment variable or pass it via'
+                ' `GitHubCopilotProvider(api_key=...)` to use the GitHub Copilot provider.'
+            )
+
+        # No `/v1`: Copilot serves `/chat/completions` off the root, and `AsyncOpenAI` appends that
+        # path itself.
+        base_url = (
+            base_url
+            or os.getenv('GITHUB_COPILOT_BASE_URL')
+            or os.getenv('COPILOT_API_URL')
+            or os.getenv('GITHUB_COPILOT_API_BASE')
+            or 'https://api.githubcopilot.com'
+        )
+        integration_id = integration_id or os.getenv('GITHUB_COPILOT_INTEGRATION_ID') or 'vscode-chat'
+
+        self._client = self._create_openai_client(
+            base_url=base_url,
+            api_key=api_key,
+            http_client=http_client,
+            default_headers={**_COPILOT_CLIENT_HEADERS, 'copilot-integration-id': integration_id},
+        )

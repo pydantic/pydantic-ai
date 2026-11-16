@@ -1,0 +1,1704 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: event_EZmPSxczOZCTTh2hERLJi
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EZmPSrqXR1BL1ofXfRSPT
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1792199874
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Use the weather_report tool for any weather question, then answer
+        in one short sentence.
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-live-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: weather_report
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Fetch the full weather station report for a city.
+- kind: message
+  direction: received
+  at: 0.071
+  data:
+    type: session.updated
+    event_id: event_EZmPS9RvFU2ZdIhDjjNbZ
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EZmPSrqXR1BL1ofXfRSPT
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: Use the weather_report tool for any weather question, then answer
+        in one short sentence.
+      tools:
+      - type: function
+        name: weather_report
+        description: Fetch the full weather station report for a city.
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1792199874
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-live-transcribe
+            language: null
+            languages: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  at: 0.072
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  at: 0.072
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.124
+  data:
+    type: conversation.item.added
+    event_id: event_EZmPStzv9gvhXUBiCCs6q
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: received
+  at: 0.127
+  data:
+    type: conversation.item.done
+    event_id: event_EZmPSLhZWUfwyfYOH9qMD
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: received
+  at: 0.132
+  data:
+    type: response.created
+    event_id: event_EZmPSVqO77gSiTMCxWccd
+    response:
+      object: realtime.response
+      id: resp_EZmPS3VVfbQYK0mpvwhhh
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EZmPSp0S5emjBdUkLjDf8
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.342
+  data:
+    type: response.output_item.added
+    event_id: event_EZmPSjyUVpHL9OxeHCGwZ
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    output_index: 0
+    item:
+      id: item_EZmPSsiTslUL80ZBgNccS
+      type: function_call
+      status: in_progress
+      name: weather_report
+      call_id: call_q7iu7yXMWvhShfAz
+      arguments: ''
+- kind: message
+  direction: received
+  at: 0.342
+  data:
+    type: conversation.item.added
+    event_id: event_EZmPSDS0PNC0WnLR1gZZW
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_EZmPSsiTslUL80ZBgNccS
+      type: function_call
+      status: in_progress
+      name: weather_report
+      call_id: call_q7iu7yXMWvhShfAz
+      arguments: ''
+- kind: message
+  direction: received
+  at: 0.342
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSQYh2knlrXtE3Urrm
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: '{'
+    obfuscation: psuIIBzBAwzOchN
+- kind: message
+  direction: received
+  at: 0.348
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSHbnEHL7CMxYCzQQg
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: "  \n"
+    obfuscation: t9QXrVkdHZGHV
+- kind: message
+  direction: received
+  at: 0.355
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSrhO40Ra7L44z47Or
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: ' '
+    obfuscation: BVtmYJrtbL7krPx
+- kind: message
+  direction: received
+  at: 0.362
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSW1kXdArfakfDXWW2
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: ' "'
+    obfuscation: U3RbzmOJzPV2f6
+- kind: message
+  direction: received
+  at: 0.371
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSmeESYzYvLnPxv0yc
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: city
+    obfuscation: ZXeVdNeKycgC
+- kind: message
+  direction: received
+  at: 0.376
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSbtLJyKjgVq39F61m
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: '":'
+    obfuscation: 7Umca9lrnnAqGv
+- kind: message
+  direction: received
+  at: 0.385
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPS7qYSM8oVkaeM7aCm
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: ' "'
+    obfuscation: hgOLOYGua30rc2
+- kind: message
+  direction: received
+  at: 0.39
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSNLo869OWnmVLGOeQ
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: London
+    obfuscation: 6f66zAeF1C
+- kind: message
+  direction: received
+  at: 0.405
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSh9jsDZulQ69aL8SI
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: '"'
+    obfuscation: r4NSO83drrVqOE2
+- kind: message
+  direction: received
+  at: 0.406
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPS2xoWLA1LBQkCCecl
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: " \n"
+    obfuscation: sfHBLdxmqPiL96
+- kind: message
+  direction: received
+  at: 0.412
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSZCiUEmHCpwhnQWZy
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: '}'
+    obfuscation: e3rsU0oSfARlG74
+- kind: message
+  direction: received
+  at: 0.42
+  data:
+    type: response.function_call_arguments.delta
+    event_id: event_EZmPSDGRPTsIp1QvbigFc
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    delta: "  \n"
+    obfuscation: il4puE8eRzV2H
+- kind: message
+  direction: received
+  at: 0.438
+  data:
+    type: response.function_call_arguments.done
+    event_id: event_EZmPSLFugi8SSRkmaHZ5p
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+    output_index: 0
+    call_id: call_q7iu7yXMWvhShfAz
+    name: weather_report
+    arguments: "{  \n  \"city\": \"London\" \n}  \n"
+- kind: message
+  direction: received
+  at: 0.439
+  data:
+    type: conversation.item.done
+    event_id: event_EZmPS9f6QpXCtuZbjpJez
+    previous_item_id: null
+    item:
+      id: item_EZmPSsiTslUL80ZBgNccS
+      type: function_call
+      status: completed
+      name: weather_report
+      call_id: call_q7iu7yXMWvhShfAz
+      arguments: "{  \n  \"city\": \"London\" \n}  \n"
+- kind: message
+  direction: received
+  at: 0.439
+  data:
+    type: response.output_item.done
+    event_id: event_EZmPS1jPADrf3QqaISezU
+    response_id: resp_EZmPS3VVfbQYK0mpvwhhh
+    output_index: 0
+    item:
+      id: item_EZmPSsiTslUL80ZBgNccS
+      type: function_call
+      status: completed
+      name: weather_report
+      call_id: call_q7iu7yXMWvhShfAz
+      arguments: "{  \n  \"city\": \"London\" \n}  \n"
+- kind: message
+  direction: sent
+  at: 0.439
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call_q7iu7yXMWvhShfAz
+      output: 'Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. '
+- kind: message
+  direction: received
+  at: 0.441
+  data:
+    type: response.done
+    event_id: event_EZmPSC6U7JA05tQjHdAP7
+    response:
+      object: realtime.response
+      id: resp_EZmPS3VVfbQYK0mpvwhhh
+      status: completed
+      status_details: null
+      output:
+      - id: item_EZmPSsiTslUL80ZBgNccS
+        type: function_call
+        status: completed
+        name: weather_report
+        call_id: call_q7iu7yXMWvhShfAz
+        arguments: "{  \n  \"city\": \"London\" \n}  \n"
+      conversation_id: conv_EZmPSp0S5emjBdUkLjDf8
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 87
+        input_tokens: 65
+        output_tokens: 22
+        input_token_details:
+          text_tokens: 65
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 22
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: sent
+  at: 0.441
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.448
+  data:
+    type: rate_limits.updated
+    event_id: event_EZmPSB4QORX1M5x0r7icB
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14999648
+      reset_seconds: 0.001
+- kind: message
+  direction: received
+  at: 0.485
+  data:
+    type: conversation.item.added
+    event_id: event_EZmPSx4yGHLadheBTsMWj
+    previous_item_id: item_EZmPSsiTslUL80ZBgNccS
+    item:
+      id: item_EZmPSmagikOavaH3jS7Xy
+      type: function_call_output
+      call_id: call_q7iu7yXMWvhShfAz
+      output: 'Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. '
+- kind: message
+  direction: received
+  at: 0.486
+  data:
+    type: conversation.item.done
+    event_id: event_EZmPSmyJOfqYxjw8PTf8O
+    previous_item_id: item_EZmPSsiTslUL80ZBgNccS
+    item:
+      id: item_EZmPSmagikOavaH3jS7Xy
+      type: function_call_output
+      call_id: call_q7iu7yXMWvhShfAz
+      output: 'Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. Station report for London: foggy, 12
+        degrees, light wind from the west. Station report for London: foggy, 12 degrees,
+        light wind from the west. Station report for London: foggy, 12 degrees, light
+        wind from the west. Station report for London: foggy, 12 degrees, light wind
+        from the west. Station report for London: foggy, 12 degrees, light wind from
+        the west. Station report for London: foggy, 12 degrees, light wind from the
+        west. Station report for London: foggy, 12 degrees, light wind from the west.
+        Station report for London: foggy, 12 degrees, light wind from the west. Station
+        report for London: foggy, 12 degrees, light wind from the west. Station report
+        for London: foggy, 12 degrees, light wind from the west. Station report for
+        London: foggy, 12 degrees, light wind from the west. Station report for London:
+        foggy, 12 degrees, light wind from the west. Station report for London: foggy,
+        12 degrees, light wind from the west. '
+- kind: message
+  direction: received
+  at: 0.494
+  data:
+    type: response.created
+    event_id: event_EZmPSt2OoFL9RhiJ3tNoS
+    response:
+      object: realtime.response
+      id: resp_EZmPS93aCpfPz3h9TaQ3O
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EZmPSp0S5emjBdUkLjDf8
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.714
+  data:
+    type: response.output_item.added
+    event_id: event_EZmPTWvPkVFlXT10OuDEH
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    output_index: 0
+    item:
+      id: item_EZmPS25D3VObzWuMVO3U2
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.715
+  data:
+    type: conversation.item.added
+    event_id: event_EZmPTbssMX7gL0OjXTXuW
+    previous_item_id: item_EZmPSmagikOavaH3jS7Xy
+    item:
+      id: item_EZmPS25D3VObzWuMVO3U2
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.715
+  data:
+    type: response.content_part.added
+    event_id: event_EZmPTEVXaiLSpuygpXcWO
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 0.715
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTQUmhUptr2V7VvvL1
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: The
+    obfuscation: 7cGTyCPIp4g4U
+- kind: message
+  direction: received
+  at: 0.727
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPT3d6dI93CrA6Bqqw4
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' weather'
+    obfuscation: AUjdrp7V
+- kind: message
+  direction: received
+  at: 0.728
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPT3YIGEOjcCDjynXIr
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' in'
+    obfuscation: T9saKF5HuIsXY
+- kind: message
+  direction: received
+  at: 0.736
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTn0ESSQVL6cJevzxt
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' London'
+    obfuscation: 0EkiTmVUj
+- kind: message
+  direction: received
+  at: 0.745
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTynD09rWrSMi3eWHO
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' is'
+    obfuscation: WJIHetEV6gVIO
+- kind: message
+  direction: received
+  at: 0.752
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTKi1wxT2Vb49Q2zMy
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' fog'
+    obfuscation: 4IdmgXl14OTh
+- kind: message
+  direction: received
+  at: 0.761
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTVWfR4RuFDMdYu243
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: gy
+    obfuscation: EGMr1UmAgFgCn5
+- kind: message
+  direction: received
+  at: 0.77
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTICl1e2z0v6yF7BXS
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' with'
+    obfuscation: IXIWwHjXQaE
+- kind: message
+  direction: received
+  at: 0.774
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTvrQolkjIHVE1jaUR
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' a'
+    obfuscation: rGvpyz5GjZbCU9
+- kind: message
+  direction: received
+  at: 0.783
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTWdifH2kTX1ZZmc4e
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' temperature'
+    obfuscation: xgY5
+- kind: message
+  direction: received
+  at: 0.79
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTpBnIemX52iBw6qf1
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' of'
+    obfuscation: GkFgp717a5rgv
+- kind: message
+  direction: received
+  at: 0.797
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTUSxHuEM7rZTnyj2F
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' '
+    obfuscation: jfJWlGZcXpg3rZS
+- kind: message
+  direction: received
+  at: 0.806
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTp5kfticZe2pZpKQt
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: '12'
+    obfuscation: SaMtHMoRdWKu6Y
+- kind: message
+  direction: received
+  at: 0.813
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTOeBJu5iDd1vkiIM3
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' degrees'
+    obfuscation: hThW0GPQ
+- kind: message
+  direction: received
+  at: 0.824
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPT4D5xXMIwrO9aapJA
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' and'
+    obfuscation: dOSD0Pvu1IQ7
+- kind: message
+  direction: received
+  at: 0.84
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTcf76LyTqw5M4PYk6
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' a'
+    obfuscation: MosP29jtdTnDTR
+- kind: message
+  direction: received
+  at: 0.849
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPT8naIDGHWT9u6qmlo
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' light'
+    obfuscation: RWbW9hssmF
+- kind: message
+  direction: received
+  at: 0.854
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTl0ST7yD6TQklQ0hG
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' wind'
+    obfuscation: VC3q2Ir8lvD
+- kind: message
+  direction: received
+  at: 0.864
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTDlgkMABCAsdTu2Fw
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' from'
+    obfuscation: LMsLlUE0Hid
+- kind: message
+  direction: received
+  at: 0.871
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTxf5EAGAc7JSv8Ot2
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' the'
+    obfuscation: PyPaxAHx2yB6
+- kind: message
+  direction: received
+  at: 0.878
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPToMvORCtwaTIahDr5
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: ' west'
+    obfuscation: 1VCF0WgaslK
+- kind: message
+  direction: received
+  at: 0.883
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTp9fAA5p0HcYEVyJa
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    delta: .
+    obfuscation: hs6iAOPYmkCgUBI
+- kind: message
+  direction: received
+  at: 0.899
+  data:
+    type: response.output_text.done
+    event_id: event_EZmPTCxYA1wwZDw085S4X
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    text: The weather in London is foggy with a temperature of 12 degrees and a light
+      wind from the west.
+- kind: message
+  direction: received
+  at: 0.9
+  data:
+    type: response.content_part.done
+    event_id: event_EZmPTtg96CealvMmDdS2V
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    item_id: item_EZmPS25D3VObzWuMVO3U2
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: The weather in London is foggy with a temperature of 12 degrees and a
+        light wind from the west.
+- kind: message
+  direction: received
+  at: 0.901
+  data:
+    type: conversation.item.done
+    event_id: event_EZmPT9CGzRhZQxmrhPHDv
+    previous_item_id: item_EZmPSmagikOavaH3jS7Xy
+    item:
+      id: item_EZmPS25D3VObzWuMVO3U2
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: The weather in London is foggy with a temperature of 12 degrees and
+          a light wind from the west.
+- kind: message
+  direction: received
+  at: 0.901
+  data:
+    type: response.output_item.done
+    event_id: event_EZmPT4Fp447PGFa9MW8jg
+    response_id: resp_EZmPS93aCpfPz3h9TaQ3O
+    output_index: 0
+    item:
+      id: item_EZmPS25D3VObzWuMVO3U2
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: The weather in London is foggy with a temperature of 12 degrees and
+          a light wind from the west.
+- kind: message
+  direction: received
+  at: 0.903
+  data:
+    type: response.done
+    event_id: event_EZmPTaeaQZuIjOWqnn01C
+    response:
+      object: realtime.response
+      id: resp_EZmPS93aCpfPz3h9TaQ3O
+      status: completed
+      status_details: null
+      output:
+      - id: item_EZmPS25D3VObzWuMVO3U2
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: The weather in London is foggy with a temperature of 12 degrees and
+            a light wind from the west.
+      conversation_id: conv_EZmPSp0S5emjBdUkLjDf8
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 2819
+        input_tokens: 2795
+        output_tokens: 24
+        input_token_details:
+          text_tokens: 2795
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 24
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: sent
+  at: 0.904
+  data:
+    type: conversation.item.delete
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+- kind: message
+  direction: sent
+  at: 0.904
+  data:
+    type: conversation.item.delete
+    item_id: item_EZmPSmagikOavaH3jS7Xy
+- kind: message
+  direction: sent
+  at: 0.904
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Thanks! Now just say goodbye.
+- kind: message
+  direction: sent
+  at: 0.904
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 0.91
+  data:
+    type: rate_limits.updated
+    event_id: event_EZmPTX1n7AsMCMvU9Pnua
+    rate_limits:
+    - name: tokens
+      limit: 15000000
+      remaining: 14996565
+      reset_seconds: 0.013
+- kind: message
+  direction: received
+  at: 0.952
+  data:
+    type: conversation.item.deleted
+    event_id: event_EZmPTtKWu8xcKOg57Jy8B
+    item_id: item_EZmPSsiTslUL80ZBgNccS
+- kind: message
+  direction: received
+  at: 0.953
+  data:
+    type: conversation.item.deleted
+    event_id: event_EZmPT1erxYZZ2PRUbLhwG
+    item_id: item_EZmPSmagikOavaH3jS7Xy
+- kind: message
+  direction: received
+  at: 0.954
+  data:
+    type: conversation.item.added
+    event_id: event_EZmPTj27yLQblWzLtCO5q
+    previous_item_id: item_EZmPS25D3VObzWuMVO3U2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Thanks! Now just say goodbye.
+- kind: message
+  direction: received
+  at: 0.955
+  data:
+    type: conversation.item.done
+    event_id: event_EZmPTZpGYhuU8xmrEQjrO
+    previous_item_id: item_EZmPS25D3VObzWuMVO3U2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Thanks! Now just say goodbye.
+- kind: message
+  direction: received
+  at: 0.963
+  data:
+    type: response.created
+    event_id: event_EZmPTbgO0AYEceSVHjh1v
+    response:
+      object: realtime.response
+      id: resp_EZmPTupxkf0GRujKJW8YR
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EZmPSp0S5emjBdUkLjDf8
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 1.103
+  data:
+    type: response.output_item.added
+    event_id: event_EZmPTwlKCaD5J32n35wD0
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    output_index: 0
+    item:
+      id: item_EZmPT4DdqcSgwLqPkkqiR
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 1.104
+  data:
+    type: conversation.item.added
+    event_id: event_EZmPTk9KbdoLFB13Z12xV
+    previous_item_id: pydantic_ai_item_2
+    item:
+      id: item_EZmPT4DdqcSgwLqPkkqiR
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 1.104
+  data:
+    type: response.content_part.added
+    event_id: event_EZmPT6dbuQimWtt4Ooxof
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 1.105
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTRutr0D6eqyG2zxvz
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    delta: You're
+    obfuscation: 1YdS7nipZJ
+- kind: message
+  direction: received
+  at: 1.11
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTRRZaVLKaKDivrQBg
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    delta: ' welcome'
+    obfuscation: uP9EkxQD
+- kind: message
+  direction: received
+  at: 1.115
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTehNTHVjnSbpq4QVn
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    delta: '!'
+    obfuscation: JNSgMaYaqjfqYJL
+- kind: message
+  direction: received
+  at: 1.139
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPToZj0340vSt9kn2Hg
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    delta: ' Goodbye'
+    obfuscation: A3AiAh2K
+- kind: message
+  direction: received
+  at: 1.142
+  data:
+    type: response.output_text.delta
+    event_id: event_EZmPTaKoJmrtLMHVOlhbE
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    delta: '!'
+    obfuscation: DPizBC3E9X7zZdZ
+- kind: message
+  direction: received
+  at: 1.156
+  data:
+    type: response.output_text.done
+    event_id: event_EZmPTtF9lNdYJD7caDy1j
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    text: You're welcome! Goodbye!
+- kind: message
+  direction: received
+  at: 1.157
+  data:
+    type: response.content_part.done
+    event_id: event_EZmPTd02SCu9MsgC6pH2z
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    item_id: item_EZmPT4DdqcSgwLqPkkqiR
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: You're welcome! Goodbye!
+- kind: message
+  direction: received
+  at: 1.159
+  data:
+    type: conversation.item.done
+    event_id: event_EZmPTwNVnFeR7KeesQacA
+    previous_item_id: pydantic_ai_item_2
+    item:
+      id: item_EZmPT4DdqcSgwLqPkkqiR
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: You're welcome! Goodbye!
+- kind: message
+  direction: received
+  at: 1.159
+  data:
+    type: response.output_item.done
+    event_id: event_EZmPTSgK9qaxjU0fHTt8n
+    response_id: resp_EZmPTupxkf0GRujKJW8YR
+    output_index: 0
+    item:
+      id: item_EZmPT4DdqcSgwLqPkkqiR
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: You're welcome! Goodbye!
+- kind: message
+  direction: received
+  at: 1.16
+  data:
+    type: response.done
+    event_id: event_EZmPTwX5fR5HmlSnZD0Cc
+    response:
+      object: realtime.response
+      id: resp_EZmPTupxkf0GRujKJW8YR
+      status: completed
+      status_details: null
+      output:
+      - id: item_EZmPT4DdqcSgwLqPkkqiR
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: You're welcome! Goodbye!
+      conversation_id: conv_EZmPSp0S5emjBdUkLjDf8
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 109
+        input_tokens: 102
+        output_tokens: 7
+        input_token_details:
+          text_tokens: 102
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 7
+          audio_tokens: 0
+      metadata:
+        pydantic_ai_inputs: '2'
