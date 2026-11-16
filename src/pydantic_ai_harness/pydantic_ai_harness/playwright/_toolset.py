@@ -1082,14 +1082,16 @@ class PlaywrightBrowserSession:
     still tears down cleanly.
 
     `PlaywrightBrowser` creates one session per run. Sessions using the same
-    default CDP context share its pages. `cdp_url` can also be a function, sync
-    or async, that returns the endpoint: the first connect calls it, and its
-    result is reused until the session is entered again. It can also be driven directly:
+    default CDP context share its pages. It can also be driven directly:
 
     ```python
     async with PlaywrightBrowserSession(policy=EgressPolicy()) as session:
         page = await session.ensure_page()
     ```
+
+    `cdp_url` can also be a function, sync or async, that takes no arguments and
+    returns the endpoint: the first connect calls it, and its result is reused
+    until the session is entered again.
     """
 
     def __init__(
