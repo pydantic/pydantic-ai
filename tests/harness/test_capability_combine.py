@@ -348,6 +348,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'KubernetesSandbox': Anonymous(
+        'two coexist; the first supplies the run workspace, as core picks the first supplier'
+    ),
     'RenderSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
