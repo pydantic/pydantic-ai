@@ -609,8 +609,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             provider_response_id=self.provider_response_id,
             timestamp=self.timestamp,
         )
-        call = map_computer_call(item, self.model_request_parameters, call_id, self.provider_name)
-        yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
+        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
+            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str
