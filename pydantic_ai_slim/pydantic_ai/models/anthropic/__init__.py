@@ -4104,9 +4104,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """One result per toolset member call, as the toolset requires.
 
         The calls that ran get `OK`, and the last of them the whole result, as it is. The failed call gets its error,
-        and the rest Anthropic's not-executed text. When no call ran, the first one carries the whole result. A failed
-        or denied result doesn't say which calls ran, so each call gets its text. Nor does a UI-rebuilt or changed
-        result, so the last call carries it whole and the rest say so.
+        and the rest Anthropic's not-executed text. When no call ran, the first one carries the whole result. A failed,
+        denied, UI-rebuilt or changed result doesn't say which calls ran, so the last call carries it whole and the
+        rest say so.
         """
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
@@ -4117,21 +4117,22 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and part.retry.cause == 'validation_error'
                 and _guard_tool_call_id(t=part) in map_context.split_computer_calls
             )
-            text = BetaTextBlockParam(
-                text=SPLIT_BATCH_REFUSAL if split else part.model_response_str(wrap_if_error=False), type='text'
-            )
-            return [_computer_result(block, part.outcome in ERROR_OUTCOMES, text) for block in blocks]
-        content = _result_items(part)
-        if not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
+            text = SPLIT_BATCH_REFUSAL if split else part.model_response_str(wrap_if_error=False)
+            # An error result can hold only text.
+            whole: list[beta_tool_result_block_param.Content] = [BetaTextBlockParam(text=text, type='text')]
+            is_error = part.outcome in ERROR_OUTCOMES
+        elif not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
             # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: which calls ran
             # isn't known, so each call but the last says where the result is instead of `OK`, and the last carries it.
-            on_last = BetaTextBlockParam(text=COMPUTER_RESULT_ON_LAST, type='text')
-            whole = [await self._map_tool_result_item(item, map_context) for item in content]
-            return [
-                _computer_result(block, False, *(whole if index == len(blocks) - 1 else [on_last]))
-                for index, block in enumerate(blocks)
-            ]
-        return await self._map_computer_outcome(replay, metadata, content, map_context)
+            whole = [await self._map_tool_result_item(item, map_context) for item in _result_items(part)]
+            is_error = False
+        else:
+            return await self._map_computer_outcome(replay, metadata, _result_items(part), map_context)
+        on_last = BetaTextBlockParam(text=COMPUTER_RESULT_ON_LAST, type='text')
+        return [
+            _computer_result(block, is_error, *(whole if index == len(blocks) - 1 else [on_last]))
+            for index, block in enumerate(blocks)
+        ]
 
     async def _map_computer_outcome(
         self,
