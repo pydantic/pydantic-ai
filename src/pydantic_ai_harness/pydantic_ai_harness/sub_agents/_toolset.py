@@ -89,8 +89,10 @@ from pydantic_ai_harness.sub_agents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
     DelegationReports,
+    DelegationSnapshot,
     DelegationTask,
     DelegationTasks,
+    preview,
 )
 
 logger = logging.getLogger(__name__)
@@ -136,8 +138,7 @@ _MODEL_ARG = 'model'
 """Name of the delegate tool's model-selection argument, shared by the function
 signature and the schema rewrite that shapes it to the configured menu."""
 _MAX_LISTED_TASKS = 50
-_PREVIEW_CHARS = 80
-CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'cancel_task'})
+CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task'})
 """The tools `SubAgents(task_control=...)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 
@@ -452,15 +453,26 @@ def _task_line(owner: DelegationTasks, record: DelegationTask) -> str:
     if record.parent_id != DelegationTasks.child_id():
         details.append(f'started by task {record.parent_id}')
     details.append('resumable' if record.resumable and not record.user_stopped else 'not resumable')
-    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {_preview(record.prompt)!r}'
+    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {preview(record.prompt)!r}'
     if (question := owner.pending_question(record.id)) is not None:
         # The question came whole as its own message; this is a reminder of which one it is.
-        line += f'\n  Waiting for an answer to: {_preview(question[1])!r}'
+        line += f'\n  Waiting for an answer to: {preview(question[1])!r}'
     return line
 
 
-def _preview(text: str) -> str:
-    return text if len(text) <= _PREVIEW_CHARS else f'{text[:_PREVIEW_CHARS]}...'
+def _snapshot_text(snapshot: DelegationSnapshot) -> str:
+    task, elapsed = f'Task {snapshot.task_id} ({snapshot.agent_name})', f'{snapshot.elapsed_seconds:.0f}s'
+    if snapshot.status != 'running':
+        return f'{task} finished ({snapshot.outcome}) after {elapsed}. Its report is delivered separately.'
+    requests = snapshot.usage.requests
+    lines = [f'{task} has been running for {elapsed}, with {requests} model request{"s" if requests != 1 else ""}.']
+    if snapshot.recent_tool_calls:
+        lines.append(f'Recent tool calls: {", ".join(snapshot.recent_tool_calls)}')
+    if snapshot.latest_text is not None:
+        lines.append(f'Latest text, not its final result: {snapshot.latest_text!r}')
+    if snapshot.pending_question is not None:
+        lines.append(f'Waiting for an answer to: {preview(snapshot.pending_question)!r}')
+    return '\n'.join(lines)
 
 
 class SubAgentToolset(FunctionToolset[AgentDepsT]):
@@ -556,6 +568,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         )
         if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control, metadata={'temporal': False})
+            self.add_function(self.check_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.message_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.answer_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.cancel_task, prepare=self._prepare_control, metadata={'temporal': False})
@@ -1130,6 +1143,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if omitted:
             lines.append(f'({" and ".join(omitted)} not shown.)')
         return '\n'.join(lines)
+
+    async def check_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:
+        """See what a task you started is doing now, without waiting for it. Its report still arrives on its own.
+
+        Args:
+            ctx: The run context.
+            task_id: The task's ID.
+        """
+        return _snapshot_text(self._visible(ctx, self._owner(), task_id).snapshot())
 
     async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
         """Send a message to a running task you started, to steer it. It reads the message at its next model request.

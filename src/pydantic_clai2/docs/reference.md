@@ -2137,8 +2137,8 @@ is needed, and your unfinished draft and queued input are preserved. Reports
 arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
-The model also manages its tasks: `list_tasks` lists them, `message_task` steers a
-running one, and `cancel_task` stops one. A child that needs a decision calls
+The model also manages its tasks: `list_tasks` lists them, `check_task` shows what a
+running one is doing, `message_task` steers a running one, and `cancel_task` stops one. A child that needs a decision calls
 `ask_parent` and waits; the question shows as a `?` task row, and the parent
 answers it with `answer_task`. Like a report, a question continues an idle parent
 without a user prompt, and one queued on a turn you cancel waits for your next prompt.

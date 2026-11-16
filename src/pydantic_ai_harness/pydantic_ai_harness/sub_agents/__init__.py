@@ -49,6 +49,7 @@ from pydantic_ai_harness.sub_agents._events import (
 from pydantic_ai_harness.sub_agents._models import ModelOption
 from pydantic_ai_harness.sub_agents._tasks import (
     DelegationReports,
+    DelegationSnapshot,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
@@ -82,6 +83,7 @@ __all__ = [
     'DelegationOutcome',
     'DelegationStartedEvent',
     'DelegationReports',
+    'DelegationSnapshot',
     'DelegationTask',
     'DelegationTaskEvent',
     'DelegationWorkspaceRequest',

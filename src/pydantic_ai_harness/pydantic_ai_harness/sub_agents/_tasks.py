@@ -27,13 +27,17 @@ from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness._task_report import make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
-from pydantic_ai_harness.sub_agents._events import DelegationOutcome
+from pydantic_ai_harness.sub_agents._events import DelegationOutcome, bounded_text
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.sub_agents._toolset import SubAgent
@@ -55,6 +59,34 @@ def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrap
         # Non-UTF-8 `bytes` in an `Any` field: only an outermost adapter's base64 config reaches them. The
         # error arrives wrapped when a serializer function sits between, as tool results' do.
         return ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+
+
+PREVIEW_CHARS = 80
+RECENT_TOOL_CALLS = 5
+
+
+def preview(text: str) -> str:
+    return text if len(text) <= PREVIEW_CHARS else f'{text[:PREVIEW_CHARS]}...'
+
+
+@dataclass(kw_only=True)
+class DelegationSnapshot:
+    """What a task is doing right now, read from its history without waiting on it."""
+
+    task_id: str
+    agent_name: str
+    status: Literal['running', 'finished']
+    outcome: DelegationOutcome | None
+    elapsed_seconds: float
+    """Time since the task last started, up to when it finished if it has."""
+    usage: RunUsage
+    """The requests and tokens of the model responses in the task's history so far."""
+    recent_tool_calls: list[str]
+    """The last few tool calls the child made, as `name(arguments)` with the arguments cut short."""
+    latest_text: str | None
+    """The child's latest text, cut at `MAX_EVENT_TEXT_CHARS`. For a running task it is not a final result."""
+    pending_question: str | None
+    """The question the task is waiting on an answer to, if any."""
 
 
 @dataclass(kw_only=True)
@@ -86,6 +118,31 @@ class DelegationTask:
     delivered: bool = False
     generation: int = 1
     run_id: str = field(default_factory=lambda: uuid4().hex)
+
+    def snapshot(self) -> DelegationSnapshot:
+        """A bounded view of the task's progress, cheap to take repeatedly while it runs.
+
+        A settled task's history is kept in its saved file only, so its snapshot has no activity.
+        """
+        responses = [message for message in self.messages if isinstance(message, ModelResponse)]
+        usage = RunUsage(requests=len(responses))
+        for response in responses:
+            usage.incr(response.usage)
+        calls = [part for response in responses for part in response.parts if isinstance(part, ToolCallPart)]
+        texts = [part.content for response in responses for part in response.parts if isinstance(part, TextPart)]
+        return DelegationSnapshot(
+            task_id=self.id,
+            agent_name=self.agent_name,
+            status=self.status,
+            outcome=self.outcome,
+            elapsed_seconds=(self.finished_at or time.time()) - self.started_at,
+            usage=usage,
+            recent_tool_calls=[
+                f'{call.tool_name}({preview(call.args_as_json_str())})' for call in calls[-RECENT_TOOL_CALLS:]
+            ],
+            latest_text=bounded_text(texts[-1])[0] if texts else None,
+            pending_question=self.pending_question,
+        )
 
     def report(self) -> UserPromptPart:
         """The settled task's report: the child's output, framed as `<task_output>` data on the user channel.

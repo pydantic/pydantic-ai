@@ -294,6 +294,7 @@ orchestrator = Agent(
 |---|---|
 | `delegate_task(agent_name, task, background=False, resume=None)` | Start a task, or resume a finished one with its task ID. `background=True` returns a receipt right away. |
 | `list_tasks()` | The tasks this run started and the tasks they started, with status and IDs (the 50 most relevant). |
+| `check_task(task_id)` | What one of those tasks is doing now, without waiting for it: its elapsed time, model requests, last five tool calls, latest text, and any question it waits on. A finished task shows only its outcome. |
 | `message_task(task_id, message)` | Steer a running task; it reads the message, as sent, at its next model request. A task's instructions tell it its delegating agent may send it messages. |
 | `answer_task(task_id, answer)` | Answer the question a task is waiting on. |
 | `cancel_task(task_id, force=False)` | Stop a task before its next model request, or right away with `force=True`, together with the tasks it started. |
@@ -509,6 +510,12 @@ with its history, and after that the task in `records` has empty `messages`.
 thread, as `anyio.to_thread.run_sync(owner.history, task_id)`), and a resume loads it
 back. To copy a settled task with its history, use
 `replace(task, messages=owner.history(task.id))`.
+`task.snapshot()` returns a `DelegationSnapshot` of a running task, read from its live
+history without waiting on it: status, `elapsed_seconds`, the `usage` of its model responses so
+far, its `recent_tool_calls`, its `latest_text` cut at `MAX_EVENT_TEXT_CHARS`, and its
+`pending_question`. A host can render a task list or status line from it, for example on each
+`DelegationTaskEvent`. A settled task's snapshot has no activity, since its history is in its
+file, and a remote task's history stays on its worker. `check_task` gives the model the same view.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
