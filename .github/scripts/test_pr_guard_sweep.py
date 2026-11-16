@@ -45,7 +45,7 @@ def _pull(
 
 
 def test_a_bot_editing_the_description_does_not_hide_the_opening() -> None:
-    """Checked event by event, the opening was judged before the bot's edit could claim the trusted-actor bypass."""
+    """The author's opening is judged even when a bot's later edit would claim the trusted-actor bypass."""
     event = deciding_event(_pull(created=10, edited=(5, DESCRIPTION_BOT)), SINCE)
     assert event is not None
     assert guard_env(_pull(), event)['GITHUB_EVENT_SENDER_LOGIN'] == 'contributor'
@@ -93,9 +93,9 @@ def test_guard_env_matches_the_pull_request_event_payload() -> None:
     [
         (None, NOW - timedelta(hours=1)),
         (NOW - timedelta(minutes=10), NOW - timedelta(minutes=15)),
-        (NOW - timedelta(days=3), NOW - timedelta(hours=24)),
+        (NOW - timedelta(days=3), NOW - timedelta(hours=3)),
     ],
-    ids=['first-sweep', 'overlaps-the-last-sweep', 'capped-at-a-day'],
+    ids=['first-sweep', 'overlaps-the-last-sweep', 'capped'],
 )
 def test_a_sweep_reads_back_to_just_before_the_last_successful_one(
     last_success: datetime | None, expected: datetime

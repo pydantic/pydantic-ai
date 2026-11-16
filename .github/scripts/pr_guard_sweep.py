@@ -21,7 +21,9 @@ from pydantic import BaseModel, Field, TypeAdapter
 # check, which closes nothing it would not have closed the first time.
 OVERLAP = timedelta(minutes=5)
 FIRST_SWEEP = timedelta(hours=1)
-LONGEST_LOOKBACK = timedelta(hours=24)
+# A sweep anchors on the last successful sweep, so one pull request that keeps failing widens every later
+# sweep's window. The cap bounds that repeated work, and still covers a schedule GitHub delays by hours.
+LONGEST_LOOKBACK = timedelta(hours=3)
 GUARD = Path(__file__).with_name('pr_guard.sh')
 
 _QUERY = """
@@ -133,7 +135,7 @@ def _gh(*args: str) -> str:
 
 
 def sweep_start(last_success: datetime | None, now: datetime) -> datetime:
-    """Read from just before the last successful sweep started, but never further back than a day."""
+    """Read from just before the last successful sweep started, but never further back than `LONGEST_LOOKBACK`."""
     if last_success is None:
         return now - FIRST_SWEEP
     return max(last_success - OVERLAP, now - LONGEST_LOOKBACK)
@@ -142,9 +144,9 @@ def sweep_start(last_success: datetime | None, now: datetime) -> datetime:
 def deciding_event(pull: PullRequest, since: datetime) -> TimelineEvent | None:
     """The event since `since` that `pr_guard.sh` should judge, or None when nothing it reacts to happened.
 
-    Each event used to start its own check, so the author's own event was checked even when someone
-    trusted, such as a bot rewriting the description, acted after it. Prefer the author's latest event;
-    otherwise take the latest one, whose actor the guard's trusted-actor bypass judges.
+    The author's latest event decides when there is one: a later event by someone trusted, such as a bot
+    rewriting the description, does not exempt the author's own. Otherwise the latest event decides, and
+    the guard's trusted-actor bypass judges its actor.
     """
     events = [*pull.timelineItems.nodes, TimelineEvent(createdAt=pull.createdAt, actor=pull.author)]
     if pull.lastEditedAt is not None:
