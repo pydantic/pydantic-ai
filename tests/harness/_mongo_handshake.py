@@ -10,11 +10,11 @@ import struct
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from importlib.metadata import version
+from typing import TypeGuard
 
 import pymongo
 from bson import BSON, encode
 
-from pydantic_ai_harness._typeguards import is_object_dict
 from tests.harness.conftest import IsStr
 
 _OP_MSG = 2013
@@ -23,6 +23,10 @@ HARNESS_DRIVER: dict[str, object] = {
     'name': IsStr(regex=r'PyMongo\|.*\|pydantic-ai-harness'),
     'version': f'{pymongo.version}|{version("pydantic-ai-harness")}',
 }
+
+
+def is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
 
 
 @asynccontextmanager
