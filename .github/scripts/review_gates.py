@@ -1,4 +1,4 @@
-"""Publish size-dependent review statuses from trusted default-branch code."""
+"""Publish size-dependent review statuses, and the `.github/` change gate, from trusted default-branch code."""
 
 from __future__ import annotations
 
@@ -16,12 +16,16 @@ from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIE
 from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-ReviewGate = Literal['douwebot']
+ReviewGate = Literal['douwebot', 'github-dir']
 Size = Literal['size: S', 'size: M', 'size: L', 'size: XL']
 CommitStatus = Literal['pending', 'success', 'failure']
 REVIEW_CONTEXTS: dict[ReviewGate, str] = {
     'douwebot': 'Gate: clean douwebot approval',
+    'github-dir': 'Gate: .github changes by a maintainer',
 }
+# Dependabot owns the action-pin bumps in `.github/workflows/` and holds no repository permission of its own.
+# Exact logins, not a `*[bot]` glob: `pydanty[bot]` builds branches out of outside text.
+GITHUB_DIR_BOTS = frozenset({'dependabot[bot]'})
 # The douwebot prompt in `bots.yml` asks for this prefix on every optional finding.
 OPTIONAL_FINDING_PREFIX = 'Optional:'
 
@@ -46,6 +50,7 @@ class ReviewPullRequest(BaseModel):
     """The live head, base, and labels that determine the review bar."""
 
     state: Literal['open', 'closed']
+    user: ReviewUser
     head: _Head
     base: Commit
     labels: list[Label]
@@ -141,6 +146,8 @@ class ReviewGitHub(Protocol):
     """The metadata needed by the review gates."""
 
     def pull_request(self) -> ReviewPullRequest: ...
+    def changed_files(self) -> list[ChangedFile]: ...
+    def permission(self, login: str) -> str: ...
     def size(self, pull: ReviewPullRequest) -> Size: ...
     def reviews(self) -> list[Review]: ...
     def review_comments(self) -> list[ReviewComment]: ...
@@ -156,23 +163,48 @@ def review_verdicts(
     comments: list[ReviewComment],
     resolved: set[int],
 ) -> dict[ReviewGate, Verdict]:
-    """Apply the size-dependent review bar to a live metadata snapshot."""
-    verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict()}
+    """Apply the `.github/` change gate and the size-dependent review bar to a live metadata snapshot."""
+    verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict(), 'github-dir': github_dir_change(github, pull)}
     size = github.size(pull)
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
     if size_labels != {size}:
-        for verdict in verdicts.values():
-            verdict.failures.append(f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.')
+        verdicts['douwebot'].failures.append(
+            f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.'
+        )
         return verdicts
     if size == 'size: S':
-        for verdict in verdicts.values():
-            verdict.summary.append(
-                'Size S: automated review enforcement is skipped; the manual merge bar still applies.'
-            )
+        verdicts['douwebot'].summary.append(
+            'Size S: automated review enforcement is skipped; the manual merge bar still applies.'
+        )
         return verdicts
 
     verdicts['douwebot'] = douwebot_approval(github, pull, reviews, comments, resolved)
     return verdicts
+
+
+def github_dir_change(github: ReviewGitHub, pull: ReviewPullRequest) -> Verdict:
+    """Files under `.github/` run with the repository's credentials, so only a maintainer may change them.
+
+    A pull request runs its own copy of `protect-github-dir.yml`, which a fork can edit; this verdict comes from
+    default-branch code. The author's resolved permission is the only trust signal: an app pushes branches into this
+    repository without holding write access, and `author_association` misreports private org members.
+    """
+    protected = sorted(
+        {
+            path
+            for file in github.changed_files()
+            for path in (file.filename, file.previous_filename)
+            if path is not None and path.startswith('.github/')
+        }
+    )
+    if not protected:
+        return Verdict(summary=['No file under `.github/` changed.'])
+    author = pull.user
+    if author.login in GITHUB_DIR_BOTS or (
+        author.type == 'User' and github.permission(author.login) in {'write', 'admin'}
+    ):
+        return Verdict(summary=[f'@{author.login} may change `.github/`.'])
+    return Verdict(failures=[f'Only a maintainer may change `.github/`; this PR changes {", ".join(protected)}.'])
 
 
 def douwebot_approval(
@@ -323,6 +355,11 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
     return int(failed)
 
 
+class _Permission(BaseModel):
+    permission: str
+
+
+_PERMISSION = TypeAdapter(_Permission)
 _SIZED_FILE_PAGES = TypeAdapter(list[list[_SizedFile]])
 _SIZED_FILES = TypeAdapter(list[_SizedFile])
 _REVIEW_PAGES = TypeAdapter(list[list[Review]])
@@ -355,6 +392,15 @@ class ReviewGhCli(GhCli):
     def pull_request(self) -> ReviewPullRequest:
         """Read current PR metadata, never an event's stale labels/head."""
         return ReviewPullRequest.model_validate_json(self._api(self._pull))
+
+    def permission(self, login: str) -> str:
+        """Fail closed: an account the endpoint cannot resolve has no write access."""
+        try:
+            permission = _PERMISSION.validate_json(self._api(f'{self._repo}/collaborators/{login}/permission'))
+        except GateError as error:
+            print(f'No repository permission for @{login}: {error}')
+            return 'none'
+        return permission.permission
 
     def size(self, pull: ReviewPullRequest) -> Size:
         """Use the same Git-attribute-aware calculation as PR Bots."""

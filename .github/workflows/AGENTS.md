@@ -206,8 +206,11 @@ outside the org is a supply-chain change rather than an ordinary code review —
 maintainer carries legitimate ones forward in their own PR (#7024 is the case that
 prompted the guard).
 
-**Its job, `.github Directory Guard`, is the merge gate for `.github/`.** It blocks only once the
-`main` ruleset lists it as a required status check; until then it is advisory.
+**`Gate: .github changes by a maintainer` is the merge gate for `.github/`.** `PR Review Gates`
+publishes that commit status from default-branch `review_gates.py`, with the same rule as this
+guard. It blocks only once the `main` ruleset lists it as a required status check; until then it is
+advisory. The guard job, `.github Directory Guard`, reports the same verdict early and posts the
+explanation, but the PR's own copy runs it.
 
 A required check must also report on every merge group, or the queue waits until the check times
 out. The guard therefore runs on `merge_group` and passes there without reading anything: each PR
@@ -248,9 +251,9 @@ base — hence also the `state != open` early exit, since `edited` fires on clos
 
 The PR's own copy of the guard runs; see
 [Privileged pull request workflows run only on same-repository branches](#privileged-pull-request-workflows-run-only-on-same-repository-branches).
-A fork can edit its copy and make the guard pass, so the guard cannot stop a fork PR: the control
-is that maintainers do not merge fork PRs. A fork run's token is read-only, so the guard
-cannot post its explanation there.
+A fork can edit its copy and make the guard pass; the `Gate:` status still judges it. A fork run's
+token is read-only, so the guard cannot post its explanation there. On a fork PR whose runs GitHub
+holds for approval, `PR Review Gates` does not wake, and the `Gate:` status stays pending.
 
 # PR metadata gates enforce the merge bar
 
@@ -260,7 +263,9 @@ workflow runs default-branch `review_gates.py` with permission to publish commit
 never executes contribution code with a write token. The workflows have distinct job names because
 GitHub matches required checks by job name, even across workflows and event types.
 
-The review status requires a clean douwebot approval for M/L/XL.
+`Gate: .github changes by a maintainer` fails a PR that changes a file under `.github/`, or renames
+one out of it, unless its author is a `User` with `write` or `admin` permission, or `dependabot[bot]`.
+It applies at every size. The review status requires a clean douwebot approval for M/L/XL.
 The status fails until exactly one size label matches the shared PR Bots calculation; changing a label cannot
 lower the computed bar. PR Bots recalculates on open, push and PR edits, including base-branch changes.
 PR Bots labels only a trusted pull request; see

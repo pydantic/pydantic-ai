@@ -15,9 +15,10 @@ name: Protect .github
 on:
   # The PR's own copy of this file runs. An author with write access may change `.github/`
   # anyway. A GitHub App cannot push `.github/workflows/` without the `workflows` permission,
-  # which `pydanty[bot]` lacks, so its branches cannot change this file. A fork can, so this guard
-  # cannot stop a fork pull request: maintainers do not merge fork pull requests. Nothing here
-  # checks out or executes PR code: it reads PR metadata via the API.
+  # which `pydanty[bot]` lacks, so its branches cannot change this file. A fork can, so the merge
+  # gate is `PR Review Gates`' `Gate: .github changes by a maintainer` status, which default-branch
+  # code computes with the same rule. Nothing here checks out or executes PR code: it reads PR
+  # metadata via the API.
   pull_request:
     # `edited` is in the list because it is the only event fired when a PR's BASE branch
     # changes, and the verdict is a diff against that base: without it a green check
