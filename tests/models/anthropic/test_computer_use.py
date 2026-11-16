@@ -1,19 +1,23 @@
-"""Anthropic's computer use tools, sent for a tool of the `computer` kind."""
+"""Anthropic's computer use tools, sent for a tool of the `computer` kind.
+
+Not VCR tests: they pin the request and stream shapes the cassettes' body matching can miss, and cases no live model
+produces, such as stored histories and cut-off streams; the recorded runs are in `tests/harness/computer_use/`.
+"""
 
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterable, Callable
 from typing import Any, Literal
 
 import pytest
 from hypothesis import given, settings, strategies as st
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent, AgentStreamEvent, Tool, capture_run_messages
 from pydantic_ai.capabilities import Hooks, NativeTool, RawToolArgs, ValidatedToolArgs
 from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys, TypeText
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import IncompleteToolCall, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -599,25 +603,66 @@ async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow
     )
 
 
+def _cut_off(blocks: list[BetaContentBlock], partial_json: str) -> list[BetaRawMessageStreamEvent]:
+    """The events Anthropic streams when `max_tokens` cuts off the last block, a computer call, mid-input.
+
+    As recorded live for `computer_20251124` and `computer_20250124`: the call's input stops part way, no block stop
+    follows, and the message stops for `max_tokens`. The toolset sends no member it cut off, so its case is a guard.
+    """
+    events = _stream(*blocks)
+    last = len(blocks) - 1
+    (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent) and event.index == last]
+    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json=partial_json)
+    message_delta = next(event for event in events if isinstance(event, BetaRawMessageDeltaEvent))
+    message_delta.delta = Delta(stop_reason='max_tokens')
+    return [event for event in events if not (isinstance(event, BetaRawContentBlockStopEvent) and event.index == last)]
+
+
 @pytest.mark.parametrize(
-    'member, streamed, action_type',
+    'model_name, blocks',
     [
-        pytest.param('type', '', 'type', id='no-input'),
-        pytest.param('type', 'n', 'type', id='not-even-the-start-of-a-value'),
-        # Keeping what parsed would drop the held key and leave a valid plain click.
-        pytest.param('left_click', '{"coordinate": [100, 200], "text": "ctrl', 'click', id='in-an-optional-field'),
+        pytest.param(
+            'claude-sonnet-4-6',
+            [
+                BetaTextBlock(text='Typing it.', type='text'),
+                BetaToolUseBlock.model_validate({'id': 'toolu_2', 'type': 'tool_use', 'name': 'computer', 'input': {}}),
+            ],
+            id='computer_20251124',
+        ),
+        # The batch's part sits at its first call, so the cut-off call must still come last.
+        pytest.param(
+            'claude-sonnet-5-5',
+            [
+                _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+                _tool_use('toolu_2', 'type', {}),
+            ],
+            id='toolset-after-a-whole-member',
+        ),
     ],
 )
-async def test_a_streamed_member_cut_off_mid_input_runs_nothing(
-    allow_model_requests: None, member: str, streamed: str, action_type: str
+async def test_a_streamed_computer_call_cut_off_mid_input_stops_the_run(
+    allow_model_requests: None, model_name: str, blocks: list[BetaContentBlock]
 ) -> None:
-    events = _stream(_tool_use('toolu_1', member, {}))
-    (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
-    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json=streamed)
+    events = _cut_off(blocks, '{"text": "word0 wo')
+    model = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
+    )
 
-    # The tool refuses the call instead of running part of it.
-    (call,) = [part for part in (await _streamed(events)).parts if isinstance(part, ToolCallPart)]
-    assert call.args_as_dict() == {'actions': [{'type': action_type, 'incomplete_input': True}]}
+    async def drain(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    with capture_run_messages() as messages:
+        with pytest.raises(IncompleteToolCall, match=r'Model token limit \(60\) exceeded while generating a tool call'):
+            await _agent(model, FakeComputer()).run(
+                'Go.', model_settings={'max_tokens': 60}, event_stream_handler=drain
+            )
+    # The cut-off call keeps its partial input and is the response's last part, which is what the run checks.
+    *_, response = [message for message in messages if isinstance(message, ModelResponse)]
+    assert response.finish_reason == 'length'
+    last = response.parts[-1]
+    assert isinstance(last, ComputerCallPart)
+    assert (last.tool_call_id, last.args) == ('toolu_2', '{"text": "word0 wo')
 
 
 async def test_a_call_named_computer_is_a_function_tools_when_tool_choice_leaves_out_the_computer(

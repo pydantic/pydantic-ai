@@ -45,6 +45,7 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
+from ...computer_use import ComputerCallPart
 from ...messages import CompactionPart, ModelResponseStreamEvent, NativeToolCallPart, NativeToolSearchCallPart, TextPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
@@ -143,6 +144,9 @@ class AnthropicStreamedResponse(StreamedResponse):
             case BetaRawContentBlockStopEvent():
                 yield from self._map_content_block_stop(event)
             case BetaRawMessageStopEvent():
+                # A call cut off at `max_tokens` gets no block stop of its own.
+                if self._native_computer and self._native_computer.answers(self._current_block):
+                    yield from self._map_computer_block_stop(self._native_computer, self._current_block)
                 self._current_block = None
             case _:  # pragma: no cover
                 pass
@@ -415,24 +419,29 @@ class AnthropicStreamedResponse(StreamedResponse):
     def _map_computer_block_stop(
         self, native_computer: NativeComputer, current_block: BetaToolUseBlock
     ) -> Iterator[ModelResponseStreamEvent]:
-        # Every member streams its input, `{}` when it takes none, so one that streamed nothing was cut off before it.
         computer_input_json = ''.join(self._computer_input)
-        computer_args: dict[str, Any]
         try:
-            computer_args = pydantic_core.from_json(computer_input_json)
+            computer_args: dict[str, Any] = pydantic_core.from_json(computer_input_json)
         except ValueError:
-            # Cut off mid-input, as at `max_tokens`: none of it runs, as a missing field such as a held key would
-            # change what the rest does.
-            self._computer_batch.incomplete.add(current_block.id)
-            computer_args = {}
+            # Cut off mid-input, as at `max_tokens`: kept as the partial JSON, so the run stops on it as for any tool
+            # call cut off. It goes after the toolset's earlier calls, as the response's last part.
+            yield from self._start_computer_batch()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=current_block.id,
+                part=ComputerCallPart(
+                    native_computer.name,
+                    computer_input_json,
+                    tool_call_id=current_block.id,
+                    provider_name=self.provider_name,
+                ),
+            )
+            return
         block = ComputerBlock(id=current_block.id, name=current_block.name, input=computer_args)
-        batch = self._computer_batch
         if native_computer.is_toolset:
-            batch.add(block)
+            self._computer_batch.add(block)
         else:
             yield self._parts_manager.handle_part(
-                vendor_part_id=block['id'],
-                part=native_computer.call_part([block], self.provider_name, incomplete=batch.incomplete),
+                vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
             )
 
     async def close_stream(self) -> None:
