@@ -1159,6 +1159,27 @@ def test_from_file_schema_mismatch(tmp_path: Path):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
 
 
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+def test_from_file_roundtrip_with_utf8_bom(tmp_path: Path, fmt: Literal['json', 'yaml']):
+    """A dataset file re-saved with a UTF-8 byte order mark still loads."""
+    dataset = Dataset[int, int, None](name='bom', cases=[Case(name='café ✓ 日本', inputs=1, expected_output=1)])
+    path = tmp_path / f'bom.{fmt}'
+    dataset.to_file(path)
+    path.write_bytes(b'\xef\xbb\xbf' + path.read_bytes())
+
+    assert Dataset[int, int, None].from_file(path) == dataset
+
+
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    path = tmp_path / 'truncated.json'
+    path.write_bytes(content)
+
+    with pytest.raises(UnicodeDecodeError):
+        Dataset[int, int, None].from_file(path)
+
+
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {
