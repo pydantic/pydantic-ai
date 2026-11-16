@@ -177,11 +177,13 @@ tool's actual work as a `background_tools execute {tool_name}` span. The task st
 | `gen_ai.tool.name` | The tool's name. |
 | `gen_ai.tool.call.id` | The call's ID, the same as on the `execute_tool` span and the result's `tool_call_id`. |
 | `background_tools.outcome` | How the call ended: `success`, `retried`, `failed`, `interrupted` or `error`. |
+| `pydantic_ai.tool.retry.cause` | Only when `retried`: `model_retry` or `validation_error`, as Pydantic AI records on a foreground call's `execute_tool` span. |
 
 `retried` is a `ModelRetry` or a validation error, which reaches the model as a failed result and counts
 toward the tool's `max_retries`. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`,
 which cannot defer a call that is already running. `interrupted` means the task was cancelled before the
-tool finished, usually because the run stopped it. `error` is any other exception, which ends the run.
+tool finished, usually because the run stopped it. A tool that raises `CancelledError` itself is also
+recorded as `interrupted`, though it ends the run. `error` is any other exception, which ends the run.
 
 `retried`, `failed` and `error` set the span's status to error; `interrupted` leaves it unset, since the
 run stopped the tool rather than the tool failing. The exception's message is recorded only when the run
