@@ -21,6 +21,7 @@ from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
+from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 _LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
@@ -270,12 +271,16 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             model_settings=ModelSettings(max_tokens=self.max_tokens) if self.max_tokens is not None else None,
         )
         try:
-            result = await advisor_agent.run(
-                prompt,
-                message_history=message_history,
-                conversation_id=ctx.conversation_id,
-                usage=ctx.usage,
-                usage_limits=ctx.usage_limits,
+            result = await run_with_count_tokens_fallback(
+                lambda limits: advisor_agent.run(
+                    prompt,
+                    message_history=message_history,
+                    conversation_id=ctx.conversation_id,
+                    usage=ctx.usage,
+                    usage_limits=limits,
+                ),
+                ctx.usage_limits,
+                ctx.usage,
             )
         except UnexpectedModelBehavior as exc:
             return RetryRequest(str(exc))

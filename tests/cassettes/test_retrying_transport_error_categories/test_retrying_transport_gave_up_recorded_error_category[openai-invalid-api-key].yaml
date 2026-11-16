@@ -1,0 +1,55 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "81"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.2
+        stream: false
+        messages:
+        - role: user
+          content: hello
+  response:
+    status: 401
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "260"
+      content-type:
+      - text/plain
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: text
+      content: |-
+        {
+          "error": {
+            "message": "Incorrect API key provided: sk-inval**-key. You can find your API key at https://platform.openai.com/account/api-keys.",
+            "type": "invalid_request_error",
+            "code": "invalid_api_key",
+            "param": null
+          },
+          "status": 401
+        }
+  recorded_at: 2026-11-14T20:36:38.158676+00:00

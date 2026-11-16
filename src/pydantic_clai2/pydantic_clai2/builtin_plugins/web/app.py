@@ -568,8 +568,8 @@ def _changes(app: FastAPI, service: WebService) -> None:
     async def changes(
         scope: ChangeScope = 'session', diffs: bool = True, conversation_id: str | None = None
     ) -> Changes:
-        session = _run(service.default if conversation_id is None else lambda: service.session(conversation_id)).session
-        return await session_changes(session.conversation.messages, session.workspace, scope=scope, diffs=diffs)
+        channel = _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+        return await session_changes(channel.messages, channel.session.workspace, scope=scope, diffs=diffs)
 
     for prefix in ('/api', '/api/sessions/{conversation_id}'):
         app.get(f'{prefix}/changes')(changes)

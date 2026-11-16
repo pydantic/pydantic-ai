@@ -21,6 +21,7 @@ from ...profiles import DEFAULT_THINKING_TAGS
 from ...profiles.openai import OpenAIModelProfile
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
+from .._tool_call_ids import stored_tool_call_id
 from ._chat_completions import (
     CHAT_FINISH_REASON_MAP,
     map_provider_details,
@@ -333,11 +334,17 @@ class OpenAIStreamedResponse(StreamedResponse):
         """
         for dtc in choice.delta.tool_calls or []:
             provider_details = map_tool_call_provider_details(dtc)
+            tool_call_id = dtc.id and stored_tool_call_id(
+                dtc.id,
+                response_scoped=self._model_profile.get('tool_call_ids_are_response_scoped', False),
+                provider_response_id=self.provider_response_id,
+                timestamp=self.timestamp,
+            )
             for event in self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=dtc.index,
                 tool_name=dtc.function.name if dtc.function is not None else None,
                 args=dtc.function.arguments if dtc.function is not None else None,
-                tool_call_id=dtc.id,
+                tool_call_id=tool_call_id,
                 provider_name=self.provider_name if provider_details else None,
                 provider_details=provider_details,
             ):

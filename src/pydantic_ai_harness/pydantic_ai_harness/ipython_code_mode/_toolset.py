@@ -31,7 +31,7 @@ from pydantic_ai_harness.ipython_code_mode._kernel import CellResult, IPythonKer
 RUN_CODE_TOOL_NAME = 'run_code'
 
 
-class _RunCodeArguments(TypedDict):
+class _RunCodeArgs(TypedDict):
     code: Annotated[str, Field(description='The Python code to run in the IPython kernel.')]
     restart: NotRequired[
         Annotated[
@@ -46,7 +46,7 @@ class _FunctionCall(TypedDict):
     args: dict[str, Any]
 
 
-_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
+_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArgs)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 _FUNCTION_CALL_ADAPTER = TypeAdapter(_FunctionCall)
