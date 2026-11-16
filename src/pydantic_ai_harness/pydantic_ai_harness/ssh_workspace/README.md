@@ -62,7 +62,7 @@ result = agent.run_sync('Run the test suite and fix the first failure.')
 - **Commands run as the user you log in as, with that user's full authority on the host.** Neither `working_dir` nor a [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) root confines shell commands. To confine them, wrap the capability in [`BubblewrappedWorkspace`](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/).
 - **Logging in needs a key without a prompt.** See [Logging in](#logging-in).
 - **Commands start in `working_dir`**, which must already exist. It defaults to the login directory, and a relative one starts there.
-- **Commands get the remote login environment plus `env=`.** Nothing from your local environment is sent.
+- **Commands get the remote login environment plus `env=`.** Your local environment isn't sent, apart from locale variables your `SendEnv` configuration forwards.
 - **Every operation opens an SSH connection.** Turn on connection sharing in your SSH configuration (`ControlMaster auto` with a `ControlPersist` time) to make them fast.
 
 For a single run, pass `workspace=SSHWorkspaceBackend('dev@build-box')` to `agent.run` instead of adding the capability.

@@ -80,7 +80,9 @@ ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later
 
 If the Sprite has been deleted, the run raises `WorkspaceUnavailableError`, as does a command running when it is deleted; pass `workspace='new'` to start over. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with its own `working_dir=` and `env=`. A backend's `get_sandbox()` returns its `sprites.AsyncSprite` for Sprites features the workspace API doesn't cover.
+The ref holds no credentials: the process that reattaches needs `SPRITE_TOKEN` or a `client=` too.
+
+Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite, working_dir=..., env=...)` to a run; `SpritesSandbox`'s settings don't apply to it. A backend's `get_sandbox()` returns its `sprites.AsyncSprite` for Sprites features the workspace API doesn't cover; on a backend with no Sprite yet, it creates one, which Sprites bills.
 
 ## Prepare a Sprite before the run
 
@@ -123,6 +125,8 @@ async def delete_sprite(ref: WorkspaceRef) -> None:
     await SpritesSandbox().destroy(ref)
 ```
 
+A ref can name any Sprite your `SPRITE_TOKEN` reaches, and `destroy` deletes whatever it names, so keep refs on your server and only destroy Sprites you created.
+
 A failed run returns no result, so delete its Sprite in an `on_run_error` hook:
 
 ```python
@@ -162,7 +166,7 @@ You pay for compute while a Sprite is active and for storage until you delete it
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/sprite`. Created on a new Sprite; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the Sprite. The agent's commands can read these, so leave out secrets it shouldn't see. |
 
-`working_dir` and `env` also apply when you reattach; `runtime` only shapes a new Sprite.
+`client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; `runtime` only shapes a new Sprite.
 
 ## Limits
 
@@ -174,7 +178,7 @@ You pay for compute while a Sprite is active and for storage until you delete it
 
 ## Durable execution
 
-Add `TemporalDurability()` next to `SpritesSandbox()` and install the `temporal` extra; [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes. If the connection drops after a command started but before it finished, the command may have run, so it raises a non-retryable error rather than running again.
+Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `SpritesSandbox()`; [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes. If the connection drops after a command started but before it finished, the command may have run, so it raises a non-retryable error rather than running again.
 
 ## Telemetry
 

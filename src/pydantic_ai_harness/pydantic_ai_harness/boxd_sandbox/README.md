@@ -82,6 +82,8 @@ ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later
 
 If the machine has been deleted, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#continuing-in-the-same-workspace) covers how runs find their workspace.
 
+The ref holds no credentials: the process that reattaches needs `BOXD_API_KEY` or a `client=` too.
+
 ## Prepare a machine before the run
 
 To seed files before the agent starts, build the backend yourself, write through a `Workspace`, and pass the backend to the run:
@@ -210,7 +212,7 @@ Destroy each machine when you are done; the copy isn't tied to the original.
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/boxd`. Created on a new machine; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the boxd machine. The agent's commands can read these, so leave out secrets it shouldn't see. |
 
-`working_dir` and `env` also apply when you reattach; the other options only shape a new machine.
+`client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new machine.
 
 ## Limits
 
@@ -222,7 +224,7 @@ Destroy each machine when you are done; the copy isn't tied to the original.
 
 ## Durable execution
 
-Add `TemporalDurability()` next to `BoxdSandbox()` and install the `temporal` extra; [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes. Pass one client, as in `BoxdSandbox(client=boxd.AsyncBoxd())`: without it, every workspace operation logs in to boxd again, and boxd allows 30 logins a minute from one IP address, so a busy worker fails with `RateLimitError`.
+Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `BoxdSandbox()`; [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes. Pass one client, as in `BoxdSandbox(client=boxd.AsyncBoxd())`: without it, every workspace operation logs in to boxd again, and boxd allows 30 logins a minute from one IP address, so a busy worker fails with `RateLimitError`.
 
 ## Telemetry
 

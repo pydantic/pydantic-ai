@@ -37,7 +37,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Local Workspace](../workspace.md) | Core | Commands and files in a directory on this machine; no isolation. Adds no tools: pair it with the ones below or your own |
+| [Local Workspace](../workspace.md) | Core | Commands and files in a directory on this machine; no isolation. Adds no tools: pair it with the [Files & shell](#files-shell) tools or your own |
 | [Docker Container](../harness/docker-container.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](https://pydantic.dev/docs/ai/harness/boxlite-sandbox/) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
@@ -52,7 +52,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 | [SSH Workspace](https://pydantic.dev/docs/ai/harness/ssh-workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
 | [Bubblewrapped Workspace](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 
-### Files & shell
+### Files & shell {#files-shell}
 
 The tools the model uses in the run's workspace, whichever one it is.
 

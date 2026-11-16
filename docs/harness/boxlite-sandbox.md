@@ -41,7 +41,7 @@ flowchart TB
 pip/uv-add "pydantic-ai-harness[coder,boxlite,anthropic]"
 ```
 
-The `boxlite` extra installs [BoxLite's Python SDK](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python), which runs VMs in your process, with no daemon: macOS 14 or newer on Apple silicon, or Linux on x86_64 or aarch64 with glibc 2.28 or newer, where the user running the agent needs read and write access to `/dev/kvm`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
+The `boxlite` extra installs [BoxLite's Python SDK](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python), which runs VMs in your process, with no daemon, on Python 3.14 or older: macOS 14 or newer on Apple silicon, or Linux on x86_64 or aarch64 with glibc 2.28 or newer, where the user running the agent needs read and write access to `/dev/kvm`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start
 
@@ -134,7 +134,7 @@ async def delete_box(ref: WorkspaceRef) -> None:
     await BoxLiteSandbox().destroy(ref)
 ```
 
-A failed run returns no result, so delete its box in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up). Each new box's id is logged as `Creating BoxLite box <id>` at INFO on the `pydantic_ai_harness.boxlite_sandbox` logger before it is created, and `await boxlite.Boxlite.default().list_info()` lists boxes, so one left without a stored ref can still be found.
+A failed run returns no result, so delete its box in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up). Each new box's id is logged as `Creating BoxLite box <id>` at INFO on the `pydantic_ai_harness.boxlite_sandbox._backend` logger before it is created, and `await boxlite.Boxlite.default().list_info()` lists boxes, so one left without a stored ref can still be found.
 
 ## Network access
 
@@ -193,7 +193,7 @@ The VM is the boundary: it has its own kernel and filesystem, and unless `box_op
 
 Whoever passes a ref runs commands in the box it names, and BoxLite can open any box on this machine by name, including ones other tools made with your folders mounted. So:
 
-- **Refs reaching `BoxLiteSandbox`** (message history, `workspace=ref`, `backend(ref)`, `destroy(ref)`) only open boxes `BoxLiteSandbox` created, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError`. Durable execution goes through this path too.
+- **Refs reaching `BoxLiteSandbox`** (message history, `workspace=ref`, `backend(ref)`, `destroy(ref)`) only open boxes `BoxLiteSandbox` created, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError`. Durable execution rebuilds the workspace from its ref, so it only works with boxes `BoxLiteSandbox` created.
 - **`BoxLiteSandboxBackend(...)` built by your code** opens any box of this process's default BoxLite runtime, because your code chose it; a box from another runtime raises `UserError`. A later run given only its message history raises `ValueError`; pass the backend again, or `workspace='new'`.
 - **The name doesn't prove origin**: any program running as your OS user can create a box with such a name. Only pass refs your application stored itself, and don't build `BoxLiteSandboxBackend(ref=...)` from user input.
 

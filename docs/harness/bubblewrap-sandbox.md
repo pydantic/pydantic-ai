@@ -63,7 +63,7 @@ agent = Agent(
 result = agent.run_sync('Run the test suite and fix the first failure.')
 ```
 
-- **Commands can write only to the working directory.** They see the host's other files read-only, a private `/tmp` and an empty `/run`. File tools such as [FileSystem](filesystem.md) and [Coder](coder.md)'s run in the wrapper too, so they can't write outside it either, even through a swapped-in symlink.
+- **Commands can write only to the working directory.** They see the host's other files read-only, a private `/tmp` and an empty `/run`. The file tools of [`FileSystem`](filesystem.md) and [`Coder`](coder.md) run in the wrapper too, so they can't write outside it either, even through a swapped-in symlink.
 - **There is no network**, not even loopback or Unix sockets. A test suite that starts a local server needs `network=True`; see [Network](#network).
 - **Background jobs keep running** after the call and the run that started them, until something stops them. Commands share the host's process list.
 - **The run's ref and `backend` are the wrapped workspace's**, so continuing a run works as it does for that workspace.
@@ -113,7 +113,7 @@ The wrapped workspace must run commands without a controlling terminal, or on ke
 
 ## Limits
 
-- On a timeout, what stops is up to the wrapped backend. Local and SSH stop the command and its foreground descendants; E2B and Modal do so only when the image has `setsid`. Jobs detached into their own session keep running everywhere.
+- On a timeout or cancellation, what stops is up to the wrapped backend. Local and SSH stop the command and its foreground descendants, though SSH cleanup is best effort if the host stalls; E2B and Modal do so only when the image has `setsid`. Jobs detached into their own session keep running everywhere.
 - The seccomp filter covers x86_64 and aarch64 hosts; a 32-bit program in the wrapper is stopped when it makes a system call.
 - A read-only wrapped workspace runs no commands, so its files are read from the host directly.
 

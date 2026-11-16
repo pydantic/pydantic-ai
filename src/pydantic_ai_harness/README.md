@@ -156,7 +156,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Local Workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) | Core | Commands and files in a directory on this machine; no isolation. Adds no tools: pair it with the ones below or your own |
+| [Local Workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) | Core | Commands and files in a directory on this machine; no isolation. Adds no tools: pair it with the [Files & shell](#files--shell) tools or your own |
 | [Docker Container](pydantic_ai_harness/docker_container/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [Smol Sandbox](pydantic_ai_harness/smol_sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](pydantic_ai_harness/boxlite_sandbox/) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |

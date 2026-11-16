@@ -180,7 +180,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 
 ## Configuration
 
-[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set every option except `connection`; configure the server there through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
+[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set every option except `connection`; a spec reaches the server through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
 
 | Option | What it does |
 | --- | --- |
@@ -197,7 +197,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 
 - Each command takes about a fifth of a second, and file operations run as commands, so a large file takes several seconds per MiB. Keep large data out of the workspace or fetch it from inside the sandbox.
 - Creating the sandbox, including pulling the image, isn't bounded by a command's `timeout`.
-- On a timeout, the command and the processes it started are stopped.
+- On a timeout or cancellation, the command and the processes it started are stopped.
 - The OpenSandbox SDK needs asyncio; under Trio, the capability raises `UserError`.
 
 ## Durable execution

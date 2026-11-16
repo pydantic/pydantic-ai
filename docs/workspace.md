@@ -56,7 +56,7 @@ tools that work in whatever workspace the run has.
 ## Run it in a sandbox
 
 `LocalWorkspace` runs the model's commands on your machine, as you. To run them somewhere isolated, swap
-it for a sandbox. Nothing else changes:
+it for a sandbox. Your tools, such as the `execute` tool above or `Coder` here, now run there:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -79,7 +79,7 @@ it or its provider stops it; see [Cleaning up](#cleaning-up).
 |---|---|---|---|
 | [`LocalWorkspace`](#your-machine-or-a-sandbox) | A directory on this machine (macOS, Linux) | No | Nothing |
 | [`WindowsWorkspace`](#platforms) | A directory on this machine, in PowerShell | No | Windows |
-| [Docker Container](harness/docker-container.md) | A local Docker or Podman container | Yes | Docker or Podman |
+| [Docker Container](harness/docker-container.md) | A local Docker or Podman container | Yes, sharing your machine's kernel | Docker or Podman |
 | [Smol Sandbox](harness/smol-sandbox.md) | A smolvm microVM on this machine | Yes | Apple silicon Mac, or Linux with KVM |
 | [BoxLite Sandbox](harness/boxlite-sandbox.md) | A BoxLite micro-VM on this machine, with an optional egress allow-list | Yes | Apple silicon Mac, or Linux with KVM |
 | [OpenSandbox](harness/opensandbox-sandbox.md) | A sandbox on your own OpenSandbox server, on Docker or Kubernetes | Yes | An OpenSandbox server |
@@ -109,7 +109,7 @@ sets where commands start. Use it for your own, trusted work, and a sandbox for 
 
 Commands in a `LocalWorkspace` get your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`, and nothing else
 from the agent's environment, so your API keys don't reach the commands the model runs. Pass what they
-need with `env=`:
+need with `env=`, never the whole `os.environ`:
 
 ```python
 from pydantic_ai import Agent
@@ -120,6 +120,54 @@ agent = Agent(
     capabilities=[LocalWorkspace('.', env={'UV_OFFLINE': '1'})],
 )
 ```
+
+## Using the workspace in tools
+
+`ctx.workspace` has the same methods in every workspace:
+
+- [`run`][pydantic_ai.workspaces.Workspace.run] runs a command.
+- [`read_text`][pydantic_ai.workspaces.Workspace.read_text] and
+  [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write text;
+  [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] and
+  [`write_bytes`][pydantic_ai.workspaces.Workspace.write_bytes] read and write exact bytes. Writing creates
+  missing parent directories.
+- [`list_dir`][pydantic_ai.workspaces.Workspace.list_dir], [`stat`][pydantic_ai.workspaces.Workspace.stat],
+  [`exists`][pydantic_ai.workspaces.Workspace.exists], [`make_dir`][pydantic_ai.workspaces.Workspace.make_dir]
+  and [`remove`][pydantic_ai.workspaces.Workspace.remove] work with directories and entries.
+
+```python {title="file_tools.py" requires="workspace_agent.py"}
+from pydantic_ai import ModelRetry, RunContext
+
+from workspace_agent import agent
+
+
+@agent.tool
+async def read_source(ctx: RunContext, path: str) -> str:
+    """Read a text file from the project."""
+    try:
+        return await ctx.workspace.read_text(path)
+    except FileNotFoundError:
+        raise ModelRetry(f'{path} does not exist.')
+
+
+@agent.tool
+async def save_notes(ctx: RunContext, notes: str) -> str:
+    """Save notes for later steps."""
+    await ctx.workspace.write_text('NOTES.md', notes)
+    return 'Saved to NOTES.md.'
+```
+
+- Relative paths resolve against the working directory. It is a starting point, not a boundary: `..` and
+  absolute paths reach the rest of the environment.
+- `run(..., cwd='subdir')` starts one command in another directory, relative to the working directory; it
+  must already exist.
+- Sandbox providers use different default users and directories, so prefer relative paths, or set
+  `working_dir=` on the sandbox.
+- A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Raise `ModelRetry`
+  from it so the model can try again; uncaught, it ends the run (on Temporal, it follows the
+  [retry policy](#durable-execution)).
+- An environment that is gone, such as a sandbox deleted during a command, raises
+  `WorkspaceUnavailableError` and ends the run.
 
 ## Pick up where you left off {#continuing-in-the-same-workspace}
 
@@ -183,7 +231,8 @@ async def main() -> None:
 Pydantic AI never deletes an environment. A sandbox keeps running, and billing, after the run until you
 delete it or its provider's lifetime settings stop it. Each sandbox page shows how to delete one.
 
-- After a successful run, `result.workspace.ref` names the sandbox, so you can continue in it or delete it.
+- After a successful run that used the sandbox, `result.workspace.ref` names it, so you can continue in it or
+  delete it. If the ref is `None`, calling `result.workspace` methods creates a new sandbox that no message records.
 - A failed run returns no result. Delete its sandbox in an `on_run_error` [hook](hooks.md), where
   `ctx.workspace.ref` names it; `after_run` doesn't run when a run fails.
 - If you delete the sandbox after each run, pass `workspace='new'` when you continue its history, or the
@@ -225,54 +274,6 @@ async def main() -> None:
 
 The reviewer has no workspace capability of its own, so it works wherever it is told to: a local checkout
 in one run, a sandbox in the next.
-
-## Using the workspace in tools
-
-`ctx.workspace` has the same methods in every workspace:
-
-- [`run`][pydantic_ai.workspaces.Workspace.run] runs a command.
-- [`read_text`][pydantic_ai.workspaces.Workspace.read_text] and
-  [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write text;
-  [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] and
-  [`write_bytes`][pydantic_ai.workspaces.Workspace.write_bytes] read and write exact bytes. Writing creates
-  missing parent directories.
-- [`list_dir`][pydantic_ai.workspaces.Workspace.list_dir], [`stat`][pydantic_ai.workspaces.Workspace.stat],
-  [`exists`][pydantic_ai.workspaces.Workspace.exists], [`make_dir`][pydantic_ai.workspaces.Workspace.make_dir]
-  and [`remove`][pydantic_ai.workspaces.Workspace.remove] work with directories and entries.
-
-```python {title="file_tools.py" requires="workspace_agent.py"}
-from pydantic_ai import ModelRetry, RunContext
-
-from workspace_agent import agent
-
-
-@agent.tool
-async def read_source(ctx: RunContext, path: str) -> str:
-    """Read a text file from the project."""
-    try:
-        return await ctx.workspace.read_text(path)
-    except FileNotFoundError:
-        raise ModelRetry(f'{path} does not exist.')
-
-
-@agent.tool
-async def save_notes(ctx: RunContext, notes: str) -> str:
-    """Save notes for later steps."""
-    await ctx.workspace.write_text('NOTES.md', notes)
-    return 'Saved to NOTES.md.'
-```
-
-- Relative paths resolve against the working directory. It is a starting point, not a boundary: `..` and
-  absolute paths reach the rest of the environment.
-- `run(..., cwd='subdir')` starts one command in another directory, relative to the working directory; it
-  must already exist.
-- Sandbox providers use different default users and directories, so prefer relative paths, or set
-  `working_dir=` on the sandbox.
-- A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Raise `ModelRetry`
-  from it so the model can try again; uncaught, it ends the run (on Temporal, it follows the
-  [retry policy](#durable-execution)).
-- An environment that is gone, such as a sandbox deleted during a command, raises
-  `WorkspaceUnavailableError` and ends the run.
 
 ## Read-only access
 
@@ -361,22 +362,26 @@ delegation.
 
 - A durable run creates or attaches its environment when it starts, even if no tool uses it, and retries,
   replays and recovery reattach to it. If a worker dies after creating a sandbox but before that is
-  recorded, the retry creates a second one; delete the first with the provider's tools.
+  recorded, the retry can create a second one; delete the first with the provider's tools.
 - A workspace call can run again if a worker dies during it. Timeouts, output-limit failures, read-only
   refusals and a lost environment are not retried. Other errors, such as `FileNotFoundError`, follow the
   engine's retry policy, which on Temporal retries without limit by default: raise `ModelRetry` from them,
   or set `maximum_attempts`.
 - On Temporal, a command must finish within its activity's `start_to_close_timeout`, 60 seconds by
   default, whatever its own `timeout`. Raise it for a tool with
-  `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`.
+  `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. Workspace calls from workflow code use
+  `activity_config`; if you set it, keep a `start_to_close_timeout` in it.
 - On DBOS, tool calls in a run with a workspace run one at a time, so their steps replay in order.
 - `workspace=` passes only the reference; each step rebuilds the workspace from the agent's capability.
   Put policy on that capability, such as `LocalWorkspace(..., read_only=True)`: a `ReadOnlyWorkspace(...)`
-  passed to the run raises `UserError`, because rebuilding would drop it.
+  passed to the run raises `UserError`, because rebuilding would drop it. A workspace capability passed to
+  the run doesn't apply its own settings, such as a sandbox image, for the same reason.
 - Workspace calls made from workflow code store their arguments, `env=` and file contents included, in
   durable history. Keep secrets in the capability's `env=` or use them inside a tool.
 - `workspace.backend` is not available in workflow code. Reach the provider's own API from a tool that
   runs as an activity or step.
+- The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` refuse a workspace; use the durability
+  capability.
 - On Temporal, `LocalWorkspace` calls run on whichever worker picks them up, so every worker needs the
   directory at the same absolute path, on shared storage.
 
@@ -412,4 +417,6 @@ A tool that builds paths or shell commands itself can read
   64 KiB of each stream. Redirect large output to a file.
 - Commands get stdin at EOF, so use non-interactive flags such as `-y`.
 - `LocalWorkspace` background processes outlive the run; stop them before your program exits.
+- Run spans record the workspace id, a `LocalWorkspace`'s directory path included, even with
+  `include_content=False`.
 - Realtime sessions don't select a workspace yet.

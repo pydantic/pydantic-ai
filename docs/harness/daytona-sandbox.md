@@ -76,7 +76,9 @@ ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later
 
 If the sandbox has been deleted, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-Already have a `daytona.AsyncSandbox`? Pass `workspace=DaytonaSandboxBackend(sandbox=sandbox)` to a run, with its own `working_dir=` and `env=`. A backend's `get_sandbox()` returns its `daytona.AsyncSandbox` for Daytona features the workspace API doesn't cover.
+The ref holds no credentials: the process that reattaches needs `DAYTONA_API_KEY` or a `client=` too.
+
+Already have a `daytona.AsyncSandbox`? Pass `workspace=DaytonaSandboxBackend(sandbox=sandbox, working_dir=..., env=...)` to a run; `DaytonaSandbox`'s settings don't apply to it. A backend's `get_sandbox()` returns its `daytona.AsyncSandbox` for Daytona features the workspace API doesn't cover; on a backend with no sandbox yet, it creates one, which Daytona bills.
 
 ## Prepare a sandbox before the run
 
@@ -162,7 +164,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C or a killed wo
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/daytona`. Created on a new sandbox; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
 
-`working_dir` and `env` also apply when you reattach; the other options only shape a new sandbox.
+`client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new sandbox.
 
 ## Limits
 

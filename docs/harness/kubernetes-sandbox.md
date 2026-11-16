@@ -110,7 +110,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - **It keeps running after the run.** See [Clean up](#clean-up).
 - **It is deleted after 24 hours** (`sandbox_timeout=86_400`), whether or not anyone still uses it. `sandbox_timeout=None` keeps it until you delete it.
 - **Commands start in sandboxd's root directory**, `/workspace` in the template above, and run as the container's user.
-- **The container's image decides which tools the agent has.** It needs a POSIX shell with coreutils (`base64`, `dd`, `find`), since file operations run as shell commands.
+- **The image needs a POSIX shell with coreutils and `find`**, since file operations run as shell commands.
 - **Files are lost if the pod is lost.** When a node fails, agent-sandbox starts a new pod that keeps only what the template puts on a persistent volume; the template above uses `emptyDir`.
 
 ## Continue in the same sandbox
@@ -267,7 +267,7 @@ sandbox = KubernetesSandbox(
 
 ## Durable execution
 
-Add `TemporalDurability()` next to `KubernetesSandbox()` and install the `temporal` extra; [Workspaces](../workspace.md#durable-execution) covers what changes. Outside a run, each command opens and closes its own connection (with the default, a `kubectl port-forward`), so each activity takes a little longer than a call inside a plain run.
+Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `KubernetesSandbox()`; [Workspaces](../workspace.md#durable-execution) covers what changes. Outside a run, each command opens and closes its own connection (with the default, a `kubectl port-forward`), so each activity takes a little longer than a call inside a plain run.
 
 ## Telemetry
 

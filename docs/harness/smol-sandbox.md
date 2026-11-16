@@ -155,7 +155,7 @@ The VM is the boundary: it has its own kernel and filesystem, nothing from this 
 
 Whoever passes a ref runs commands in the VM it names, and smolmachines can open any VM of your OS user by name, including ones other tools made with your folders mounted. So:
 
-- **Refs reaching `SmolSandbox`** (message history, `workspace=ref`, `backend(ref)`, `destroy(ref)`) only open VMs `SmolSandbox` booted, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError`. Durable execution goes through this path too.
+- **Refs reaching `SmolSandbox`** (message history, `workspace=ref`, `backend(ref)`, `destroy(ref)`) only open VMs `SmolSandbox` booted, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError`. Durable execution rebuilds the workspace from its ref, so it only works with VMs `SmolSandbox` booted.
 - **`SmolSandboxBackend(...)` built by your code** opens any VM on this machine, because your code chose it. A later run given only its message history raises `ValueError`; pass the backend again, or `workspace='new'`.
 - **The name doesn't prove origin**: any program running as your OS user can boot a VM with such a name. Only pass refs your application stored itself, and don't build `SmolSandboxBackend(ref=...)` from user input.
 

@@ -86,7 +86,9 @@ ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later
 
 If the sandbox has been terminated or has expired, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox)` to a run, with its own `working_dir=` and `env=`. A backend's `get_sandbox()` returns its `modal.Sandbox` for Modal features the workspace API doesn't cover.
+The ref holds no credentials: the process that reattaches needs your Modal token or a `client=` too.
+
+Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox, working_dir=..., env=...)` to a run; `ModalSandbox`'s settings don't apply to it. A backend's `get_sandbox()` returns its `modal.Sandbox` for Modal features the workspace API doesn't cover; on a backend with no sandbox yet, it creates one, which Modal bills.
 
 ## Prepare a sandbox before the run
 
@@ -219,12 +221,13 @@ agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersModal(
 | `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 
-`working_dir` and `env` also apply when you reattach; the other options only shape a new sandbox.
+`client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`. `warn_if_no_tools` only controls the warning; the other options only shape a new sandbox.
 
 ## Limits
 
 - A timeout or cancellation stops the command's process group, not the sandbox. Custom images need util-linux's `setsid` for that; without it, the command's children keep running.
 - If stopping a command fails, it may keep running; keep the ref so you can terminate the sandbox.
+- A sandbox terminated mid-command raises `WorkspaceUnavailableError`; a command killed in a live sandbox returns exit 137.
 - A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
 - Modal's SDK needs asyncio; under Trio, every operation raises `UserError`.
 

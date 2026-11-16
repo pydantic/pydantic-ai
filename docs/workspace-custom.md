@@ -1,7 +1,7 @@
 # Custom Workspaces
 
-Choose a workspace per user or tenant, add your own policy to one, or connect an environment Pydantic AI
-doesn't [support yet](workspace.md#supported-workspaces). Start with [Workspaces](workspace.md) if you
+Choose a workspace per user or tenant, add your own policy to one, mark who wrote its files, or connect an
+environment Pydantic AI doesn't [support yet](workspace.md#supported-workspaces). Start with [Workspaces](workspace.md) if you
 haven't used one.
 
 ## Supplying a workspace from a capability

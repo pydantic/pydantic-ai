@@ -77,7 +77,9 @@ ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later
 
 If the sandbox has been killed, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with its own `working_dir=` and `env=`.
+The ref holds no credentials: the process that reattaches needs `E2B_API_KEY` or a `client=` too.
+
+Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox, working_dir=..., env=...)` to a run; `E2BSandbox`'s settings don't apply to it.
 
 ## Prepare a sandbox before the run
 
@@ -218,7 +220,7 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/user` on the default template. Created on a new sandbox; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. The default locale is POSIX; pass `{'LC_ALL': 'C.UTF-8'}` for tools that should count characters rather than bytes. |
 
-`template` and `allow_internet_access` only shape a new sandbox; the other options also apply when you reattach.
+`template` and `allow_internet_access` only shape a new sandbox; the other options also apply when you reattach, and `destroy` uses `client`.
 
 ## Limits
 
@@ -227,6 +229,7 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 - A background process that keeps the command's stdout or stderr open keeps `run()` waiting. Redirect its output to a file; `Shell.start_command` does this for you.
 - A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
 - On a timeout, the command's process group is stopped. Custom templates need `/bin/bash`, `/bin/sh` and `setsid` for that; without `setsid`, only the command itself is stopped.
+- Stopping is best effort: if E2B can't be reached, the command may keep running, so keep the ref to inspect or kill the sandbox.
 - The E2B SDK needs asyncio; under Trio, every operation raises `UserError`.
 
 ## Durable execution

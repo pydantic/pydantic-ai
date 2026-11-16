@@ -56,6 +56,8 @@ ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later
 
 If the sandbox has been terminated, the run raises `WorkspaceUnavailableError`; pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
+The ref holds no credentials: the process that reattaches needs `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`, or a `client=`, too.
+
 ## Prepare a sandbox before the run
 
 To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
@@ -152,10 +154,11 @@ New sandbox ids are logged at INFO. A connection failure during creation can lea
 | `working_dir` | Absolute directory commands start in and relative paths resolve from. Default: `None`, the sandbox's home directory. Created on a new sandbox; on an attached one it must exist. |
 | `env` | Environment variables every command gets. Default: `None`; nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
 
-`working_dir` and `env` also apply when you reattach; the other options only shape a new sandbox.
+`client`, `working_dir` and `env` also apply when you reattach, and `destroy` uses `client`; the other options only shape a new sandbox.
 
 ## Limits
 
+- Sandbox setup timeouts raise `TimeoutError`; missing sandboxes and rejected access raise `WorkspaceUnavailableError`.
 - Render allows 100 API requests a minute. A rate-limited request raises the SDK's `RateLimitError` and is not retried.
 - A command and its environment must fit in about 110 KB. Write larger content with the file tools.
 - A command whose output passes 10 MiB raises `WorkspaceOutputLimitError`. Redirect large output to a file.
