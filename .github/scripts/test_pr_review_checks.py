@@ -100,6 +100,7 @@ def test_ui_check_owns_the_clai2_live_session_socket() -> None:
     [
         ('pydantic_ai_slim/pydantic_ai/messages.py', 'ui'),
         ('pydantic_ai_slim/pydantic_ai/realtime/_utils.py', 'url-fetch'),
+        ('.github/scripts/agent_provider_health.py', 'telemetry'),
     ],
 )
 def test_joint_path_runs_its_check_and_the_general_check(path: str, check: str) -> None:

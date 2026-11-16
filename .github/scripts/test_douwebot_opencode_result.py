@@ -85,6 +85,14 @@ _FINDINGS = json.dumps(
         'discussion': '',
     }
 )
+# Braces and escaped quotes inside JSON strings, and a string that ends with an escaped backslash.
+_STRINGS_WITH_BRACES = json.dumps(
+    {
+        'verdict': 'REQUEST_CHANGES',
+        'comments': [{'path': 'a.py', 'line': 1, 'side': 'RIGHT', 'body': 'Write `f"{x}"`, not `"}"`.'}],
+        'discussion': 'Ends with a backslash: \\',
+    }
+)
 
 
 @pytest.mark.parametrize(
@@ -93,18 +101,30 @@ _FINDINGS = json.dumps(
         pytest.param(f'{_PROSE}\n\n{_FINDINGS}', id='paragraph-before'),
         pytest.param(f'{_PROSE} {_FINDINGS}', id='same-line'),
         pytest.param(f'```json\n{_FINDINGS}', id='unterminated-fence'),
+        pytest.param(
+            f'The workflow reads `${{{{ github.sha }}}}`, not `{{}}`.\n\n{_FINDINGS}', id='prose-holding-braces'
+        ),
+        pytest.param(f'Checked `{{`.\n\n{_STRINGS_WITH_BRACES}', id='braces-and-escapes-in-strings'),
     ],
 )
 def test_prose_before_bare_json_is_dropped(tmp_path: Path, text: str) -> None:
-    """Accept a bare JSON object that ends the answer after prose."""
+    """Accept the JSON object that ends the answer, bare or fenced, after prose, even prose that holds a `{`."""
     result = review_result(_stream(tmp_path, text))
     assert result.verdict == 'REQUEST_CHANGES'
 
 
-def test_fence_heavy_answer_is_rejected_in_linear_time(tmp_path: Path) -> None:
-    """A model-controlled answer of a million fence characters cannot stall validation."""
+@pytest.mark.parametrize(
+    'text',
+    [
+        pytest.param('```\n' * 250_000 + 'x', id='fences'),
+        pytest.param('"' * 1_000_000 + '}', id='quotes'),
+        pytest.param('{' * 500_000 + '}' * 500_000, id='braces'),
+    ],
+)
+def test_adversarial_answer_is_rejected_in_linear_time(tmp_path: Path, text: str) -> None:
+    """A model-controlled answer of a million fence, quote or brace characters cannot stall validation."""
     with pytest.raises(ValidationError):
-        review_result(_stream(tmp_path, '```\n' * 250_000 + 'x'))
+        review_result(_stream(tmp_path, text))
 
 
 @pytest.mark.parametrize(

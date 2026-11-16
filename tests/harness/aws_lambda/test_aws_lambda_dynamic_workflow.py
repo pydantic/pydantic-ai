@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import RequestInput
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -293,7 +293,7 @@ def test_a_callback_in_a_branch_suspends_the_invocation_and_resumes_its_branch()
         FunctionModel(clean_up),
         name='clean',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), RequestInput[None](ask)],
+        capabilities=[AWSLambdaDurability[None](), HandleDeferredToolCalls[None](ask)],
     )
 
     @cleaner.tool_plain(requires_approval=True)

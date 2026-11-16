@@ -30,7 +30,12 @@ from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import EventStreamHandlerParams, ToolsetCallToolId, ToolsetKind
 from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
-from pydantic_ai.durable_exec._toolset import CallToolResult, DurableFunctionToolset, wrap_tool_call_result
+from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
+    DurableFunctionToolset,
+    holds_tool_instance_defaults,
+    wrap_tool_call_result,
+)
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
@@ -41,7 +46,8 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._agent import DBOSParallelExecutionMode
-from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig, SnapshotStepReservation
+from ._function_toolset import ToolInstanceDefaultsGateToolset
+from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
 from ._operation_names import DBOSOperationNamer
 from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
 
@@ -164,7 +170,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
         self._event_step_reservations: dict[
-            tuple[str | None, str | None], dict[int, deque[StepReservation | SnapshotStepReservation | None]]
+            tuple[str | None, str | None], dict[int, deque[StepReservation | None]]
         ] = {}
         self._child_workflow_toolsets: dict[str, DurableFunctionToolset[AgentDepsT]] = {}
         self._child_workflow_metadata_capability = False
@@ -298,9 +304,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             nonlocal swapped
-            child = self._child_workflow_toolset(ts)
-            swapped = swapped or child is not None
-            return child or ts
+            replacement = self._child_workflow_toolset(ts) or ts
+            if isinstance(ts, FunctionToolset) and holds_tool_instance_defaults(ts):
+                replacement = ToolInstanceDefaultsGateToolset(replacement, function_toolset=ts)
+            swapped = swapped or replacement is not ts
+            return replacement
 
         replaced = (wrapped or toolset).visit_and_replace(swap)
         return replaced if swapped else wrapped
@@ -413,7 +421,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             # Reserve in buffer order, before immediate listeners can yield or emit another event.
             reservation = None
             if ctx.tool_call_id is not None and self.in_durable_context:
-                reservation = DBOS.reserve_step() if hasattr(DBOS, 'reserve_step') else SnapshotStepReservation()
+                reservation = DBOS.reserve_step()
             reservations.setdefault(id(event), deque()).append(reservation)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
