@@ -363,7 +363,7 @@ class TestEstimateTokenCount:
 
     def test_an_encoded_run_does_not_hide_compact_json(self):
         compact_json = '{"id": 1, "name": "x", "tags": [1, 2, 3]}' * 10
-        assert estimate_token_count([_user(compact_json + '"aB3dE5fG7hI9jK1lM3nO5pQ7"')]) == 275
+        assert estimate_token_count([_user(compact_json + '"aB3dE5fG7hI9jK1lM3nO5pQ7"')]) == 273
 
 
 # ---------------------------------------------------------------------------
