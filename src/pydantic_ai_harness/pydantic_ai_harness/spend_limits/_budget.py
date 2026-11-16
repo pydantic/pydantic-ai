@@ -8,10 +8,10 @@ counter. A new day is a new key.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Generic, Literal, assert_never
+from typing import Any, Generic, Literal, NamedTuple, TypeVar, assert_never
 
 from typing_extensions import TypedDict
 
@@ -156,16 +156,9 @@ class Budget(Generic[AgentDepsT]):
 
     def _check_ceilings(self) -> None:
         """Validate plain ceilings; a callable's are validated once `resolve_ceilings` has its value."""
-        if self.usd is not None and not callable(self.usd):
-            # Checked before the comparison, which raises `InvalidOperation` on a NaN
-            # rather than returning False. An infinity passes it and reads as a ceiling
-            # that can never be reached, which `usd=None` already says outright.
-            if not self.usd.is_finite():
-                raise UserError(f'Budget.usd must be a finite amount; got {self.usd}. Use `usd=None` for no ceiling.')
-            if self.usd <= 0:
-                raise UserError(f'Budget.usd must be positive; got {self.usd}. Use `usd=None` for no ceiling.')
-        if self.tokens is not None and not callable(self.tokens) and self.tokens <= 0:
-            raise UserError(f'Budget.tokens must be positive; got {self.tokens}. Use `tokens=None` for no ceiling.')
+        for kind, ceiling in (('usd', self.usd), ('tokens', self.tokens)):
+            if ceiling is not None and not callable(ceiling):
+                _check_ceiling(kind, ceiling)
 
     def _check_retain(self) -> None:
         if isinstance(self.retain, timedelta):
@@ -285,32 +278,65 @@ def resolves_from_run(budget: Budget[Any]) -> bool:
     return callable(budget.usd) or callable(budget.tokens)
 
 
-def resolve_ceilings(budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT]) -> Budget[AgentDepsT]:
-    """`budget` with its callable ceilings resolved for this run, validated as a plain ceiling is.
+class Ceilings(NamedTuple):
+    """The ceilings a budget applies to one reading, with any callable resolved for the run."""
 
-    A partition resolved to no ceiling at all drops `warn_at`, which has nothing left to be a fraction of.
+    usd: Decimal | None
+    tokens: int | None
+
+    @property
+    def enforce(self) -> bool:
+        """Whether either ceiling is set, so the reading can refuse a request."""
+        return self.usd is not None or self.tokens is not None
+
+
+_CeilingT = TypeVar('_CeilingT', Decimal, int)
+
+
+def resolve_ceilings(budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT] | None) -> Ceilings:
+    """The ceilings `budget` applies in this run, a callable one resolved and validated as a plain one is.
+
+    `ctx` is `None` only for a budget with plain ceilings: without a run, callers omit the rest.
     """
-    if not resolves_from_run(budget):
-        return budget
-    usd = budget.usd(ctx) if callable(budget.usd) else budget.usd
-    tokens = budget.tokens(ctx) if callable(budget.tokens) else budget.tokens
-    for kind, resolved, expected in (('usd', usd, Decimal), ('tokens', tokens, int)):
-        # Checked rather than coerced, as `scope` is: an allowance read from deps is often a float.
-        if resolved is not None and (isinstance(resolved, bool) or not isinstance(resolved, expected)):
-            raise UserError(
-                f'The `{kind}` ceiling of budget {budget.name!r} must return {expected.__name__} or None; '
-                f'got {type(resolved).__name__}.'
-            )
-    warn_at = None if usd is None and tokens is None else budget.warn_at
-    return replace(budget, usd=usd, tokens=tokens, warn_at=warn_at)
+    return Ceilings(
+        _resolve_ceiling(budget.name, 'usd', budget.usd, ctx, Decimal),
+        _resolve_ceiling(budget.name, 'tokens', budget.tokens, ctx, int),
+    )
 
 
-def ceilings(budget: Budget[Any]) -> tuple[Decimal | None, int | None]:
-    """The USD and token ceilings of a budget `resolve_ceilings` has resolved."""
-    usd, tokens = budget.usd, budget.tokens
-    if callable(usd) or callable(tokens):  # pragma: no cover - callers resolve first
-        raise UserError(f'Budget {budget.name!r} resolves its ceiling from the run, which needs a run context.')
-    return usd, tokens
+def _resolve_ceiling(
+    name: str,
+    kind: str,
+    ceiling: _CeilingT | Callable[[RunContext[AgentDepsT]], _CeilingT | None] | None,
+    ctx: RunContext[AgentDepsT] | None,
+    expected: type[_CeilingT],
+) -> _CeilingT | None:
+    if not callable(ceiling):
+        return ceiling
+    if ctx is None:  # pragma: no cover - callers filter these budgets out first
+        raise UserError(f'Budget {name!r} resolves its `{kind}` ceiling from the run, which needs a run context.')
+    resolved: object = ceiling(ctx)
+    if resolved is None:
+        return None
+    # Checked rather than coerced, as `scope` is: an allowance read from deps is often a float.
+    if isinstance(resolved, bool) or not isinstance(resolved, expected):
+        raise UserError(
+            f'The `{kind}` ceiling of budget {name!r} must return {expected.__name__} or None; '
+            f'got {type(resolved).__name__}.'
+        )
+    _check_ceiling(kind, resolved)
+    return resolved
+
+
+def _check_ceiling(kind: str, ceiling: Decimal | int) -> None:
+    """Reject a ceiling of zero or less, and a USD one that is not finite."""
+    # Checked before the comparison, which raises `InvalidOperation` on a NaN
+    # rather than returning False. An infinity passes it and reads as a ceiling
+    # that can never be reached, which `usd=None` already says outright.
+    if isinstance(ceiling, Decimal) and not ceiling.is_finite():
+        raise UserError(f'Budget.{kind} must be a finite amount; got {ceiling}. Use `{kind}=None` for no ceiling.')
+    if ceiling <= 0:
+        raise UserError(f'Budget.{kind} must be positive; got {ceiling}. Use `{kind}=None` for no ceiling.')
 
 
 def store_key(budget: Budget[Any], bucket_id: str, scope: str) -> str:

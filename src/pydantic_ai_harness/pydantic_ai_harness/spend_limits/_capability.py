@@ -28,8 +28,8 @@ from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend_limits._budget import (
     Budget,
     BudgetSpec,
+    Ceilings,
     bucket,
-    ceilings,
     delimited,
     resolve_ceilings,
     resolves_from_run,
@@ -278,11 +278,11 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Refuse the request if any budget with a ceiling is already spent."""
-        resolved = [(resolve_ceilings(budget, ctx), key) for budget, key in await self._keyed(ctx)]
-        enforcing = [(budget, key) for budget, key in resolved if budget.enforces]
-        read = await self._read(list(dict.fromkeys(key for _, key in enforcing)))
-        for budget, key in enforcing:
-            self._check(budget, read[key], ctx)
+        resolved = [(budget, key, resolve_ceilings(budget, ctx)) for budget, key in await self._keyed(ctx)]
+        enforcing = [entry for entry in resolved if entry[2].enforce]
+        read = await self._read(list(dict.fromkeys(key for _, key, _ in enforcing)))
+        for budget, key, limits in enforcing:
+            self._check(budget, limits, read[key], ctx)
         return request_context
 
     async def wrap_model_request(
@@ -421,7 +421,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         keyed = await self._keyed(ctx)
         accrued = await self._accrue_boundaries(keyed, response, token, boundaries, usd=usd, priced=priced)
         # Resolved only once the response is accrued, so a failing ceiling callable cannot drop the spend.
-        statuses = [_status(resolve_ceilings(budget, ctx), key, accrued[key]) for budget, key in keyed]
+        statuses = [_status(budget, key, accrued[key], resolve_ceilings(budget, ctx)) for budget, key in keyed]
 
         error: Exception | None = None
         snapshot = SpendSnapshot(
@@ -442,8 +442,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     SpendBudgetStatus(
                         name=status.budget.name,
                         window=status.budget.window,
-                        usd_limit=ceilings(status.budget)[0],
-                        token_limit=ceilings(status.budget)[1],
+                        usd_limit=status.usd_limit,
+                        token_limit=status.token_limit,
                         key=status.key,
                         spent_usd=status.spent.usd,
                         spent_tokens=status.spent.tokens,
@@ -619,10 +619,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             ):
                 unresolved.append(budget.name)
                 continue
-            resolved = budget if ctx is None else resolve_ceilings(budget, ctx)
-            keyed.append((resolved, self._key(budget, ctx, now, scope)))
+            keyed.append((budget, self._key(budget, ctx, now, scope)))
         read = await self._read(list(dict.fromkeys(key for _, key in keyed)))
-        return tuple(_status(budget, key, read[key]) for budget, key in keyed), tuple(unresolved)
+        statuses = tuple(_status(budget, key, read[key], resolve_ceilings(budget, ctx)) for budget, key in keyed)
+        return statuses, tuple(unresolved)
 
     async def exhausted(
         self,
@@ -760,9 +760,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         # Preserve existing single-response replay keys; distinguish subsequent provider responses.
         return delimited(token, str(response_index)) if response_index else token
 
-    def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
+    def _check(self, budget: Budget[AgentDepsT], limits: Ceilings, spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
         """Raise if `spent` has reached either of the budget's ceilings."""
-        usd, tokens = ceilings(budget)
+        usd, tokens = limits
         if usd is not None and spent.usd >= usd:
             self._refuse(budget, ctx, f'spent ${spent.usd} of ${usd}')
         if tokens is not None and spent.tokens >= tokens:
@@ -934,14 +934,14 @@ def _continuation_boundaries(
     return boundaries
 
 
-def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:
+def _status(budget: Budget[Any], key: str, spent: Spent, limits: Ceilings) -> BudgetStatus:
     """Pair a budget with what its window has accumulated.
 
     `remaining_usd` under `money_precision` for the same reason the counter itself is: an
     application that lowered `Decimal` precision for its own arithmetic would otherwise be
     told a rounded number by a store that holds an exact one.
     """
-    usd, tokens = ceilings(budget)
+    usd, tokens = limits
     with money_precision():
         remaining_usd = None if usd is None else usd - spent.usd
     remaining_tokens = None if tokens is None else tokens - spent.tokens
@@ -949,24 +949,26 @@ def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:
         budget=budget,
         key=key,
         spent=spent,
+        usd_limit=usd,
+        token_limit=tokens,
         remaining_usd=remaining_usd,
         remaining_tokens=remaining_tokens,
-        warning=_warning(budget, spent),
+        warning=_warning(budget.warn_at, limits, spent),
         exhausted=(remaining_usd is not None and remaining_usd <= 0)
         or (remaining_tokens is not None and remaining_tokens <= 0),
     )
 
 
-def _warning(budget: Budget[Any], spent: Spent) -> bool:
-    """Whether spend has crossed the budget's warning fraction.
+def _warning(warn_at: float | None, limits: Ceilings, spent: Spent) -> bool:
+    """Whether spend has crossed the budget's warning fraction of its ceilings.
 
     The USD product is taken under `money_precision`: rounded at the application's, a
     crossing near the fraction reports the wrong side of it.
     """
-    if budget.warn_at is None:
+    if warn_at is None:
         return False
-    fraction = Decimal(str(budget.warn_at))
-    usd, tokens = ceilings(budget)
+    fraction = Decimal(str(warn_at))
+    usd, tokens = limits
     with money_precision():
         if usd is not None and spent.usd >= usd * fraction:
             return True

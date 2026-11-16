@@ -91,7 +91,7 @@ class BudgetStatus:
     """A budget and how much of it is left."""
 
     budget: Budget[Any]
-    """The budget this describes, with a callable ceiling resolved to the value it read.
+    """The budget this describes, as configured. `usd_limit` and `token_limit` hold its resolved ceilings.
 
     Unparameterised because this is a reading: the dependency type only types
     the callables of a `Budget`, and nothing calls one through a status.
@@ -102,6 +102,12 @@ class BudgetStatus:
 
     spent: Spent
     """What the budget's current window has accumulated."""
+
+    usd_limit: Decimal | None = None
+    """The USD ceiling this reading is measured against, resolved for the run when `Budget.usd` is a callable."""
+
+    token_limit: int | None = None
+    """The token ceiling this reading is measured against, resolved for the run when `Budget.tokens` is a callable."""
 
     remaining_usd: Decimal | None
     """`None` when the budget sets no USD limit."""

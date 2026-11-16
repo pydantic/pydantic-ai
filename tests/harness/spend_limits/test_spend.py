@@ -540,12 +540,12 @@ class _Account:
     allowance_tokens: int | None = None
 
 
-def _account_budget(**kwargs: Any) -> Budget[_Account]:
+def _account_budget(*, warn_at: float | None = None) -> Budget[_Account]:
     return Budget[_Account](
         usd=lambda ctx: ctx.deps.allowance_usd,
         scope=lambda ctx: ctx.deps.id,
         name='account',
-        **kwargs,
+        warn_at=warn_at,
     )
 
 
@@ -565,12 +565,13 @@ class TestResolvedCeiling:
 
         [small_status] = await guard.status(_run_ctx(deps=small))
         [large_status] = await guard.status(_run_ctx(deps=large))
-        assert (small_status.budget.usd, small_status.remaining_usd, small_status.exhausted) == (
+        assert small_status.budget is guard.budgets[0]
+        assert (small_status.usd_limit, small_status.remaining_usd, small_status.exhausted) == (
             Decimal('5'),
             Decimal('-1'),
             True,
         )
-        assert (large_status.budget.usd, large_status.remaining_usd, large_status.exhausted) == (
+        assert (large_status.usd_limit, large_status.remaining_usd, large_status.exhausted) == (
             Decimal('50'),
             Decimal('44'),
             False,
@@ -624,20 +625,21 @@ class TestResolvedCeiling:
             (Decimal('NaN'), 'Budget.usd must be a finite amount'),
         ],
     )
-    async def test_a_resolved_ceiling_is_validated(self, allowance: Any, match: str):
+    async def test_a_resolved_ceiling_is_validated(self, allowance: object, match: str):
         guard = SpendLimits(budgets=[_account_budget()])
+        account = _Account('u1', allowance_usd=allowance)  # pyright: ignore[reportArgumentType]
 
         with pytest.raises(UserError, match=match):
-            await _gate(guard, ctx=_run_ctx(deps=_Account('u1', allowance_usd=allowance)))
+            await _gate(guard, ctx=_run_ctx(deps=account))
 
     async def test_a_failing_ceiling_still_records_the_spend(self):
         """The response was billed whatever the callable does, so it is accrued before the ceiling is read."""
 
-        def broken(ctx: RunContext[Any]) -> Decimal | None:
+        def broken(ctx: RunContext[None]) -> Decimal | None:
             raise RuntimeError('allowance service down')
 
         guard = SpendLimits(
-            budgets=[Budget[Any](usd=broken, name='broken'), Budget[Any](window='total', name='all')],
+            budgets=[Budget[None](usd=broken, name='broken'), Budget[None](window='total', name='all')],
             price=lambda r: Decimal('1'),
         )
 
@@ -648,7 +650,7 @@ class TestResolvedCeiling:
         assert status.spent.usd == Decimal('1')
 
     async def test_a_boolean_token_ceiling_is_refused(self):
-        guard = SpendLimits(budgets=[Budget[Any](tokens=lambda ctx: True)])
+        guard = SpendLimits(budgets=[Budget[None](tokens=lambda ctx: True)])
 
         with pytest.raises(UserError, match="`tokens` ceiling of budget 'default' must return int or None; got bool"):
             await _gate(guard)
