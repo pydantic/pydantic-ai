@@ -389,6 +389,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd), use `Workspace(backend)` (`write_text`,
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
+- `E2BSandbox(desktop=True)` gives a new sandbox E2B's `desktop` template (Ubuntu, XFCE, a terminal, Chrome) at
+  1280x800 for `ComputerUse()`, or pass `desktop=(w, h)`. XFCE takes `printscreen` and the media and volume keys
+  itself. The agent can type only ASCII. A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot`, `setsid`
+  and `startxfce4`.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
