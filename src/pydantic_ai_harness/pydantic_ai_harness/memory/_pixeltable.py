@@ -215,16 +215,16 @@ class PixeltableMemoryStore:
             matches=result.matches, scanned=result.scanned, truncated=result.truncated or content_truncated
         )
 
-    def _locked(self, fn: Callable[[], _T]) -> _T:
+    def _locked(self, func: Callable[[], _T]) -> _T:
         with self._lock:
             try:
-                return fn()
+                return func()
             except pxt.NotFoundError:
                 # The cached handle goes stale if the table was dropped; recreate and retry once.
                 # The retry is safe: the drop discarded every file and receipt, so the operation runs
                 # again against the new, empty table exactly as a fresh call would.
                 self._table = None
-                return fn()
+                return func()
 
     def _ensure_table(self) -> pxt.Table:
         if self._table is not None:

@@ -26,7 +26,9 @@ def _as_task(value: task.Task[T]) -> task.Task[object]:
     return cast(task.Task[object], value)
 
 
-_CURRENT_LOOP: ContextVar[_TrampolineLoop | None] = ContextVar('durabletask_loop', default=None)
+_CURRENT_LOOP: ContextVar[_TrampolineLoop | None] = ContextVar(
+    'pydantic_ai_harness.azure_durable_task.current_loop', default=None
+)
 
 
 def current_loop() -> _TrampolineLoop | None:

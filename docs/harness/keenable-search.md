@@ -67,7 +67,7 @@ agent = Agent(
     '{{ anthropic:medium }}',
     capabilities=[
         KeenableSearch(
-            num_results=10,
+            max_results=10,
             max_snippet_chars=800,
             max_page_chars=20_000,
         )
@@ -77,11 +77,13 @@ agent = Agent(
 
 | Field | Default | What it does |
 |---|---|---|
-| `num_results` | `5` | How many results `web_search` returns, from 1 to 50. |
+| `max_results` | `5` | How many results `web_search` returns, from 1 to 50. |
 | `max_snippet_chars` | `500` | Excerpt budget per search result. |
 | `max_page_chars` | `10_000` | Page budget for `get_page`; longer pages are truncated and marked, with the marker counted against the budget. A budget too small to hold the marker ends the page with `…` instead. |
 | `guidance` | `None` | Replaces the default research instructions, including their untrusted-content rule; `''` contributes none. |
 | `client` | `None` | A `KeenableClient` to use instead of the default HTTP client. |
+
+`num_results` is the deprecated name of `max_results` and still works, with a warning.
 
 `max_snippet_chars` exists because Keenable's snippets run to thousands of
 characters, far more than the excerpt a typical search API returns. Left
@@ -127,7 +129,7 @@ For a proxy, a self-hosted deployment, or a `KeenableClient` of your own, this
 is what the default client sends. `search` posts a JSON body
 `{"query": ..., "max_results": ...}` to `/v1/search`, or to
 `/v1/search/public` when there is no key, and returns the response's `results`
-list; the toolset passes `num_results` as `max_results`. `fetch` sends
+list. `fetch` sends
 `GET /v1/fetch`, or `/v1/fetch/public` when keyless, with the page address in
 the `url` query parameter, and returns the response object; the toolset reads
 its `content`, `title`, and `url`. Every request carries an `X-Keenable-Title: Pydantic AI
@@ -194,7 +196,7 @@ file instead of Python:
 model: {{ anthropic:medium }}
 capabilities:
   - KeenableSearch:
-      num_results: 10
+      max_results: 10
 ```
 
 ```python

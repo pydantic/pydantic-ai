@@ -21,6 +21,9 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._output import truncate_head
 from pydantic_ai_harness._typeguards import is_object_dict, is_object_list
+from pydantic_ai_harness._warn import warn_argument_renamed
+
+KEENABLE_DEFAULT_MAX_RESULTS = 5
 
 KEENABLE_MAX_RESULTS = 50
 """The most results one Keenable search returns; the API rejects a larger `max_results`."""
@@ -266,7 +269,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
     (`KeenableSource` dicts), so applications can render citations from
     `ToolReturnPart.metadata` without parsing the text.
 
-    `web_search` asks Keenable for `num_results` results and trims each excerpt
+    `web_search` asks Keenable for `max_results` results and trims each excerpt
     to `max_snippet_chars`, and `get_page` truncates at `max_page_chars` with a
     marker so the model knows the page continued; a budget too small to hold
     the marker ends the page with `…` instead. All three bounds are validated
@@ -288,11 +291,12 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         client: KeenableClient | None,
-        num_results: int,
+        max_results: int = KEENABLE_DEFAULT_MAX_RESULTS,
         max_snippet_chars: int,
         max_page_chars: int,
         id: str | None = None,
         operations: KeenableSearchOperations | None = None,
+        num_results: int | None = None,
     ) -> None:
         """Configure the tools.
 
@@ -300,7 +304,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
             client: The Keenable client the tools call. `None` uses an
                 `HttpKeenableClient` configured from the `KEENABLE_API_KEY` and
                 `KEENABLE_API_URL` environment variables.
-            num_results: Number of results `web_search` asks Keenable for, from
+            max_results: Number of results `web_search` asks Keenable for, from
                 1 to 50.
             max_snippet_chars: Maximum characters of excerpt `web_search`
                 returns per result.
@@ -310,16 +314,22 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
                 needs to identify it.
             operations: The durable operations each tool's Keenable request
                 runs through. `None` makes the request directly.
+            num_results: Deprecated name of `max_results`.
 
         Raises:
             ValueError: If a budget is not a positive integer, or
-                `num_results` is above 50.
+                `max_results` is above 50.
         """
         super().__init__(id=id)
+        if num_results is not None:
+            if max_results != KEENABLE_DEFAULT_MAX_RESULTS:
+                raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
+            warn_argument_renamed('KeenableSearchToolset', 'num_results', 'max_results')
+            max_results = num_results
         # `KeenableSearch` validates these at construction, but the toolset is
         # public too, so a direct caller gets the same guarantee. Validated
         # before the client is built, so a bad budget fails on its own terms.
-        self._num_results = validated_budget('num_results', num_results, limit=KEENABLE_MAX_RESULTS)
+        self._max_results = validated_budget('max_results', max_results, limit=KEENABLE_MAX_RESULTS)
         self._max_snippet_chars = validated_budget('max_snippet_chars', max_snippet_chars)
         self._max_page_chars = validated_budget('max_page_chars', max_page_chars)
         self._client: KeenableClient = client if client is not None else HttpKeenableClient()
@@ -339,7 +349,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
 
     @staticmethod
     def _recoverable(
-        fn: Callable[Concatenate[_SelfT, _P], Awaitable[_R]],
+        func: Callable[Concatenate[_SelfT, _P], Awaitable[_R]],
     ) -> Callable[Concatenate[_SelfT, _P], Awaitable[_R]]:
         """Convert transient Keenable API failures into `ModelRetry`.
 
@@ -354,10 +364,10 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         """
         auth_statuses = frozenset({401, 402, 403})
 
-        @functools.wraps(fn)
+        @functools.wraps(func)
         async def wrapper(self: _SelfT, *args: _P.args, **kwargs: _P.kwargs) -> _R:
             try:
-                return await fn(self, *args, **kwargs)
+                return await func(self, *args, **kwargs)
             except httpx2.HTTPStatusError as error:
                 if error.response.status_code in auth_statuses:
                     raise
@@ -390,10 +400,10 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         """
         if self._operations is not None:
             return raise_retry(await self._operations.web_search(query))
-        # Keenable is asked for `num_results`, so a result without a usable URL
+        # Keenable is asked for `max_results`, so a result without a usable URL
         # still costs a slot. Filtering before the slice matters only when a
         # server returns more than `max_results`.
-        found = await self._client.search(query, max_results=self._num_results)
+        found = await self._client.search(query, max_results=self._max_results)
         results = [
             (url, result)
             for result in found
@@ -401,7 +411,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
             and len(url) <= self._MAX_URL_CHARS
             and not any(char.isspace() for char in url)
         ]
-        results = results[: self._num_results]
+        results = results[: self._max_results]
         if not results:
             return ToolReturn(f'No results found for {query!r}.', metadata={'sources': []})
 

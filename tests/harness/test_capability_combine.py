@@ -511,7 +511,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'KeenableSearch': Narrows(
         'one Keenable search configuration per id; two that differ need their own ids and PrefixTools',
-        lambda cls: (cls(), cls(num_results=3)),
+        lambda cls: (cls(), cls(max_results=3)),
     ),
     'Slack': Narrows(
         'one Slack connection per id; two that differ need their own ids and tool prefixes',

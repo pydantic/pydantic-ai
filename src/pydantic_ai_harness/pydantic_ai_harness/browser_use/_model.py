@@ -154,7 +154,7 @@ class _HostBudget:
             raise
 
 
-_host_budget: ContextVar[_HostBudget | None] = ContextVar('browser_use_host_budget', default=None)
+_host_budget: ContextVar[_HostBudget | None] = ContextVar('pydantic_ai_harness.browser_use.host_budget', default=None)
 
 
 @contextmanager
