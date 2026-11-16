@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ValidatedToolArgs
-from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipToolExecution, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -30,6 +30,8 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import SummarizingCompaction, ToolBudgets
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
+from ._search_agent import refusal
+
 
 def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
     """A model that sends `responses` in order, then answers `'done'`."""
@@ -43,6 +45,10 @@ def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
 
 def _search(query: str, tool_call_id: str | None = None) -> ToolCallPart:
     return ToolCallPart('search', {'query': query}, tool_call_id=tool_call_id or f'search-{query}')
+
+
+def _lookup(tool_call_id: str, key: str = 'k') -> ToolCallPart:
+    return ToolCallPart('lookup', {'key': key}, tool_call_id=tool_call_id)
 
 
 def _poll(tool_call_id: str) -> ToolCallPart:
@@ -98,7 +104,7 @@ class TestToolBudgets:
                 (
                     'search-c',
                     '2 of 2 `search` calls used; no more are allowed in this run.',
-                    {'tool_budgets': 'per_tool'},
+                    {'origin': 'pydantic-ai-harness.tool_budgets.refusal.v1', 'reason': 'per_tool'},
                 ),
             ]
         )
@@ -112,7 +118,7 @@ class TestToolBudgets:
 
         assert ran == ['search:a', 'poll:j1']
         assert _returns(result.all_messages())[-1] == snapshot(
-            ('p2', '2 of 2 tool calls used; no more are allowed in this run.', {'tool_budgets': 'total'})
+            ('p2', '2 of 2 tool calls used; no more are allowed in this run.', refusal('total'))
         )
 
     async def test_refuses_a_repeat_of_a_listed_tool_only(self):
@@ -134,7 +140,7 @@ class TestToolBudgets:
                 's2',
                 '`search` already ran with these exact arguments in this run (tool call `s1`); its result, or a '
                 "summary of it, is earlier in this conversation. Don't call it again with the same arguments.",
-                {'tool_budgets': 'repeat'},
+                refusal('repeat'),
             )
         )
 
@@ -158,8 +164,8 @@ class TestToolBudgets:
         assert {call_id: metadata for call_id, _, metadata in _returns(result.all_messages())} == {
             'search-a': None,
             'search-b': None,
-            'search-c': {'tool_budgets': 'per_tool'},
-            'again': {'tool_budgets': 'repeat'},
+            'search-c': refusal('per_tool'),
+            'again': refusal('repeat'),
         }
 
     async def test_failed_call_uses_the_budget_but_can_be_repeated(self):
@@ -170,7 +176,7 @@ class TestToolBudgets:
         result = await agent.run('Research it')
 
         assert ran == ['search:flaky', 'search:flaky']
-        assert _returns(result.all_messages())[-1][2] == {'tool_budgets': 'per_tool'}
+        assert _returns(result.all_messages())[-1][2] == refusal('per_tool')
 
     async def test_call_skipped_by_another_capability_is_not_counted(self):
         class SkipFirst(AbstractCapability[None]):
@@ -194,7 +200,7 @@ class TestToolBudgets:
             None,
             None,
             None,
-            {'tool_budgets': 'per_tool'},
+            refusal('per_tool'),
         ]
 
     async def test_call_approved_inline_is_counted_once(self):
@@ -219,7 +225,33 @@ class TestToolBudgets:
         assert ran == ['search:a']
         assert [metadata for _, _, metadata in _returns(result.all_messages())] == [
             None,
-            {'tool_budgets': 'per_tool'},
+            refusal('per_tool'),
+        ]
+
+    async def test_call_deferred_and_resolved_inline_is_counted(self):
+        """A tool that defers may already have started its work, so the call counts and stays a repeat."""
+
+        def resolve(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return DeferredToolResults(calls={call.tool_call_id: 'started' for call in requests.calls})
+
+        ran: list[str] = []
+        model = _scripted([_lookup('l1')], [_lookup('l2')], [_lookup('l3', 'other')], [_lookup('l4', 'third')])
+        budgets = ToolBudgets(per_tool={'lookup': 2}, refuse_repeats={'lookup'})
+        agent = _agent(model, budgets, HandleDeferredToolCalls(resolve), ran=ran)
+
+        @agent.tool_plain
+        def lookup(key: str) -> str:
+            ran.append(f'lookup:{key}')
+            raise CallDeferred
+
+        result = await agent.run('Look it up')
+
+        assert ran == ['lookup:k', 'lookup:other']
+        assert [metadata for _, _, metadata in _returns(result.all_messages())] == [
+            None,
+            refusal('repeat'),
+            None,
+            refusal('per_tool'),
         ]
 
     async def test_runs_do_not_share_counts(self):
@@ -259,7 +291,7 @@ class TestToolBudgets:
         assert ran == ['search:a', 'search:b']
         # The model asked for the repeat after compaction had summarized the first call away.
         assert [call_id for call_id, _, _ in seen[2]] == ['search-b']
-        assert [returns[-1][2] for returns in seen[3:]] == [{'tool_budgets': 'repeat'}, {'tool_budgets': 'per_tool'}]
+        assert [returns[-1][2] for returns in seen[3:]] == [refusal('repeat'), refusal('per_tool')]
 
     async def test_usage_limits_stay_the_hard_ceiling(self):
         """A refused call is still a call the model made, so it counts toward `tool_calls_limit`."""

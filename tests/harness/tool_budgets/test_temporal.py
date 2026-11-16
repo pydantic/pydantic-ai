@@ -24,7 +24,7 @@ from pydantic_ai_harness import ToolBudgets
 from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
-from ._search_agent import refusals, search, searches, searching_model
+from ._search_agent import refusal, refusals, search, searches, searching_model
 
 pytestmark = [
     pytest.mark.temporal,
@@ -70,7 +70,7 @@ async def test_budget_is_counted_in_workflow_code_and_survives_replay() -> None:
             )
         history = await client.get_workflow_handle(workflow_id).fetch_history()
 
-    assert refusals(ModelMessagesTypeAdapter.validate_json(dumped)) == [{'tool_budgets': 'per_tool'}]
+    assert refusals(ModelMessagesTypeAdapter.validate_json(dumped)) == [refusal('per_tool')]
     assert searches == ['q0', 'q1']
     # Replaying the recorded history re-runs the budget checks in workflow code; a different decision would be a
     # nondeterminism error, and the tool activities are read from history rather than run again.

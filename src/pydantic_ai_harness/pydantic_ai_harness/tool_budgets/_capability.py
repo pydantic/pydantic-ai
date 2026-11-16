@@ -13,10 +13,13 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipToolExecu
 from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-__all__ = ['ToolBudgets', 'ToolRefusal']
+__all__ = ['ToolBudgetReason', 'ToolBudgets']
 
-ToolRefusal: TypeAlias = Literal['repeat', 'per_tool', 'total']
-"""Why `ToolBudgets` refused a call, as recorded under `'tool_budgets'` in the refusal's `ToolReturn.metadata`."""
+ToolBudgetReason: TypeAlias = Literal['repeat', 'per_tool', 'total']
+"""Why `ToolBudgets` refused a call, as recorded under `'reason'` in the refusal's `ToolReturn.metadata`."""
+
+_REFUSAL_ORIGIN = 'pydantic-ai-harness.tool_budgets.refusal.v1'
+"""The `origin` in the `metadata` of the `ToolReturn` a refusal is answered with."""
 
 
 @dataclass(kw_only=True)
@@ -27,8 +30,8 @@ class ToolBudgets(AbstractCapability[AgentDepsT]):
     used, and the run continues. `UsageLimits.tool_calls_limit` stays the hard ceiling that ends the run.
 
     Counts live on the instance `for_run` creates for each run, not in message history, so compaction can't hand
-    a budget back. A call counts once its execution starts, whether it then succeeds or fails; a call that another
-    capability skips or defers doesn't count.
+    a budget back. A call counts once its execution starts, whether it then succeeds, fails or defers; a call that
+    another capability skips, or holds for approval, doesn't count.
 
     ```python
     from pydantic_ai import Agent
@@ -108,9 +111,11 @@ class ToolBudgets(AbstractCapability[AgentDepsT]):
             self._ran[key] = call.tool_call_id
         try:
             return await handler(args)
-        except (SkipToolExecution, CallDeferred, ApprovalRequired):
+        except (SkipToolExecution, ApprovalRequired):
             self._calls[name] -= 1
             self._forget(key)
+            raise
+        except CallDeferred:
             raise
         except Exception:
             self._forget(key)
@@ -121,8 +126,12 @@ class ToolBudgets(AbstractCapability[AgentDepsT]):
         if key is not None:
             del self._ran[key]
 
-    def _refuse(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, reason: ToolRefusal, message: str) -> NoReturn:
+    def _refuse(
+        self, ctx: RunContext[AgentDepsT], call: ToolCallPart, reason: ToolBudgetReason, message: str
+    ) -> NoReturn:
         ctx.tracer.start_span(
             'tool call refused', attributes={'tool_budgets.reason': reason, 'tool_budgets.tool_name': call.tool_name}
         ).end()
-        raise SkipToolExecution(ToolReturn(return_value=message, metadata={'tool_budgets': reason}))
+        raise SkipToolExecution(
+            ToolReturn(return_value=message, metadata={'origin': _REFUSAL_ORIGIN, 'reason': reason})
+        )

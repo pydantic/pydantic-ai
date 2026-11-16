@@ -771,7 +771,7 @@ except LoopDetectedError as error:
 ## ToolBudgets
 
 In `wrap_tool_execute`, refuses a function tool call that is over its `per_tool` budget, over the run's
-`total`, or (for tools in `refuse_repeats`) an exact repeat of a call that already returned in this run.
+`total`, or (for tools in `refuse_repeats`) an exact repeat of a call that already ran in this run.
 The refused call doesn't run: `SkipToolExecution` answers it with a `ToolReturn` naming the budget
 ("3 of 3 `web_search` calls used; no more are allowed in this run."), and the run continues.
 
@@ -801,14 +801,16 @@ def web_search(query: str) -> str:
 messages = agent.run_sync('Research Pydantic').all_messages()
 parts = [part for message in messages for part in message.parts]
 print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and part.metadata])
-#> [{'tool_budgets': 'repeat'}]
+#> [{'origin': 'pydantic-ai-harness.tool_budgets.refusal.v1', 'reason': 'repeat'}]
 ```
 
-- Find refusals by `ToolReturnPart.metadata == {'tool_budgets': reason}` (`'per_tool'`, `'total'`,
-  `'repeat'`), never by text. `UsageLimits.tool_calls_limit` stays the hard ceiling and counts refused calls.
-- A call counts when execution starts (success, `ModelRetry` or failure); calls another capability skips
-  or defers, and refused calls, don't. Repeats match tool name plus sorted-key JSON arguments; only a call
-  that returned is remembered. Parallel calls can't overshoot.
+- Find refusals by `metadata['origin'] == 'pydantic-ai-harness.tool_budgets.refusal.v1'`, never by text;
+  `metadata['reason']` is `'per_tool'`, `'total'` or `'repeat'` (`ToolBudgetReason`).
+  `UsageLimits.tool_calls_limit` stays the hard ceiling and counts refused calls.
+- A call counts when execution starts (success, `ModelRetry`, failure or `CallDeferred`); calls another
+  capability skips or holds for approval, and refused calls, don't. Repeats match tool name plus sorted-key
+  JSON arguments; a failed call isn't remembered. Parallel calls can't overshoot: they are checked against
+  calls still in flight, so one refused because of a call that is then skipped stays refused.
 - Counts live on the per-run instance from `for_run`, so compaction doesn't reset them; hooks run in
   workflow code under Temporal, DBOS, and Prefect, so replay reaches the same refusals. Each new run
   starts at zero, including one resumed after an approval round outside the run, so with approval

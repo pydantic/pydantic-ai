@@ -15,7 +15,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness import ToolBudgets
 from tests.conftest import try_import
 
-from ._search_agent import refusals, search, searches, searching_model
+from ._search_agent import refusal, refusals, search, searches, searching_model
 
 with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -71,8 +71,8 @@ def test_recovery_does_not_double_count(dbos: DBOS) -> None:
     DBOS.resume_workflow(workflow_id).get_result()
 
     first, recovered = attempts
-    assert refusals(first) == [{'tool_budgets': 'per_tool'}]
-    assert refusals(recovered) == [{'tool_budgets': 'per_tool'}]
+    assert refusals(first) == [refusal('per_tool')]
+    assert refusals(recovered) == [refusal('per_tool')]
     # Recovery replays the journaled model responses and runs the plain function tool again, which DBOS doesn't
     # journal. Each attempt counts from zero, so the replay lets the same two searches through and refuses the third.
     assert searches == ['q0', 'q1', 'q0', 'q1']

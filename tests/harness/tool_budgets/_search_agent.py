@@ -21,6 +21,11 @@ def search(query: str) -> str:
     return f'results for {query}'
 
 
+def refusal(reason: str) -> dict[str, str]:
+    """The `metadata` of the tool result `ToolBudgets` answers a refused call with."""
+    return {'origin': 'pydantic-ai-harness.tool_budgets.refusal.v1', 'reason': reason}
+
+
 def refusals(messages: list[ModelMessage]) -> list[object]:
     return [
         part.metadata

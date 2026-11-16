@@ -12,7 +12,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness import ToolBudgets
 from tests.conftest import try_import
 
-from ._search_agent import refusals, search, searches, searching_model
+from ._search_agent import refusal, refusals, search, searches, searching_model
 
 with try_import() as imports_successful:
     from prefect import flow
@@ -42,5 +42,5 @@ async def test_flow_refuses_the_call_over_budget(prefect_test_server: None, tmp_
     with temporary_settings({PREFECT_LOCAL_STORAGE_PATH: tmp_path}):
         messages = await run()
 
-    assert refusals(messages) == [{'tool_budgets': 'per_tool'}]
+    assert refusals(messages) == [refusal('per_tool')]
     assert searches == ['q0', 'q1']
