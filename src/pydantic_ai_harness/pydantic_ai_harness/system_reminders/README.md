@@ -172,7 +172,7 @@ SystemReminders(dynamic_reminders=[GoalReanchor(), LLMReminder(model='anthropic:
 
 `LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, so an agent with an `LLMReminder` and no cadence of its own grew its history by two parts on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
 
-Set `skip_unchanged=True` to leave out a generation whose text matches the latest generated reminder in the history the model sees. The generation call is still made; only the duplicate record is skipped.
+Set `skip_unchanged=True` to leave out a generation whose text matches the latest generated reminder in the history the model sees. The generation call is still made; only the duplicate record is skipped. The latest generated reminder is the latest from any `LLMReminder`, so the flag skips reliably only when it's the only `LLMReminder` on the agent.
 
 The nested call runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text.
 

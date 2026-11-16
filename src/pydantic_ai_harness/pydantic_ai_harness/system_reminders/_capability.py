@@ -492,7 +492,7 @@ class LLMReminder(Generic[AgentDepsT]):
     """Skip a firing whose generated text matches the latest generated reminder in the history the model sees.
 
     The generation call is still made; only an unchanged record is left out, so the history doesn't gain copies of
-    a nudge the model already has in front of it.
+    a nudge the model already has in front of it. The latest record may come from any `LLMReminder`.
     """
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
     _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
