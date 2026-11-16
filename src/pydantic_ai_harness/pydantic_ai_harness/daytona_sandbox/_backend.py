@@ -63,7 +63,7 @@ except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
 from pydantic_ai_harness._display import LazyDisplay, desktop_size
-from pydantic_ai_harness.daytona_sandbox._desktop import DaytonaDesktop
+from pydantic_ai_harness.daytona_sandbox._desktop import DISPLAY, DaytonaDesktop
 
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
@@ -481,9 +481,8 @@ class DaytonaSandboxBackend(
             raise UserError(
                 f"Daytona's desktop is at least 1024x768, not {self._desktop_size[0]}x{self._desktop_size[1]}."
             )
-        # Commands see the desktop too, so a program the agent starts from the shell opens on it. Daytona's desktop
-        # runs on display `:0`.
-        self._env = {**({'DISPLAY': ':0'} if self._desktop_size else {}), **(env or {})}
+        # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+        self._env = {**({'DISPLAY': DISPLAY} if self._desktop_size else {}), **(env or {})}
         self._display = (
             None
             if self._desktop_size is None

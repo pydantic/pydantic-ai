@@ -17,6 +17,7 @@ from anthropic.types.beta import (
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
+from ..._utils import is_str_dict
 from ...computer_use import ComputerCallPart
 from ...messages import ModelResponsePart, ToolCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
@@ -48,13 +49,6 @@ class ComputerReplay(TypedDict):
 _REPLAY = TypeAdapter(ComputerReplay)
 
 
-class _CallArgs(TypedDict):
-    actions: list[Any]
-
-
-_CALL_ARGS = TypeAdapter(_CallArgs)
-
-
 def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | None:
     """The calls a `computer` call came from, or `None` to send it back as a plain call.
 
@@ -66,11 +60,14 @@ def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | 
         return None
     try:
         replay = _REPLAY.validate_python(part.provider_details)
-        actions = _CALL_ARGS.validate_python(part.args_as_dict())['actions']
     except ValidationError:
         return None
     blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
-    return replay if blocks and len(blocks) == len(counts) and sum(counts) == len(actions) else None
+    match part.args_as_dict():
+        case {'actions': [*actions]} if blocks and len(blocks) == len(counts) and sum(counts) == len(actions):
+            return replay
+        case _:
+            return None
 
 
 @dataclass(frozen=True)
@@ -126,9 +123,19 @@ class NativeComputer:
         object and a name back.
         """
         split = split or {}
-        malformed = [block['id'] for block in blocks if not _well_formed(block)]
+        malformed = [
+            block['id'] for block in blocks if not (isinstance(block['name'], str) and is_str_dict(block['input']))
+        ]
         incomplete = {*incomplete, *malformed}
-        checked = [_checked(block) for block in blocks]
+        # A malformed call keeps its ID, with its name and input emptied, so Anthropic takes it back.
+        checked = [
+            ComputerBlock(
+                id=block['id'],
+                name=block['name'] if isinstance(block['name'], str) else '',
+                input=block['input'] if is_str_dict(block['input']) else {},
+            )
+            for block in blocks
+        ]
         member_actions = [
             self._member_actions(block, incomplete, split, last=index == len(checked) - 1)
             for index, block in enumerate(checked)
@@ -178,25 +185,41 @@ class ComputerBatch:
     between: list[str] = field(default_factory=list[str])
     """The other tools called since the batch's last call, which would run out of order if the batch ran as one."""
     split: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    incomplete: set[str] = field(default_factory=set[str])
+    """The IDs of calls whose input didn't arrive whole, such as in a stream cut off at `max_tokens`."""
 
     def take(self, block: BetaToolUseBlock, parts: list[ModelResponsePart]) -> bool:
         """Collect `block` if it's a call of the computer use tool; otherwise note it as another tool's call."""
         if self.computer is None or not self.computer.answers(block):
-            if self.blocks:
-                self.between.append(block.name)
+            self.note_other(block.name)
             return False
         call = {'id': block.id, 'name': block.name, 'input': block.input}
-        if not self.computer.is_toolset:
+        if self.computer.is_toolset:
+            self.add(call, len(parts))
+        else:
             # Each call of an earlier computer use tool is a call of its own.
             parts.append(self.computer.call_part([call], self.provider_name))
-            return True
+        return True
+
+    def add(self, call: dict[str, Any], index: int = 0) -> None:
+        """Add a toolset call to the batch; `index` is where in the parts the batch goes if this is its first call."""
         if not self.blocks:
-            self.index = len(parts)
+            self.index = index
         self.blocks.append(call)
         if self.between:
-            self.split[block.id] = self.between
+            self.split[call['id']] = self.between
             self.between = []
-        return True
+
+    def note_other(self, tool_name: str) -> None:
+        """Note another tool's call, which runs out of order if it comes between the batch's calls."""
+        if self.blocks:
+            self.between.append(tool_name)
+
+    def call_part(self) -> ComputerCallPart | None:
+        """The toolset's calls as one `computer` call, or `None` if there are none."""
+        if self.computer is None or not self.blocks:
+            return None
+        return self.computer.call_part(self.blocks, self.provider_name, incomplete=self.incomplete, split=self.split)
 
     def insert(self, parts: list[ModelResponsePart]) -> None:
         """Put the toolset's calls in `parts` as one `computer` call, at the first one's place.
@@ -204,29 +227,8 @@ class ComputerBatch:
         A response's toolset member calls are one batch, run in order until one fails. Text may sit between them;
         another tool call can't, since it would then run after calls Claude made after it.
         """
-        if self.computer and self.blocks:
-            parts.insert(self.index, self.computer.call_part(self.blocks, self.provider_name, split=self.split))
-
-
-def _checked(block: dict[str, Any]) -> ComputerBlock:
-    """A call with a name and input Anthropic takes back: a malformed one keeps its ID, with them emptied."""
-    return ComputerBlock(
-        id=block['id'],
-        name=block['name'] if _is_text(block['name']) else '',
-        input=block['input'] if _is_object(block['input']) else {},
-    )
-
-
-def _well_formed(block: dict[str, Any]) -> bool:
-    return _is_text(block['name']) and _is_object(block['input'])
-
-
-def _is_text(value: Any) -> bool:
-    return isinstance(value, str)
-
-
-def _is_object(value: Any) -> bool:
-    return isinstance(value, dict)
+        if (part := self.call_part()) is not None:
+            parts.insert(self.index, part)
 
 
 def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion) -> tuple[str, dict[str, Any]]:

@@ -8,7 +8,8 @@ from collections import Counter
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import KW_ONLY, asdict, dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
+from functools import cached_property
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import anyio
 import anyio.lowlevel
@@ -106,8 +107,24 @@ loop, so calls on separate loops don't take turns. A lock goes once no call hold
 _RELEASE_TIMEOUT = 5
 """Maximum time spent releasing each mouse button a failed or cancelled call left pressed."""
 
-_Limit: TypeAlias = tuple[int | None, int | None] | None
-"""The largest screenshot a model takes, as `(longest side, pixel count)`, either of which may be unlimited."""
+
+@dataclass(frozen=True)
+class _ScreenshotLimit:
+    """The largest screenshot a model takes. A field left `None` is unlimited."""
+
+    max_side: int | None = None
+    """The longest side, in pixels."""
+    max_pixels: int | None = None
+    """The pixel count."""
+
+    def fit(self, size: tuple[int, int]) -> tuple[int, int]:
+        """The largest size of `size`'s shape within the limit: `size` itself when it fits."""
+        width, height = size
+        scale = min(
+            self.max_side / max(width, height) if self.max_side else 1.0,
+            math.sqrt(self.max_pixels / (width * height)) if self.max_pixels else 1.0,
+        )
+        return size if scale >= 1 else (max(1, int(width * scale)), max(1, int(height * scale)))
 
 
 _NO_DISPLAY = (
@@ -136,7 +153,7 @@ class _Plan:
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: bool
     """Whether the actions to run differ from the ones the model asked for."""
-    limit: _Limit
+    limit: _ScreenshotLimit
     """The largest screenshot both that model and the run's model take; a larger screen is refused."""
     model_name: str
 
@@ -148,6 +165,15 @@ class _NotRun:
     message: str
     kind: Literal['tool', 'unavailable', 'config'] = 'tool'
     """`tool` tells the model; `unavailable` ends the run with `WorkspaceUnavailableError`, `config` with `UserError`."""
+
+    @classmethod
+    def of(cls, error: ToolFailed | WorkspaceUnavailableError | UserError) -> _NotRun:
+        """The result for a call that raised `error`."""
+        if isinstance(error, ToolFailed):
+            return cls(error.message)
+        if isinstance(error, WorkspaceUnavailableError):
+            return cls(str(error), 'unavailable')
+        return cls(error.message, 'config')
 
     def error(self) -> Exception:
         if self.kind == 'tool':
@@ -170,42 +196,40 @@ def _candidate_models(model: AbstractModel) -> list[Model]:
     return [model]
 
 
-def _model_limit(model: AbstractModel) -> _Limit:
-    """The largest screenshot every model that may answer takes, as `(longest side, pixel count)`."""
+def _smallest(*values: int | None) -> int | None:
+    """The smallest of the limits that are set, or `None` when none is."""
+    return min((value for value in values if value), default=None)
+
+
+def _model_limit(model: AbstractModel) -> _ScreenshotLimit:
+    """The largest screenshot every model that may answer takes."""
     profiles = [answering.profile for answering in _candidate_models(model)]
-    sides = [side for profile in profiles if (side := profile.get('computer_use_screenshot_max_side'))]
-    pixels = [count for profile in profiles if (count := profile.get('computer_use_screenshot_max_pixels'))]
-    if not sides and not pixels:
-        return None
-    return min(sides, default=None), min(pixels, default=None)
-
-
-def _call_limit(call: ComputerCallPart) -> _Limit:
-    """The largest screenshot the model that made `call` takes, as the agent recorded it on the call."""
-    side, pixels = call.screenshot_max_side, call.screenshot_max_pixels
-    return None if side is None and pixels is None else (side, pixels)
-
-
-def _min_limit(first: _Limit, second: _Limit) -> _Limit:
-    """The largest screenshot both limits allow."""
-    if first is None or second is None:
-        return first or second
-    sides = [side for side in (first[0], second[0]) if side]
-    pixels = [count for count in (first[1], second[1]) if count]
-    return min(sides, default=None), min(pixels, default=None)
-
-
-def _fit(size: tuple[int, int], limit: _Limit) -> tuple[int, int]:
-    """The largest size of `size`'s shape within the limit: `size` itself when it fits."""
-    if limit is None:
-        return size
-    width, height = size
-    side, pixels = limit
-    scale = min(
-        side / max(width, height) if side else 1.0,
-        math.sqrt(pixels / (width * height)) if pixels else 1.0,
+    return _ScreenshotLimit(
+        max_side=_smallest(*(profile.get('computer_use_screenshot_max_side') for profile in profiles)),
+        max_pixels=_smallest(*(profile.get('computer_use_screenshot_max_pixels') for profile in profiles)),
     )
-    return size if scale >= 1 else (max(1, int(width * scale)), max(1, int(height * scale)))
+
+
+def _call_limit(call: ComputerCallPart) -> _ScreenshotLimit:
+    """The largest screenshot the model that made `call` takes, as the agent recorded it on the call."""
+    return _ScreenshotLimit(max_side=call.screenshot_max_side, max_pixels=call.screenshot_max_pixels)
+
+
+def _min_limit(first: _ScreenshotLimit, second: _ScreenshotLimit) -> _ScreenshotLimit:
+    """The largest screenshot both limits allow."""
+    return _ScreenshotLimit(
+        max_side=_smallest(first.max_side, second.max_side),
+        max_pixels=_smallest(first.max_pixels, second.max_pixels),
+    )
+
+
+def _check_fits(what: str, size: tuple[int, int], limit: _ScreenshotLimit, model_name: str, then: str = '') -> None:
+    """Refuse a screenshot of `size` larger than the model can see, naming it `what`."""
+    if (fitted := limit.fit(size)) != size:
+        raise UserError(
+            f'{what} is {size[0]}x{size[1]}, larger than {model_name!r} can see. Start the display at '
+            f'{fitted[0]}x{fitted[1]} or smaller{then}.'
+        )
 
 
 def _points(action: ComputerToolAction) -> Sequence[Point]:
@@ -236,51 +260,42 @@ def _scale(value: int, to: int, scale_from: int) -> int:
     return min(to - 1, (2 * value * to + scale_from) // (2 * scale_from))
 
 
-def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tuple[int, int]) -> ComputerToolAction:
-    """Scale an action's positions from the model's `space` (a grid, or an older screenshot's size) to the display's."""
-    (width, height), (space_width, space_height) = display, space
-
-    def x(value: int) -> int:
-        return _scale(value, width, space_width)
-
-    def y(value: int) -> int:
-        return _scale(value, height, space_height)
-
-    match action:
-        case Click(x=px, y=py) | Scroll(x=px, y=py) | MoveMouse(x=px, y=py) if px is not None and py is not None:
-            return replace(action, x=x(px), y=y(py))
-        case Drag(path=path):
-            return replace(action, path=tuple(Point(x=x(p.x), y=y(p.y)) for p in path))
-        case Zoom(region=r):
-            # The far edges round up, so even a region one unit across covers a pixel.
-            right = max(min(width, -(-r.right * width // space_width)), x(r.left) + 1)
-            bottom = max(min(height, -(-r.bottom * height // space_height)), y(r.top) + 1)
-            return replace(action, region=Region(left=x(r.left), top=y(r.top), right=right, bottom=bottom))
-        case _:
-            return action
-
-
 @dataclass
-class _Call:
+class _CoordinateMapping:
     """One `computer` call's coordinate space and how it maps to the display."""
 
     space: tuple[int, int]
-    """The model's coordinate space."""
+    """The model's coordinate space: a grid, or the size of the screenshot it pointed on."""
     display: tuple[int, int]
     """The display's size in pixels."""
 
+    def to_display(self, action: ComputerToolAction) -> ComputerToolAction:
+        """`action` with its positions scaled from the model's space to the display's pixels."""
+        (width, height), (space_width, space_height) = self.display, self.space
+
+        def x(value: int) -> int:
+            return _scale(value, width, space_width)
+
+        def y(value: int) -> int:
+            return _scale(value, height, space_height)
+
+        match action:
+            case Click(x=px, y=py) | Scroll(x=px, y=py) | MoveMouse(x=px, y=py) if px is not None and py is not None:
+                return replace(action, x=x(px), y=y(py))
+            case Drag(path=path):
+                return replace(action, path=tuple(Point(x=x(p.x), y=y(p.y)) for p in path))
+            case Zoom(region=r):
+                # The far edges round up, so even a region one unit across covers a pixel.
+                right = max(min(width, -(-r.right * width // space_width)), x(r.left) + 1)
+                bottom = max(min(height, -(-r.bottom * height // space_height)), y(r.top) + 1)
+                return replace(action, region=Region(left=x(r.left), top=y(r.top), right=right, bottom=bottom))
+            case _:
+                return action
+
     def to_model(self, point: Point) -> Point:
+        """`point` on the display, in the model's space."""
         return Point(
             x=_scale(point.x, self.space[0], self.display[0]), y=_scale(point.y, self.space[1], self.display[1])
-        )
-
-
-def _check_fits(plan: _Plan, size: tuple[int, int]) -> None:
-    """Refuse a screen larger than the model can see: screenshots are sent at the screen's size."""
-    if (fitted := _fit(size, plan.limit)) != size:
-        raise UserError(
-            f'The screen is {size[0]}x{size[1]}, larger than {plan.model_name!r} can see. Start the display at '
-            f'{fitted[0]}x{fitted[1]} or smaller.'
         )
 
 
@@ -338,7 +353,7 @@ class _Steps:
     """Runs one call's actions on `display`, keeping what they return and whether the screen still has to settle."""
 
     display: Display
-    call: _Call
+    mapping: _CoordinateMapping
     settle_seconds: float
     outputs: list[str | BinaryImage] = field(default_factory=list[str | BinaryImage])
     unsettled: bool = False
@@ -361,7 +376,7 @@ class _Steps:
             case CursorPosition():
                 if not isinstance(self.display, SupportsCursorPosition):
                     raise UnsupportedActionError('This display cannot report the pointer position.')
-                point = self.call.to_model(await self.display.cursor_position())
+                point = self.mapping.to_model(await self.display.cursor_position())
                 self.outputs.append(f'The pointer is at ({point.x}, {point.y}).')
             case Screenshot():
                 pass
@@ -373,14 +388,14 @@ class _Steps:
 async def _perform(
     display: Display,
     actions: list[ComputerToolAction],
-    call: _Call,
+    mapping: _CoordinateMapping,
     settle_seconds: float,
 ) -> tuple[int, str | None, list[str | BinaryImage]]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned.
 
     After an action, the screen settles for `settle_seconds` before a zoom or the closing screenshot.
     """
-    steps = _Steps(display, call, settle_seconds)
+    steps = _Steps(display, mapping, settle_seconds)
     performed, error = 0, None
     held: list[MouseButton] = []
     try:
@@ -484,6 +499,13 @@ def _display(ctx: RunContext[Any]) -> Display | None:
     return display if isinstance(display, Display) else None
 
 
+def _required_display(ctx: RunContext[Any]) -> Display:
+    """The workspace backend's display, or a `UserError` when it has none."""
+    if (display := _display(ctx)) is None:
+        raise UserError(_NO_DISPLAY)
+    return display
+
+
 async def _display_size(display: Display) -> tuple[int, int]:
     try:
         return await display.display_size()
@@ -581,11 +603,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     )
     """What the model reads about the capability before loading it, when it's deferred with `defer_loading=True`."""
 
-    _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
-
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """Merge the fields, keeping the smallest value each action limit is given, then rebuild the tool."""
+        """Merge the fields, keeping the smallest value each action limit is given."""
         merged = super().combine(capabilities)
         assert isinstance(merged, cls)
         limits: dict[str, float] = {}
@@ -595,7 +615,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 if value is not None:
                     limits[name] = min(value, limits.get(name, value))
         # A copy, since `merged` can be a caller's instance that another agent also uses.
-        # `replace` re-runs `__post_init__`, which rebuilds the tool from the merged fields.
         return replace(merged, action_limits=_ACTION_LIMITS.validate_python(limits))
 
     def __post_init__(self) -> None:
@@ -603,6 +622,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise UserError('`settle_seconds` must not be negative.')
         # An agent spec passes the limits as a mapping.
         self.action_limits = _ACTION_LIMITS.validate_python(self.action_limits)
+
+    @cached_property
+    def _toolset(self) -> FunctionToolset[AgentDepsT]:
+        """The `computer` tool, built once per instance so every run of an agent gets the same toolset."""
         tool = Tool[AgentDepsT](
             self._computer,
             name='computer',
@@ -621,7 +644,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 'azure_durable_task': False,
             },
         )
-        self._toolset = FunctionToolset([tool], id=self.id)
+        return FunctionToolset([tool], id=self.id)
 
     async def _computer(
         self,
@@ -642,7 +665,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         made = _the_call(ctx)
         call = made[1] if made else None
         # The grid and screenshot limit of the model that made the call, as the agent recorded them.
-        grid, made_limit = (call.coordinate_grid, _call_limit(call)) if call else (None, None)
+        grid, made_limit = (call.coordinate_grid, _call_limit(call)) if call else (None, _ScreenshotLimit())
         plan = _Plan(
             grid=grid,
             # The model pointed on the latest screenshot before its call.
@@ -683,37 +706,32 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """Everything a call does on the display, as one durable unit."""
         try:
             return await self._run_on_display(ctx, actions, plan)
-        except ToolFailed as e:
-            return _NotRun(e.message)
-        except WorkspaceUnavailableError as e:
-            return _NotRun(str(e), 'unavailable')
-        except UserError as e:
-            return _NotRun(e.message, 'config')
+        except (ToolFailed, WorkspaceUnavailableError, UserError) as e:
+            return _NotRun.of(e)
 
     async def _run_on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn:
-        display = _display(ctx)
-        if display is None:
-            raise UserError(_NO_DISPLAY)
+        display = _required_display(ctx)
         # Measured while this call holds the screen, so a call that waited sees the size the one before it left.
         async with _taking_turns(ctx, display):
             # Also starts a display that stopped, before anything acts.
             size = await _display_size(display)
-            # The call ends with a screenshot, so a screen the model can't see ends the run before anything acts.
-            _check_fits(plan, size)
+            # The call ends with a screenshot at the screen's size, so a screen the model can't see ends the run
+            # before anything acts.
+            _check_fits('The screen', size, plan.limit, plan.model_name)
             # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size since.
-            call = _Call(space=(plan.grid, plan.grid) if plan.grid else plan.seen or size, display=size)
+            mapping = _CoordinateMapping(space=(plan.grid, plan.grid) if plan.grid else plan.seen or size, display=size)
             # The backend would move a position outside the screen to its edge and act there.
-            if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
+            if refused := _off_screen(actions, *mapping.space, 'grid' if plan.grid else 'screen'):
                 raise ToolFailed(refused)
-            pixels = actions if call.space == size else [_to_pixels(a, size, call.space) for a in actions]
-            return await self._act_and_look(display, pixels, call, plan)
+            pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
+            return await self._act_and_look(display, pixels, mapping, plan)
 
     async def _act_and_look(
-        self, display: Display, actions: list[ComputerToolAction], call: _Call, plan: _Plan
+        self, display: Display, actions: list[ComputerToolAction], mapping: _CoordinateMapping, plan: _Plan
     ) -> ToolReturn:
-        performed, error, outputs = await _perform(display, actions, call, self.settle_seconds)
+        performed, error, outputs = await _perform(display, actions, mapping, self.settle_seconds)
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
@@ -783,15 +801,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     @durable_operation('display_size')
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
         """The display's size, as its own durable unit: the request's tools are prepared in workflow code."""
-        display = _display(ctx)
-        if display is None:
-            return _NotRun(_NO_DISPLAY, 'config')
         try:
-            width, height = await display.display_size()
-        except WorkspaceUnavailableError as e:
-            return _NotRun(str(e), 'unavailable')
-        except WorkspaceError as e:
-            return _NotRun(str(e))
+            width, height = await _display_size(_required_display(ctx))
+        except (ToolFailed, WorkspaceUnavailableError, UserError) as e:
+            return _NotRun.of(e)
         return width, height
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -824,9 +837,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 '`computer` call returns a screenshot.'
             )
         size = _last_screenshot_size(request_context.messages)
-        if size is not None and (fitted := _fit(size, _model_limit(model))) != size:
-            raise UserError(
-                f'The latest screenshot is {size[0]}x{size[1]}, larger than {model.model_name!r} can see. Start the '
-                f'display at {fitted[0]}x{fitted[1]} or smaller to use this model on it.'
+        if size is not None:
+            _check_fits(
+                'The latest screenshot', size, _model_limit(model), model.model_name, ' to use this model on it'
             )
         return request_context
