@@ -59,7 +59,7 @@ Compaction updates persistent run history and replaces the current request view.
 
 ## Triggers
 
-Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`. Token counts anchor on the provider-reported usage of the most recent model response when one is available. That provider usage includes the instructions, tool definitions, and `FilePart` payloads sent in the anchored request; only the messages added since are estimated. The suffix after the anchor, or a history with no usage anchor, uses `tokenizer` or a heuristic of ~4 characters per token, priced up for denser text: ~1.5 characters per token for non-ASCII scripts, base64-like runs and compact JSON, and one token per CJK character; it cannot see `FilePart` payloads. Upgrading moves every token budget measured with this estimate -- `max_tokens`/`target_tokens` triggers, `keep_tokens` retention, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands and the `compaction.tokens_*` span attributes -- so histories holding non-ASCII text, base64 or compact JSON compact earlier than before. Pass `tokenizer` to measure with a real tokenizer instead. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Pending tool schemas newly revealed for the request are conservatively estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a large total.
+Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`. Token counts anchor on the provider-reported usage of the most recent model response when one is available. That provider usage includes the instructions, tool definitions, and `FilePart` payloads sent in the anchored request; only the messages added since are estimated. The suffix after the anchor, or a history with no usage anchor, uses `tokenizer` or the text estimate: ~4 characters per token for English-like prose, one token per CJK character, ~1.5 characters per token for other non-ASCII text and base64-like runs, and in compact JSON one token per punctuation character and half a token per digit. Dense content is deliberately estimated high, since an undercount can send a request over the context window. The same estimate measures `keep_tokens`, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands and the `compaction.tokens_*` span attributes. Neither can see `FilePart` payloads. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Pending tool schemas newly revealed for the request are conservatively estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a large total.
 
 ### `max_fraction`: one setting for every model
 
@@ -140,7 +140,7 @@ billed input re-counts the earlier requests' output, or the last sampling pass o
 [Anthropic response that reports its passes](../models/anthropic.md#server-side-tool-loops), whose
 billed input re-counts the context of each pass. For the suffix after the
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
-or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
+or the [text estimate](#triggers). That estimated portion cannot see `FilePart` payloads, and
 counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.
 When the instructions changed since the anchor, the new set replaces the old one in the estimate
 rather than adding to it, since a request sends only one. Pending tool schemas newly revealed for the request are conservatively estimated by the
@@ -161,8 +161,8 @@ of an [Anthropic response that reports its passes](../models/anthropic.md#server
 That last pass also read the response's own earlier passes, so the difference credits them to the
 messages before it, and the tail measures high. Before the first such response, after the last, and
 where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
-~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
-provider usage is measured with the heuristic as before.
+[text estimate](#triggers) applies. Instructions are not part of the tail. A history with no
+provider usage is measured with the text estimate.
 
 **If you set `keep_tokens`, re-check it.** It used to be measured with the heuristic alone, which
 on a thinking-heavy history can see a third of the real tokens or less, so the same budget kept
@@ -194,7 +194,7 @@ Each reading carries `used_tokens`, `window_tokens`, `fraction`, and `resolved` 
 
 `used_tokens` follows the accounting above: provider usage anchors include instructions, tool
 definitions, and `FilePart` payloads from the anchored request. The suffix after the anchor, or a
-history with no anchor, uses `tokenizer` or a ~4-characters-per-token heuristic and cannot see
+history with no anchor, uses `tokenizer` or the [text estimate](#triggers) and cannot see
 `FilePart` payloads. Pending newly revealed tool schemas are conservatively estimated by the
 implementation. When a compaction capability runs earlier in the same cycle, a monitor registered
 after it subtracts the rewrite's heuristic reclaim while retaining the anchor's fixed provider
@@ -546,7 +546,7 @@ Neither transport works everywhere, which is why this is a choice rather than a 
 
 ### A summary that isn't smaller
 
-The summary replaces only part of the history: system prompts, the first user turn, the recent tail, pinned parts and receipts are kept as they are. When the summarized span is short or the summary is long, the result can be larger than the history it replaces. Automatic compaction is there to make the request smaller, so when `SummarizingCompaction` runs on its own trigger, the compacted history is kept only when it is estimated smaller than the original, using the `tokenizer` of the capability whose trigger fired (`FallbackCompaction`'s inside a chain), or the ~4-characters-per-token estimate without one. Otherwise the request goes out with the history unchanged, any receipt the attempt wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller` records the attempt and its estimated size. The summary call's usage still counts, and while the trigger stays exceeded, the next request in the run tries again with another summary call. Inside `FallbackCompaction`, the next strategy runs instead, so putting a `SlidingWindowCompaction` after the summarizer bounds both the history and that cost. A direct `compact()` call, `compact_now()` or a `TieredCompaction` tier returns the summary either way.
+The summary replaces only part of the history: system prompts, the first user turn, the recent tail, pinned parts and receipts are kept as they are. When the summarized span is short or the summary is long, the result can be larger than the history it replaces. Automatic compaction is there to make the request smaller, so when `SummarizingCompaction` runs on its own trigger, the compacted history is kept only when it is estimated smaller than the original, using the `tokenizer` of the capability whose trigger fired (`FallbackCompaction`'s inside a chain), or the [text estimate](#triggers) without one. Otherwise the request goes out with the history unchanged, any receipt the attempt wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller` records the attempt and its estimated size. The summary call's usage still counts, and while the trigger stays exceeded, the next request in the run tries again with another summary call. Inside `FallbackCompaction`, the next strategy runs instead, so putting a `SlidingWindowCompaction` after the summarizer bounds both the history and that cost. A direct `compact()` call, `compact_now()` or a `TieredCompaction` tier returns the summary either way.
 
 ### Usage accounting
 

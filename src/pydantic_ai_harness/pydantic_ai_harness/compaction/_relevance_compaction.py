@@ -255,7 +255,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     """Insert a deterministic note after the head of the history saying how much was summarized or dropped."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional token counter; defaults to the characters-per-token heuristic."""
+    """Optional token counter; defaults to the built-in text estimate."""
 
     id: str | None = 'relevance_compaction'
     """Stable identity for durable operations; two on one agent merge into one."""

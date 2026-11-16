@@ -7,6 +7,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 from __future__ import annotations
 
 import re
+import string
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -232,11 +233,14 @@ _ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
 """A base64 or base64url-like run; `_is_encoded` rules out paths and identifiers."""
 
 _JSON_PUNCTUATION = '{}[],:"'
+"""In compact JSON each costs about a token, and each digit about half of one."""
 
 _DENSE_CHARS_PER_TOKEN = 1.5
-"""Characters per token of encoded runs, compact JSON, and non-ASCII text outside CJK (Cyrillic measures ~1.9)."""
+"""Characters per token of encoded runs and of non-ASCII text outside CJK (Cyrillic measures ~1.9)."""
 
 _DENSE_SURCHARGE = 1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
+_TOKEN_SURCHARGE = 1 - 1 / CHARS_PER_TOKEN
+_DIGIT_SURCHARGE = 1 / 2 - 1 / CHARS_PER_TOKEN
 
 
 def _is_encoded(run: str) -> bool:
@@ -254,10 +258,12 @@ def _dense_surcharge(text: str) -> float:
     non_ascii = len(text) - ascii_chars
     cjk = len(text) - len(_CJK.sub('', text)) if non_ascii else 0
     encoded = sum(len(run) for run in _ENCODED_RUN.findall(text) if _is_encoded(run))
-    plain = ascii_chars - encoded
-    is_json = plain >= 32 and sum(text.count(c) for c in _JSON_PUNCTUATION) * 5 >= len(text) - encoded
-    dense = non_ascii - cjk + encoded + (plain if is_json else 0)
-    return cjk * (1 - 1 / CHARS_PER_TOKEN) + dense * _DENSE_SURCHARGE
+    surcharge = cjk * _TOKEN_SURCHARGE + (non_ascii - cjk + encoded) * _DENSE_SURCHARGE
+    punctuation = sum(text.count(c) for c in _JSON_PUNCTUATION)
+    if ascii_chars - encoded >= 32 and punctuation * 5 >= len(text) - encoded:
+        digits = sum(text.count(c) for c in string.digits)
+        surcharge += punctuation * _TOKEN_SURCHARGE + digits * _DIGIT_SURCHARGE
+    return surcharge
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
@@ -354,7 +360,7 @@ def estimate_message_tokens(
 ) -> list[int]:
     """Tokens each message adds to a request, measured with provider-reported usage where the history has it.
 
-    The text estimate (`tokenizer`, or ~4 characters per token) misses what a provider counts but
+    The text estimate (`tokenizer`, or `estimate_text_tokens`) misses what a provider counts but
     does not return as text, such as thinking kept as an empty part with a signature, and it
     underestimates token-dense content. Usage measures both. A response counts at least its
     `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
@@ -653,7 +659,7 @@ async def compact_with_span(
         messages: The pre-compaction messages, measured for the `*_before` attributes.
         compact: Zero-argument async callable returning the compacted message list.
         tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
-            uses the same ~4 characters-per-token heuristic as `estimate_token_count`.
+            uses the same text estimate as `estimate_token_count`.
         model_requested: Whether the model asked for this compaction, recorded as
             `compaction.model_requested` (set only when `True`).
         background: What became of a background compaction, recorded as `compaction.background`
