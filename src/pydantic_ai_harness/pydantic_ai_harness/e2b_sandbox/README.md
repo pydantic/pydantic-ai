@@ -223,9 +223,9 @@ if __name__ == '__main__':
 
 The `finally` kills the sandbox even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
-## Give commands a credential they cannot read
+## Keep a token out of the sandbox
 
-`network` takes E2B's network options, passed to `Sandbox.create` unchanged. Their `rules` let commands use a token the sandbox never holds: E2B's proxy, outside the sandbox, sets the headers on each HTTPS request to the named host, replacing a header of the same name. Here `gh` and `git push` act as the token's owner, while `echo $GH_TOKEN` in the sandbox prints only `placeholder`:
+Pass `network` to have E2B add a token to the sandbox's requests itself, so the token is never inside the sandbox. `network` takes E2B's own network options and passes them on unchanged. Here `gh` and `git push` work as the token's owner, while `echo $GH_TOKEN` in the sandbox prints `placeholder`:
 
 ```python {names="defined"}
 import base64
@@ -246,14 +246,14 @@ sandbox = E2BSandbox(
 )
 ```
 
-E2B marks these rules [public beta](https://docs.e2b.dev/sandbox/internet-access), so their shape may change.
+E2B adds the header as each request leaves the sandbox, replacing any header with the same name. E2B calls this [public beta](https://docs.e2b.dev/sandbox/internet-access), so it may change.
 
-- Only HTTPS requests get the headers. Plain HTTP and SSH remotes such as `git@github.com:owner/repo.git` get none, so use the `https://` URL.
-- A rule does not allow traffic by itself. If you set `allow_out` or `allow_internet_access=False`, list each rule's host in `allow_out` too.
-- The agent cannot read the token, but can use it for anything it allows, on every repository it reaches.
-- Name only hosts you trust not to echo request headers back in a response, or a command can read the value there.
-- The rules last as long as the sandbox, including after a reattach. To change them, such as to rotate the token, call `update_network` on `await backend.get_sandbox()`; it replaces every network option at once.
-- To keep the token out of the request that creates the sandbox too, save the whole header value (such as `Basic ...` for `github.com`) as an E2B secret, and use `e2b.Secret.fill(name)` as that value. The proxy swaps only the exact placeholder `fill` returns, so do not encode or wrap it.
+- Only HTTPS requests get the header. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- If you also set `allow_out` or `allow_internet_access=False`, add each host in `rules` to `allow_out`, or its requests are blocked.
+- The agent can't see the token, but it can use it for anything the token allows.
+- List only hosts that never send request headers back in a response, or a command could read the token there.
+- An attached sandbox keeps its rules. To change them, for example to swap the token, call `update_network` on `await backend.get_sandbox()`. It replaces all network options at once.
+- To keep the token out of the request that creates the sandbox too, save the whole header value as an E2B secret and use `e2b.Secret.fill(name)` as the value.
 
 ## Preview a dev server
 
@@ -313,7 +313,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
-| `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Give commands a credential they cannot read](#give-commands-a-credential-they-cannot-read). A spec cannot set it. |
+| `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). A spec cannot set it. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
