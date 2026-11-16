@@ -671,6 +671,11 @@ agent = Agent(
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
+- `LLMReminder` vs `TrajectoryJudge`: `LLMReminder` adds a model-written goal refresher on every
+  firing, blocks the request it precedes, and falls back to `GoalReanchor` text on error;
+  `TrajectoryJudge` runs alongside the agent (outside durable execution), steers only when the
+  run drifts, and raises an evaluation error on the run. Use `LLMReminder` for a regular goal
+  refresher, the judge for course correction, and `GoalReanchor` for free re-anchoring.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
