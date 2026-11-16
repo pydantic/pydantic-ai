@@ -31,6 +31,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
 | Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
+| Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 
 ## RepairToolArguments
@@ -766,6 +767,51 @@ except LoopDetectedError as error:
 - Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
   `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
+
+## ToolBudgets
+
+In `wrap_tool_execute`, refuses a function tool call that is over its `per_tool` budget, over the run's
+`total`, or (for tools in `refuse_repeats`) an exact repeat of a call that already returned in this run.
+The refused call doesn't run: `SkipToolExecution` answers it with a `ToolReturn` naming the budget
+("3 of 3 `web_search` calls used; no more are allowed in this run."), and the run continues.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ToolBudgets
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) < 5:
+        return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'pydantic'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+budgets = ToolBudgets(per_tool={'web_search': 3}, total=20, refuse_repeats={'web_search'})
+agent = Agent(FunctionModel(model), capabilities=[budgets])
+
+
+@agent.tool_plain
+def web_search(query: str) -> str:
+    return f'results for {query}'
+
+
+messages = agent.run_sync('Research Pydantic').all_messages()
+parts = [part for message in messages for part in message.parts]
+print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and part.metadata])
+#> [{'tool_budgets': 'repeat'}]
+```
+
+- Find refusals by `ToolReturnPart.metadata == {'tool_budgets': reason}` (`'per_tool'`, `'total'`,
+  `'repeat'`), never by text. `UsageLimits.tool_calls_limit` stays the hard ceiling and counts refused calls.
+- A call counts when execution starts (success, `ModelRetry` or failure); calls another capability skips
+  or defers, and refused calls, don't. Repeats match tool name plus sorted-key JSON arguments; only a call
+  that returned is remembered. Parallel calls can't overshoot.
+- Counts live on the per-run instance from `for_run`, so compaction doesn't reset them; hooks run in
+  workflow code under Temporal, DBOS, and Prefect, so replay reaches the same refusals.
+- Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
 ## RefineOutput
 
