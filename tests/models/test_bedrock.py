@@ -2592,6 +2592,11 @@ async def test_bedrock_openai_converse_file_inputs(allow_model_requests: None, v
                 'stopReason': 'end_turn',
                 'usage': usage,
             },
+            {
+                'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+                'stopReason': 'end_turn',
+                'usage': usage,
+            },
         ]
     )
     sent: list[dict[str, Any]] = []
@@ -2606,17 +2611,12 @@ async def test_bedrock_openai_converse_file_inputs(allow_model_requests: None, v
     # handler as returning `None`.
     model.client.meta.events.register_last('before-send.bedrock-runtime.Converse', respond)  # pyright: ignore[reportArgumentType]
 
-    await agent.run(['Summarize this report, then the files.', document])
+    # The prompt document gets its own run: Converse rejects any request that carries it.
+    await agent.run('Summarize the files.')
 
     assert sent[-1]['messages'] == snapshot(
         [
-            {
-                'role': 'user',
-                'content': [
-                    {'text': 'Summarize this report, then the files.'},
-                    {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': 'JVBERi0xLjQ='}}},
-                ],
-            },
+            {'role': 'user', 'content': [{'text': 'Summarize the files.'}]},
             {
                 'role': 'assistant',
                 'content': [{'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_files', 'input': {}}}],
@@ -2641,6 +2641,20 @@ async def test_bedrock_openai_converse_file_inputs(allow_model_requests: None, v
                     {'text': '</pyai:tool_result>'},
                 ],
             },
+        ]
+    )
+
+    await agent.run(['Summarize this report.', document])
+
+    assert sent[-1]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Summarize this report.'},
+                    {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': 'JVBERi0xLjQ='}}},
+                ],
+            }
         ]
     )
 
