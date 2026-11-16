@@ -96,7 +96,20 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
         if isinstance(cause := e.__cause__, httpx2.HTTPStatusError):
             # A retrying transport raises this for a status it gave up on, and `anthropic` wraps it as if the
             # connection had failed, though the provider responded.
-            raise _model_errors.transport_status_error(model_name, cause.response) from e
+            response = cause.response
+            body, error, text = _model_errors.transport_error_body(response)
+            if not error:
+                # Without an error object in the body, only its status and text say what went wrong.
+                raise _model_errors.transport_status_error(model_name, response) from e
+            raise api_error(
+                model_name,
+                model_id_namespace,
+                status_code=response.status_code,
+                body=body,
+                message=text,
+                headers=dict(response.headers),
+                in_stream=False,
+            ) from e
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except httpx2.TransportError as e:
         # `anthropic` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks

@@ -35,7 +35,7 @@ from pydantic_ai.messages import (
     UserContent,
 )
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.subagents import DelegationTask, is_task_report
+from pydantic_ai_harness.sub_agents import DelegationTask, is_task_report
 from pydantic_clai2.runtime.imported_history import (
     HEAD_LINES,
     Header,

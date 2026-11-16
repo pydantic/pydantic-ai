@@ -13,7 +13,7 @@ from termflow.ansi.utils import visible_length
 from termflow.themes import PALETTES
 
 from pydantic_ai import PartStartEvent, TextPart
-from pydantic_ai_harness.filesystem import FileEditedEvent
+from pydantic_ai_harness.file_system import FileEditedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.menus.theme_picker import theme_preview
 from pydantic_clai2.ui.rendering import theme

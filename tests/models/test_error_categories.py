@@ -9,7 +9,7 @@ Mock transports use `localhost` base URLs, which VCR ignores.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -38,7 +38,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ..conftest import try_import
+from ..conftest import gave_up_on, try_import
 
 with try_import() as imports_successful:
     import grpc
@@ -64,7 +64,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.models.mistral import MistralModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.models.zai import ZaiModel
@@ -75,6 +76,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -123,6 +125,16 @@ def _openai(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+
+
+def _openai_responses(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 
 
 def _openrouter(handler: Handler) -> Model:
@@ -223,6 +235,14 @@ def _cohere(handler: Handler) -> Model:
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
 
 
+def _ollama(handler: Handler) -> Model:
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    return OllamaModel(
+        'gpt-oss:20b-cloud',
+        provider=OllamaProvider(base_url='http://localhost/v1', api_key='test', http_client=http_client),
+    )
+
+
 def _json(status_code: int, body: Any, headers: dict[str, str] | None = None) -> Handler:
     def handler(request: Any) -> Any:
         response_class = httpx.Response if isinstance(request, httpx.Request) else httpx2.Response
@@ -261,13 +281,35 @@ def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
     return handler
 
 
+class _ErrorBodyBreakingOff(httpx2.AsyncByteStream):
+    def __init__(self, kind: Literal['protocol', 'timeout']) -> None:
+        self.kind = kind
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'{"error": {"mess'
+        raise (httpx2.RemoteProtocolError if self.kind == 'protocol' else httpx2.ReadTimeout)('failed')
+
+
+def _error_body_breaking_off(kind: Literal['protocol', 'timeout']) -> Handler:
+    """A 503 whose body breaks off after its first chunk, as when a proxy cuts the connection.
+
+    For a streamed request, `openai` reads an error status's body outside the code that wraps transport errors in
+    `APIConnectionError`, so the raw `httpx2` error reaches the model.
+    """
+
+    def handler(request: Any) -> Any:
+        return httpx2.Response(503, headers={'content-type': 'application/json'}, stream=_ErrorBodyBreakingOff(kind))
+
+    return handler
+
+
 def _gave_up(
     status_code: int, headers: dict[str, str] | None = None, *, content: bytes | None = None, read: bool = True
 ) -> Handler:
     """What a retrying transport raises once its `validate_response` rejected the last attempt's status.
 
-    With `read=False`, the response's body was never read, as when the transport closes a response from the network
-    that its `validate_response` rejected.
+    With `read=False`, the response's body was never read, as when the transport failed to read the body of a response
+    from the network that its `validate_response` rejected.
     """
 
     def handler(request: Any) -> Any:
@@ -508,6 +550,38 @@ CASES = [
         handler=_sse_data({'error': {'message': 'Overloaded', 'type': 'overloaded'}}),
         categories=_OVERLOADED,
         attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': None, 'provider_error_type': 'overloaded'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-error-body-broken-off',
+        model=_openai,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-error-body-timeout',
+        model=_openai,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-broken-off',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-timeout',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
         stream=True,
     ),
     Case(
@@ -1041,6 +1115,64 @@ CASES = [
         },
     ),
     Case(
+        id='mistral-context-window-prompt-too-long',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'Prompt 142251 > 131072 maximum context length',
+                'type': 'invalid_request_prompt_too_long',
+                'param': None,
+                'code': '3059',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3059',
+            'provider_error_type': 'invalid_request_prompt_too_long',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'reasoning_effort none is not supported for this model, supported values: '
+                "[<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+                'type': 'invalid_request_invalid_args',
+                'param': None,
+                'code': '3051',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_REJECTED,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3051',
+            'provider_error_type': 'invalid_request_invalid_args',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args-structured-message',
+        model=_mistral,
+        handler=_json(
+            422,
+            {
+                'object': 'error',
+                'message': {'detail': [{'type': 'missing', 'loc': ['body', 'messages'], 'msg': 'Field required'}]},
+                'type': 'invalid_request_invalid_args',
+                'code': '3051',
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 422, 'provider_error_code': '3051'},
+    ),
+    Case(
         id='mistral-rate-limit',
         model=_mistral,
         handler=_json(429, {'object': 'error', 'message': 'Requests rate limit exceeded', 'type': 'rate_limited'}),
@@ -1067,6 +1199,23 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400},
+    ),
+    Case(
+        id='ollama-cloud-context-window',
+        model=_ollama,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': 'prompt too long; exceeded max context length by 668997 tokens (ref: …)',
+                    'type': 'invalid_request_error',
+                    'param': None,
+                    'code': None,
+                }
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
         id='openai-unavailable',
@@ -1756,7 +1905,7 @@ CASES = [
             413,
             {'type': 'error', 'error': {'type': 'request_too_large', 'message': 'Request exceeds the maximum size'}},
         ),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 413, 'provider_error_type': 'request_too_large'},
     ),
     Case(
@@ -2091,6 +2240,63 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     assert (exc.__cause__ is not None) == case.has_cause
 
 
+_TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
+    _openai,
+    _openrouter,
+    _zai,
+    _moonshotai,
+    _ollama,
+    _anthropic,
+    _anthropic_bedrock,
+    _google,
+    _mistral,
+)
+"""Models whose status a retrying transport gave up on is classified from its body as their SDK's error is.
+
+Groq and Cohere chat aren't: their SDKs take a legacy `httpx` client, whose retrying transport closes the response
+without reading its body.
+"""
+
+_GAVE_UP_TWINS = [
+    case
+    for case in CASES
+    if case.model in _TRANSPORT_CLASSIFIED_MODELS
+    and not case.stream
+    and case.has_cause
+    and ModelHTTPError in case.categories
+    and 'transport-gave-up' not in case.id
+]
+
+
+@pytest.mark.parametrize('case', _GAVE_UP_TWINS, ids=[case.id for case in _GAVE_UP_TWINS])
+async def test_transport_gave_up_status_error_category(allow_model_requests: None, case: Case):
+    """A status a retrying transport gave up on raises what the provider SDK raises for the same response.
+
+    That's the same error category, provider error code and type, suggested model ID, hint and `retry_after`.
+    """
+
+    async def error(handler: Handler) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(case.model(handler)).run('hello')
+        return exc_info.value
+
+    def summary(exc: ModelHTTPError) -> tuple[object, ...]:
+        categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
+        return (
+            categories,
+            exc.status_code,
+            exc.provider_error_code,
+            exc.provider_error_type,
+            exc.suggested_model_id,
+            exc.hint,
+            exc.retry_after,
+        )
+
+    sdk_error = await error(case.handler)
+    gave_up_error = await error(gave_up_on(case.handler))
+    assert summary(gave_up_error) == summary(sdk_error)
+
+
 def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
     """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status."""
 
@@ -2165,6 +2371,54 @@ async def test_model_fallback_after_retrying_transport_gives_up(
     [attempt] = result.response.failed_attempts or []
     assert attempt.outcome == 'error'
     assert attempt.error is not None and attempt.error.startswith('ModelUnavailableError: status_code: 503')
+
+
+@pytest.mark.parametrize(
+    ('make_model', 'status_code', 'body', 'categories', 'retry_after'),
+    [
+        pytest.param(
+            _retrying_google,
+            429,
+            _GEMINI_FREE_TIER_RATE_LIMIT,
+            {ModelHTTPError, ModelRateLimitError},
+            14.0,
+            id='google-retry-info',
+        ),
+        pytest.param(
+            _retrying_openai,
+            503,
+            {'error': {'message': 'The server is overloaded.', 'type': 'server_error', 'code': None}},
+            _OVERLOADED,
+            None,
+            id='openai-overloaded',
+        ),
+    ],
+)
+async def test_retrying_transport_gave_up_keeps_streamed_error_body(
+    allow_model_requests: None,
+    make_model: Callable[[httpx2.AsyncClient], Model],
+    status_code: int,
+    body: dict[str, Any],
+    categories: set[type[ModelAPIError]],
+    retry_after: float | None,
+):
+    """A status the retrying transport gave up on keeps its body, and so the category and wait parsed from it.
+
+    The body is a stream, like one from the network, so nothing has read it when `validate_response` rejects it.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, stream=httpx2.ByteStream(json.dumps(body).encode()))
+
+    agent = Agent(make_model(_retrying_client(handler)), model_settings={'max_retries': 0})
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+
+    exc = exc_info.value
+    assert {cls for cls in _CATEGORIES if isinstance(exc, cls)} == categories
+    assert exc.status_code == status_code
+    assert exc.body == body
+    assert exc.retry_after == retry_after
 
 
 def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientError:
