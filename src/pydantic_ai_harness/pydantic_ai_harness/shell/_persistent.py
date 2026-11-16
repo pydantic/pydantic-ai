@@ -11,7 +11,7 @@ itself.
 from __future__ import annotations
 
 import codecs
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Generic, Literal
 
 import anyio
@@ -49,11 +49,9 @@ async def _count_lines(job: Job) -> int | None:
     return data.count(b'\n') + int(bool(data) and not data.endswith(b'\n'))
 
 
-async def _output_tail(job: Job) -> str:
+async def _output_tail(job: Job, secrets: Sequence[bytes]) -> str:
     """The last `_OUTPUT_TAIL_BYTES` of the log, from a line start and marked when earlier output is left out."""
-    size = await job.size(job.output_path)
-    start = max(0, size - _OUTPUT_TAIL_BYTES)
-    data = await job.read(job.output_path, start, size - start)
+    start, data = await job.read_tail(job.output_path, _OUTPUT_TAIL_BYTES, secrets=secrets)
     if not start:
         return data.decode('utf-8', errors='replace')
     # Drop the cut first line, unless it is the only one.
@@ -151,6 +149,7 @@ async def run_persistent_command(
     mode: CommandMode,
     timeout: float,
     log_limit: int | None = None,
+    secrets: Sequence[bytes] = (),
 ) -> str:
     """Start `command` as a detached job and return its PID, output log, and status file.
 
@@ -189,7 +188,7 @@ async def run_persistent_command(
         # result, and the PID and paths are what the model must not lose.
         result = ''
         if mode == 'foreground':
-            result = await _output_tail(job)
+            result = await _output_tail(job, secrets)
             if result and not result.endswith('\n'):
                 result += '\n'
         result += (

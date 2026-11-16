@@ -129,7 +129,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     provider-credential denylist.
     """
 
-    secret_env: Mapping[str, str] | None = field(default=None, kw_only=True)
+    secret_env: Mapping[str, str] | None = field(default=None, kw_only=True, repr=False)
     """Secrets added to every command's environment, like `env`, and masked in what the tools return.
 
     Each value is replaced with `[REDACTED:<name>]` in tool results and retry or failure messages before the model

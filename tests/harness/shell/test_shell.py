@@ -2338,17 +2338,23 @@ class TestEnvControlPropagation:
 _SECRET = 'sk-secret-123abc'
 
 
-def _secret_toolset(**kwargs: Any) -> ShellToolset[None]:
+def _secret_toolset(
+    *,
+    env: Mapping[str, str] | None = None,
+    denied_env_patterns: Sequence[str] = (),
+    max_output_chars: int = 50_000,
+) -> ShellToolset[None]:
     return ShellToolset(
         allowed_commands=[],
         denied_commands=[],
         denied_operators=[],
         default_timeout=10.0,
-        max_output_chars=50_000,
+        max_output_chars=max_output_chars,
         persist_cwd=False,
         allow_interactive=False,
+        env=env,
+        denied_env_patterns=denied_env_patterns,
         secret_env={'TMP_TOKEN': _SECRET, 'EMPTY': ''},
-        **kwargs,
     )
 
 
@@ -2381,6 +2387,25 @@ class TestShellSecretEnv:
         assert output.startswith('[REDACTED:TMP_TOKEN]\n')
         assert _SECRET not in output
 
+    async def test_masked_before_output_cap(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(max_output_chars=30)
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command=f'printf "%s{"y" * 20}" "$TMP_TOKEN"')
+        assert output.endswith('y' * 20)
+        assert '123abc' not in output
+
+    async def test_persistent_tail_does_not_split_a_secret(self, tmp_path: Path) -> None:
+        # One line, so the tail keeps the line it cuts: 16,003 bytes after the secret's first three.
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': f'printf "%s%s" "$TMP_TOKEN" "$(printf "%{16_003 - len(_SECRET) + 3}s")"'},
+        )
+        assert output.startswith('[... output truncated, ')
+        assert '123abc' not in output
+
+    def test_repr_hides_secret_env(self) -> None:
+        assert _SECRET not in repr(Shell(secret_env={'TMP_TOKEN': _SECRET}))
+
     async def test_longer_secret_is_masked_whole(self, shell_dir: Path) -> None:
         ts = ShellToolset[None](
             allowed_commands=[],
@@ -2399,6 +2424,7 @@ class TestShellSecretEnv:
         with pytest.raises(ModelRetry) as exc_info:
             await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command=f'vi {_SECRET}')
         assert exc_info.value.message == "Interactive commands are not allowed. Command: 'vi [REDACTED:TMP_TOKEN]'"
+        assert exc_info.value.__suppress_context__
 
     async def test_failure_message_is_masked(self, shell_dir: Path) -> None:
         ts = _secret_toolset()
@@ -2427,7 +2453,7 @@ async def test_background_tools_push_run_command_output(tmp_path: Path) -> None:
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'sleep 0.2; echo built'})])
+            return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'echo built'})])
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(

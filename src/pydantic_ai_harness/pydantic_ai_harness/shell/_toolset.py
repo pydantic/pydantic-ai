@@ -220,10 +220,14 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         except (ModelRetry, ToolFailed) as exc:
             if not self._secrets:
                 raise
-            raise type(exc)(self._redact(exc.message)) from exc
+            raise type(exc)(self._redact(exc.message)) from None
         if not isinstance(result, str):
             return result
         return truncate_tail(self._redact(result), self._max_output_chars)
+
+    @property
+    def _secret_bytes(self) -> list[bytes]:
+        return [os.fsencode(value) for value, _ in self._secrets]
 
     def _redact(self, text: str) -> str:
         for value, mask in self._secrets:
@@ -494,6 +498,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             mode=mode,
             timeout=self._default_timeout if timeout is None else timeout,
             log_limit=self._max_log_bytes,
+            secrets=self._secret_bytes,
         )
 
     @recoverable
@@ -528,8 +533,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _read_bg_output(self, job: Job) -> tuple[str, str]:
         """The retained tail of a background command's stdout and stderr logs."""
         limit = self._max_output_chars * _OUTPUT_BYTES_PER_CHAR
-        stdout = await job.tail(job.output_path, limit)
-        stderr = await job.tail(job.stderr_path, limit)
+        stdout = await job.tail(job.output_path, limit, secrets=self._secret_bytes)
+        stderr = await job.tail(job.stderr_path, limit, secrets=self._secret_bytes)
         return stdout.decode('utf-8', errors='replace'), stderr.decode('utf-8', errors='replace')
 
     @recoverable

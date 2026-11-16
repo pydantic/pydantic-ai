@@ -17,7 +17,7 @@ import base64
 import json
 import shlex
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import anyio
@@ -434,11 +434,18 @@ class Job:
             raise WorkspaceError(result.stderr.strip() or f'Unable to read job log {path!r}.')
         return base64.b64decode(result.stdout)
 
-    async def tail(self, path: str, max_bytes: int) -> bytes:
-        """The last `max_bytes` bytes of `path`."""
+    async def tail(self, path: str, max_bytes: int, *, secrets: Sequence[bytes] = ()) -> bytes:
+        """The last `max_bytes` bytes of `path`, starting after any of `secrets` the cut would split."""
+        return (await self.read_tail(path, max_bytes, secrets=secrets))[1]
+
+    async def read_tail(self, path: str, max_bytes: int, *, secrets: Sequence[bytes] = ()) -> tuple[int, bytes]:
+        """The offset and bytes of `tail`, so a split secret leaves no fragment for masking to miss."""
         size = await self.size(path)
         start = max(0, size - max_bytes)
-        return await self.read(path, start, size - start)
+        pad = min(start, max(map(len, secrets), default=0))
+        data = await self.read(path, start - pad, size - start + pad)
+        cut = _past_secrets(data, pad, secrets)
+        return start - pad + cut, data[cut:]
 
     async def kill(self) -> None:
         """Stop the job's process group: `SIGTERM`, then `SIGKILL` if it is still running after the grace period."""
@@ -504,3 +511,13 @@ class Job:
             await self.workspace.remove(self.directory)
         except FileNotFoundError:
             pass
+
+
+def _past_secrets(data: bytes, cut: int, secrets: Sequence[bytes]) -> int:
+    """`cut`, moved past the end of every occurrence of a secret in `data` that spans it."""
+    for secret in secrets:
+        index = data.find(secret, max(0, cut - len(secret) + 1))
+        while 0 <= index < cut:
+            cut = max(cut, index + len(secret))
+            index = data.find(secret, index + 1)
+    return cut
