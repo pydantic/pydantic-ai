@@ -192,9 +192,9 @@ async def run_in_prepared_machine() -> str:
 
 The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
 
-## Keep a credential out of the machine
+## Keep a token out of the machine
 
-`secrets` names existing boxd secrets, applied as `boxd.spec.secrets(*secrets)` in a new machine's spec. A secret bound to domains reaches the machine only as an opaque `bxds_` placeholder in its environment, and boxd's proxy, outside the machine, replaces it with the real value in the URL, headers, Basic auth and body of HTTPS requests to those domains. Set the secret before the machine is created, since boxd refuses a spec naming a secret that does not exist:
+Pass `secrets` to give a new machine boxd secrets by name. If a secret is tied to domains, the machine gets only a placeholder starting with `bxds_`, and boxd swaps in the real value as requests leave for those domains. Create the secret first, since boxd won't create a machine that names a missing one:
 
 ```python {test="skip"}
 import boxd
@@ -215,15 +215,16 @@ async def set_github_secret(token: str) -> None:  # a fine-grained GitHub token,
 sandbox = BoxdSandbox(secrets=['GH_TOKEN'])
 ```
 
-`gh` then acts as the token's owner, while `echo $GH_TOKEN` in the machine prints only the placeholder. For `git push`, have a command in the machine send the placeholder as the HTTPS password:
+`gh` then works as the token's owner, while `echo $GH_TOKEN` in the machine prints the placeholder. For `git push`, have git send the placeholder as its password:
 
 ```bash
 git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
 ```
 
-A remote such as `git@github.com:owner/repo.git` gets no credential: use the `https://` URL. The agent can still use the token for anything it allows, on any repository it reaches. boxd scrubs the value back to the placeholder in responses, but may miss an encoded copy, such as an echoed Basic auth header: name only hosts that never echo request headers.
-
-The placeholder keeps the token out of the machine's environment and files, but a command can still get at it. boxd also substitutes the request body, so a command can write the real value into something a named host stores, such as a GitHub issue or gist, and read it back from a host that is not named, such as `gist.githubusercontent.com`. For GitHub, use a fine-grained token limited to the repositories the agent works on, without the Gists permission, rather than your `gh auth token`. `secrets` applies to a machine `BoxdSandbox` creates; an attached machine keeps the ones it was created with. Calling `secrets.set` again rotates the value at once, and the placeholder stays the same.
+- Only HTTPS requests get the real value. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- boxd swaps the value into the whole request, body included, so a command can still write the real token into something GitHub stores, such as an issue or a gist, and read it back. Use a fine-grained token that reaches only the repositories the agent works on and can't create gists, not your `gh auth token`.
+- boxd turns the real value back into the placeholder in responses, but may miss an encoded copy. List only hosts that never send request headers back.
+- An attached machine keeps the secrets it was created with. Calling `secrets.set` again swaps the value right away, and the placeholder stays the same.
 
 ## Clean up
 
@@ -283,7 +284,7 @@ Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the 
 | `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the machine's own (`/home/boxd`, where commands run as non-root `boxd`); set a project directory, or use relative paths for portable code. Created on a new machine; on an attached machine it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the machine. |
-| `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a credential out of the machine](#keep-a-credential-out-of-the-machine). |
+| `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
 
 boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 
