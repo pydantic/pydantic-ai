@@ -322,6 +322,28 @@ async def test_the_computer_tool_stays_a_function_on_a_model_without_one_or_when
     assert [(tool['name'], 'input_schema' in tool) for tool in request['tools']] == [('computer', True)]
 
 
+def test_the_computer_use_tool_is_sent_only_on_the_clients_it_is_recorded_on() -> None:
+    from anthropic import (
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
+
+    supported: dict[str, bool] = {}
+    for name, client in (
+        ('direct', None),
+        ('bedrock', AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')),
+        ('mantle', AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y')),
+        ('vertex', AsyncAnthropicVertex(project_id='p', region='us-central1', access_token='x')),
+        ('foundry', AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
+    ):
+        provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
+        model = AnthropicModel('claude-opus-5-5', provider=provider)
+        supported[name] = ComputerTool in model.profile.get('supported_native_tools', frozenset[Any]())
+    assert supported == {'direct': True, 'bedrock': True, 'mantle': True, 'vertex': False, 'foundry': False}
+
+
 async def test_a_required_computer_tool_on_a_model_without_one_is_refused(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
 

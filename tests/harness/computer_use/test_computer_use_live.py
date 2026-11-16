@@ -58,6 +58,8 @@ with try_import() as openai_installed:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as anthropic_installed:
+    from anthropic import AsyncAnthropicBedrockMantle
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -590,6 +592,24 @@ async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     # Bedrock takes the toolset, as the Claude API does.
+    assert _tools(request_capture.bodies()[0]) == [{'type': 'computer_toolset_20260801'}]
+
+
+@needs_anthropic
+@pytest.mark.vcr
+async def test_claude_on_the_bedrock_messages_api_drives_the_screen_through_the_computer_toolset(
+    allow_model_requests: None, request_capture: RequestCapture
+) -> None:
+    client = AsyncAnthropicBedrockMantle(
+        api_key=os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
+        aws_region='us-east-1',
+        http_client=request_capture.client,
+    )
+    provider = ScreenProvider()
+    model = AnthropicModel('anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
+
+    assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     assert _tools(request_capture.bodies()[0]) == [{'type': 'computer_toolset_20260801'}]
 
 

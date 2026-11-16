@@ -720,8 +720,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
     """The model's computer use tool, from Anthropic's compatibility table.
 
-    Claude 5.5 and later take only the toolset on the Claude API. Retired or retiring models (Opus 4 and 4.1, Sonnet 4
-    and 4.5) get a function tool.
+    Sent on the Claude API and both Bedrock APIs, the clients it is recorded on; `AnthropicModel.profile` turns it off
+    for Vertex AI and Foundry. Claude 5.5 and later take only the toolset. Retired or retiring models (Opus 4 and 4.1,
+    Sonnet 4 and 4.5) get a function tool.
     https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
     """
     if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
