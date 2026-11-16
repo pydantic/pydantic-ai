@@ -2640,52 +2640,43 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
-async def test_user_id_and_safety_identifier(allow_model_requests: None, openai_api_key: str):
-    """OpenAI accepts `user` and `safety_identifier` in the same request."""
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(
-        m, model_settings=OpenAIChatModelSettings(openai_user='user_id', openai_safety_identifier='safety_id')
-    )
-    result = await agent.run('hello')
-    assert result.output == snapshot('Hello! How can I assist you today?')
-
-
-async def test_openai_safety_identifier(allow_model_requests: None):
-    """`openai_safety_identifier` is sent as `safety_identifier` alongside `openai_user`."""
-    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
+async def test_openai_safety_identifier_chat_completions(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """`openai_safety_identifier` goes out as Chat Completions' `safety_identifier` next to `user`, and only when set."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=provider))
 
     result = await agent.run(
-        'test',
-        model_settings=OpenAIChatModelSettings(
-            openai_safety_identifier='user-123',
-            openai_user='user_id',
-            extra_body={'safety_identifier': 'caller-key'},
-        ),
+        'What is 2+2?',
+        model_settings=OpenAIChatModelSettings(openai_user='user_id', openai_safety_identifier='safety_id'),
     )
-    assert result.output == 'hello'
+    assert result.output == snapshot('2 + 2 equals 4.')
+    await agent.run('What is 2+2?')
 
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs.get('safety_identifier') == 'user-123'
-    assert kwargs.get('user') == 'user_id'
-    # The caller's `extra_body` is forwarded unchanged next to the typed field.
-    assert kwargs['extra_body']['safety_identifier'] == 'caller-key'
+    assert [
+        {key: value for key, value in body.items() if key in ('user', 'safety_identifier')}
+        for body in request_capture.bodies('/chat/completions')
+    ] == [{'user': 'user_id', 'safety_identifier': 'safety_id'}, {}]
 
 
-async def test_openai_safety_identifier_not_sent_by_default(allow_model_requests: None):
-    """`safety_identifier` is not sent when `openai_safety_identifier` is not set."""
-    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
+async def test_openai_safety_identifier_responses(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """`openai_safety_identifier` goes out as the Responses API's `safety_identifier`, and only when set."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIResponsesModel('gpt-4o', provider=provider))
 
-    result = await agent.run('test')
-    assert result.output == 'hello'
+    result = await agent.run(
+        'What is 2+2?', model_settings=OpenAIResponsesModelSettings(openai_safety_identifier='safety_id')
+    )
+    assert result.output == snapshot('2 + 2 equals 4.')
+    await agent.run('What is 2+2?')
 
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'safety_identifier' not in kwargs
+    assert [
+        {key: value for key, value in body.items() if key == 'safety_identifier'}
+        for body in request_capture.bodies('/responses')
+    ] == [{'safety_identifier': 'safety_id'}, {}]
 
 
 async def test_openai_moderation(allow_model_requests: None, openai_api_key: str):

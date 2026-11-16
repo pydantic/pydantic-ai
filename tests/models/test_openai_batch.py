@@ -247,7 +247,11 @@ async def test_batch_encode_carries_the_responses_params() -> None:
         custom_id='item',
         messages=[ModelRequest(parts=[UserPromptPart('Hello')], instructions='Answer briefly')],
         model_settings=OpenAIResponsesModelSettings(
-            max_tokens=100, temperature=0.5, openai_user='user', extra_body={'metadata': {'source': 'test'}}
+            max_tokens=100,
+            temperature=0.5,
+            openai_user='user',
+            openai_safety_identifier='safety_id',
+            extra_body={'metadata': {'source': 'test'}},
         ),
         model_request_parameters=ModelRequestParameters(
             function_tools=[ToolDefinition(name='weather', parameters_json_schema={'type': 'object', 'properties': {}})]
@@ -273,6 +277,7 @@ async def test_batch_encode_carries_the_responses_params() -> None:
             'max_output_tokens': 100,
             'temperature': 0.5,
             'user': 'user',
+            'safety_identifier': 'safety_id',
             'metadata': {'source': 'test'},
         }
     )
