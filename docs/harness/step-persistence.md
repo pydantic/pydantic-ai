@@ -9,6 +9,9 @@ description: "Save Pydantic AI agent run snapshots to memory, files, SQLite, Mon
 
 A snapshot holds the run's message history, not everything around it: capability state outside the messages, workspace files, and resuming from the middle of a step are tracked separately (see `pydantic-ai-harness` issues #149 and #196). For recovery inside a step, run the agent on [durable execution](../durable_execution/overview.md), which `StepPersistence` works alongside.
 
+!!! note "Storing sessions"
+    To store a chat session or any other conversation you pick up later, use core's [`ConversationStore`](../persistence.md#using-a-conversation-store): it keeps the conversation's usage and deferred tool requests along with its messages, stores each message once, and catches conflicting saves. `StepPersistence` remains supported for recovering runs: the step-event trail, the tool-effect ledger, and continuing or forking a run from a settled step. To move sessions you already stored with it, see [Moving sessions to a `ConversationStore`](#moving-sessions-to-a-conversationstore).
+
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
@@ -566,6 +569,33 @@ Pydantic AI providers download the bytes from a URL when the target model does n
 ### Persisting to unsupported backends
 
 DynamoDB, Redis, GCS, and other backends are not built in. Write your own `StepStore` (about ten methods on a Protocol) or your own `MediaStore` (five methods: `put`, `get`, `exists`, `public_url`, `get_metadata`) and pass it via `store=` / `media_store=`.
+
+## Moving sessions to a `ConversationStore`
+
+A run's latest `complete` snapshot holds the history it continued plus what the run added, so the newest run of a conversation that has one holds the conversation up to that point. Save it to a `ConversationStore` once per conversation, then load and save around each run as [Using a conversation store](../persistence.md#using-a-conversation-store) shows:
+
+```python
+from pydantic_ai import Conversation
+from pydantic_ai.conversation_store import ConversationStore
+from pydantic_ai_harness.step_persistence import StepStore
+
+
+async def move_conversation(steps: StepStore, conversations: ConversationStore, conversation_id: str) -> None:
+    for run in reversed(await steps.list_runs(conversation_id=conversation_id)):
+        if snapshot := await steps.latest_snapshot(run_id=run.run_id):
+            await conversations.save(Conversation(messages=snapshot.messages, conversation_id=conversation_id))
+            return
+
+
+async def move_all(steps: StepStore, conversations: ConversationStore) -> None:
+    for conversation_id in {run.conversation_id for run in await steps.list_runs() if run.conversation_id}:
+        await move_conversation(steps, conversations, conversation_id)
+```
+
+- The moved conversation starts with empty `usage` and no `deferred_tool_requests`, since snapshots don't record them.
+- `save` raises `ConversationConflict` for a conversation the store already has, so a second pass doesn't duplicate one. Pass `scope=` to record whose conversation it is.
+- Delegate runs keep their own `conversation_id`, so `move_all` moves their conversations too. Skip runs with a `parent_run_id` to leave them out.
+- Keep `StepPersistence` on the agent if you still need the step-event trail, the tool-effect ledger, or [Conversation Search](conversation-search.md), which reads its store.
 
 ## Conversation heads and background names
 

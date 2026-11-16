@@ -51,6 +51,11 @@ of tool calls (`started`/`completed`/`failed`). It stores message history only: 
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.
 
+It is not the recommended session store: to store conversations, use core's `ConversationStore`
+(`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
+already stored with `StepPersistence`, save each conversation's newest `complete` snapshot as a
+`Conversation` (see "Moving sessions to a `ConversationStore`" on the Step Persistence page).
+
 ```python
 import asyncio
 
