@@ -14,10 +14,11 @@ PowerShell there.
 from __future__ import annotations
 
 import base64
+import heapq
 import json
 import shlex
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import AnyStr
 
@@ -514,18 +515,20 @@ class Job:
             pass
 
 
-def secret_spans(data: AnyStr, secrets: Sequence[AnyStr], start: int = 0) -> list[tuple[int, int, int]]:
+def secret_spans(data: AnyStr, secrets: Sequence[AnyStr], start: int = 0) -> Iterator[tuple[int, int, int]]:
     """Every occurrence of a secret in `data` that ends after `start`, overlapping ones included.
 
-    Each is `(start, -length, index in secrets)`, sorted by start and, at a shared start, longest first.
+    Each is `(start, -length, index in secrets)`, by start and, at a shared start, longest first. The occurrences of
+    each secret are merged as they are found, so memory grows with the number of secrets, not of occurrences.
     """
-    spans: list[tuple[int, int, int]] = []
-    for number, secret in enumerate(secrets):
-        index = data.find(secret, max(0, start - len(secret) + 1))
-        while index != -1:
-            spans.append((index, -len(secret), number))
-            index = data.find(secret, index + 1)
-    return sorted(spans)
+    return heapq.merge(*(_occurrences(data, secret, number, start) for number, secret in enumerate(secrets)))
+
+
+def _occurrences(data: AnyStr, secret: AnyStr, number: int, start: int) -> Iterator[tuple[int, int, int]]:
+    index = data.find(secret, max(0, start - len(secret) + 1))
+    while index != -1:
+        yield index, -len(secret), number
+        index = data.find(secret, index + 1)
 
 
 def past_secrets(data: AnyStr, cut: int, secrets: Sequence[AnyStr]) -> int:
