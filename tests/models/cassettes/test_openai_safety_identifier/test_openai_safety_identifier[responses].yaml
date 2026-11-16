@@ -39,7 +39,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1164"
+      - "1223"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -49,15 +49,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0dfb65d0fddd7998006afa7851e22487d2beca3100da2314d9
+        id: resp_0b563f3611f63900006afa7dff0a2c87d2b0cf10f9873eda9c
         object: response
-        created_at: 1794799697
+        created_at: 1794801151
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1794799698
+        completed_at: 1794801151
         error: null
         frequency_penalty: 0.0
         image:
@@ -70,7 +70,7 @@ interactions:
         model: gpt-4o-2024-08-06
         moderation: null
         output:
-        - id: msg_0dfb65d0fddd7998006afa7852860487d29f857f41d5ba446e
+        - id: msg_0b563f3611f63900006afa7dffb4c487d2b9a894dfdad57818
           type: message
           status: completed
           content:
@@ -128,7 +128,7 @@ interactions:
           total_tokens: 23
         user: null
         metadata: {}
-  recorded_at: 2026-11-16T03:28:19.048013+00:00
+  recorded_at: 2026-11-16T03:52:32.269417+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -167,7 +167,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "2153"
+      - "1458"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -177,15 +177,15 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0c148a577b3e84f0006afa7853282c87d2b4708a1b43be5050
+        id: resp_03e0cde33218cb6c006afa7e005c0087d2b03ffd5af5fe100d
         object: response
-        created_at: 1794799699
+        created_at: 1794801152
         status: completed
         access_programs: null
         background: false
         billing:
           payer: developer
-        completed_at: 1794799700
+        completed_at: 1794801153
         error: null
         frequency_penalty: 0.0
         image:
@@ -198,7 +198,7 @@ interactions:
         model: gpt-4o-2024-08-06
         moderation: null
         output:
-        - id: msg_0c148a577b3e84f0006afa7854b62087d2aeae3d7bc3e5c95a
+        - id: msg_03e0cde33218cb6c006afa7e01455087d29046090bf1a2f9ec
           type: message
           status: completed
           content:
@@ -256,4 +256,4 @@ interactions:
           total_tokens: 23
         user: null
         metadata: {}
-  recorded_at: 2026-11-16T03:28:21.321295+00:00
+  recorded_at: 2026-11-16T03:52:33.825503+00:00

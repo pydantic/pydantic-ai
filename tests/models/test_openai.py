@@ -2640,45 +2640,6 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
-async def test_openai_safety_identifier_chat_completions(
-    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
-):
-    """`openai_safety_identifier` goes out as Chat Completions' `safety_identifier` next to `user`, and only when set."""
-    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=provider))
-
-    result = await agent.run(
-        'What is 2+2?',
-        model_settings=OpenAIChatModelSettings(openai_user='user_id', openai_safety_identifier='safety_id'),
-    )
-    assert result.output == snapshot('2 + 2 equals 4.')
-    await agent.run('What is 2+2?')
-
-    assert [
-        {key: value for key, value in body.items() if key in ('user', 'safety_identifier')}
-        for body in request_capture.bodies('/chat/completions')
-    ] == [{'user': 'user_id', 'safety_identifier': 'safety_id'}, {}]
-
-
-async def test_openai_safety_identifier_responses(
-    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
-):
-    """`openai_safety_identifier` goes out as the Responses API's `safety_identifier`, and only when set."""
-    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
-    agent = Agent(OpenAIResponsesModel('gpt-4o', provider=provider))
-
-    result = await agent.run(
-        'What is 2+2?', model_settings=OpenAIResponsesModelSettings(openai_safety_identifier='safety_id')
-    )
-    assert result.output == snapshot('2 + 2 equals 4.')
-    await agent.run('What is 2+2?')
-
-    assert [
-        {key: value for key, value in body.items() if key == 'safety_identifier'}
-        for body in request_capture.bodies('/responses')
-    ] == [{'safety_identifier': 'safety_id'}, {}]
-
-
 async def test_openai_moderation(allow_model_requests: None, openai_api_key: str):
     """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))

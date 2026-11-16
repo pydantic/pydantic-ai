@@ -40,7 +40,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "371"
+      - "567"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -50,9 +50,9 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-Ekhg8Hnz1SOHP7gMLJnYUqmsJWgR1
+        id: chatcmpl-Eki3ZyCI3LDx9g00tJvwwhfnQSqG1
         object: chat.completion
-        created: 1794799696
+        created: 1794801149
         model: gpt-4o-2024-08-06
         choices:
         - index: 0
@@ -77,7 +77,7 @@ interactions:
             rejected_prediction_tokens: 0
         service_tier: default
         system_fingerprint: fp_f89046aead
-  recorded_at: 2026-11-16T03:28:16.815300+00:00
+  recorded_at: 2026-11-16T03:52:29.879565+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/chat/completions
@@ -116,7 +116,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "412"
+      - "346"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -126,9 +126,9 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-Ekhg90UusU4JJKMwY89wLF50wpDtg
+        id: chatcmpl-Eki3axiiNfW1CDCfdAmwBn3vhn0TD
         object: chat.completion
-        created: 1794799697
+        created: 1794801150
         model: gpt-4o-2024-08-06
         choices:
         - index: 0
@@ -153,4 +153,4 @@ interactions:
             rejected_prediction_tokens: 0
         service_tier: default
         system_fingerprint: fp_ce6605ba42
-  recorded_at: 2026-11-16T03:28:17.736424+00:00
+  recorded_at: 2026-11-16T03:52:30.880235+00:00
