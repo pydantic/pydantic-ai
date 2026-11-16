@@ -4,7 +4,8 @@
 pydantic-ai-harness[mongodb]`); it is imported lazily so the rest of this
 module stays usable without `pymongo` installed. `PostgresStepStore` imports
 no driver (it takes a caller-owned asyncpg-compatible pool), so it is exported
-eagerly.
+eagerly, and so is `RedisStepStore`, which takes a caller-owned client through
+the `RedisClient` protocol.
 """
 
 from typing import TYPE_CHECKING
@@ -20,6 +21,7 @@ from pydantic_ai_harness.step_persistence._helpers import (
     is_provider_valid,
 )
 from pydantic_ai_harness.step_persistence._postgres import PostgresStepStore
+from pydantic_ai_harness.step_persistence._redis import RedisClient, RedisStepStore
 from pydantic_ai_harness.step_persistence._store import (
     FileStepStore,
     InMemoryStepStore,
@@ -49,6 +51,8 @@ __all__ = [
     'PostgresConnection',
     'PostgresPool',
     'PostgresStepStore',
+    'RedisClient',
+    'RedisStepStore',
     'RunRecord',
     'SnapshotSavedEvent',
     'SnapshotState',
