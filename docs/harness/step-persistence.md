@@ -13,7 +13,25 @@ A snapshot holds the run's message history, not everything around it: capability
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.](../img/harness/step-persistence.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Step Persistence: save a run so you can continue or fork it later
+    accDescr: StepPersistence hooks write an agent run to the step store: before_run a RunRecord, after_model_request an event, after_tool_execute a completed tool effect, after_node_run a complete snapshot, and before_tool_execute the next tool effect as started. The worker then crashes. Later, your code calls list_runs and continue_run, gets the latest complete snapshot and starts a new Agent.run from it.
+    participant agent as Agent run
+    participant store as Step store
+    participant code as Your code, later
+    Note over agent,store: StepPersistence() hooks
+    agent->>store: before_run<br/>RunRecord
+    agent->>store: after_model_request<br/>event appended
+    agent->>store: after_tool_execute<br/>tool effect completed
+    agent->>store: after_node_run<br/>complete snapshot
+    agent->>store: before_tool_execute<br/>next tool effect started
+    agent->>agent: worker crashes
+    code->>store: list_runs
+    code->>store: continue_run
+    store-->>code: latest complete<br/>snapshot
+    code->>agent: new Agent.run, message_history=history
+```
 
 ## What it gives you
 
@@ -420,7 +438,7 @@ The marker format is versioned, and compatibility is upgrade-only. A current rea
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
 | `InMemoryStepStore` | not applicable                         | bytes stay in the in-memory snapshot  |
-| `FileStepStore`     | `DiskMediaStore(<root>/media/)`        | `<root>/media/<sha256>.bin`           |
+| `FileStepStore`     | `FileMediaStore(<root>/media/)`        | `<root>/media/<sha256>.bin`           |
 | `SqliteStepStore`   | `SqliteMediaStore(database=<same db>)` | sibling `media` table in the same DB  |
 | `MongoStepStore`    | `MongoMediaStore(client=<same client>)` | sibling `media` + `media_chunks` collections |
 | `PostgresStepStore` | `PostgresMediaStore(<same pool>)`      | `{table}_media` table on the same pool |
@@ -455,7 +473,7 @@ SqliteStepStore(database='runs.db', media_store=None)
 
 URIs are `media+sha256://<hex>`, content-addressed. The same blob written through any `MediaStore` resolves the same way, so dedup is automatic and moving the underlying storage is a one-line swap. The shipped implementations are:
 
-- `DiskMediaStore(directory)` -- one file per blob at `<directory>/<sha256>.bin`.
+- `FileMediaStore(directory)` -- one file per blob at `<directory>/<sha256>.bin`.
 - `SqliteMediaStore(database=...)` or `SqliteMediaStore(connection=...)` -- one row per blob (`INSERT OR IGNORE` for content-addressed dedup).
 - `S3MediaStore(bucket=, endpoint=, region=, access_key_id=, secret_access_key=)` -- path-style URLs plus handrolled SigV4. Compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. PUT/GET/HEAD only -- no multipart, lifecycle, or listing.
 - `MongoMediaStore(client= or db_url=, database=...)` -- MongoDB, needs the `mongodb` extra. Each blob is sha256-addressed chunks across a `media` manifest document and a sibling `media_chunks` collection (manual chunking rather than GridFS, so dedup is preserved -- see the [media page](media.md)), so a blob larger than one BSON document still stores and reads back. Chunking bounds the document, not memory: there is no streaming API, so each blob is held whole in process memory on both `put` and `get`. The manifest holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. `collection=` renames both collections and `chunk_size_bytes=` (default 8 MiB) sets the split size.
@@ -512,20 +530,20 @@ class MediaContext:
 
 All fields have defaults; pass what you have.
 
-**Persistence by store.** `get_metadata(uri)` returns the stored `metadata` mapping and raises `FileNotFoundError` for a blob that was never stored. A repeated `put` keeps the first metadata on the SQLite, MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with metadata replaces it; on `S3MediaStore` every `put` replaces it, and one without metadata clears it. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` does not return `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `DiskMediaStore` does not persist it.
+**Persistence by store.** `get_metadata(uri)` returns the stored `metadata` mapping and raises `FileNotFoundError` for a blob that was never stored. A repeated `put` keeps the first metadata on the SQLite, MongoDB, and PostgreSQL stores. On `FileMediaStore` a later `put` with metadata replaces it; on `S3MediaStore` every `put` replaces it, and one without metadata clears it. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` does not return `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `FileMediaStore` does not persist it.
 
 - `SqliteMediaStore` writes `metadata` to a JSON column and `media_type` to a dedicated column.
 - `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers and `media_type` as `Content-Type`; `get_metadata` reads the `x-amz-meta-*` values back from the HEAD response. Keys must match `[A-Za-z0-9-]+` and come back lowercased.
-- `DiskMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`) alongside each blob, atomically through a uniquely named temporary file.
+- `FileMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`) alongside each blob, atomically through a uniquely named temporary file.
 - `MongoMediaStore` writes `metadata` as a JSON string and `media_type` as a dedicated field on the blob's manifest document (the `media` collection by default); `get_metadata` decodes the JSON string back. Because the mapping is one JSON string rather than nested fields, metadata keys are not subject to BSON field-name rules here.
 - `PostgresMediaStore` writes `metadata` as a JSON string to a `TEXT` column and `media_type` to a dedicated column.
 
 ### `key_strategy`: controlling the backend storage path
 
-Default is `<sha256>.bin`. `DiskMediaStore` and `S3MediaStore` accept overrides to fit existing layouts; `SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` do not (the digest is their primary key, so a user-chosen key would either break dedup or be a no-op -- use `table=` / `collection=` to move the rows or documents):
+Default is `<sha256>.bin`. `FileMediaStore` and `S3MediaStore` accept overrides to fit existing layouts; `SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` do not (the digest is their primary key, so a user-chosen key would either break dedup or be a no-op -- use `table=` / `collection=` to move the rows or documents):
 
 ```python
-from pydantic_ai_harness.media import DiskMediaStore, MediaContext
+from pydantic_ai_harness.media import FileMediaStore, MediaContext
 
 
 def by_media_type(uri: str, ctx: MediaContext) -> str:
@@ -534,12 +552,12 @@ def by_media_type(uri: str, ctx: MediaContext) -> str:
     return f'images/{digest}{ext}'
 
 
-store = DiskMediaStore('runs', key_strategy=by_media_type)
+store = FileMediaStore('runs', key_strategy=by_media_type)
 ```
 
 **Caveat**: if your strategy depends on `context.media_type` (for example, to pick an extension), `get(uri)` and `exists(uri)` will not find the blob unless the same context is supplied at read time. For pure path-organisation strategies (no context dependency) the constraint does not apply.
 
-`DiskMediaStore` rejects strategies that produce absolute paths or paths containing `..` segments, to prevent escaping the store directory.
+`FileMediaStore` rejects strategies that produce absolute paths or paths containing `..` segments, to prevent escaping the store directory.
 
 Separately, all five stores accept a `public_url=` resolver, useful when a CDN, local HTTP server, or signed-URL service fronts the bytes. Without it `public_url(...)` returns `None` (the model never sees a URL unless a resolver is configured and it returns a string).
 

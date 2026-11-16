@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import Capability as TopLevelCapability
 from pydantic_ai._run_context import RunContext
@@ -46,6 +47,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
     WebFetch,
     WebSearch,
+    WindowsWorkspace,
     XSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -66,6 +68,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    NATIVE_TOOL_TYPES,
     AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -91,6 +94,9 @@ pytestmark = []
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
+
+with try_import() as jsonschema_imports_successful:
+    from jsonschema.validators import validator_for
 
 
 def test_capability_top_level_export() -> None:
@@ -120,6 +126,7 @@ def test_capability_types() -> None:
             'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
+            'WindowsWorkspace': WindowsWorkspace,
             'XSearch': XSearch,
         }
     )
@@ -1043,6 +1050,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.openai.gpt-6-astra',
                         'bedrock:global.openai.gpt-6-luna',
                         'bedrock:global.openai.gpt-6.1-sol',
+                        'bedrock:global.openai.gpt-6.1-terra',
                         'bedrock:global.xai.grok-4.7',
                         'bedrock:global.zai.glm-5.3',
                         'bedrock:google.gemma-3-27b-it',
@@ -1114,6 +1122,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.openai.gpt-6-astra',
                         'gateway/bedrock:global.openai.gpt-6-luna',
                         'gateway/bedrock:global.openai.gpt-6.1-sol',
+                        'gateway/bedrock:global.openai.gpt-6.1-terra',
                         'gateway/bedrock:global.xai.grok-4.7',
                         'gateway/bedrock:google.gemma-3-27b-it',
                         'gateway/bedrock:minimax.minimax-m2.5',
@@ -1144,6 +1153,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3.8-flash',
                         'gateway/google-cloud:gemini-4-argon',
                         'gateway/google-cloud:gemini-4-carbon',
+                        'gateway/google-cloud:gemini-4-hydrogen',
                         'gateway/google:gemini-3-pro-image',
                         'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
@@ -1153,6 +1163,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3.8-flash',
                         'gateway/google:gemini-4-argon',
                         'gateway/google:gemini-4-carbon',
+                        'gateway/google:gemini-4-hydrogen',
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:qwen/qwen3.8-27b',
@@ -1172,6 +1183,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.8-flash',
                         'google-cloud:gemini-4-argon',
                         'google-cloud:gemini-4-carbon',
+                        'google-cloud:gemini-4-hydrogen',
                         'google-decisions:gemini-decision-1',
                         'google:gemini-3-pro-image',
                         'google:gemini-3.1-flash-image',
@@ -1182,6 +1194,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.8-flash',
                         'google:gemini-4-argon',
                         'google:gemini-4-carbon',
+                        'google:gemini-4-hydrogen',
                         'groq:openai/gpt-oss-120b',
                         'groq:openai/gpt-oss-20b',
                         'groq:qwen/qwen3.8-27b',
@@ -1721,16 +1734,78 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {
                                     'oneOf': [
-                                        {'$ref': '#/$defs/WebSearchTool'},
-                                        {'$ref': '#/$defs/XSearchTool'},
-                                        {'$ref': '#/$defs/CodeExecutionTool'},
-                                        {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/ImageGenerationTool'},
-                                        {'$ref': '#/$defs/MemoryTool'},
-                                        {'$ref': '#/$defs/MCPServerTool'},
-                                        {'$ref': '#/$defs/FileSearchTool'},
-                                        {'$ref': '#/$defs/AdvisorTool'},
-                                        {'$ref': '#/$defs/ToolSearchTool'},
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/WebSearchTool'},
+                                                {'properties': {'kind': {'const': 'web_search'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/XSearchTool'},
+                                                {'properties': {'kind': {'const': 'x_search'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/CodeExecutionTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'code_execution'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/WebFetchTool'},
+                                                {'properties': {'kind': {'const': 'web_fetch'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/ImageGenerationTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'image_generation'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/MemoryTool'},
+                                                {'properties': {'kind': {'const': 'memory'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/MCPServerTool'},
+                                                {'properties': {'kind': {'const': 'mcp_server'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/FileSearchTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'file_search'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/AdvisorTool'},
+                                                {'properties': {'kind': {'const': 'advisor'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/ToolSearchTool'},
+                                                {
+                                                    'properties': {'kind': {'const': 'tool_search'}},
+                                                    'required': ['kind'],
+                                                },
+                                            ]
+                                        },
                                     ]
                                 },
                                 {'type': 'null'},
@@ -1738,6 +1813,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Nativetool',
                         }
                     },
+                    'required': ['NativeTool'],
                     'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
@@ -1774,6 +1850,18 @@ def test_model_json_schema_with_capabilities():
                     },
                     'required': ['IncludeToolReturnSchemas'],
                     'title': 'spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
+                'short_spec_WindowsWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'WindowsWorkspace': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Windowsworkspace',
+                        }
+                    },
+                    'required': ['WindowsWorkspace'],
+                    'title': 'short_spec_WindowsWorkspace',
                     'type': 'object',
                 },
                 'spec_BatchModelRequests': {
@@ -1816,6 +1904,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Settoolmetadata',
                         }
                     },
+                    'required': ['SetToolMetadata'],
                     'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
@@ -1919,6 +2008,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
                     'required': ['WebFetch'],
                     'title': 'spec_WebFetch',
+                    'type': 'object',
+                },
+                'spec_WindowsWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {'WindowsWorkspace': {'$ref': '#/$defs/spec_params_WindowsWorkspace'}},
+                    'required': ['WindowsWorkspace'],
+                    'title': 'spec_WindowsWorkspace',
                     'type': 'object',
                 },
                 'spec_WebSearch': {
@@ -2378,6 +2474,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebSearch'},
+                                {'$ref': '#/$defs/short_spec_WindowsWorkspace'},
+                                {'$ref': '#/$defs/spec_WindowsWorkspace'},
                                 {'const': 'XSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_XSearch'},
                             ]
@@ -2480,6 +2578,37 @@ def test_model_json_schema_with_capabilities():
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_WindowsWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'working_dir': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Working Dir',
+                        },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'authority': {'enum': ['operator', 'user', 'none'], 'title': 'Authority', 'type': 'string'},
+                        'path_authority': {
+                            'anyOf': [
+                                {
+                                    'additionalProperties': {'enum': ['operator', 'user', 'none'], 'type': 'string'},
+                                    'type': 'object',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Path Authority',
+                        },
+                        'env': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Env',
+                        },
+                    },
+                    'required': ['working_dir'],
+                    'title': 'spec_params_WindowsWorkspace',
                     'type': 'object',
                 },
                 'spec_params_XSearch': {
@@ -2617,6 +2746,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebSearch'},
+                            {'$ref': '#/$defs/short_spec_WindowsWorkspace'},
+                            {'$ref': '#/$defs/spec_WindowsWorkspace'},
                             {'const': 'XSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_XSearch'},
                         ]
@@ -2710,40 +2841,6 @@ def test_native_tools_param_wrapped_as_capabilities():
     assert len(cap_tools) == 2
 
 
-def test_agent_from_spec_builtin_tool():
-    """NativeTool capability can be constructed from spec."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {'NativeTool': {'kind': 'web_search'}},
-            ],
-        }
-    )
-    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
-    assert len(builtin_caps) == 1
-    assert isinstance(builtin_caps[0].tool, WebSearchTool)
-
-
-def test_agent_from_spec_builtin_tool_with_options():
-    """NativeTool spec supports builtin tool configuration options."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {'NativeTool': {'kind': 'web_search', 'search_context_size': 'high'}},
-            ],
-        }
-    )
-    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
-    assert len(builtin_caps) == 1
-    tool = builtin_caps[0].tool
-    assert isinstance(tool, WebSearchTool)
-    assert tool.search_context_size == 'high'
-
-
 def test_agent_from_spec_builtin_tool_explicit_form():
     """NativeTool spec supports the explicit {tool: ...} form."""
     agent = Agent.from_spec(
@@ -2758,6 +2855,60 @@ def test_agent_from_spec_builtin_tool_explicit_form():
     builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.parametrize(
+    ('arguments', 'tool'),
+    [
+        pytest.param({'kind': 'code_execution'}, CodeExecutionTool(), id='code-execution'),
+        pytest.param({'kind': 'web_search'}, WebSearchTool(), id='web-search'),
+        pytest.param(
+            {'kind': 'web_search', 'search_context_size': 'high'},
+            WebSearchTool(search_context_size='high'),
+            id='web-search-with-options',
+        ),
+    ],
+)
+def test_native_tool_flat_form_schema(arguments: dict[str, str], tool: AbstractNativeTool):
+    """The schema accepts each `NativeTool` flat form, which loads as the tool its `kind` names."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': arguments}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [tool]
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+def test_native_tool_flat_form_schema_requires_kind():
+    """The schema rejects a `NativeTool` flat form without `kind`, which loads as no native tool."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'search_context_size': 'high'}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec))
+    with pytest.raises(ValueError, match="Failed to instantiate capability 'NativeTool'"):
+        Agent.from_spec(spec)
+
+
+def test_slotted_native_tool_class(tmp_path: Path):
+    """`@dataclass(slots=True)` recreates the class; the recreated class registers and loads under its kind."""
+    with patch.dict(NATIVE_TOOL_TYPES):
+
+        @dataclass(kw_only=True, slots=True)
+        class SlottedTool(AbstractNativeTool):
+            kind: str = 'slotted'
+            size: int = 0
+
+        @dataclass(kw_only=True)
+        class FieldDefaultTool(AbstractNativeTool):
+            kind: str = field(default='field_default')
+
+        assert NATIVE_TOOL_TYPES['slotted'] is SlottedTool
+        adapter = TypeAdapter[AbstractNativeTool](AbstractNativeTool)
+        tool = SlottedTool(size=1)
+        assert adapter.validate_python(tool) == tool
+        assert adapter.validate_json(adapter.dump_json(tool)) == tool
+        assert adapter.validate_python({'kind': 'field_default'}) == FieldDefaultTool()
+        AgentSpec(model='test').to_file(tmp_path / 'agent.yaml')
 
 
 def test_save_schema(tmp_path: str):

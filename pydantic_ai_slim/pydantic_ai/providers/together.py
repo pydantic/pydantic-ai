@@ -8,6 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._family import vendor_family_model_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
+from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
@@ -39,7 +40,7 @@ class TogetherProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.together.xyz/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -48,7 +49,8 @@ class TogetherProvider(_OpenAISDKProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = vendor_family_model_profile(model_name, overrides={'openai': _gpt_oss_only_profile})
-        if model_name.lower().startswith('deepseek-ai/deepseek-v4-'):
+        vendor, _, family_model_name = model_name.lower().partition('/')
+        if vendor == 'deepseek-ai' and _DEEPSEEK_V4_PATTERN.match(family_model_name):
             # DeepSeek's V4 models reject a forced tool choice while thinking is on, and thinking is
             # their default. Whether Together honors DeepSeek's thinking toggle is unverified, so the
             # restriction is unconditional here rather than per request as it is on `DeepSeekProvider`.
@@ -63,13 +65,13 @@ class TogetherProvider(_OpenAISDKProvider):
         )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -78,6 +80,7 @@ class TogetherProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -88,6 +91,8 @@ class TogetherProvider(_OpenAISDKProvider):
                 ' to use the Together AI provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.together.xyz/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

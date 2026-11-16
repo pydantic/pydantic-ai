@@ -1571,6 +1571,34 @@ async def test_tool_media_is_framed_with_its_originating_call(case: ToolMediaWir
     assert ('</pyai:tool_result>' in rendered) is case.framed
 
 
+TEXT_TOOL_RESULT_CASE_IDS = ('openai_chat', 'groq', 'mistral', 'huggingface', 'xai')
+"""The `TOOL_MEDIA_WIRE_CASES` whose tool result text comes from `model_response_str_and_user_content`."""
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(case, id=case.id, marks=case.marks)
+        for case in TOOL_MEDIA_WIRE_CASES
+        if case.id in TEXT_TOOL_RESULT_CASE_IDS
+    ],
+)
+async def test_structured_tool_return_beside_media_is_json_in_the_tool_result_text(case: ToolMediaWireCase) -> None:
+    """A dict returned beside an image reaches a text-only tool result as a JSON object, as it does without the image.
+
+    Rendered rather than recorded: the cassette matchers ignore the request body, so a recording would not pin it.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='what is the weather?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='weather', args={}, tool_call_id='weather1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='weather', content=[{'temp': 20}, _PHOTO], tool_call_id='weather1')]
+        ),
+    ]
+
+    assert '[{"temp":20},"See file photo."]' in str(await case.mapper(messages))
+
+
 @pytest.mark.skipif(not google_available(), reason='google not installed')
 async def test_google_framed_media_precedes_tool_return_content() -> None:
     """A tool's own file reaches Gemini before the `ToolReturn.content` the developer sent with it.

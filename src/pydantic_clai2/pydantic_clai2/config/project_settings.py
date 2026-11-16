@@ -12,6 +12,7 @@ from pydantic_clai2.config import (
     SETTING_KEYS,
     USER_ONLY_SETTINGS,
     PluginSettings,
+    Settings,
     resolve_settings,
 )
 from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookTable
@@ -30,6 +31,17 @@ Every other key a project file may set waits for `/project approve`: it grants p
 instructions, picks the model or account, or configures how runs execute. A new key waits too unless
 it is added here. The exception is a `run.permissions` no wider than your own, which applies at once.
 """
+
+
+def widens(key: str, value: JsonValue, *, saved: Settings) -> bool:
+    """Whether `value` for `key`, over your `saved` settings, could change what the agent may do or is told.
+
+    Only the `SAFE_PROJECT_KEYS` and a `run.permissions` no wider than your own cannot.
+    """
+    if key == PERMISSIONS_SETTING:
+        # Later modes ask for more, so one at or after yours cannot widen what the agent may do.
+        return PERMISSION_MODES.index(value) < PERMISSION_MODES.index(saved.permissions)
+    return key not in SAFE_PROJECT_KEYS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -150,16 +162,11 @@ def with_current_approvals(project: ProjectSettings, *, store: SettingsStore | N
     rows = {} if store is None else store.approved_project_settings(root)
     declared = {**project.overrides, **project.pending}
     approved = frozenset(key for key, value in declared.items() if rows.get(key) == setting_json(value))
-    # Later modes ask for more, so one at or after yours cannot widen what the agent may do.
-    no_wider = (
-        store is not None
-        and PERMISSIONS_SETTING in declared
-        and PERMISSION_MODES.index(declared[PERMISSIONS_SETTING]) >= PERMISSION_MODES.index(store.load().permissions)
-    )
+    saved = None if store is None else store.load()
     applied = {
         key: value
         for key, value in declared.items()
-        if key in SAFE_PROJECT_KEYS or key in approved or (no_wider and key == PERMISSIONS_SETTING)
+        if key in approved or key in SAFE_PROJECT_KEYS or (saved is not None and not widens(key, value, saved=saved))
     }
     return replace(
         project,
