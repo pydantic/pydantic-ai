@@ -1,0 +1,5 @@
+{
+  "against": "v2.66.0",
+  "reason": "clai2 `RepoContextSettings.nested_traversal` defaults to `True` since #11691, and its description now also says it reacts to writes and edits. Its type is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11701"
+}

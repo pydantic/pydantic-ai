@@ -1,180 +1,335 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '396'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
     method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_file
     uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '627'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      content:
-      - text: I'll retrieve the file for you and describe what I receive.
-        type: text
-      - id: toolu_01YahAUKrWFRUmEJzzQKC8o8
-        input: {}
-        name: get_file
-        type: tool_use
-      id: msg_013N1bRem6JRCztjUsg8nVqd
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 558
-        output_tokens: 50
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '896'
+      - "369"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
-          type: text
-        role: user
-      - content:
-        - text: I'll retrieve the file for you and describe what I receive.
-          type: text
-        - id: toolu_01YahAUKrWFRUmEJzzQKC8o8
-          input: {}
-          name: get_file
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: File attached
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
             type: text
-          is_error: false
-          tool_use_id: toolu_01YahAUKrWFRUmEJzzQKC8o8
-          type: tool_result
-        - source:
-            type: url
-            url: https://www.gstatic.com/webp/gallery3/1.png
-          type: image
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_file
-    uri: https://api.anthropic.com/v1/messages?beta=true
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_file
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1517'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=102
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-58d829c2ff50ed87b00690eccb13c0c1-d3302a27f3614ee8-01
       transfer-encoding:
       - chunked
-    parsed_body:
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHHsKuCAoZfXVyR35pD","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01GVf3cVtDMFEwhr35noBE6T","name":"get_file","input":{},"caller":{"type":"direct"}}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-10-25T16:36:36.013043+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "732"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - text: |-
-          I received a beautiful image of an orange-yellow rose. Here's what I can describe:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01GVf3cVtDMFEwhr35noBE6T
+            type: tool_use
+            name: get_file
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01GVf3cVtDMFEwhr35noBE6T
+            type: tool_result
+            content:
+            - text: File attached
+              type: text
+            is_error: false
+          - source:
+              type: url
+              url: https://iili.io/3Hs4FMg.png
+            type: image
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_file
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=572
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9668c294300f9340fe415bcf73479c48-a755f0813e988ffe-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHHw5d6WjhRpsT3WPBr","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1395,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":235,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
 
-          **Main Subject:** A single rose bloom in warm, peachy-orange tones with hints of yellow, particularly towards the center and lower petals.
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
 
-          **Details:**
-          - The rose petals have a soft, delicate texture with visible water droplets on them, giving it a fresh, dewy appearance
-          - The petals show natural color variation, transitioning from deeper orange on the outer petals to lighter yellow-peach tones
-          - There's a stem with what appears to be a small bud or rosehip at the top - it has a reddish-pink color with a textured surface
-          - A few green leaves are visible along the brown stem
-          - The background is clean white, making the rose stand out prominently
+        event: ping
+        data: {"type": "ping"}
 
-          **Overall Impression:** This is a lovely, close-up photograph of a rose that appears freshly cut or photographed after rain/dew, with excellent detail showing the layered structure of the petals and the natural moisture on the flower. The warm color palette gives it a gentle, romantic quality.
-        type: text
-      id: msg_01GoLkVsUQZvTFhNmwBYS2ip
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 795
-        output_tokens: 243
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" received an image of the **"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Pydantic**"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" logo. It sh"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ows:\n\n- **"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Logo ic"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"on ("}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"left):** A pink or"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" magenta geometric py"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ramid dr"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"awn as an"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" outline. It"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a triangular"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" shape with an inner line"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" struct"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ure that"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" gives it"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a 3D look,"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" like a p"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"yramid or"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" t"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"etrahedron seen from"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the side"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n- **W"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ordmark (center-"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"right):** \"Pydant"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ic\" in large, black,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rounded sans-serif"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" type"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on a white background.\n- **"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Tagline (b"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ottom):** \"Bring"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ing schema and sanity to"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your data\" in smaller black"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" centered below"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the log"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"o.\n\nThe design"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is clean and minimal,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with pl"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"enty of white space."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Pydantic is a"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" popular Python library"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for data validation and sett"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ings management, and this"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" loo"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks like its branding or"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" banner image."}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1395,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":235,"output_tokens_details":{"thinking_tokens":0}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-10-25T16:36:39.160101+00:00

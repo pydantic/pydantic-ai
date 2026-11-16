@@ -50,6 +50,13 @@ def clip(text: str) -> str:
     return text[:MAX_TOOL_OUTPUT] + f'\n…[truncated {len(text) - MAX_TOOL_OUTPUT} chars]'
 
 
+def clip_tail(text: str) -> str:
+    """Truncate command output to about `MAX_TOOL_OUTPUT` chars, keeping the tail (errors and exit code)."""
+    if len(text) <= MAX_TOOL_OUTPUT:
+        return text
+    return f'[... output truncated, showing last {MAX_TOOL_OUTPUT} chars]\n' + text[-MAX_TOOL_OUTPUT:]
+
+
 # --------------------------------------------------------------------------- #
 # Directory-scoped AGENTS.md / CLAUDE.md auto-loading
 # When the agent touches a file, the shim transparently surfaces the

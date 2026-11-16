@@ -5,6 +5,7 @@ import duckdb
 import pandas as pd
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.capabilities import Caching
 
 
 @dataclass
@@ -29,6 +30,7 @@ analyst_agent = Agent(
     'openai:gpt-5.2',
     deps_type=AnalystAgentDeps,
     instructions='You are a data analyst and your job is to analyze the data according to the user request.',
+    capabilities=[Caching()],
 )
 
 

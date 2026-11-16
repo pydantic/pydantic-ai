@@ -8,20 +8,21 @@ adapter calls `create_directory` first to keep that behavior.
 
 import os
 
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from ._backends import filesystem
 from .shared import attach_context
 
 
-async def write_file(file_path: str, content: str) -> str:
+async def write_file(ctx: RunContext[object], file_path: str, content: str) -> str:
     """Create or overwrite a UTF-8 text file under the workspace."""
     fs = filesystem()
     parent = os.path.dirname(file_path)
     try:
         if parent:
-            await fs.create_directory(parent)
-        result = await fs.write_file(file_path, content)
+            await fs.create_directory(parent, workspace=ctx.workspace)
+        result = await fs.write_file(file_path, content, workspace=ctx.workspace)
     except (ModelRetry, OSError) as exc:
         # The harness converts its own recoverable errors to `ModelRetry`, but
         # `create_directory` -> `Path.mkdir(exist_ok=True)` still raises a bare

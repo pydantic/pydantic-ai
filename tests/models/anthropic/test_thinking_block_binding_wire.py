@@ -22,7 +22,6 @@ with try_import() as anthropic_imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
 ]
 
 _THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
@@ -48,5 +47,5 @@ async def test_anthropic_vertex_count_tokens_sends_persisted_binding_on_the_wire
     assert request.url.path.endswith('/publishers/anthropic/models/count-tokens:rawPredict')
     assert _THINKING_BINDING_BETA in request.headers['anthropic-beta']
     assert json.loads(request.content)['thinking'] == snapshot(
-        {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
     )

@@ -1,0 +1,18 @@
+--- expected
++++ actual
+@@ -36,7 +35,0 @@
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "secret"
+-     ],
+-     "tool_call_id": "unlock-1"
+@@ -185,7 +177,0 @@
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "secret"
+-     ],
+-     "tool_call_id": "unlock-7"

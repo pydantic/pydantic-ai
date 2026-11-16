@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 import yaml
+from cassetter import Cassette, RecordMode
 
 from tests.cassette_utils import (
     CassetteContext,
@@ -77,17 +78,25 @@ class TestGetCassetteBodiesFromYaml:
         assert len(bodies) == 1
         assert '"role": "user"' in bodies[0]
 
+    def test_cassetter_typed_bodies(self, tmp_path: Path) -> None:
+        """Cassettes written by cassetter carry a typed body mapping instead of `parsed_body`."""
+        cassette_data: dict[str, Any] = {
+            'interactions': [
+                {'request': {'body': {'type': 'json', 'content': {'model': 'gpt-4'}}}},
+                {'request': {'body': {'type': 'text', 'content': 'raw request body'}}},
+                {'request': {'body': {'type': 'binary', 'content': 'AAE='}}},
+                {'request': {'body': {'type': 'none'}}},
+            ]
+        }
+        path = tmp_path / 'cassette.yaml'
+        path.write_text(yaml.dump(cassette_data), encoding='utf-8')
+        assert _get_cassette_bodies_from_yaml(path) == ['{"model": "gpt-4"}', 'raw request body']
+
 
 def test_get_first_post_body_skips_non_post_request() -> None:
-    from vcr.cassette import Cassette
-    from vcr.request import Request
-
-    cassette = Cassette('fake.yaml')
-    cassette.append(Request('GET', 'https://example.com', None, dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.append(  # pyright: ignore[reportUnknownMemberType]
-        Request('POST', 'https://example.com', b'{"key": "value"}', dict[str, str]()),
-        {},
-    )
+    cassette = Cassette('fake.yaml', record_mode=RecordMode.NONE)
+    cassette.record('GET', 'https://example.com', {}, None, 200, {}, b'')
+    cassette.record('POST', 'https://example.com', {}, b'{"key": "value"}', 200, {}, b'')
 
     assert get_first_post_body(cassette) == {'key': 'value'}
 
@@ -122,10 +131,13 @@ class TestVerifyWithEmptyBodies:
         return _make_ctx(tmp_path)
 
     def test_verify_contains_no_bodies(self, ctx: CassetteContext) -> None:
-        ctx.verify_contains('anything')
+        """With nothing recorded there is nothing to check, which must fail rather than pass."""
+        with pytest.raises(AssertionError, match='No recorded request bodies to verify for fake_test'):
+            ctx.verify_contains('anything')
 
     def test_verify_ordering_no_bodies(self, ctx: CassetteContext) -> None:
-        ctx.verify_ordering('a', 'b', 'c')
+        with pytest.raises(AssertionError, match='No recorded request bodies to verify for fake_test'):
+            ctx.verify_ordering('a', 'b', 'c')
 
 
 class TestGetXaiCassetteRequestBodies:

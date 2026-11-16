@@ -34,7 +34,7 @@ import urllib.request
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from http.client import HTTPMessage
 from typing import IO, Any, cast
 from urllib.parse import urlparse
@@ -83,7 +83,7 @@ ZERO_OUTPUT_ALERT_RATE = 0.5
 MIN_RUNS_FOR_RATE_ALERT = 5
 # A scheduled run has no path filter to legitimately skip on, so an agent that never
 # starts is a broken job graph. Every other trigger can skip by design — PR workflows
-# (`ui-security-review` only reviews UI-touching PRs) and manual dispatches gated on
+# (`CI Review` skips a head that has not passed `CI`) and manual dispatches gated on
 # their inputs — so alerting on those would be false noise. The static guard in
 # `agentic_workflow_guard.py` covers that failure mode at review time instead.
 UNCONDITIONAL_EVENTS = frozenset({'schedule'})
@@ -427,14 +427,15 @@ def format_report(
         lines.append('')
 
     lines.append('```')
-    lines.append(f'{"workflow":<34}{"runs":>6}{"agent":>7}{"empty":>7}{"out tok":>10}')
+    lines.append(f'{"workflow":<34}{"runs":>6}{"failed":>8}{"agent":>7}{"empty":>7}{"out tok":>10}')
     for summary in summaries:
         empty = f'{summary.zero_output_rate:.0%}' if summary.output_measured_runs else '-'
         # Mark the row itself, not only the footnote: an unmarked number reads as the
         # workflow's total when it is really a sample of it.
         name = f'{summary.workflow}*' if summary.workflow in capped else summary.workflow
         lines.append(
-            f'{name[:33]:<34}{summary.total_runs:>6}{summary.agent_runs:>7}{empty:>7}{summary.output_tokens:>10,}'
+            f'{name[:33]:<34}{summary.total_runs:>6}{summary.conclusions["failure"]:>8}'
+            f'{summary.agent_runs:>7}{empty:>7}{summary.output_tokens:>10,}'
         )
     lines.append('```')
 
@@ -525,7 +526,7 @@ def gather(
     client: GitHubClient, workflows: list[str], days: int, per_workflow_limit: int
 ) -> tuple[list[RunRecord], dict[str, int]]:
     """Collect run records for each workflow within the window, plus any truncation caps."""
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    since = (datetime.now(UTC) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     records: list[RunRecord] = []
     truncated: dict[str, int] = {}
     for workflow in workflows:

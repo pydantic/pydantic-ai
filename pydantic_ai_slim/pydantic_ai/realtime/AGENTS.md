@@ -8,9 +8,11 @@ shared message/part vocabulary from `pydantic_ai.messages`, building ordinary `M
 history, and running the tool loop. The provider-agnostic layout mirrors the request-response side:
 `model.py` holds the `RealtimeModel` ABC and `infer_realtime_model`, `settings.py` the settings
 vocabulary, `profiles.py` the `RealtimeModelProfile` type (per-provider tables live in
-`pydantic_ai/profiles/{google,openai,grok}.py` as `*_realtime_model_profile` helpers), and
+`pydantic_ai/profiles/{google,openai,grok,elevenlabs}.py` as `*_realtime_model_profile` helpers), and
 `codec.py` the connection layer; concrete providers live in `openai.py` / `azure.py` / `google.py` /
-`xai.py`. The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
+`xai.py` / `openai_live.py` (OpenAI GPT-Live, a different protocol from the Realtime API rather than another
+model on it, which is why `infer_realtime_model` routes it by model name inside the `openai` prefix) /
+`elevenlabs.py` (Eleven Realtime, on the OpenAI protocol) / `elevenlabs_agents.py` (ElevenLabs Agents). The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
 
 ## Policy lives in the shared core, never in the session
 
@@ -29,14 +31,17 @@ vocabulary, `profiles.py` the `RealtimeModelProfile` type (per-provider tables l
 
 - Parse provider frames through typed SDK models, never ad-hoc `dict` access. OpenAI-protocol event
   types come from the OpenAI SDK; Gemini's from `google-genai`.
-- Azure and xAI reuse the OpenAI codec (`_openai_protocol.py`). Fix protocol bugs there so all
-  three benefit; put genuinely provider-specific divergence in the provider's own module.
+- Azure, xAI, and Eleven Realtime reuse the OpenAI codec (`_openai_protocol.py`). Fix protocol bugs there so all
+  of them benefit; put genuinely provider-specific divergence in the provider's own module.
 - Capability differences go through `RealtimeModelProfile` flags (resolved defaults → provider →
   user `profile=`), never `isinstance`/provider-name checks at use sites. A change that branches on
   a profile flag needs a test pinning each side of the flag.
 - One event means one thing on every provider. If providers disagree about what a frame implies
   (speech start, turn end), normalize in the codec — the session must not branch per provider.
-  `RealtimeTurnCompleteEvent` is synthesized by the session, never read off the wire.
+  `RealtimeTurnCompleteEvent` is synthesized by the session, never read off the wire. Where a protocol
+  has no end-of-turn frame at all (GPT-Live), the *connection* synthesizes `ResponseDone` from output
+  timing and the profile says so via `synthesizes_turn_boundary`, so the session still sees one
+  vocabulary.
 - Wrap connect/handshake failures in `ModelAPIError`/`ModelHTTPError`; recoverable in-session
   provider errors become `RealtimeSessionErrorEvent` and leave the session usable.
 

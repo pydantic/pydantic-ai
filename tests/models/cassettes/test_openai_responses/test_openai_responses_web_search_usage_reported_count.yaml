@@ -1,0 +1,275 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "596"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Use web search step by step, one search at a time, where each search depends on the previous answer: first find who directed the film that won Best Picture at the most recent Academy Awards; then search for that director's birthplace, and open that director's Wikipedia page to confirm it; then search for the current mayor of that birthplace. Give all three answers."
+        model: gpt-5
+        reasoning:
+          effort: medium
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: web_search
+          search_context_size: medium
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "97763"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0a7c9276abe51453006abae9c099f087d0b426b59c7f351ff0
+        object: response
+        created_at: 1790634432
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790634529
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5-2025-08-07
+        moderation: null
+        output:
+        - id: rs_0a7c9276abe51453006abae9c201f087d0b1e5c989524c20c2
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoimSiLb73yywljGb8pEgK8tREK0EqYHdHVlWVc51ckB2wICQfQWCQ-1W-j6RqH1ZNkAzobiULzisjuczXGdRQEnUx9SEXa-3Q-3_3qrJk3z5RegNcVHHtm0PfKEWLnJodFcLBQruB-Z4bBK8u41PizkaCw-n6Cqx0lwvwvzm5jH0ZDBL6WOc3XI7AlxKTYVDOfSc0zaXOeTb0xhkpv8Qqn1HK__8jLFoPVejEXrNvEPHwAdTA3kIwQkqADLxF8dkwbK3A9EBPzC3DYoEi8U-JB3v9qqjRjjtqSQHGhkX7FWGRCW96r98s0SDaM3nzmx8macTE-Ie1Ru65rb7psAB8740bqandhAfe8CT23xFUD-TMoaYeFSrGZIOYMHRoR81_DIJLa8cK5U293rI6m6AHu098kdWidGaHYyr1AIjcOIv9z3Racy3B0Ps_-DB8YJ8wwDzEzZiJ72nf8nxTr-foc7p55Zv999cm32UBLmnI31a3hWEyg5OaoauYNDfoX-yXv0CX9J_Ql3dqO1Ex8h9OH5CKji9BcARlycqU7cu-E69vwOACIPW9xLjplBa2rV7-8_VKX8UpqBLcnjo5MRIjixc9H0YZBuUnpEB5xtpsrJomMjyA0t6d6VFcC5yeADfihJhCgyLoMsxQdjtRpmT76ChZ1-94srurp-Cqi1YDU2jB12sKr8ma28ALsnrIAwVhwyjBGTchujKWuZ6mDiWI27tGiLkRuBuMgSfQfwzryyHlKW-XuHAkOraN_hm7vxkwLDEu17ONypjvEYNroHxG-anbzBSw2gnE5-FHND4MzwGvtA60glgySD_2dSJjj_zRuK0tgiWCCexOvosFNmDNWg0S2gccHf0kzLa_rvCvjc81OlWJ2SWnUQz09HDp7xxUNltEgqvF4oVzi-D0pIQItA5HL3iIEeLtKBj1-xZEJnaRRNALNWPFTRpN3-hy-h6PfaVEj4BeS5oiqt7bSSNvYOVve31bWiy7s3IdiI2PCIglK3RITKpaFWvyEQMpYDQMNoCuNh2pRJI9la6DHu-ZL-5IfpX2lM2oeYcwFy-jOv9N7mJ4pfdCQxNlw_8RSBKC4nfa1AHcL1O-kvw1EBJxMcYDYhnitykmERMxgeLI5e2t1YYvfvKC7Oupm4-z0q9N5TIZxOZOGz1n9YW7caJsp2HRN4tVC5fTUC2Is42GZlN6McaI1ZHorQVrJQx89FgLIfB1yYoPY2huQVitXtjQdSXqIZsEgTEPI-3TAGTosR9Gy3FNPj7fTBlernGh8Fai9KDcmkC1FAvfEOIvcKefHSGbgsf9y2WISIewYGuRasLSNW7b5Dom9SPOI_hcRHWFc17C_9q5Sn_3BzyDTaNVeqQ_SYmKZJ62JNIkaUrlYlBs__0Ecs34XKql2cx4bgrwfZYG-4tBG4VlKUhKs1We4v0jir-Q5CYnJsztcFZ6mWBk5hwKUJg25UmXHWX5SnADMwftkb2FtMOcBe7P18uTonCyASRIbpAI3DNs8soPh0zmOT4zG35UXifSfdigdv1rEIHYAqT9xVkNePALkPAuDIwHI2gl24uCleVNpH5joHiyMYW9PBx8yxiiayi-RD2K5JSi5OGSy-ahJdlAMXyuH7DpW6FeisQIPE4tCr_8hoXZDr8F547kzX049iNXRejt4IwLBb4ldJa_qOjNJfpFLCX_HqZTmZ3oBN7qW9K2Wo7sU6GL4eewQaBBzWLg31SrI8QxKbcxfZkmVmWTkCFkk6egnxwOc2AjzfvQtNJN31FmYXWxxOw9P74P2jzSKcZK96g4uJzlg6szFPug9NQSWlYQ9zWPGarjp6kSzqnTY7AMcRjiuWijko9sfy9ke4dL3r6htHWjYSgu7A9U7PXLigBSVrANiDfMDzPAVmjx1QvbSzBewjVkujd5UIVQpbA90tZPDrfdABeVzsF2NckvLBDDV4O8rWqAck4ic0SALzxQwMBvSZpkDZ9AHgaPXjH5myFmpQ8t45prSCorHSF-a7T5FDQTyZHl5boXlPxRSdA4hPuAvZDpGfDqIzea6U9HyssVqCpCFKNaIj8XmeDBqw1VFF5DfpAzPdvf9_n-7wzC0xZ-12ZwUDCP_kTApkRLoCiw5uBZK8_mpNxrNOMMARgD4vcJhHbna7KndA9nwpVYh1wE4L8fl90e68uEMMblQTN6ql4lVC9dQxS7XKqW6KsvR4adHT1jn-MmC5EFsag_8VL_oMAnv5orNw38WM4WS2sjco9Q1gnFS9Y6A6ZoQrZheXUL3CF7Pa5DtJsC2sIPySeUp2VhuEdODH9BSBiiJo58fC1FyfOM__UbeR2fgKkv2cfaC7G2Jq8T7aOwXlpNee9geD8kADdKhoKi_vVw7p_XOyGyOei4kZjus1WvO2En2AJW6MFW9pW7ihLtvBmZd0nAj0XDcvcvd29lT0nkhJiLZjsRQyTrOBPVmz5IpX5_dAeIDVV70YiuSp6MaHR5tdv-hARRa6Nu2ky4e910vUCFSGS1yFQ4UdMkxLWb7RIPLJaNPFPg6nyysMe9__eMrb0P_XtB7ITHWw6G3zpV3SOpZZHRizGhEg9h73GbPCPvrumuJDM5rdG-HXXflk_ZdDQULwEULKGlSwF4p3adyjX6j77JEi9ouFlYAOJLzlCjuEYv09IpdTca6srcTzm2GqWSov_NzxjqgU--GJp39J7zsOd72Ov-dPFyMSntf9YAsBp0aoewBg0Lj-Yak8n5EpuCyJ5K_Ffa2vu1FQoAmMHgbCKsHw_OQkqPTI9_T9Vt9xPAkO6Su2cZi4f3bIZ9yl6g9n0THAdKXNUQi6zGm5UHYAqC89mZCyx62UN3EIR_wgu8koKJ87amb2KEBCyoXlELOTb2zTWlnoyxkbM9AP7q1whbHgjGSf6gJbWbI3L5h0B_hstFP3bfNn-DYo4hRnDkqmx5kStZq1jRZByprEKGTDgJAsDzcNUPvDtZSmn3D8Jd66xWVSH__S82T3xbGNb6RiTdxv8tKgQLpOfZhWZsJVE1uGRcv30D_Kk3AscCXnWaFK18s5LZ6dKpagYFLuubtuLTfSe7bRVRDu7EateaQh-KfWexjddTCkq7JKdw1xPDQ4TP9UGcsuvzMK8oF4N6hOdgrKZDO99tqEzeMAPnvLlo4jENCPgmKUaK1NnOkJSb7wJl79n0Ha36ew0eJ6OX1XeG8OBVfmydcRhg6eZjF6SmwClxgTVzNvnh30hJ24pcey8-thnJFOp3M4Qpq0mAcruMbAXG1f_A-meEfks3JTwM1WyBJxA8g5-Z38sT5bsOjmnBpiWd5uYqCpapbS5XuRuXVxYy71xyFC7noQ5xDyKbYnnFwqS-fv23MNQZG-urnXkUG53PwcUNo47znlQo7-mMOG3SO0z3_2oZSzILeVOnothMWluXpAH4GzSlLh1-qVyqwAdXrnLQLPXs=
+          summary: []
+        - id: ws_0a7c9276abe51453006abae9cf94cc87d0b9b21f16eb4f35fe
+          type: web_search_call
+          status: completed
+          action:
+            type: search
+            queries:
+            - most recent Academy Awards Best Picture winner 2026
+            - 98th Academy Awards Best Picture winner
+            - 2026 Oscars Best Picture winner
+            - who won Best Picture at the most recent Academy Awards
+            query: most recent Academy Awards Best Picture winner 2026
+        - id: rs_0a7c9276abe51453006abae9d3727c87d0be809e7d651a9131
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoiuq6nr7QqzgXjAi4ar5x6iZRc9VaXaowlL-21v5UkRBzz3pSPYzAYH9WqxqMY0HjflslBCvhq6FhYLEGjV8tAaX26YmMu7HIhXqVW-nM68ccliDN5OnLk79WXYAnipiCbbG1WlC3uY1BkSPaSo40rqtX15tU6kXE1knwsx8sYMwwb9HnstDHO7dxSzmg-x8sqGO4Dul0ylj_rX9jIMIGDNmChiD3q5IZnubV5bQz95JCnJ75M8vm9phYv_u8oQVDEOm5xLolDQ320qr1MNXMvx4gP6UEn9NdclEkZokwsEGle8ZZtvVRcdMFvV5ZUMN4tadVZqZ67iDjZMjBWfcQfoyrinCtgq6b1tS6Fshf5lhZ9Ju0O2XB6lKchyazrvgJ5plteKD_FMu_-FiIr8zLjGAt8_MGAnJxwsGgI8w3OUuETqdjzzEkdwWoni4UVy8w2IxYdpPcm2goP0uJPRWIGzqCH1LPgk4bkIAm945v3hhVsNvTtW2Lmo-TAMRyXoKoGLQ-YDiAIjiW-EyPjSRvhR9AlwnKFANBliqfG_xt8Xwv2__qnuXXuz7KBvKfWcPMEnvPAAFuplBXr_BmhjL5g48rlgYTiUBMP-VRydoMz0SSnaBzmPql5P73Gs2p01AfhGujce352m4bRaoDIU2zVEEv294cX4VGsWBUDFEhOAS6570K1gfJbgzokkuKHnI2cR4A6twVijH3eq6Tlkri5utvwvrG9sXq3naGH9js2FtOH83Z5x0GQqYMht6wiQpE5yqV8crjAxrrrfhrd17Jw373SCDf0XHKUY6S6dtgvptajmBYaUswzAN8kZeD7oZPNjTKZao8EDH-8E70ozKfKVep1iBZD81PigBHgC4zQc7l8Hy-qaehUWaM3zIsjup79WO9p89UQhaD1KGPYJWyeCQWPH-uFBRnwYSumtf6o72RNUpvrBuiNbkcqc2AewdY0sWJMUU7pOlfuWYCz68GEzTYv-3WrAzuENIj2SNPBjaWX5074OZ1X-S3Ft367pKpHPa_KHInHwRQ9x5hDGm8BxVMXNgMY8QLpBho8SeZl4gch0P4LMJuoUnTlfV7_sWEypBYClJWvjGx_WgxHHJm0ZOo6zuVBkHIRe38TrhNsRfgHkOFJg5qxDqIoXBlu1wFNHmDlCOT6XdvnqzK-1-uz8rZTKrl8wigz7IiUfaWzHX1w5iWFOf2HKYORDd0TbeuD5yke2XE5LSAXLv13-80s3gBsFRgxueCLmJuBnSAW19sR5hjaCHYBWOGxYzrCb90HAyA7OFdyKmG2tfs9FF-6eVYCJ6E34MM0FbL84POetqqVyRyu2DmQud5dBtt7EIDv6j8fC22gcFvouZmeyBLKLspsaKGyiG0YyPRBmnf_lWrmcXAvdm6uTqT-Zs4u71UTTxzNBAMPGtqHxPhlviwyGi89_Z7D5bpFgNFqOqt5tTcKMPczq6lpyoxFkwgPO-T1b1fYfmFRw0czJzh1EcRbvjY6N7JZiSXsDf2fsAlr7glzt00g02Dr0rjEGHLiFiW53NWITynbkY_4urucqbWnh3YeFDpQWY8SgPmI4TutVPT03yBcDt_yB5cdoF1DHA3vCNAkzD4SUgxNYAnTlBUJuUF5rlA0nUtkIXEkf_SqIbH91pex5F2iC-dng8E4xywDVwNlmYt351muI5UzQI23Os1by05nKEGM4kyVcWCBLlcZu8KxVTIn_5ukPXkoVXdDX2isT8BGcPVT9laOgR1ocW9spQb1tTu_F6xwU2QFPnQ5pfmKBYDm4Vt5SoNKNTjHoQiY2guXbT1qdTnInVfxhQKyvf-ClSKHQWbFtGGqDQqCPZASIMyyMgFSYQCN-u3tznfVapdxbbV60ZWuoPkmXQWgVgMESG7BpBXCOaOortxBIJLdGe_YdoiSMcrBq4CV_oNXJbrrXZ7lrch6FxFuf3pcYJlw1nkHTCyKpOQqTjrhsgIUdVPD0Klq_M8DWrTolZ7FVwvJGw-OQ22WZnfewWxAk3TkigRLWCbqW2au0lvEeG8Qg3dHEmArv5IxuzXD8rRR61OENjAHPypKtpwerK_cffGxlQ_gdhGCtLUEwTOgUYzQ2JZQv8z5GoKPPe_8oxvgk19eAZmCLn2f2J9E1DsT2-KD1HVFOupmHWnx_PjY7CIshKRiSrgvvmxgWGViJEjbJI6wlOHD3id2rQDlg_l9Hn1vp1lWjjn8nDCNFtjs7rpxlR1jXKZ8dguJp0zg7KEFpUGGCYVdpi1qfofp4At25x6pxBZaQBgUvkI_RT8J-GIUCWRxwlc8tep9viSyT5i_Y_S9jBQ_ozEW1aCGxPC6Af5JG8y7W7GzrpI3V09Skj8LC_1Cx39vBU6NfIgpWqt3oFC_OhlOH2L7YRHf06UXLYj3EZNHJ5BgbYko_MaIr7J1gP5hLDriFeDTY78cJy3IEWIEWq1kN3RhT0B7RGJ2CqqAPGeCreh1h5nG8GXVE47LRbXcFMyzyCEZELSnde7Exw0lOlBFdrC-ZLhv4478NwI2cM2Q5LbSRgcbf6Mf3VNmsxvVR01bB0bvpf-FZV-qk6b2mG0zcBFMBYUqsY7jkSzfxO2EyoliyOCtgnJpmvpEx8teVswoQZxITa1OO5uKmmH2YDC9-UtOdUu-ufTxcE7K0_egnah3FG6DQbUWW0X_B79OgvZDRkUCPKVKXaxs8NrJTti8oNehDHgYQyIv_rKU1gU9Yv_cHXdG4rC8JWsYy8R_3ieQQ6Q8v_8urAfuLDQq0MTrkZB2uXxwJYhZVuF-k5dRkD4nBzrm18gkipWXUuF8mwEsS0VVJawt6L_UjBr1TJfWPNzGK861wQsiXz4mZ-5QK0FQfhYAj5VYzgeo4UKUOkKcqQV79XCfLfvSO-GQpgPmQThiOSAF0DQLGUGAivukGeiy-nuwNhHhb4JuFis2NYtT0CceENcs6jAnJ0uvTGjcEiOZbSE_NW_Qg_km3fZzvcq1rPL4QVOntTjkPPu8h_G7pERoee0Y3Ck5gTsYOZRJSjPOZh2KRgCNmMKxctld8ZlH5jU3UjC6CNp7j54SroZLefLi_0xW0XVK3sfKNG3FqHI44LNOISh6R1sSIMmNSYEjmgDEaNx19hzzYNFJ3nXauDCNlln2PtvYCcWRcR40vJgy4WLMpn5V8OKe9X9qu8EuULLLTxTmd2vqhJiQY7gaJVrJiXIdV2cxXSBEjwJXwFqGSJoeUZpFI0FpVUL1dOcscvwbL5CAsG54agJhrFieOkgm6cPPY3KahI5ESeH697D2vRphPBe6PiU-L-wfYrthDkMySYp461b01NiW5EMcbhvZnt5u6jBW233S_QdqUQJWicXgN8mkZ-5ng1eYVCcs15Ht6IzJqAzYKptyGZ2GGIvFeAOOwLY-lPYl2GsYIPXxnxfsaFnz5KPP1uJnKUXpVD4dNX5E3X03uM9O4f9x-mbMFr4CoSMaV2HAfN2A89EZzZzBzRNvWpxa5qt_4HbW49ghJFyWAbnBO3pY5O9A2g8hUGkETgse6NS4RkrveZUuMHb8GANmSTaeDq86BF0ns1MftZoBN3yssP9R_tsWeLrUas9xCFjCc3fJGA5y5YIQnCN3jbyBKnaBinSg75K0K1FYqr5owOLY6ucvB4Ykn6BsHbi_EOvancNPDFEsKP7ahKN3dwl8V1QO-vrPVDv0MfYmkNojn9IhdA0HnHdEYNVSTO32DUOZZMw8gaF-AWLMEF298MCZf27H898EhTyw7ZNdyewryVfXARcES86771m064I0
+          summary: []
+        - id: ws_0a7c9276abe51453006abae9dde59087d0864162f5bdca6b3a
+          type: web_search_call
+          status: completed
+          action:
+            type: open_page
+            url: https://www.oscars.org/oscars/ceremonies/2026
+        - id: rs_0a7c9276abe51453006abae9e013e487d087f693eeef112bee
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoitVnD7_Hb6hnlRxCdnQ9D3IJ8AmJa_cDqtNsT6lhlt3APzuWDjQge-2Q-PgPzBZyXmbWriXkW3t-Tczq9MCNnzJCfD4QJ-Djjmsie9mcogywOe08LNMiqJP-vM9BdDB0MIcUFI6Rwu6heTN1WC4SsXp-MqY1IM035kFA2DyKRht1rMui30RknJeNXwI5Ygd4PhbZj5ujfdL5yHVbOTJgxshsqHeeye2CudaYY4wi7ztDLBbn5Z92ms8qbYi4XV_LrParojOUJymSewLiRVkvsdGhgl8-lQxXmVgxSWjbUleIzKLLo8qHfxVLjKNIE5y96RDoV3hJjb_cmuD6dva4E2XowMDPVF03m0YpnSRyLP_t1ZYP_O-O0Saok7bTDf24_29jRookjG1dVFGCae0Bz0t1aE71MrW6zZDQEYVQJlX42xEbjg936mrynU6zODy1D-SdB6zErc8VDP0sj2gAwz9E3u4SECF69i3PPiOmH6KeHK0DxvJjjMLq2e_HfYLR3oqe5CBtGiSk5sH2jPTdC4wxfTot_k-esumi2D_mxyIi95NlSUOXr0TTHN1k48j38v02BDa9MBonY8GbQAvGjGP5LLiCWJcphlYWUdurB5m0a5iNWN_up1y1rYTLUL-NaFN16Zwa688muoR6mxGRRpxGGi-iJVxqueZ2YF6C8b1qmrPhgFOTvrwr9rFCq4UQ0yJEa-hy2IsXtcAgZteVuqBG0FboF8j4qdfs_ZR8gAj-jYFl4v4SX0ECQVIC4JUG9TSCS3m3i_G6CHRfGsxEO1XUvsH2p7iKvUGKbN8YxbFBsiVG5Z_dz7CsOJCLSSb1gc2BoP6_uXQcF5JBIEvT_iTdWnJMpnUdbDPOkoN9vQhKtF02MTv0fdCEU3WZK1kHxv9O0bdtQMyU23fAN5Lif3czS4jxDljrMIPqhR1pxYc9_Hcdh1iJ0lmDZZeFkKAeiQZc67p0DXanoKls70Ng8pO4hHks9Z2rxGk1oPb2c1fcxiLLadbpdGAU0pfepu0QmTN9YzryDK9uviYh2MEIl26HIEePV2b36nKYZquvJSNw657b6f-tWqnd3_efeOq7l8vmTruOfVUMk6gm7ddYLwGaDzZHJ95yYPmKrtF1nDjS1eTG1i4rDuW5MtPFJPya4i720Irqcpy9suSuSKz0IEHVOFDTBL4Mfc3zV1Aup0IfArNa7MYiXQGBZDAcPzcCeUn-zFWhIDZBHtdykasdEmSemYVNtOvtgFUtmrWN0BnE=
+          summary: []
+        - id: ws_0a7c9276abe51453006abae9e06e4487d0915f9d1fb8a2b7dc
+          type: web_search_call
+          status: completed
+          action:
+            type: find_in_page
+            pattern: Best Picture
+            url: https://www.oscars.org/oscars/ceremonies/2026
+        - id: rs_0a7c9276abe51453006abae9e2440c87d0a355938cf0f59c70
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoihvFI-1Dv4SlYrUUQl9e1jaFPnn5u-kSjSJJdwyEFgmbZBNEDFSVD6EsxH1vuZc0RFhPppb_E0IyU80kPISe8Oi28sw1cMKWT0FdkYNdlwlo1rohjrsmN9UG7b9olx6uBU3vREIxn_S6ksmm0uCvo-a_jlzAa6BoW-bKWhlT8Nicb0NRb7Jl_biC6KOzVarIhjh3AEftDFBtpa-htrZrq6BVbPQ48PZknvM9Ms25tJKot2sSsPywtJ_pRw5smqgbb3pOt1_Q2UPsy8zzuivAULSA4qrUP9pr_yOk16anyt7EYdW-3rYowq1_rFsCCgIYewitn7iCQvZHbTQSL1EKoKoCZJJmda_vga3vmADrrxwBz0E7XbsZkHglcnwx40_141b_KEuKkNJ9HRKmvE_lzIZTOyoZQjMTnGt3C6qmYYfT6DRNQXmYuPRv2btdDwMTzslAh6JOyaHmKbJrmtfzfx2VBo08weoP7Njdi7m80NL33obqj9X9p1V0wl4srq9gc7eQLIU0WVNO8PqD9Aml3SMP1pA9Wti5lgwQap-OVkgxm5KuabnpKRFyDdxrDHNXiuoJBuK20BQU078b07IxDwVcH9UE3fUBk5qQ8DgsGGLy2y9bETJMbiVRSdWnMS1p9YkR7cpxkRQJr387THrMJgEpNU9clUAtil9Py4mLdo79CfXBpSOmuF1-3BK992vz87i94T3YAIcuoqlCgCbVb52_f6_gtinhrLr5NB39Bm97nfpFipENj5LYsMLtTS8DBkkv0RpYDDZvfJziYYu0zQPIfvwPWQoIZ1Kjdzsz52BHs4DBziRsnxSO4N03-ARsaai8-JgACA3gwzcXz8ybOTqLawztWKjF2QhleHMQA-JXZSFsjKrO9TvVteK_dX-B_mIZSrIsKMC-tVSTe3fNvXrACU6SAF41xlPIr2ZJkyr3y5OJISBpsFSoIpU4beGg2L1oLljgBfWrLpsU4js3meMmlsH2HzlR54VH0e3THn9bGAujRi9NRCRUlicqhhq1QAs7fenFldsSE5zhwWIj749H_CKuOwEbHla76ThjJtK0vTo-_TIDjevuTRQ6qQiyU88YSPGmzI9V56rYqDOF-a6kntb1ygSt-teguhLNhu3UTq2KUMAhISmHsywOd18eH_ax-VxT98IhbAVcZVs6h60pZl34PfvIbWKtO08DWa_l054cern9FtvretuF36XDzWHl37wwUExa1W8OGjSYz-FkCTBH-tIrnkbdHzrRnVYXWvQp5eITZcrxzDvyAs0CgsoYme35Y77z9zjtQ6y5d-i8naQVZkx1HT85y7ZdCu3Ed_vH0xvz2JjHX3cpQg6N4ugUdDaSGId4dEHzPku5xCmk3BcK0uZhUcqP8IWCTr-eE9wqBHGqjMB-V8W2QzV9ve7xH3LFQaFdiv1ZJRSrZxalpRzMIqhZTVsi0Otb0P_wvg47CL2N-LKYFsBkWq-RS-_FBEzEbKcI62Z356i5fCcduslobdtwtEyPEeuEt5DMGCkb6b18GocB1VhQlZ8B9NzScHNFEd-tIKSx8VKTHhxtcMuURpigWc9FNruiN-xE2jTorOIf68t0Mhe0EcjgvCC-epuAU8EkqnY41xzb7FyPym02nyjgyPzcGq05jrpew4l-C5haE5_fgB50xSyHu3dWgZabWBaVGUQxrH4TRqpk5SQ2b4JnXgDIlgmgHqWL7aJnOe6D3juIYY5A6gFK78HgifGzSqNOkSSZ___moUo_eJfqpn2IljfbVZbiMkNAPEdrKvUJqA3O-Yc9UUbEpa9vEGD0anhowqF0px08yLC0dGP2fGw2T5gaxCR_xaoSZlAOrODoZbOZydxyLFzFfq5TWqfPDKVeNmsYKFo9CwDyyEcr6fYkCRebAD6CFg8hDB6dq90B7UFQGYUCwIYqyuBbsjD8xNWb-6ktBfNfEspn7Oj-EH8pTfuK3LF74GRH3CbAoXG4Ld6GiiXWcYfXSU-NZlBPD4U_O7YLdSaD0k7Z3c4_7StmAheeU2XsZ4INDuXUUQwd1Kk_fbeCILaYlwUy-4iMYqIaBEPW5FBARMJmWIYsl_-zhPSHY51awCtzl2CRnmWAfZ_1wc4lEvohvWZ2FjJ82Wy4t26aE764bGw==
+          summary: []
+        - id: ws_0a7c9276abe51453006abae9e5286487d0a4b5db0fc9e9131e
+          type: web_search_call
+          status: completed
+          action:
+            type: search
+            queries:
+            - Paul Thomas Anderson birthplace
+            - Paul Thomas Anderson place of birth Wikipedia
+            query: Paul Thomas Anderson birthplace
+        - id: rs_0a7c9276abe51453006abae9ea264487d0ac0f7aad17b0de2d
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoiA2PRjttoXyua4hZjnRBuIsPtQ7r-bQSMBAB1rwG59JmCSmqHoyqIXrTUeKobZAJujSS1C6ddi8KA_mzP7WW7SSs1Xc87uUJPfU1HdM9B-SvYb8JEW3f-bCi5KPJxzKjsvx08_e17KmZUcIknocK6v3swwiHpFprZaBZkcoxCEsaUyDbf5khO3V0zPPzyqJSDbs9DdaeOLP3LhS1msOlVs32mKffgZdEzgvbDcdlWNK60fYr70Hk6OQfswbL8w26sIqLM_4RwRaNpi4lDSXK_5a-oZo4znZ8EEQJcnoN0gob25kpLUWlTbYrT-YZJwvGz0TdJY9hFXb-_B3KSivvuXy5j0gMZXhU5EwE1hRmqczOV_xiAgW1ilkAURmsrWSRBdoWXSNif9rtLJJwfa9zsogHmsC8W75lv9tZL-EuSY4RzrjW2HclRDxu_eOSZU_7NNB-88SlnrzeJDIMVweznurDqmE-E3M9vuFIRZ7NJQHt3EU7KGoUuUZ0X493S1R6sGrJiMqBYLeDisc0O5GBbQaLmJacUOw-ahtkMh6TYt1qTFDBCg6LFG83rpKC7cZCYoWOGoj5QCYEAb9CtfZOqifattgnNCRZYntJaQwizIybkOggBCWBtjvuy4isS9lb5YZxpWUTutubsbPPrcM-UQXjD19GkpJqRLf-uhK-nFrzDbeA9L1iARi8d7h5FxkdsrcSY0jKpaNmKZipdGr0xzDwhQ3tKywuptbkqF519W7bFhCmWUrIX2BzP9LSHM5Xvjvng4r2_Em6UWd5jB5U6EaqXOq8dU1BYmbitr5StzhUT-tt9Aj6trog3U6ZhoEdqd0WJG1fyUgw9soPvJCz2bweN8SkqtIy1Fmfvv47XUceLs3h6AtrIIiMjYznxhvJNb0TToz6mqy_3nS9iE4gEiFABoOevXVfz7JYoM_BMAtGksppSHsAHHe0sZBmGIClKBH_SzjGXOztjr8eIApCW_QUOTtJK8UmVfj1eEnA8SFNLWfqJm5N5yDzyGBhpWMc6GxlcX9SAYPow8tndkjnLyAwzUKQQhn_cVLFx-3evsIQ1mPlrYHIEl9zMlx6rhqUlPieZXFmM6axUxQiJgV-1vhSJOwYBtfMgB7uDgY4T_nV-0N6NcCgqOT0Lcpe9CDK3tBv_yAn_K9JvKyzBeK-l047agT4BIijrtA1AtVhgkewBXcHt5KxQsHmBMSSmE77JNfL2QqedMhkzG6GCiBz4ibVoWhD_FIG3CGju5yxKfmlyvPWuEAnY7ngQuRvaFgaYK39ICfSYVy2IVmg4Jb3OeeKe-SVapec9VlXIznWhzBryWcL5PZn2pBnhI9HA6e6XxFICPzHJOH4HXpZYoBpuhQpIvudlPO6ZdvpiHAry-0CT-HzkzdemKg92xhBbCSQfZqzh3Rs-FxVSbShfMBFD1dx2C95ER3oV2Rg_BV3HNyCB03wm_qcGYeShVHhQ7LzScMDoU6AdznrsDzPtVpIWVj3RZjqElU7plIHS6KjmVAQkW1Gd-lRUNsk8jKhh53zHvnVW3_HsghJ2e_1aybAGVRccUU1nJXipcCRtSmIvwRGxAHMEnZDXE3LDqLP1Hr7DN14EzDg556T6u49uOqyPg95BxTHNhKlXudh4dhLJpMq0UZUFJyGW1sVUSdcqGpFeO7xotPEE7XbLIVdQm59_zMq4wIxzuFzB_8IuSazeYEMHZkZLJnDx94fKtOfF-Be54M9UgVvISFH9FQXGQys75Z-bEPbXOyxJfUk7dU1LQAB-OSkkaBBameQ_egQvZ0id3-KzB2MgAHboz3RJ4TprUxRaC9RDkJaFklX6YUMZST_sTbFamS7LjwG17W2GvNxfGCMk5p2D35JLLDlCn2UtNCRiIAY6OdtromTfYmqIvgrLYIERSjyEVlmEbV2QDy5_qcs4EvrLPMdyVXhNPIuqEjv_HXQ_DFqxuFVYQ4JFa1R1_fmGrsgCWxLz0gY_b3Tov0teOu4ClsWPQ3TeVoIrTSatRTlAhFP05NjxI2j9_8HNgBZCOlP8KcrYaHhTdsUn7esiAOumaVY-0fEgun3t3gFaZ29jQU9ydCbXnHuTaBCGrbs9tEXdjbxDeaHH0cZxVuiKJ6TUlzTmMt6I-Qpa85ikAndnhD85vbcF4NbLcaawLudmlTiWkrkQnoIcDqum
+          summary: []
+        - id: ws_0a7c9276abe51453006abae9ef3c8487d0a1e8be1df41ae00e
+          type: web_search_call
+          status: completed
+          action:
+            type: open_page
+            url: https://en.wikipedia.org/wiki/Paul_Thomas_Anderson
+        - id: rs_0a7c9276abe51453006abae9f195a887d0b34d471c10e966e3
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoiEgUf0CzbjeYZjDvlxPD-ibOzVibA77M_knqUvfABNNgy5DFsey5p4TvDBpNrGbZbEa9rZ5dazOaSa25CztIKPncmtQricZFjSbOI6lRCe0D9tJFzn1cnlFkJa0WpyjtSv3U0YG8Fh7pI0tEM4dVTkvvnyoMNMetIWseEqgtyX5rQ4r3arHiXPbKhakfWDRgK-tdOZ3gwkJ-AyBqYd4fMaLzU6xSkMYXJr_MGAoUt0HIgMGaf8lq8it3cvTzorKHVRZlAIl3YMDmdoFoLqvjo4tWNdrEGlpzsEgV6cXjMV30NQvVmVjysmvqbfBF79_fnR4-pLzGRpBL591gnB4ulVsP7yqZIeASot4zNudh2zD2vlT5QvhqAf3vV_g2-PIDnxww9L57Ey4rbP26GsNfUOJn0d8sDQmjoPKNkBd3S3aiLjqRuXXuTO_AErSjc5GS18q-_xDcTTMhXiykihj69jO5tkucz0FzhqeYPYBQaXe2Ju4NYOa1oYKYBeAFlGtsGqwiOHD1wPwd7_Ug5jnHR0h4ujvIV3XBwBSlulSggQgyDyY9vB5QZ9swmmKZHGjmcOvhtqy6JK18UF4J851BiA1MaQ7XJsMBdoYF-2HUvHta0SOE5runaZXwOKgm-NrJr1CnWQ_91Nw1dT9bi1ppWHayakRXT5pWMOYX6CR4Rn0nOk__rbaJnaHRzw_wtsCdFaT65e6Ym_uUFJPST0Gbm1iLeKeKi4rHXti9goBREUW7wJyWQzgjp08TzgpKVapRhUkwMf9s2Gx7CwFeyOW5xp1Diqqh-K7UDzHM_yO0TV0Df1iQehhJFfnrMYSXTNMU86mPNSIDDSpZXA6aS87b6qv9ibWg4Y0lMWizi2jYWjeUQ8wHWmiFRFx3lPlc4R_HniWnNidlK-52m8ous4DgDnsM1-1zUabIVbEp_7PT3IrPVwdiLSMjeLrfDQ5RHeAx_paZLx6cnr6phRxFM8PJklVP8N75mM_pBOGXYUErkfx1eMZQV8nEzKEwEwToLD2rDiXO6gzevIbHG46IBoLZLG0Y6MKuy-eJjFbHN3JAmPNzlM86yFfkLS9iYBYPW2B6wDoi5p-gmJmXb1c687hEbbLOtyB2tgLbnZK31gPvaZm1cSFei7o0PIFNgYWFipoJwxiQkPIFapGMrTAp7f_5CzsikzGmKT2jOf2Xipw5P1yv4wJch8WDDsHbkr6bFnRqj01gJp_9Y2BLmEcHEGD1oLm8VhyaCbHyQY6nL4xZHziRzr7s-VJKRgfdCIW117usqwFVpnzLVSrQNpYlggBuhiqo3pfXVSza0-GXl8I9WzREO_2G07ZLaUml13KAbBYGdH-j-92sXdKBw1AoFp5XQId7_gTZk0XyWOwT2D9ajwoE7WXrOJXcbp-8M81XTZyeddOpedtTDqw9FBVj3Ut32KCFM6UMe4nP0Z9zrmCSBYh44KKA8CjYtJ4UCYo9iwIxPNru7a929vTP1ngIrNKKw0RTEbhv8DPeh0_OdTEA2aEcK-ZbOd1d_CjIQlZDS81lITLOKUz1fSfXS5IUVePjOWOSZPSaYMGJ5vaz4JAxSBrIlPT_aRwOAAQNb0R-VyEKBfCX3QGVCtMij86HPZoFogxC4oC_6AiaB55Rs15_LZ8Ny7XsqiFJSNlZqwdx7hC0zGOTtKX6bwp0IaoSpZTPEX-GdLnlGJmqV85ZECj1qsC2rkazUeUmTitj5_0K91U6H_3ECTkBQrDgm-MHtCNJIVekofJs_ccZoHcu3XMA-Mbr3pt2Etf5QdV8dwgT6GWYPLeWft3IIYLOdz4DWBvF4L9AhJs4NblafFh0tQB0any94Xl2CRWv6ZtQqnMAAB0vwRgy0BEemr3e1VM5jGJWVlcnzPlKZQmrahU_ajFVwrPh0DE0u8kaGEwSThU2N9FWjA8FCTd4JYQOI2AIUsOstQ4wPzxy_5c_B7vXcP6WND8b0pqcJoKM2sxWQCgYJ61VAuZfE3M57CXz0BhOuojWUWj4LRkeNz-dcSUtU16gpYkkBN5UiwFKA5S4Wt3v3PZG58G94S8DmKZp_TAdKx-lNsRYGQpOE1GASjGdGoLX9z9DL8psoaLN1EuTC-q9UoveS1i3oEAXmC7bmFFz__2aW4zhlXcoDa7tr4CLn1rZAMl1Bf_GGe7wZPTk50uAnL4wsDdSbpSVGdxyKhFRq5ECldQtKFyrWOIYtxAgUTyFhQtLJvqB5xw8mbSSeRliFPxERsrCYY30q7otcLvISDUY-3TZNkPZ8y1rRpPOSG7WL_ZobcFohoE16oAajnKNZZ7T-iZhvslxjefzna-1dxlSsMsdJwTVPHNcSmQtk4-MuHzHIUBDNpGqefdEaurqjvBmYQwMTAYbDvNF_EOaObIP0G3qQwmPikK3GeIAa7iZqlByYrmICy7P8ItqfHvO7bTvP3oNpH5BnzVRWqQaNNs5vVEWOxDAXuQKMI600Rx2CXBCTEl_K7yFATjcZzA1n9a2gc6MKKT8wovTd1ltYGubz4A==
+          summary: []
+        - id: ws_0a7c9276abe51453006abae9f7a66887d0a73121a652c22dbd
+          type: web_search_call
+          status: completed
+          action:
+            type: search
+            queries:
+            - current mayor of Los Angeles September 2026
+            - Los Angeles mayor 2026 current
+            - who is the mayor of Los Angeles now 2026
+            query: current mayor of Los Angeles September 2026
+        - id: rs_0a7c9276abe51453006abae9fdbce887d0b7ac3e56f921cfc8
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoi1vdnMYkqLi5h92UvGupD513qBlYcIMsEinu-cPtu1Rn1Y_RR9PREbURLT9fUf6y_SUQfp_Q9EfcbVrIUIvy5KqT0OlcwBZ4dTbPFoimzdooInHM3m1wii9I7Gm-gHqoXd05CVBzbVBt3xWTvgCCURJXHecNqQFGAsTF_qg65Fqgs1s7JWtnEFbQLsultBOW9afq7t-ZNSY8IMN90nRHBpOZHe5pa03xc19NsACUHUbwhJ-ahOwg9fpHidu5HIOak6aSrkdGcP67fYnLTJtFEWUvp1SkXb_to95QU2-u4iEHl7Q_8h5ulohPWL-VFeMsAzSL1pUGudsXNHRdU3niksGVM2nmPxrT5P1Ug6nj9pkHwiTZ7X41ujjc7wsFwz8_1pYBytCL3ik6i1cr2jSr_KVz5JP8iT5MO8Zo8fpA28YCoAwXDJUgdULzVPkPKM2RZGqUDeMHpiFEZbYAfrlbQfL_4q0vqmhfpKdjpbqKEMZBs_8xwcE7B72CNOrKDhz7cNt90IEV8zsnRuhwjVPbPwV0i7bGvqNPz0MAf4khun8ASxNWMxWi0VLCmdEVIW1GpnakqIdLVzqucbMsn02fd90ruJ4ntb8TOJ38VWY4uAwOR88FrK5A05O6P-QIwBmtQIb9ZapIWss0ZFNH7pQExiNdKpXfl-KLQUcKvMr8eROzSVekV_yH2ZdwpILj1k-zIZwHkJCmLPwFOjRxZP0fjrpwTvUYIKV8gGQtnvsqJIlgOScYghiQT1MtuHrG6oWldoI53SlqZgMr890hnqJlKs8tTiqeSMXgOQieCQiz-d27XSQM5AsTfwoXejzL0PYG7aFk13sSMBeDVNn4EfJn1vg9jxOF2fH8Matsifwpn3B7hb0pz7-e9iw85qFZZ5GMRl-rTjDvBTM4x_IBIyUNUQ7HQsakQiGwO2hEZP-KJ2eSQByoldDy7EuN2GAodTTiU-xhcymviVOXJWllPZVMsvF5V1ahM9nvgWADOR68HCLIdBla7GAP5QfkPOJhe7ArtDprpoclLzmaVe65YQblZHlaqQ2Cc2qhBvCwPQTloMl1Kn3kFyvFzBZtweUJ7LZlgjoRPFJc5ktOeZij1zJIyZ3y3C_ITa9aOM5oR--cQOwIJYfT-EYaj5q1WYxk_tgl5daN5jH1f7FcXGExwr1P31yQ-reFKvpF2gSTRO5Yytkrh6xbDTdebIEz-IEb426RA9Z4w-iEWABHx7tVOFmBYo4lo7Q5XPCw0bzCHJM-tN_vjfytyr9-uGjjbfNYeAOmZxweLDVYBZMrzyxlX0jw8tfdw9O8G88KKPokVxpd-qZIUVKyw2Iy0tw9n9kiL30qsLvmmelqN9q8H101hjJWQYrLhXlbPufWWDDY1CD2FeUmtJcjgd268PXY6DdZ9CwF86nlE3sH5JsaZvKO6PhH8iDAru1blVZYCDu4MOQQraRZMoiUQJ52Ng7rKho0Pvz3xwDqGEVgfFovNpWIQg6UU84jFTbcUUeqNDxoqO6jGz7LGMx3Q64MIoTGGi00UrxEgDa2Ny_w5NxRT0IbeYYfwdU8wZwBJNc5lCIdNDiL0gQlwy0bdByh_4smBmfrsOSD0KzOZHt59xQ_gR5yMKE3-Er_lPvUi5IsYjoYt-nrVkSeAHT3pHPO_uSHrvPMxS8aL6_UbZ4rcFTg1uLh4uIHj-U4uDjnMOLU4LVJdEyKavl-41qvT2D68wG2ZtBJ7eYTCEo4OSjxTSZLIlG4pSieQLnDB4QycueyoNt5BCMJK1oJo0MmX9PI2jKYudT-fQpg-N06uAlihGchZ0K8Dh0_LOcdTb3XXVMQCJLWzUMLJAVJHgqQBUNmhBFOPcyiIT8vmEvEU9cyJ_ugmDYaJpenbjOPhw_IUFFnPLrRa9CwR4NxNA14NNfIJ9fgcRLs_rbMSdrHZitFBcUJwJmXd-Ygq1ve9-1rzbaJuTaeDun7SikoWVPlPQdnl-Xlmw0Z4IBPH0cl9NiDj5Lb9m8Jf2F96K2564fYTLDao-plWoQ6_gQz1nzN5B7nh1gaUbvW0WvzfQ6LvGDg4YBfn2ZiMNH1CvZ5mB1tIhr0GiUQek0sdRGgrd0yhYhiEU3teQhjBDHMfioFd1Xd62fqX3NQ0b3goNd33TSowWQ-JpNOuTcpGp8oJ1lhKIseIS3-TeVtyIJri-6zJYUKZ4FUE9507kABX2sggWrvmJ9PgoTIRQ0biJtzB68drUOs6_gWAPfbukpa1mF1LfHxrkTj7aln7pl00uRurJnMajSm2TaAFqwzzSPVJOYxrv9QmNpUpC0GSm7Bq7Vr4JFHfUJ70dAUSIx1au8ecUpOxzz8kywMb0idB7e0yIihT-tbC7FoyXA8fF14IZo2w2OsJLdIMK1f2XUguBsWbAxYjXx4cxonoJyp70xn6Ru_BsgftgOHLYH2S-n3AhVZNPtrHiEdbpX7eoRByQ-6GuJcY1s6JEpHmRbStQtbIiZJkhCjyF4DcbM8aqO_B-gJ9UWt2nDg8tXAvoaKBGuGBKOkbXQQicdfhY72Yd0aWnH0qZaBhdvGZMRb-EqNlkUwHqS-7tb8LaHU7d_fxXRwBbgKT1KdWpXgceT4GSDqHCepMR2zHIn3zh-AOOLgn9aBrl1UznocW-wfol0jJSXbbURliHIlAby9Qn-Zp5rJefqIAfxyETHv4Vt6qEO5e7jBP8_HIsx6vA9DWpagYwLhH66AfhH5LVEqbhGQ_58iZgy3_Ts5Qe8UmK4sQW1RY6H9cj8h_5k2twWo9t18CXOwun0mbU_OVWfK4K3fKwjilbcGpqorv4hfaqi9uINTcMlN-b_hqY2prdjQXE-plLtBXHKY0vB5pjZlzoHG_D94we2KGrRqTEgZfZLaSthxyuA-ETQMCo7mewXSv1ywQ7PfXpNjwfRp9lUPb7CDbICXcsjiGwCeWbz9H2rLdOSr-JbT2YWqjXAI9Kokp7Nw2-moUj5MZKmH6gNCpuR1YBMVlp1QtOWsTsQbZuBm9G5BfYzvhXs0l26FUk_EhzCg8ym5kSeBzsM2IZRU_FxUZbMDylhMRddgGAnrjwF2VNxOm5f2eCUu4EUMDhbU2fbmAk_p7FbeWy532l5Y5iTTTzFPR5n_Qc_p9Qusk_6P2C2g0nh-LCZraU17X5Kx3LNaLbBXMkbIy6qwGz3IkDzXxLNvr4zkRDRO7it4Cjm03--U82_BlhEwv_qGf_9ErnuQF4lZPrvp8x5KSgSlkZHKsVMyZ6M47mwGx7sCLXw0GPX_pQMKej6CH2nG04-Gu8C_Zy_aJJH1EKXyBSLmfL4qpq0FKq4x91v6X8uXL5KwVW0-zdANqWpNe9hHwXb1wvzXmS8AulHYrwFE5mO3bo9GPrSAH6km9X3lQF5nobHIfuUisfXCSUU2Ffnf1CSJP2J1LgiGClONuxzEskKGFvg4TxOB61B5BhpompsIr6na44ggxZgz3a3_rMWZ2mWHuHrULf0IZaD1SnXcTDWQQfln2QtxSQ17sZMIb8cwhLTQglCg3oirHo7qIIbPT_9pwRiF0PwpabYWZT-O1h-e9Xmjad5FzB_aR7TsuiTvrSO5oAiV9lTEGb29xPNmehxM3UsSwY670at3TQQxv1Lqj9mpd1FmFJwrl37-xchAwXY_OR9gwbMo4ldbljovRC6lGCyEQuErGbp3-6xNQp3FhBFvdL4FhoTARNCU34CuLVSz2vb5JmQPo8V4d5WpTILYV3n9ooQTcIjMRDrI-nQVPtK9JzOUBrHhYl03YHgjmXhQxNb4IeWgaf5YRuYLla-leaQDjtl_0j2r22fSvBO7LbRrU4zNZsu3_D0hMlaGK4fAXM5_IblxVGL1pEEyj0CS5Z0OYBgHqoitnKmdXL_e5DOYYmcUapBJhUHO4GbFBe8J0NCqu3laXeTKdFIXvufYEbXjvUiSLBvkuzhzBzUaKWBIl2mzbNulFeEMmGwNAGSombMQ3eLa7P9wYN85ggSx7c-FZFjtY35qdVedPhIwr-oJkWqDQKj4KdmTj4bCnehldHCWL6YbH8_R-g9lZw5enXM_JNgHF_r4zPYHJp8vIppt3henKKOH5Ll3ZqNJlamRF1sU8Iireqo44Jy8jPKy6HW4q-aHOWu-wRQOAuI7znQ4S4EFF5DyVD7YsKiDgP3DG2YSoeqYMdBSG-TGCnFjMsnT7oHiaqcW1eLQ1hPI6rK1rTTc=
+          summary: []
+        - id: ws_0a7c9276abe51453006abaea05787c87d0aa8e9b866a14e2a2
+          type: web_search_call
+          status: completed
+          action:
+            type: search
+            queries:
+            - Studio City neighborhood of Los Angeles is part of the city of Los Angeles
+            - Studio City Los Angeles neighborhood Wikipedia
+            query: Studio City neighborhood of Los Angeles is part of the city of Los Angeles
+        - id: rs_0a7c9276abe51453006abaea0dae3487d09be901ec61a11018
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABquuoiTUOghX1wRRidADO8YJdIieQikKuU9h54oRS2tlWCxrx9j3IW_1nbwg2cQ-md9OMp8y4jXdivFcQk__O-ClwtglMW8QPrTKvTBp4dc5LVG4FT-L3HU5yBmDquMumKlD-qTC5sEXRsWt8wHbyLknyMPzw2Wpa7X7B4zOQYEBDk_i9xcZO7Qap29ctIcBfXLMjiNZQ31NGedxdf0YrWXz_EsISFLpIV3w-jdoz2ybMJm99XvMPu2aetdilb3owWo7hgevBpnxz-pzEdmOCuZXphNi0b7SAjg4EbOcmdaoNFI6vu-rX1J-FfIbwTg_ABDRhOw5aOcpGhm-5YGwVDnSSKPwWMM5TkYMsvLx6RpCuJqxbtF-rROrquDoIJsqrJodQvvvF1XyIH9Ays8-_bY707LDKVJe_Tx3bnlj8tANTNQPxBKysSH2BaHzYqLKqDEORsxfbsxR46f06tPpxhe-_TlapmWXnL3g3t8OWoQhakbgsWgTiLlG29Bdqol7kzH3sDTAOgfTcMHYTs31TSj7kaleZuKy_xoftFw4UQiLAZ79BIYK0ZwNnSprdb4rcoTZKoHdeEChZ3VyMtW_PeejLdseHF_rtLHNAEVHjbBcsTdEHz1JoeGWd3D-TzYM5iAg7pKkxupPvT-DPtoLLZAFJIKaevTZEOeENPIoTQbLA6or0MEwF1uMw21NHKGp_VxWZoB3WqCHQupSfigrIKE7t7LjhARjkMsdiFI9hFJ_1c2a3R1u_yB4P1bcmOyVdVgkd81qcUD4BMknylDQMBpZHak9guq1aMnMc2ZjNyfI2friLZ8-_Sp8vny6eDt_3yvLp2RXQuA-GslNTdJTLptkxXhbm55GzV-j46C6_jlA3YP8nUnrGbowDxDy-r-deexlfPCa-AJ8_KkegbbJfYjiixythanhIO71c_7L1Whb52vNFJWPiTvchv9IH3xgeI-adxw8nv2oF18o8dg6HJaIGisujhi65hoZPCz2WR9--47GnJR9DzKbbyx13qcBz3MPvgLExf1gpP9zNF4uDYAFrfN1VO3lnRKKnLsNSjRC7NAnHvHhwwfJD2BSbJOVpp9rZ4LC9dtSnMTaiMGUbM3f1KMd5fjZQAGCaSt0HYWXt7-D76iO5zEfgM8Drk5GdMazkIMHJeqPA4RFGuVQtWBX-wLbvU6JcNxwT4wgnj3J9lWjF0ZMIca_bBTqdax1n1kT-ztPLmFJcd-leNQUePdUvXuZ8cxC-1J7s4qX9tg0auj_gfpSc5TzSD0aFe-krnV8kBsmuScSa6NTkgYEzqrVZRHA1YR6TPmFqE4cx3DUqbIxhBkdzGPg51FXLuMtQ2lQjxrZKCjb-lXxKBYlJJGW3nwzRVC8GQN3gGAAvZ5zCN6NPauPFAr00Y6DlWMFzinWswuf8Jd7uGr9unJiUgnGwAfC0zNCAk7_cD2UMCIPHn_QR6b_oMasFPmUGqaAgZcPa1xroz-2aYAPwXOhRIFAgS_fRa3cgMCSjoIBzkLZMU37QJaJFugpO6Vfa0FT-BtFySEwQVIj5K0w24lwDaiDrZi0UgdJUcjGC74WSN_qzLiqE6p6f7LDy3D0UegYPVEm1tk3L7C0yOIGkvEckDr7VakS8_0PJ9sB3w6FqIZDklydN45XvQPnAbfVL-xS7bwIlTYmRkwKvv5VmRPvBENiewbxkADX8XDgg7vdgPWSyVSaCLfLzk2zL2tiTaDQNJzXqDG3DLOXmqYdeoTbXmOnnHvxjP47zKh3EyKJVuNOMz-9U0G4bdoEgPLSen5OY4CjCi2fwWMc5zKzKWIhSX370MTrMlG2kAZlksP3CI7Ylpbyn60SAP75VpA8sBR-1zz2Wa3V9TOJpozSKgORn8QaKLvTuJQ_oYEAAaK0vHApiLx1DJeW5KdQn03gA6kMhc_HwzR_-o0pY5zhLlmBKVu5nler4Y-p7hHdvyv5Dx8Wv2MPh61qD_WiGUQfy3lXhLeTdfYqnDeWI6FAlXBLwdQ8Nppg_3mniE773SrQIyibXKdPlM7sn4GgLSTZtiqmEc_L3gxUqyMKwTLymbCimDbAzvipYnERrq-kerZF72UYolAgvknRP-d4w_Ka6uyD0MMnLNGxfNbAjYXP_vlkF5BRV5IIR3QB4-wrwUMb7m3PjV4_h8mykeyt9WqQqMBHVGHia7YKBKoT7QRjP2caLXiBoKkuDYHdNI5I9k4etQm3jcPjy6hsYCC8VaxxUJUu9QvJ3mfVVlihE2mpOcUquL7GwsYuUZF4AU-tTx1jVzI44KLTRAIJIrJuvOYOeEoK1oM7VYjQultbcB54sv9vdv1EvG8pUfVhjbo2oSCnjbKJflyMZ4VPqTqhUglRbYusi1VNoP8k4fCGrGvsiq2Ybj1765utoOSh55YXXxlyHzu9WF0zfjXOl2_WLpMXjdp8TjtR5SOpME4WVRueCR0l75rb3w0d7OOJsZLuEq1OCjHJeiRXVUuxJK26ConfphcDom5IxusYh5c2LeirUh2hmtcU9Jdkwhi7uE1Jk_2jmE5nAKQ_Vh2Cbehv4-4-6G-aS5F64X2tqMchODt_7UGMfr2TJSIkF1n2SKUeBK6cIslsdjq9oILF_B5zkwUMMMt9-yAFxBm7XjqQBxjnqEgy8skREkp_LUejMV6WYioSrrQnIbuZ3yjU7wfLRodif1BhcuOP6BX3HEv6gE1c9rwPzeHhnq_zbT1kFGrOsuIcTc0TDT2pHWITpbkyLIj8uASrI9vlcWJV_i5nHiHtYQEglLYn_wi__bpgbSnYR7ZYlOxw1yII9YQbqtXDbCEr12vqUMXnHApR9_1tb_m5Ic9Co8HByMBdIOTvxzL54bXITJjVsoFo6aeJpKtqRKA1toHRVaGzTebxnUGIJ3187ZsULeY9bi8qLlvhAB4oRupBrthRv2MoymikBv7agjCwQ5-nh4w5ce0tKg5Z_dN3WjxzLSeTb7IZvSKIC3bPZ1zqpWpP2vl9aiZtt38keXmUs4UmJ372hUGeAfSRNDhez-1rvkcULtc1QUBuXCn5Am2PzMFKj9qs0r_pyyWFWlMa97RInll_6OxmWdD3VhyAAwASiy7nZc5t4jONHnO9IVtV6wiWoZ0Tpn6EyJsa8bBlZBdNf0irPy6GhBjrDgOPDicdsqF0rRT_8GIA8hBznKjDO5D1Riv0M9fKV-NqTLvT1rS63qfYKxtjKNZQW4C31XWnHwZUig66is2ZkBMk3ucygUpvYS5mNwhyIKnKeP-4a0iUDAidCsrrrrAqeDaduyYvZdsWD0O6UpR17WEaKRjxT6ppmzsU7KjKg5rn_63VFK6gQ1osdKZrLRxpuqcaq3KjwDI53fOcYa1fNLdlcoqpw9d7L6BLdcxWBbAllFk6_pSldvv1zOuV-sR1SoCRZ4AcxbxgOje4M57l9deMIoqyiC9WDB6v-d_B1LGpubZslSBQx8Q5Tu2fUMO8yHEsgwqWgzV85CrKBil7Idn3PDdG-VIf2GDN78-Gh4ruH8ji4wG2Nvvf5NVVFzFBnonYYDxUIeaLkg_8GMrfA7Oe0hF0MHpwrBNRVjeqkL14aIw8RZvgm4ZZTzKIYdxC0BUR5dx3TikvOjlJ2E0KXXjs4PnIPS08Jl2fyV-LHttoc7H2KPaHqX57D5AOCofnaSEkJu9bY344IO1RT2jf9TR0sMLmTqbLGVkpYloBZcvk8swmVeUJtJwEJ8wvXRxCWo5qLN0ri6ATRr-VRiuq2qpFvsDW1XPcK_jDjiTiuo46Y5BOY1WRi30VoFIVf3uBIgsA0uSaY7pPWnsdc865AWx6n3pH__cdMc1YI2YXTid2fHNzfMK_DFyA5t5ykUHBzOwBGOH_u5Qs4U6RxUUbffG9ipj3igdz_3ynooFIAmMhyT_3x8vAWEtTmbeCqwnUY8DINdZcs1XkglAcMNgdOpt4KgI4FgwEPhN55c24UzO__B-IipkMvMM7wApXxCWrkr9D_MqH8vptOL9vl1_POGfMubPY6DDO0m63ZYytqNxbxkYKtfN48pJ7-7v62FVrAS0XEhZ7rv1IO-J22StaRdfBOJgKE0ssdi2PYoo_BJk8QpxjSz4doxsxfOixmyjZRFVzGQbY5DSCNo6ZafE7-Ko2wI_327x3Q_vTl61C3HIj6uhQyunF7r3wOjiDlUqzjjxIRf2DR8L9pvLCRZ2O7vSIUkv34oAGgVIYCEN2323HyyjQqo6UOAZ8rYh8SR8STHtzGJmzATJ2yIO0Bzp8WS4fhUSY0iwP7MyUigs2_Bo22wkMVSphZ1cM0c_-N6W2XTe8Nz1rjQlf-ed4Bbc4MjSD5EwPO9GPMFN9ZqI_wszhkQ_W2SNH1VWjyu2VTqgdg17rsxVh9KTFq-UaStWhyKD1L2YXVCJb1OeBFSoduvjUEMg_LHgV1DB0TGgBMrsHwebnt-8BYppINIsL6GuIdqEO3-kxbHiu56zxEtArndFE-tlLSaAA-GVv4tFwrooELyDN7PVZ6tiTZDuvqFm1DoFfbNdl3uEU8KzR-FRsy59Ayoje_TAOo3je95i7Pa8wnh_babdrIZ3P1GlvDd2uezotUOCce7kpBVYulQuy_6CskHYooRiRCg05SqDjfoCVjQGJsLT8znB-vKjEVDOGHYV2kYW1ub8shFly6olYO9XaZ7znwb9EHOy1ELJKG61iL9stzm5ahGf1DVWJ04WzVxX-xdsDNvVETXPkzwJwRmvgxEle15rQdw3PahyUJU0ObNdPrV8zh1fVRbi4CQHRaWilEwD9iKAvho5GmCg945uu8c4jks10F4e3R4vrhAoR3AhP-oz6mD85SOu5DYnbi7D8WGZGZ7ze5igS0fmTBwuPHhzS2Hl6rgFHxUga9ix3ZNWqRl57CDAjfUx6cDrPwtOvkonR__Ne6drG-4HHD1z5IHsT4EAGoODxBE6gXrrOme51Y275KK0kh8x0up-tJ3fSoT0h-Rb7KhduQ2iDbL1UIAum0WnneHTNjLLjR1uM9-5wkUJVn3I2yXALmJpy3vTvnpg1JQnDABanpw72wzdldlgZmtvNGqZnK7HMMviWEGmDV1Av4Ko8_0H4jur1pavQFb0DWM76xKaauCnokKI_lkLJdoAqaVy0LfWbz-a5A4Sw8fAi9k3SdYvtBMNLP-KtgmRfAbJLPDnaY=
+          summary: []
+        - id: msg_0a7c9276abe51453006abaea1ba4a887d0b19fb5984b1176ac
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations:
+            - type: url_citation
+              end_index: 319
+              start_index: 258
+              title: The 98th Academy Awards | 2026
+              url: https://www.oscars.org/oscars/ceremonies/2026
+            - type: url_citation
+              end_index: 574
+              start_index: 502
+              title: Paul Thomas Anderson - Wikipedia
+              url: https://en.wikipedia.org/wiki/Paul_Thomas_Anderson
+            - type: url_citation
+              end_index: 873
+              start_index: 777
+              title: Studio City, Los Angeles
+              url: https://en.wikipedia.org/wiki/Studio_City%2C_Los_Angeles?utm_source=openai
+            logprobs: []
+            text: |-
+              Here are the three answers, found step by step:
+
+              1) Director of the film that won Best Picture at the most recent Academy Awards
+              - Paul Thomas Anderson directed "One Battle after Another," which won Best Picture at the 98th Academy Awards on March 15, 2026. ([oscars.org](https://www.oscars.org/oscars/ceremonies/2026))
+
+              2) That director's birthplace (confirmed on Wikipedia)
+              - Paul Thomas Anderson was born in Studio City, Los Angeles, California, on June 26, 1970. (Confirmed on his Wikipedia page.) ([en.wikipedia.org](https://en.wikipedia.org/wiki/Paul_Thomas_Anderson))
+
+              3) Current mayor of that birthplace
+              - Studio City is a neighborhood within the City of Los Angeles, so its mayor is the Mayor of Los Angeles. As of September 28, 2026, the current mayor is Karen Bass. ([en.wikipedia.org](https://en.wikipedia.org/wiki/Studio_City%2C_Los_Angeles?utm_source=openai))
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: current_turn
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 4
+        tools:
+        - type: web_search
+          return_token_budget: default
+          search_content_types:
+          - text
+          search_context_size: medium
+          user_location:
+            type: approximate
+            city: null
+            country: US
+            region: null
+            timezone: null
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 38833
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 2875
+          output_tokens_details:
+            reasoning_tokens: 2496
+          total_tokens: 41708
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-28T22:28:50.509367+00:00

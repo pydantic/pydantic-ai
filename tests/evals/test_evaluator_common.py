@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
 import pytest
@@ -47,7 +47,7 @@ with try_import() as logfire_import_successful:
 
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
@@ -264,7 +264,6 @@ async def test_max_duration():
     assert evaluator.evaluate(MockContext(duration=1.5)) is False
 
 
-@pytest.mark.anyio
 async def test_llm_judge_evaluator(mocker: MockerFixture):
     """Test LLMJudge evaluator."""
     # Create a mock GradingOutput
@@ -394,7 +393,6 @@ async def test_llm_judge_omits_an_unavailable_reason(mocker: MockerFixture):
     assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Hello'))) == snapshot({'LLMJudge': True})
 
 
-@pytest.mark.anyio
 async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     """Test LLMJudge evaluator with specific model_settings."""
     mock_grading_output = mocker.MagicMock()
@@ -637,7 +635,7 @@ def test_g_eval_model_instance_serialized_as_string():
     assert evaluator.build_serialization_arguments()['model'] == 'openai:gpt-5.2'
 
 
-class Tone(str, Enum):
+class Tone(StrEnum):
     polite = 'polite'
     curt = 'curt'
     """Correct but gives the customer nothing extra."""

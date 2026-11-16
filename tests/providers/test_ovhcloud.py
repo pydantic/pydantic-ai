@@ -10,7 +10,10 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -24,7 +27,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -83,7 +85,7 @@ def test_ovhcloud_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('gpt-oss-120b')
     harmony_mock.assert_called_with('gpt-oss-120b')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
 
     # Test meta provider
     meta_profile = provider.model_profile('Llama-3.3-70B-Instruct')

@@ -1,0 +1,85 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "171"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What is 17 * 23? Answer with just the number.
+            type: text
+        model: claude-opus-5
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-837df04aba8cc2ed0521a5cc65f82bd1-24efaaf928a89f4b-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfWk4CFkUgF57Kk6sSDzV","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":23,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISngMKrgIIEhgCKkBun5aw4pp8OwMcmPih8WPkWUcibrzQ8Jg5AooTtYTxb4OGtHksxfgAiCJWYNO0xqC4zVwgAFZ0nU0+5/QoKQStMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAd3969UGwgE6CAQQABoMAtqKA083BTjIBCatIAEyBBJxzyU6BDgzI4pCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwANoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgK5cOrCX3vy3OnpVsysu3A+Qt35FmKcKgYcF/N6FrMUsiADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIM+6ImtypCk26WY6myGgzr8ugts3lbS4xhXr4iMKo4tCOiDp/ohfV0ee6Vq7lypIas26TmwWGPGbzKgLBonH9U+77isPAyt2tJimZ/qiodKfgsq1ers3QkvIdiGbdidGogCH/HWJh2nmEN6WEYAQ=="}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"391"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":23,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":14,"output_tokens_details":{"thinking_tokens":11}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-09-28T23:57:17.250732+00:00

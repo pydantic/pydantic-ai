@@ -1,0 +1,83 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cohere.com/v2/chat
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "185"
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    body:
+      type: json
+      content:
+        model: command-a-reasoning-08-2025
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        thinking:
+          type: enabled
+          token_budget: 512
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - "6627"
+      num_tokens:
+      - "266"
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    body:
+      type: json
+      content:
+        id: dc52fe1c-05be-4fa6-80af-35460de48230
+        message:
+          role: assistant
+          content:
+          - type: thinking
+            thinking: |-
+              Okay, the user is asking "What is 2+2?" and wants just the number in the reply. Let me start by understanding the question. It's a simple arithmetic problem.
+
+              First, I need to confirm that 2 plus 2 is 4. There's no trick here, right? Sometimes people might try to trick you with wordplay, but in this case, it's straightforward. The numbers are both positive integers, so adding them together should be easy.
+
+              Wait, maybe the user is testing me? Like checking if I can handle basic math. But I'm confident that 2+2 equals 4. There's no need to overcomplicate this. I should just provide the correct answer as requested.
+
+              Also, the user specified to reply with just the number. So I shouldn't include any extra words or explanations. Just the numerical answer. Let me make sure I follow that instruction exactly. No "The answer is 4" or anything like that. Just 4.
+
+              I don't see any other possible interpretations here. Unless there's some cultural reference I'm missing, but 2+2=4 is a universal mathematical truth. So the answer should be 4.
+          - type: text
+            text: "4"
+        finish_reason: COMPLETE
+        usage:
+          billed_units:
+            input_tokens: 13
+            output_tokens: 253
+          tokens:
+            input_tokens: 1399
+            output_tokens: 258
+            reasoning_tokens: 252
+          cached_tokens: 1344
+  recorded_at: 2026-10-22T16:51:58.156073+00:00

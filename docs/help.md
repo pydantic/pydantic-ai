@@ -1,3 +1,7 @@
+---
+description: "Where to get help with Pydantic AI, from getting started to advanced usage: ask the community in the Pydantic Slack or open an issue on GitHub."
+---
+
 # Getting Help
 
 If you need help getting started with Pydantic AI or with advanced usage, the following sources may be useful.

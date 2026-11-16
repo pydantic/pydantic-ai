@@ -1,0 +1,170 @@
+"""GitHub device login and model discovery through Pydantic AI's Copilot provider."""
+
+import os
+import re
+import time
+from collections.abc import Callable
+from functools import partial
+
+import httpx2
+from anyio import to_thread
+from openai import APIError
+from pydantic import BaseModel, Field, ValidationError
+from rich.console import Console
+
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.github_copilot import GitHubCopilotModel
+from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials, GitHubCopilotOAuthFlow, GitHubCopilotProvider
+from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.models.profiles import parse_model
+from pydantic_clai2.plugins.menus import Dialogs
+
+ACCOUNT = 'github-copilot'
+CANCELLED = 'GitHub Copilot sign-in cancelled.'
+_PREFERRED = (
+    r'claude-opus-5\.5',
+    r'gemini-4-argon',
+    r'claude-opus-',
+    r'gemini-[4-9]',
+    r'gpt-',
+    r'claude-sonnet-',
+)
+_SMALL = re.compile(r'\b(?:mini|nano|flash|lite|haiku|turbo|codex)\b')
+
+
+class Connection(BaseModel):
+    """Keep issuance time with core's token lifetime metadata."""
+
+    credentials: GitHubCopilotCredentials
+    issued_at: float = Field(ge=0, allow_inf_nan=False)
+
+
+async def login(*, console: Console, account: str = ACCOUNT, dialogs: Dialogs | None = None) -> str:
+    """Display core's device challenge and save only a completed authorization.
+
+    `account` is `github-copilot` for the default profile, or `github-copilot@PROFILE`. With `dialogs`,
+    the challenge shows on their waiting screen, which cancels the sign-in, instead of on `console`.
+    """
+    client_id = os.getenv('GITHUB_COPILOT_CLIENT_ID', '').strip() or 'Iv1.b507a08c87ecfe98'
+    flow = GitHubCopilotOAuthFlow(client_id=client_id, scope='read:user')
+    if dialogs is None:
+        authorization = await flow.start()
+        console.print(f'Open {authorization.verification_uri}', markup=False, highlight=False)
+        console.print(f'Enter code: {authorization.user_code}', markup=False, highlight=False)
+        console.print('Approve only the code shown here. Ctrl-C cancels. You can open the link on another device.')
+        credentials = await flow.wait_for_authorization()
+    else:
+        authorized: list[GitHubCopilotCredentials] = []
+
+        async def authorize(show: Callable[[str], None]) -> None:
+            authorization = await flow.start()
+            show(f'Open {authorization.verification_uri} and enter code {authorization.user_code}')
+            authorized.append(await flow.wait_for_authorization())
+
+        description = 'Approve only the code shown here. You can open the link on another device.'
+        if not await dialogs.wait(title='Signing in to GitHub Copilot', description=description, task=authorize):
+            return CANCELLED
+        credentials = authorized[0]
+    connection = Connection(credentials=credentials, issued_at=time.time())
+    await to_thread.run_sync(lambda: save_codex_credentials(account=account, value=connection.model_dump_json()))
+    path = credentials_path(account=account)
+    storage = (
+        f'No OS keyring is available; credentials are saved in plaintext at {path}.'
+        if await to_thread.run_sync(path.exists)
+        else 'Credentials saved in the OS credential store.'
+    )
+    if account != ACCOUNT:
+        return f'GitHub login saved as {account}. {storage} Use {account}:MODEL.'
+    return f'GitHub login saved. {storage}'
+
+
+def token(account: str = ACCOUNT) -> str:
+    """Prefer the saved login; the default profile also takes Copilot-specific environment tokens."""
+    raw = load_codex_credentials(account=account)
+    if raw is not None:
+        try:
+            connection = Connection.model_validate_json(raw)
+        except ValidationError:
+            raise UserError(f'Stored Copilot credentials are invalid. Run /login {account}.') from None
+        lifetime = connection.credentials.expires_in
+        if lifetime is not None and time.time() >= connection.issued_at + lifetime:
+            raise UserError(f'Copilot credentials expired. Run /login {account}.')
+        return connection.credentials.access_token
+    if account != ACCOUNT:
+        raise UserError(f'Copilot is not connected for this profile. Run /login {account}.')
+    for name in ('GITHUB_COPILOT_API_KEY', 'GITHUB_COPILOT_API_TOKEN', 'COPILOT_GITHUB_TOKEN'):
+        if value := os.getenv(name):
+            return value
+    raise UserError('Copilot is not connected. Run /login github-copilot or set GITHUB_COPILOT_API_KEY.')
+
+
+def model(name: str, *, base_url: str | None = None) -> GitHubCopilotModel:
+    """Use core's Copilot model profiles and request semantics, with the profile's login."""
+    ref = parse_model(name)
+    return GitHubCopilotModel(ref.name, provider=GitHubCopilotProvider(api_key=token(ref.account), base_url=base_url))
+
+
+class ServedModel(BaseModel):
+    """Copilot's endpoint allowlist determines which models core can use."""
+
+    id: str = Field(min_length=1)
+    supported_endpoints: list[str] = Field(default_factory=list)
+    model_picker_enabled: bool = False
+
+
+class ModelList(BaseModel):
+    """Validate discovery before presenting identifiers for selection."""
+
+    data: list[ServedModel]
+
+
+async def discover(*, account: str = ACCOUNT, transport: httpx2.AsyncBaseTransport | None = None) -> list[str]:
+    """Use core's endpoint, authentication and headers, without following redirects."""
+    async with httpx2.AsyncClient(transport=transport, timeout=20, follow_redirects=False) as client:
+        copilot = GitHubCopilotProvider(api_key=await to_thread.run_sync(partial(token, account)), http_client=client)
+        try:
+            response = await copilot.client.with_options(max_retries=0).models.with_raw_response.list()
+        except APIError:
+            raise UserError(
+                'Copilot model discovery failed. Check connectivity, your subscription and organization policy, '
+                f'or run /login {account} again.'
+            ) from None
+        try:
+            models = ModelList.model_validate_json(response.content)
+        except ValidationError:
+            raise UserError('Copilot returned an invalid model list.') from None
+    names = sorted(
+        {
+            model.id
+            for model in models.data
+            if model.model_picker_enabled and '/chat/completions' in model.supported_endpoints
+        }
+    )
+    if not names:
+        raise UserError('Copilot returned no Chat Completions models for this account.')
+    return names
+
+
+def default_model(names: list[str]) -> str:
+    """The newest of the first `_PREFERRED` family Copilot serves, passing over small models when it serves others."""
+    large = [name for name in names if not _SMALL.search(name)] or names
+    for family in _PREFERRED:
+        if matches := [name for name in large if re.match(family, name)]:
+            return max(matches, key=_version)
+    return max(large, key=_version)
+
+
+def _version(name: str) -> tuple[int, ...]:
+    """The first dotted version in a model id, else its first digit, as Copilot writes Opus 4.1 as `claude-opus-41`."""
+    found = re.search(r'\d+(?:\.\d+)+|\d', name)
+    return tuple(map(int, found.group().split('.'))) if found else ()
+
+
+async def ensure_login(*, console: Console) -> bool:
+    """Request device authorization when saved or environment credentials cannot be used; whether it signed in."""
+    try:
+        await to_thread.run_sync(token)
+    except UserError:
+        console.print(await login(console=console), markup=False)
+        return True
+    return False

@@ -1,4 +1,4 @@
-from typing_extensions import assert_never
+from typing import assert_never
 
 from .._operation import (
     CapabilityOperationId,
@@ -6,6 +6,7 @@ from .._operation import (
     EventStreamHandlerId,
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
+    ModelCountTokensId,
     ModelRequestId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
@@ -41,6 +42,8 @@ class TemporalOperationNamer(DurableOperationNamer):
                 return f'{self._prefix}__model_cancel_suspended_response'
             case ModelCompactMessagesId():
                 return f'{self._prefix}__model_compact_messages'
+            case ModelCountTokensId():
+                return f'{self._prefix}__model_count_tokens'
             case EventStreamHandlerId():
                 return f'{self._prefix}__event_stream_handler'
             case ToolsetGetToolsId(toolset_kind=kind, toolset_id=toolset_id):
