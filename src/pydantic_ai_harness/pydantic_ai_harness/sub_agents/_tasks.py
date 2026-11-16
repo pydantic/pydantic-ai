@@ -8,7 +8,7 @@ import logging
 import re
 import sys
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -25,9 +25,11 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_even
 from pydantic_ai.exceptions import ModelRetry, RunCancelled, UserError
 from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
+    FinalResultEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
+    ModelResponsePart,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -68,6 +70,9 @@ PREVIEW_CHARS = 80
 RECENT_TOOL_CALLS = 5
 
 
+TaskStatus = Literal['running', 'finished']
+
+
 def preview(text: str) -> str:
     return text if len(text) <= PREVIEW_CHARS else f'{text[:PREVIEW_CHARS]}...'
 
@@ -78,16 +83,16 @@ class DelegationSnapshot:
 
     task_id: str
     agent_name: str
-    status: Literal['running', 'finished']
+    status: TaskStatus
     outcome: DelegationOutcome | None
     elapsed_seconds: float
     """Time since the task last started, up to when it finished if it has."""
     usage: RunUsage
-    """The requests and tokens of the model responses in the task's history so far."""
+    """The requests and tokens of the model responses in the task's current run so far."""
     recent_tool_calls: list[str]
     """The child's last few tool calls other than `ask_parent`, as `name(arguments)` with the arguments cut short."""
     latest_text: str | None
-    """The child's latest text, cut at `MAX_EVENT_TEXT_CHARS`. For a running task it is not a final result."""
+    """The child's latest text, cut at `MAX_EVENT_TEXT_CHARS`. It is never from the response that ends the run."""
     pending_question: str | None
     """The question the task is waiting on an answer to, if any."""
 
@@ -108,7 +113,7 @@ class DelegationTask:
     backgroundable: bool = True
     resumable: bool = True
     user_stopped: bool = False
-    status: Literal['running', 'finished'] = 'running'
+    status: TaskStatus = 'running'
     outcome: DelegationOutcome | None = None
     output: str = ''
     pending_question: str | None = None
@@ -121,40 +126,6 @@ class DelegationTask:
     delivered: bool = False
     generation: int = 1
     run_id: str = field(default_factory=lambda: uuid4().hex)
-
-    def snapshot(self) -> DelegationSnapshot:
-        """A bounded view of the task's progress, cheap to take repeatedly while it runs.
-
-        A settled task's history is kept in its saved file only, so its snapshot has no activity.
-        """
-        # A resumed task's history holds earlier runs too; only this run's responses describe its progress.
-        responses = [
-            message for message in self.messages if isinstance(message, ModelResponse) and message.run_id == self.run_id
-        ]
-        usage = RunUsage(requests=len(responses))
-        for response in responses:
-            usage.incr(response.usage)
-        # A question's arguments are left out: `pending_question` holds it as listeners rewrote it.
-        calls = [
-            part
-            for response in responses
-            for part in response.parts
-            if isinstance(part, ToolCallPart) and part.tool_name != ASK_PARENT_TOOL_NAME
-        ]
-        texts = [part.content for response in responses for part in response.parts if isinstance(part, TextPart)]
-        return DelegationSnapshot(
-            task_id=self.id,
-            agent_name=self.agent_name,
-            status=self.status,
-            outcome=self.outcome,
-            elapsed_seconds=(self.finished_at or time.time()) - self.started_at,
-            usage=usage,
-            recent_tool_calls=[
-                f'{call.tool_name}({preview(call.args_as_json_str())})' for call in calls[-RECENT_TOOL_CALLS:]
-            ],
-            latest_text=bounded_text(texts[-1])[0] if texts else None,
-            pending_question=self.pending_question,
-        )
 
     def report(self) -> UserPromptPart:
         """The settled task's report: the child's output, framed as `<task_output>` data on the user channel.
@@ -172,6 +143,29 @@ class DelegationTask:
             outcome=self.outcome or 'ok',
             generation=self.generation,
         )
+
+
+def _run_responses(record: DelegationTask) -> list[ModelResponse]:
+    """The model responses of the task's current run: a resumed task's history holds earlier runs too."""
+    return [
+        message for message in record.messages if isinstance(message, ModelResponse) and message.run_id == record.run_id
+    ]
+
+
+def _without_result(response: ModelResponse, final: FinalResultEvent | None) -> Sequence[ModelResponsePart]:
+    """`response`'s parts, less the final result it streamed, if any."""
+    if final is None:
+        return response.parts
+    if final.tool_call_id is not None:
+        return [
+            part
+            for part in response.parts
+            if not (isinstance(part, ToolCallPart) and part.tool_call_id == final.tool_call_id)
+        ]
+    if any(isinstance(part, ToolCallPart) for part in response.parts):
+        # Text next to tool calls doesn't end the run: the tools run and the model is asked again.
+        return response.parts
+    return [part for part in response.parts if not isinstance(part, TextPart)]
 
 
 @dataclass(kw_only=True)
@@ -373,6 +367,8 @@ class DelegationTasks:
         self._stops: set[str] = set()
         self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
         self._starting: dict[str, int] = {}
+        self._final_results: dict[str, tuple[str, int, FinalResultEvent]] = {}
+        """Each task's latest final result: its run ID, the index in that run of the response, and the event."""
         self._open = False
 
     @staticmethod
@@ -505,10 +501,50 @@ class DelegationTasks:
         context_window: int | None = None,
     ) -> None:
         """Send correlated activity, and the child's model when known, to the application's observer."""
+        if isinstance(event, FinalResultEvent):
+            # The response streaming this event is not in the history yet, so it is the next one.
+            self._final_results[record.id] = (record.run_id, len(_run_responses(record)), event)
         if self.observer is not None:
             await self.observer(
                 DelegationTaskEvent(task=record, event=event, model_name=model_name, context_window=context_window)
             )
+
+    def snapshot(self, task_id: str) -> DelegationSnapshot:
+        """A bounded view of what a task is doing, cheap to take repeatedly while it runs.
+
+        The child's final result is left out of its tool calls and text, so a snapshot doesn't hold a result
+        before its listeners have processed it. A settled task's history is kept in its saved file only, so
+        its snapshot has no activity.
+        """
+        record = self.records[task_id]
+        responses = _run_responses(record)
+        usage = RunUsage(requests=len(responses))
+        for response in responses:
+            usage.incr(response.usage)
+        final = self._final_results.get(task_id)
+        parts = [
+            part
+            for index, response in enumerate(responses)
+            for part in _without_result(
+                response, final[2] if final is not None and final[:2] == (record.run_id, index) else None
+            )
+        ]
+        # A question's arguments are left out: `pending_question` holds it as listeners rewrote it.
+        calls = [part for part in parts if isinstance(part, ToolCallPart) and part.tool_name != ASK_PARENT_TOOL_NAME]
+        texts = [part.content for part in parts if isinstance(part, TextPart)]
+        return DelegationSnapshot(
+            task_id=record.id,
+            agent_name=record.agent_name,
+            status=record.status,
+            outcome=record.outcome,
+            elapsed_seconds=(record.finished_at or time.time()) - record.started_at,
+            usage=usage,
+            recent_tool_calls=[
+                f'{call.tool_name}({preview(call.args_as_json_str())})' for call in calls[-RECENT_TOOL_CALLS:]
+            ],
+            latest_text=bounded_text(texts[-1])[0] if texts else None,
+            pending_question=record.pending_question,
+        )
 
     async def save(self, record: DelegationTask) -> None:
         """Atomically replace one child's persisted history.

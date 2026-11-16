@@ -54,6 +54,7 @@ from pydantic_ai_harness.sub_agents import (
     MAX_EVENT_TEXT_CHARS,
     AgentCreatedEvent,
     DelegationReports,
+    DelegationSnapshot,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
@@ -697,6 +698,40 @@ class TestSubAgentsTaskControl:
         assert checked.endswith('s, with 0 model requests.')
         assert 'first answer' not in checked
 
+    @pytest.mark.parametrize('structured', [False, True])
+    async def test_a_snapshot_never_shows_a_result_its_listeners_are_processing(self, structured: bool) -> None:
+        snapshots: list[DelegationSnapshot] = []
+
+        @dataclass
+        class Redactor(AbstractCapability[Any]):
+            @on_event(TaskCompletedEvent)
+            async def redact(self, ctx: RunContext[Any], event: TaskCompletedEvent) -> None:
+                owner = DelegationTasks.current()
+                assert owner is not None
+                snapshots.append(owner.snapshot(event.task_id))
+                event.output = '[redacted]'
+
+        @dataclass
+        class Answer:
+            answer: str
+
+        finishing = ModelResponse(parts=[TextPart('Done looking.'), ToolCallPart('final_result', {'answer': 'secret'})])
+        child_agent: Agent[Any, Any] = (
+            Agent(scripted(finishing), output_type=Answer) if structured else Agent(scripted(text('secret')))
+        )
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Find it.'), echo_last_return),
+            capabilities=[controlled(researcher(child_agent)), Redactor()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        [snapshot] = snapshots
+        assert (snapshot.status, snapshot.usage.requests) == ('running', 1)
+        # Text next to the output tool call is not the result.
+        assert (snapshot.latest_text, snapshot.recent_tool_calls) == ('Done looking.' if structured else None, [])
+        assert result.output.endswith('[redacted]')
+
     async def test_a_snapshot_is_bounded(self) -> None:
         task = DelegationTask(
             id='t',
@@ -717,7 +752,9 @@ class TestSubAgentsTaskControl:
                 ),
             ],
         )
-        snapshot = task.snapshot()
+        owner = DelegationTasks()
+        owner.records[task.id] = task
+        snapshot = owner.snapshot(task.id)
         assert (snapshot.usage.requests, snapshot.usage.input_tokens, snapshot.usage.output_tokens) == (2, 30, 5)
         assert [call.split('(')[0] for call in snapshot.recent_tool_calls] == [f'tool{i}' for i in range(2, 7)]
         assert snapshot.recent_tool_calls[0] == f'tool2({{"arg":"{"x" * 72}...)'

@@ -517,12 +517,14 @@ with its history, and after that the task in `records` has empty `messages`.
 thread, as `anyio.to_thread.run_sync(owner.history, task_id)`), and a resume loads it
 back. To copy a settled task with its history, use
 `replace(task, messages=owner.history(task.id))`.
-`task.snapshot()` returns a `DelegationSnapshot` of a running task, read from its live
-history without waiting on it: status, `elapsed_seconds`, the `usage` of its model responses so
-far, its `recent_tool_calls`, its `latest_text` cut at `MAX_EVENT_TEXT_CHARS`, and its
-`pending_question`. A host can render a task list or status line from it, for example on each
-`DelegationTaskEvent`. A settled task's snapshot has no activity, since its history is in its
-file, and a remote task's history stays on its worker. `check_task` gives the model the same view.
+`snapshot(task_id)` returns a `DelegationSnapshot` of a running task, read from its live
+history without waiting on it: status, `elapsed_seconds`, the `usage` of its current run's model
+responses, its `recent_tool_calls`, its `latest_text` cut at `MAX_EVENT_TEXT_CHARS`, and its
+`pending_question`. The response that streamed the child's final result is left out, so a snapshot
+doesn't show a result before `TaskCompletedEvent` listeners process it. A host can render a task
+list or status line from it, for example on each `DelegationTaskEvent`. A settled task's snapshot
+has no activity, since its history is in its file, and a remote task's history stays on its worker.
+`check_task` gives the model the same view.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool

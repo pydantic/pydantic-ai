@@ -1151,7 +1151,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             ctx: The run context.
             task_id: The task's ID.
         """
-        return _snapshot_text(self._visible(ctx, self._owner(), task_id).snapshot())
+        owner = self._owner()
+        return _snapshot_text(owner.snapshot(self._visible(ctx, owner, task_id).id))
 
     async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
         """Send a message to a running task you started, to steer it. It reads the message at its next model request.
