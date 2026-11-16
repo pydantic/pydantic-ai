@@ -61,3 +61,15 @@ fn transformed_schemas_match_python() {
         failures.join("\n")
     );
 }
+
+#[test]
+fn malformed_requests_are_errors() {
+    for request in [
+        json!({"fn": "model_profile", "family": "openai"}),
+        json!({"fn": "transform_schema", "transformer": "openai", "schema": {}, "strict": "true"}),
+        json!({"fn": "transform_schema", "schema": {}}),
+        json!({"fn": "nope"}),
+    ] {
+        assert!(call(request.clone())["error"].is_string(), "{request}");
+    }
+}

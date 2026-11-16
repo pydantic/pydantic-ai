@@ -12,7 +12,12 @@ transformSchema("openai", { type: "object", properties: { a: { type: "string", m
 // { ok: { schema: { ..., additionalProperties: false, required: ["a"] }, is_strict_compatible: true } }
 ```
 
+> [!WARNING]
+> **This is an experiment for discussion.** It is not a maintained component. Nothing in the Python packages imports it, and no CI job builds it, tests it or regenerates its fixtures. `fixtures/golden.json` goes stale when `KnownModelName`, `openai_model_profile` or the ported transformers change.
+
 ## Run it
+
+You need Rust 1.88 or later with the WASM target (`rustup target add wasm32-unknown-unknown`), and a Node version that runs TypeScript files directly. It was tested with Rust 1.99 and Node 24.
 
 ```bash
 cd experiments/pydantic-ai-core
@@ -43,7 +48,7 @@ The profile holds ids where Python holds classes: `json_schema_transformer` is o
 `fixtures/generate.py` runs the real `pydantic-ai` and writes `fixtures/golden.json`:
 
 - 170 model names, each with its profile.
-- 45 schemas, each through 3 transformers and 3 `strict` values: 405 cases, 112 of which expect a `UserError`.
+- 47 schemas, each through 3 transformers and 3 `strict` values: 423 cases, 118 of which expect a `UserError`.
 
 Both test runners compare serialized JSON, so key order has to match. Error messages have to match exactly.
 
@@ -64,3 +69,6 @@ Every binding goes through one function, `call(request_json) -> response_json`. 
 - A Python binding. The fixtures show the outputs are equal; nothing in `pydantic-ai` calls this library.
 - Schemas with two or more recursive definitions under `inline_defs`. Python emits their `$defs` in set order, which changes with `PYTHONHASHSEED`, so there is no single output to match.
 - Inputs on which Python raises something other than `UserError`.
+- Python `repr` of floats with an exponent, such as `1e-07`, and of non-printable Unicode. Both are marked `shortcut:` in `src/schema.rs`.
+- Typed errors. A failed call returns one `error` string, so a binding cannot tell a ported `UserError` from a malformed request.
+- What a JavaScript object does to a schema before Rust sees it. Integer-like keys move first, so `{"b": ..., "1": ...}` arrives as `{"1": ..., "b": ...}`, and `2.0` arrives as `2`. No fixture has either shape, so the TypeScript runner does not show them.

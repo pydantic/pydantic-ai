@@ -1,6 +1,7 @@
 //! Port of `pydantic_ai._json_schema.JsonSchemaTransformer` and the transformers `openai_model_profile` selects.
 //!
-//! The control flow follows the Python line by line, so the output is byte-identical.
+//! The control flow follows the Python closely enough that every fixture matches byte for byte.
+//! The `shortcut:` comments mark the inputs where it would not.
 
 use std::collections::HashMap;
 
@@ -570,6 +571,8 @@ impl Walker {
                 match schema.get("required") {
                     Some(Value::Array(required))
                         if property_names.iter().all(|name| required.contains(name)) => {}
+                    // Python only reads `required` when there is a property to look up in it.
+                    Some(Value::Null) if property_names.is_empty() => {}
                     _ => self.is_strict_compatible = false,
                 }
             }

@@ -19,15 +19,20 @@ pub fn call(request: &str) -> String {
 }
 
 fn dispatch(request: &Value) -> Result<Value, String> {
-    let arg = |name: &str| request[name].as_str().unwrap_or_default();
+    let text = |name: &str| {
+        request[name]
+            .as_str()
+            .ok_or_else(|| format!("`{name}` must be a string"))
+    };
     match request["fn"].as_str() {
-        Some("model_profile") => model_profile(arg("family"), arg("model")),
+        Some("model_profile") => model_profile(text("family")?, text("model")?),
         Some("transform_schema") => {
-            let out = transform_schema(
-                arg("transformer"),
-                &request["schema"],
-                request["strict"].as_bool(),
-            )?;
+            let strict = match &request["strict"] {
+                Value::Null => None,
+                Value::Bool(strict) => Some(*strict),
+                _ => return Err("`strict` must be a boolean or null".to_owned()),
+            };
+            let out = transform_schema(text("transformer")?, &request["schema"], strict)?;
             Ok(json!({"schema": out.schema, "is_strict_compatible": out.is_strict_compatible}))
         }
         other => Err(format!("unknown fn {other:?}")),

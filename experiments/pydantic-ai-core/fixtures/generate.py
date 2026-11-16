@@ -15,15 +15,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, TypeAdapter
 
-from pydantic_ai import InlineDefsJsonSchemaTransformer
+from pydantic_ai import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
-TRANSFORMER_IDS = {
+# The gpt-oss transformer is private, so it is taken from the profile that selects it.
+GPT_OSS_TRANSFORMER = openai_model_profile('gpt-oss-120b').get('json_schema_transformer')
+assert GPT_OSS_TRANSFORMER is not None
+
+TRANSFORMER_IDS: dict[type[JsonSchemaTransformer], str] = {
     InlineDefsJsonSchemaTransformer: 'inline_defs',
     OpenAIJsonSchemaTransformer: 'openai',
-    openai_model_profile('gpt-oss-120b')['json_schema_transformer']: 'gpt_oss',
+    GPT_OSS_TRANSFORMER: 'gpt_oss',
 }
 
 EXTRA_MODEL_NAMES = {
@@ -43,11 +47,15 @@ EXTRA_MODEL_NAMES = {
 
 
 class Color(StrEnum):
+    """A color."""
+
     red = 'red'
     green = 'green'
 
 
 class Address(BaseModel):
+    """A postal address."""
+
     street: str
     zip: Annotated[str, Field(pattern=r'^\d{5}$', min_length=5, max_length=5)]
 
@@ -69,34 +77,46 @@ class Person(BaseModel):
     scores: dict[str, float]
     pair: tuple[int, str]
     anything: Any
-    bare: list  # type: ignore[type-arg]
+    bare: list  # pyright: ignore[reportMissingTypeArgument]
     unique: set[int]
 
 
 class Tree(BaseModel):
+    """A tree that refers to itself."""
+
     value: int
     children: list[Tree] = []
 
 
 class Ping(BaseModel):
+    """One half of a mutually recursive pair."""
+
     pong: Pong | None = None
 
 
 class Pong(BaseModel):
+    """The other half of a mutually recursive pair."""
+
     ping: Ping | None = None
 
 
 class Cat(BaseModel):
+    """A cat."""
+
     type: Literal['cat']
     meow: bool
 
 
 class Dog(BaseModel):
+    """A dog."""
+
     type: Literal['dog']
     bark: bool
 
 
 class Owner(BaseModel):
+    """The owner of a pet, which is a discriminated union."""
+
     pet: Annotated[Cat | Dog, Field(discriminator='type')]
 
 
@@ -229,6 +249,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
         '$defs': {'S': STRING},
     },
+    'required_null': {'type': 'object', 'required': None},
     'required_subset': {'type': 'object', 'properties': {'a': STRING, 'b': STRING}, 'required': ['a']},
     'discriminator_and_schema': {
         '$schema': 'https://json-schema.org/draft/2020-12/schema',
@@ -239,6 +260,20 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         'type': 'object',
         'anyOf': [{'$ref': '#/$defs/S'}, {'title': 'T'}],
         '$defs': {'S': STRING},
+    },
+    'too_large_to_inline': {
+        'type': 'object',
+        'properties': {'root': {'$ref': '#/$defs/D17'}},
+        '$defs': {
+            'D0': STRING,
+            **{
+                f'D{level}': {
+                    'type': 'object',
+                    'properties': {side: {'$ref': f'#/$defs/D{level - 1}'} for side in ('left', 'right')},
+                }
+                for level in range(1, 18)
+            },
+        },
     },
     'malformed_properties': {'type': 'object', 'properties': []},
     'malformed_type': {'type': 5},
@@ -257,6 +292,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
 
 
 def encode_profile(profile: Any) -> dict[str, Any]:
+    """The profile as JSON, with ids where it holds classes and sorted lists where it holds sets."""
     encoded = dict(profile)
     encoded['json_schema_transformer'] = TRANSFORMER_IDS[encoded['json_schema_transformer']]
     encoded['supported_native_tools'] = sorted(tool.kind for tool in encoded['supported_native_tools'])
@@ -266,6 +302,7 @@ def encode_profile(profile: Any) -> dict[str, Any]:
 
 
 def main() -> None:
+    """Write `golden.json` next to this file."""
     model_names = {name.split(':', 1)[-1] for name in get_args(KnownModelName.__value__)} | EXTRA_MODEL_NAMES
     profiles = [{'model': name, 'expected': encode_profile(openai_model_profile(name))} for name in sorted(model_names)]
 
