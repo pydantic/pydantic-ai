@@ -71,8 +71,8 @@ def thread_fingerprint(params: _MessageCreateParams, betas: set[str], key: bytes
 class Thread:
     """The `thread` of one request: a create request, or a continue request with only the new messages."""
 
-    previous_message_id: str | None = None
-    messages: list[BetaMessageParam] | None = None
+    continuation: tuple[str, list[BetaMessageParam]] | None = None
+    """For a continue request, the response ID it continues from and its new messages."""
     cache_breakpoints: tuple[list[str], list[str]] | None = None
     """The cache breakpoints of the request, which for a continue request are only those of the new messages."""
 
@@ -81,10 +81,11 @@ class Thread:
         body: dict[str, object] = {**extra_body} if is_str_mapping(extra_body) else {}
         thread: dict[str, str] = {'type': 'create'}
         params = {**params}
-        if self.previous_message_id is not None and self.messages is not None:
-            thread = {'type': 'continue', 'previous_message_id': self.previous_message_id}
+        if self.continuation is not None:
+            previous_message_id, messages = self.continuation
+            thread = {'type': 'continue', 'previous_message_id': previous_message_id}
             # The thread keeps `system` and `tools`; sending either, even as `null` or through `extra_body`, is a 400.
-            params.update(messages=self.messages, system=OMIT, tools=OMIT)
+            params.update(messages=messages, system=OMIT, tools=OMIT)
             body = {key: value for key, value in body.items() if key not in ('system', 'tools')}
         params['extra_body'] = {**body, 'thread': thread}
         return params
@@ -210,7 +211,6 @@ def thread_continuation(
         model.accepts_server_state(response)
         and response.provider_response_id
         and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
-        and response.history_digest is not None
         and response.history_digest
         == thread_digest(history_hasher(messages[:index], history_digest_key), response, fingerprint)
         and response.finish_reason != 'content_filter'

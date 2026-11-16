@@ -282,6 +282,7 @@ try:
         last_message_content,
         lasting_messages,
         raise_earlier_breakpoint_ttls,
+        record_cache_breakpoints,
     )
     from ._citations import (
         check_citations_tool_choice,
@@ -1017,15 +1018,6 @@ class _PreparedMessagesCreate:
     inference_geo: str | Omit
 
 
-def _record_cache_breakpoints(breakpoints: tuple[list[str], list[str]] | None) -> None:
-    """Record a request's requested and applied cache breakpoints on its model-request span, if it has any."""
-    span = current_model_request_span()
-    if span is not None and breakpoints is not None:
-        requested, applied = breakpoints
-        span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
-        span.set_attribute('pydantic_ai.cache.applied_breakpoints', applied)
-
-
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
@@ -1556,9 +1548,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
+                stamp_thread=thread_record.stamp,
             )
-            # Stamped in `get()`, once the response's parts are known.
-            streamed_response._stamp_thread = thread_record.stamp  # pyright: ignore[reportPrivateUsage]
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
 
@@ -1921,8 +1912,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # A create request with the full history keeps the boundary where it was put.
             return None
         return Thread(
-            previous_message_id=previous_message_id,
-            messages=new_prepared.anthropic_messages,
+            continuation=(previous_message_id, new_prepared.anthropic_messages),
             cache_breakpoints=continue_cache_breakpoints(new_prepared.cache_breakpoints),
         )
 
@@ -1942,7 +1932,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Send one attempt of `_messages_create`, with the container, thinking object and thread this attempt uses."""
         max_tokens = prepared.max_tokens
         anthropic_profile = self.profile
-        _record_cache_breakpoints(prepared.cache_breakpoints if thread is None else thread.cache_breakpoints)
+        record_cache_breakpoints(prepared.cache_breakpoints if thread is None else thread.cache_breakpoints)
         params, betas = with_thread(
             self._messages_create_params(
                 messages, model_settings, prepared, container_param, thinking, thinking_override
@@ -2075,7 +2065,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return_breakpoints=current_model_request_span() is not None,
         )
         if not record_cache_breakpoints_on_send:
-            _record_cache_breakpoints(cache_breakpoints)
+            record_cache_breakpoints(cache_breakpoints)
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(effort_request_parameters, model_settings)
         anthropic_profile = self.profile
@@ -2796,6 +2786,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         history_fetched_pages: Sequence[tuple[str, str]] = (),
         *,
         code_execution_in_open_turn: bool = False,
+        stamp_thread: Callable[[ModelResponse], ModelResponse] | None = None,
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -2822,6 +2813,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
             _history_fetched_pages=history_fetched_pages,
             _report_inference_geo=self._sends_inference_geo(model_settings, self.profile),
+            _stamp_thread=stamp_thread,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
