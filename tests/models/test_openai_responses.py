@@ -1289,7 +1289,7 @@ async def test_openai_safety_identifier(allow_model_requests: None) -> None:
     kwargs = get_mock_responses_kwargs(mock_client)[0]
     assert kwargs.get('safety_identifier') == 'user-123'
     assert kwargs.get('user') == 'user_id'
-    # The caller's `extra_body` entry keeps precedence over the typed setting in the SDK's merge.
+    # The caller's `extra_body` is forwarded unchanged next to the typed field.
     assert kwargs['extra_body']['safety_identifier'] == 'caller-key'
 
 

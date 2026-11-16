@@ -2640,6 +2640,16 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
+async def test_user_id_and_safety_identifier(allow_model_requests: None, openai_api_key: str):
+    """OpenAI accepts `user` and `safety_identifier` in the same request."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m, model_settings=OpenAIChatModelSettings(openai_user='user_id', openai_safety_identifier='safety_id')
+    )
+    result = await agent.run('hello')
+    assert result.output == snapshot('Hello! How can I assist you today?')
+
+
 async def test_openai_safety_identifier(allow_model_requests: None):
     """`openai_safety_identifier` is sent as `safety_identifier` alongside `openai_user`."""
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
@@ -2660,7 +2670,7 @@ async def test_openai_safety_identifier(allow_model_requests: None):
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs.get('safety_identifier') == 'user-123'
     assert kwargs.get('user') == 'user_id'
-    # The caller's `extra_body` entry keeps precedence over the typed setting in the SDK's merge.
+    # The caller's `extra_body` is forwarded unchanged next to the typed field.
     assert kwargs['extra_body']['safety_identifier'] == 'caller-key'
 
 
