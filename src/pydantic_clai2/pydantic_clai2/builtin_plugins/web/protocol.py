@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
-from pydantic_ai_harness.filesystem import (
+from pydantic_ai_harness.file_system import (
     EditFileCallPart,
     FileChangeRequestedEvent,
     FileEditedEvent,
@@ -49,7 +49,7 @@ from pydantic_ai_harness.filesystem import (
 )
 from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_ai_harness.sub_agents import DelegationOutcome
 from pydantic_clai2.config import PermissionMode
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL

@@ -46,7 +46,7 @@ sub-agents.
 The harness has two delegation capabilities. They trade in the same currency, named and isolated
 sub-agent runs, but they work at different altitudes:
 
-- [`SubAgents`](../subagents/README.md) exposes one `delegate_task(agent_name, task)` tool. Each
+- [`SubAgents`](../sub_agents/README.md) exposes one `delegate_task(agent_name, task)` tool. Each
   delegation is its own tool call and its own model turn. It is the right fit when delegations are
   occasional, or when each result needs the parent's judgment before the next one.
 - `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops
@@ -501,7 +501,11 @@ sub-agent's model requests and tool calls keep their own checkpoints. A branch's
 with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
 branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
 
-Under other engines, sub-agents run concurrently.
+Under other engines, sub-agents run concurrently. To schedule them differently, for example to
+register every call of a batch with an engine before any of them starts, subclass
+`DynamicWorkflowToolset` and override `create_executor`, which builds the executor each
+`run_workflow` call runs its script with. Its `dispatch` argument runs one sub-agent call, and the
+executor awaits its `flush` callback before it waits on the calls the script has made so far.
 
 ## API
 
@@ -534,7 +538,7 @@ WorkflowAgent(
 
 - [Code Mode](../code_mode/README.md), the same sandbox, calling the agent's own tools instead of
   sub-agents.
-- [SubAgents](../subagents/README.md), one-delegation-per-tool-call sub-agents, without the
+- [SubAgents](../sub_agents/README.md), one-delegation-per-tool-call sub-agents, without the
   scripted choreography.
 - [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic),
   the mechanism this applies to sub-agents.

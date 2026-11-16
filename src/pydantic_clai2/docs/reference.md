@@ -267,9 +267,15 @@ conversation. Bytecode compiles during installation, so the restart skips it. Sw
 back to `stable` offers the latest release. Run from a source checkout, it installs
 CLAI as a `uv tool` the same way and restarts into that.
 
+Installing replaces the files of the `uv tool` environment, which would break any other
+`clai2` process running from it. So on Linux and macOS, while another `clai2` runs from that
+install, `/update now` and `clai2 update` install nothing and name the processes' IDs: quit
+them, then update again. A `clai2` started while uv installs is not covered, so start none then.
+
 `clai2 update` (or `clai2 --update`) installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `clai2`
-is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
+is the new build. It exits with status 1 when the check, uv, or finding uv failed, or
+when other `clai2` processes run from the install. On
 Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
 an interactive session, which installs after CLAI exits. The flag cannot be combined with
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
@@ -582,11 +588,12 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+To steer the active run instead, press Alt+Enter (Option+Enter; Ctrl+Enter on
+Windows, see [Windows Terminal](#windows-terminal)). With a typed
 draft, this immediately shows the message in the transcript and enqueues it for
 the run's next model request. It does not interrupt the current response or
 cancel in-flight tools. Messages already queued stay queued. With an empty
-draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+draft, it sends the oldest queued follow-up instead. Each press sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
 pressed Enter. A queued message that cannot steer stays queued and is not
@@ -834,6 +841,20 @@ versions before this setting ignore it and send to the provider's default endpoi
 if you depend on a gateway, also set the provider's environment variable or don't
 downgrade.
 
+Set `api_key` to the name of a `/keys` entry for a model to use that key instead of
+the provider's environment variable. Only the name is saved; the key stays in `/keys`
+and is read each time the model is built, so deleting or renaming the key in `/keys`
+fails the turn until you pick another. The row
+shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
+The plain model's `api_key` also applies to its `@default` account, which uses the
+environment's key; a profile such as `openai@work` keeps its own sign-in unless its
+own model sets `api_key`. While `accounts.pool` runs a plain model on every signed-in
+account, each keeps its own key, so its `api_key` reaches only the `@default` account,
+if that is one of them. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
+and plugin models take their keys elsewhere and have no API Key row. CLAI versions
+before this setting ignore it and use the environment's key, sending it to any saved
+`base_url`, so don't downgrade while a model relies on both.
+
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
 which core supports but does not currently include in that model catalog. Complete
@@ -894,14 +915,17 @@ in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
 advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
 
-When no keyring backend exists at all (keyring raises `NoKeyringError` or
-`InitError`, typical on a headless Linux box or over SSH), credentials go to a
+When no usable keyring backend exists (keyring raises `NoKeyringError`,
+`InitError`, `RuntimeError`, or `PasswordSetError`, `kwallet.DBusKeyring`
+cannot open a wallet, or the backend does not retain the key, typical on a headless
+Linux box, over SSH, or on KDE / Steam Deck with KWallet disabled or unconfigured), credentials go to a
 `0600` file in `$XDG_CONFIG_HOME/pydantic-clai2/` (`~/.config/pydantic-clai2/` by
 default) instead, named for the account: Codex uses `credentials-openai-codex.json`,
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
-these files are per user, so `--database PATH` does not move them. `/login` says so in its confirmation. A locked keyring is not treated as
-missing; unlock it instead. Once a keyring becomes available, the next login or
-token refresh encrypts the credentials and deletes the plaintext file.
+these files are per user, so `--database PATH` does not move them; `/login` says so in its
+confirmation. Reading or writing one logs a single warning per process. A locked keyring is not
+treated as missing; unlock it instead. Once a keyring becomes available, the next login or token
+refresh encrypts the credentials and deletes the plaintext file.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
@@ -1338,6 +1362,20 @@ still queues the message like Enter, the terminal is sending a plain Enter:
   Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
 - For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
   `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
+### Windows Terminal
+
+Windows Terminal and the Windows console take Alt+Enter to toggle full screen,
+so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
+CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
+is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
+wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
+Ctrl+Enter needs a terminal that reports modified keys, such as Windows
+Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
+a newline.
+SSH does not forward `WT_SESSION`, so a remote session started from Windows
+Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
+example with `export WT_SESSION=1` in the shell you start CLAI from.
 
 ### Interrupting a turn
 
@@ -1879,14 +1917,19 @@ not the filesystem the file tools act on there.
   delete and rename files there, which `write_file` cannot do but could already
   replace the content of.
 - **Read-only:** `read_file` registered but `write_file` missing, `read_only`,
-  `read_only_patterns` set, or a `ToolGuardrail` (a plugin's or the agent's own)
-  that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`.
+  `read_only_patterns` set, or a `ToolGuardrail` or `ToolCallJudge` (a plugin's
+  or the agent's own) that checks or hides `write_file`, `edit_file`, `shell`,
+  or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
+  the agent's own, or a plugin's) mounts it read-only for that run.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
-  `ToolGuardrail` that checks or hides `read_file`, no `FileSystem`, more than
-  one, a supplied agent that does not expose its capabilities, or a plugin that
-  adds a capability function or
-  `DynamicCapability` (which could supply one at run time). File access then
-  goes through the file tools only.
+  `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
+  `FileSystem`, more than one, a supplied agent that does not expose its
+  capabilities, or a plugin that adds a capability function or
+  `DynamicCapability` (which could supply one at run time). So does any
+  `Hooks`, such as a `before_tool` hooks table, and a `ToolCallJudge` over
+  every tool or chosen by metadata or a function: which tools they check can't
+  be read before the run. An `after_tool` table only reports, so it keeps the
+  mount. File access then goes through the file tools only.
 
 While the model writes:
 
@@ -1985,8 +2028,9 @@ that code mode's sandbox keeps the folder as the turn mounted it until the next 
 The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
 and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
 the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
-only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
-gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
+sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
+`read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
 can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead.
@@ -2821,9 +2865,11 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds.
-**New worktree…**, on a folder's row or below the list for the row the arrow keys
+asks which folder. It lists one row per project it has sessions in, which starts
+in the checkout you are in, else the main one; the row's chevron, or → and ←, shows
+and hides every worktree of its repository, to start in one of those instead. It also
+completes a typed path to any directory, listing each repository it finds with its
+worktrees shown. **New worktree…**, on a row or below the list for the row the arrow keys
 select, checks out a new branch of that folder's repository
 first, from the base you name (by default its `HEAD`), in `.worktrees/` as
 [`--worktree`](#git-worktrees) does, and starts the session there; without a branch
@@ -2995,7 +3041,8 @@ see [Questions from the model](#questions-from-the-model). The built-in
 of the launch directory and its ancestors into the agent's
 instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
-On Windows, CLAI does not provide an agent workspace or repository context yet.
+On Windows, the agent's workspace is a `WindowsWorkspace` on the launch directory, so commands run
+in PowerShell; CLAI does not provide repository context or skills there yet.
 `coder` clears old tool results as the context fills.
 CLAI sends every tool, MCP tool, and output tool with strict mode off, whatever the
 provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps

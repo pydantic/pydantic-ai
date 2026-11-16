@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons, status and refusals, logprobs, compaction items and response-scoped tool call IDs."""
+"""Usage, Responses finish reasons, status and refusals, logprobs and compaction items."""
 
 from __future__ import annotations as _annotations
 
@@ -105,21 +105,24 @@ def billed_web_searches(
 
     OpenAI bills native web search per search action (see
     <https://developers.openai.com/api/docs/guides/tools-web-search>) but doesn't report the count in `usage`.
-    Newer responses carry it as `tool_usage.web_search.num_requests`, which the SDK doesn't type yet; older ones
-    don't, so fall back to counting `search` actions. Reasoning models also emit `open_page` and `find_in_page`
-    actions, which aren't billed as searches. A streamed `in_progress` or `queued` snapshot returns 0: its
-    searches are counted again from the terminal event's response.
+    Newer responses carry it as `tool_usage.web_search.num_requests`, an extra field on older SDKs and a typed one on
+    newer SDKs, so it's read through `model_dump`. Older responses don't carry it, so fall back to counting `search`
+    actions. Reasoning models also emit `open_page` and `find_in_page` actions, which aren't billed as searches, and
+    OpenAI can return a `web_search_call` item without any action, which isn't counted either. A streamed
+    `in_progress` or `queued` snapshot returns 0: its searches are counted again from the terminal event's response.
     """
     if not isinstance(response, responses.Response) or response.status in ('in_progress', 'queued'):
         return 0
-    match (response.model_extra or {}).get('tool_usage'):
+    match response.model_dump(include={'tool_usage'}).get('tool_usage'):
         case {'web_search': {'num_requests': int() as num_requests}}:
             return num_requests
         case _:
             return sum(
                 1
                 for item in response.output
-                if isinstance(item, responses.ResponseFunctionWebSearch) and item.action.type == 'search'
+                if isinstance(item, responses.ResponseFunctionWebSearch)
+                and (action := item.action)
+                and action.type == 'search'
             )
 
 
@@ -145,7 +148,7 @@ def map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
-        if isinstance(v, int)
+        if isinstance(v, int) and not isinstance(v, bool)
     }
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
@@ -194,12 +197,3 @@ def responses_usage_details(response_usage: responses.ResponseUsage, web_search_
     if web_search_requests:
         details['web_search_requests'] = web_search_requests
     return details
-
-
-def response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
-    """Qualify a Responses tool-call ID with its response ID, or return it unchanged.
-
-    `response_id` is the provider response ID when the model's tool-call IDs are response-scoped (so the
-    ID must be made history-wide unique), or `None` to leave the call ID as-is.
-    """
-    return f'{response_id}:{tool_call_id}' if response_id is not None else tool_call_id
