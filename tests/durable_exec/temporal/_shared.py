@@ -520,6 +520,14 @@ def _scheduled_activity_count(history: WorkflowHistory) -> int:
     return len([e for e in history.events if e.HasField('activity_task_scheduled_event_attributes')])
 
 
+def scheduled_activity_types(history: WorkflowHistory) -> list[str]:
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+    ]
+
+
 @dataclass(kw_only=True)
 class DurableCheckpointEvent(CapabilityEvent, namespace='durability_test', name='checkpoint'):
     """A capability event for the durability tests.

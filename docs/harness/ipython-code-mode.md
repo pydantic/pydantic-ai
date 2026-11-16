@@ -135,6 +135,8 @@ Code that raises returns a model retry with the printed output and the traceback
 
 `timeout` (default 60 seconds) bounds each `run_code` call, not counting time spent in tool calls. Code still running then is interrupted with `KeyboardInterrupt`, the model gets a retry saying so, and the kernel keeps its state. Code that ignores the interrupt for 5 more seconds gets its kernel shut down. If the kernel process exits, for example because the code crashed it or called `os._exit()`, the model gets a retry saying its state is gone. Either way, the next call starts a fresh kernel. Pass `timeout=None` to remove the limit.
 
+On Python 3.14, an interrupt that lands while the code is printing can leave the kernel's output stream locked, because of a CPython bug ([python/cpython#148874](https://github.com/python/cpython/issues/148874)). The code then hangs, so its kernel is shut down 5 seconds later, as for code that ignores the interrupt, and the next call starts a fresh kernel without the state. In code that prints in a tight loop, about 3% of interrupts end this way. Python 3.11 to 3.13 are not affected, and Python 3.15 fixes the bug. To avoid it, run the agent on one of those versions, or pass `IPythonKernel` a [`kernel_name`](#keep-the-kernel-across-runs) whose kernelspec runs on one.
+
 The model can pass `restart: true` with its code to restart the kernel and clear its state first. `input()` returns an empty string.
 
 ## The kernel

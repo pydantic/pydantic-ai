@@ -218,6 +218,8 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
 
         This method ensures synchronous execution by running any async evaluate implementation
         to completion using run_until_complete.
+        If `evaluate` returns an awaitable, calling this method while an event loop is running raises a
+        `RuntimeError`; use [`evaluate_async`][pydantic_evals.evaluators.Evaluator.evaluate_async] instead.
 
         Args:
             ctx: The context containing the inputs, outputs, and metadata for evaluation.
