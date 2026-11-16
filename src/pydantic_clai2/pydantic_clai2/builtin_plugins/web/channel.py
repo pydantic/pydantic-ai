@@ -315,7 +315,7 @@ class SessionChannel:
         return None
 
     def steer(self, text: str) -> bool:
-        """Send a prompt to the running turn now, as Alt+Enter at the prompt does; `False` when nothing takes it.
+        """Send a prompt to the running turn now, as steering at the prompt does; `False` when nothing takes it.
 
         A `/command`, or any input while no turn runs, never steers: send it instead, as the prompt then does.
         """

@@ -284,6 +284,53 @@ A check on a batch that fails the way a live request is retried on, for example 
 
 The number of resubmissions and of failed checks is recorded in the message history, so a run resumed from a history whose batch has failed submits the request again, rather than reading the same failed result every time it's resumed. A resubmitted request waits for its new batch as usual, or, with [`PendingModelResponse`](#ending-a-run-while-it-waits), ends the run with a new `PendingModelResponse`.
 
+### Retrying transports {#retrying-transports}
+
+Pydantic AI sends the request that creates a batch once, with the provider SDK's retries turned off, because a failed attempt may still have created the batch. A [retrying transport](retries.md#transport-retries) on the provider's HTTP client sits below the SDK, so it sends the request again on every failure its `validate_response` raises for, such as the 429 and 5xx responses in [A retrying client](retries.md#a-retrying-client). If the failed attempt did create a batch, the retry creates a second one with the same requests, and the first one, which Pydantic AI never learns about, still runs.
+
+To send the create once, return from `validate_response` without raising for it, so that its error reaches the SDK and is raised:
+
+```python {title="batch_retrying_client.py" gateway_toggle="skip"}
+import httpx2
+from tenacity import retry_if_exception_type, stop_after_attempt
+
+from pydantic_ai.models import create_async_httpx2_client
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.retries import (
+    AsyncHTTPX2TenacityTransport,
+    RetryConfig,
+    wait_retry_after,
+)
+
+BATCH_CREATE_PATHS = ('/batches', ':batchGenerateContent')  # (1)!
+
+
+def should_retry_status(response: httpx2.Response) -> None:
+    request = response.request
+    if request.method == 'POST' and request.url.path.endswith(BATCH_CREATE_PATHS):
+        return
+    if response.status_code in (429, 502, 503, 504):
+        response.raise_for_status()
+
+
+transport = AsyncHTTPX2TenacityTransport(
+    config=RetryConfig(
+        retry=retry_if_exception_type((httpx2.HTTPStatusError, httpx2.ConnectError)),
+        wait=wait_retry_after(),
+        stop=stop_after_attempt(5),
+        reraise=True,
+    ),
+    validate_response=should_retry_status,
+)
+client = create_async_httpx2_client(transport=transport)
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
+```
+
+1. OpenAI creates a batch with `POST /v1/batches`, Anthropic with `POST /v1/messages/batches`, and Google with `POST /v1beta/models/<model>:batchGenerateContent`.
+
+The transport still retries a create that failed to connect, as it never reached the provider, and every other request, such as a check on a batch. The create's error then fails the batch's requests, as when the provider refuses to create a batch, so check the provider's batches before submitting the requests again. Uploading the input file of an OpenAI or Google batch is still retried too, which at worst leaves an unused file in place until the provider expires it.
+
 ## Direct batch requests
 
 [`model_request_batch`][pydantic_ai.direct.model_request_batch] sends a list of [`BatchRequest`][pydantic_ai.models.batch.BatchRequest]s through a model's batch API and waits for all of them. Every request can have its own messages, settings and [request parameters][pydantic_ai.models.ModelRequestParameters], such as tools and output schema. It returns, in request order, each request's response or the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] it failed with:
@@ -387,7 +434,7 @@ async def main():
 4. `batch_decode` raises the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the request failed with, if it did. Resubmitting failed requests is up to you, as is handling a request the batch ended without a result for.
 5. Or check from a scheduled job.
 
-[`batch_cancel`][pydantic_ai.models.Model.batch_cancel] asks the provider to cancel a batch. `batch_create` doesn't retry a failed submission, because the provider may have created the batch before the connection failed: check the provider's batches before submitting the requests again.
+[`batch_cancel`][pydantic_ai.models.Model.batch_cancel] asks the provider to cancel a batch. `batch_create` doesn't retry a failed submission, because the provider may have created the batch before the connection failed: check the provider's batches before submitting the requests again. A retrying transport does send it again after an error response, unless its `validate_response` [skips batch creates](#retrying-transports).
 
 ## Details
 

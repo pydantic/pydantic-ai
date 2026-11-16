@@ -1046,7 +1046,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Submit encoded requests that share a `group` as one batch job.
 
         A failed submission is not retried, because the provider may have created the job before the connection
-        failed: check the provider's jobs before submitting the requests again.
+        failed: check the provider's jobs before submitting the requests again. A retrying transport on the provider's
+        HTTP client does send it again after an error response, unless its `validate_response`
+        [skips batch creates](../../batch.md#retrying-transports).
         """
         raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
@@ -5388,7 +5390,8 @@ the parts every adapter already knows how to map, or drops it. So an adapter mee
 step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
 a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
-adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
+adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts. An adapter
+that maps its parts without it, as `OpenAIDecisionsModel` does, needs an arm of its own for each.
 """
 
 
