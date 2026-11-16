@@ -124,7 +124,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs `BOXD_API_KEY` too. Pass `workspace='new'` to start a fresh machine even when the message history names one.
 
-`org`, `snapshot`, `vcpu`, and `auto_suspend_timeout` only shape a new machine; `working_dir` and `env` apply to every command, including after you reattach. A new machine gets `working_dir` created for it; on an attached machine it must already exist, or commands fail with `WorkspaceError`.
+`org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, and `secrets` only shape a new machine; `working_dir` and `env` apply to every command, including after you reattach. A new machine gets `working_dir` created for it; on an attached machine it must already exist, or commands fail with `WorkspaceError`.
 
 A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from the environment, not the machine, and a later operation opens a new one. A `client=` you passed is never closed.
 
