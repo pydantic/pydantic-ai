@@ -4,8 +4,7 @@ A held call is put to the user as an `ask_user` question with three choices, so 
 the browser's question card both answer it; a typed answer denies the call with that reason. Whichever
 plugin answers questions binds `approval_handler` with its answerer. A call no handler answered, as in a
 session no one can be asked in, is denied by `DenyUnanswered`. A `SubAgents` delegation that the session's
-`Permissions` would not reach, or a `message_task` that resumes one, is refused outside `full` by
-`KeepDelegatesChecked`.
+`Permissions` would not reach is refused outside `full` by `KeepDelegatesChecked`.
 """
 
 import difflib
@@ -38,7 +37,7 @@ from pydantic_ai_harness.permissions import (
     denial_message,
     permission_requests,
 )
-from pydantic_ai_harness.sub_agents import SELF_AGENT_NAME, DelegationTasks, SubAgents
+from pydantic_ai_harness.sub_agents import SELF_AGENT_NAME, SubAgents
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as SETTING
 from pydantic_clai2.runtime.task_prompts import is_delegate_tool
@@ -95,39 +94,23 @@ class KeepDelegatesChecked(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
         mode = self.permissions.mode_for(ctx)
-        if mode == 'full':
-            return args
-        if is_delegate_tool(ctx, tool_def):
-            agent_name = args.get('agent_name')
-        elif (agent_name := _resumed_agent(ctx, tool_def, args)) is None:
-            return args
-        if self._carried(ctx, tool_def, agent_name):
+        if mode == 'full' or not is_delegate_tool(ctx, tool_def) or self._carried(ctx, tool_def, args):
             return args
         raise SkipToolExecution(
             f'Delegation is off while /permissions is {mode}: this delegate would run without the permission '
             'checks. Do the work here instead; /permissions full lets delegates run.'
         )
 
-    def _carried(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition, agent_name: str | None) -> bool:
+    def _carried(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
         owner = ctx.capabilities[tool_def.capability_id or '']
         assert isinstance(owner, SubAgents)
         if any(shared is self.permissions for shared in owner.shared_capabilities):
             return True
-        if agent_name != SELF_AGENT_NAME or ctx.agent is None:
+        if args.get('agent_name') != SELF_AGENT_NAME or ctx.agent is None:
             return False
         bound: list[AbstractCapability[Any]] = []
         ctx.agent.root_capability.apply(bound.append)
         return any(capability is self.permissions for capability in bound)
-
-
-def _resumed_agent(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
-    """The agent a `SubAgents` `message_task` call resumes, when it names a finished task."""
-    owner = ctx.capabilities.get(tool_def.capability_id or '')
-    tasks = DelegationTasks.current()
-    if not isinstance(owner, SubAgents) or tool_def.name != 'message_task' or tasks is None:
-        return None
-    record = tasks.records.get(args.get('task_id', ''))
-    return record.agent_name if record is not None and record.status != 'running' else None
 
 
 @dataclass

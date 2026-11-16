@@ -26,8 +26,14 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.exceptions import ApprovalRequired, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, on_event
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    SkipToolExecution,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     CapabilityEvent,
     FinalResultEvent,
@@ -47,7 +53,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness.sub_agents import (
@@ -611,6 +617,49 @@ class TestSubAgentsTaskControl:
         assert len(task_texts(result.all_messages())) == 2
         [resumed] = recorder.of(TaskResumedEvent)
         assert resumed.task_id == recorder.of(TaskAssignedEvent)[0].task_id
+
+    @pytest.mark.parametrize(
+        ('hold', 'handled', 'expected'),
+        [
+            (SkipToolExecution('Resuming is off.'), False, 'Resuming is off.'),
+            (ApprovalRequired(), False, "Call `delegate_task` with `agent_name='researcher'`"),
+            (ApprovalRequired(), True, 'was not resumed: Not now.'),
+        ],
+    )
+    async def test_a_resume_by_message_goes_through_the_delegate_tools_hooks_and_approvals(
+        self, hold: Exception, handled: bool, expected: str
+    ) -> None:
+        recorder = Recorder()
+
+        class HoldResumes(AbstractCapability[Any]):
+            async def before_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+            ) -> dict[str, Any]:
+                if tool_def.name == 'delegate_task' and args.get('resume') and not ctx.tool_call_approved:
+                    raise hold
+                return args
+
+        def deny(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+            return DeferredToolResults(
+                approvals={call.tool_call_id: ToolDenied('Not now.') for call in requests.approvals}
+            )
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[
+                controlled(),
+                HoldResumes(),
+                recorder,
+                *([HandleDeferredToolCalls[Any](handler=deny)] if handled else []),
+            ],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert expected in result.output
+        assert not recorder.of(TaskResumedEvent)
 
     async def test_list_tasks_shows_each_task_once_with_its_status(self) -> None:
         gate = Gate()

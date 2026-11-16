@@ -31,10 +31,10 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import repair_messages
+from pydantic_ai.messages import ToolCallPart, repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 # Private import: pydantic-ai has no public way to tell capability-contributed
@@ -1131,11 +1131,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             lines.append(f'({" and ".join(omitted)} not shown.)')
         return '\n'.join(lines)
 
-    async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
+    async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> object:
         """Send a message to a task you started, to steer it.
 
         A running task reads the message at its next model request. A finished task resumes with the message as
-        its next prompt, in the background if it ran there, and this returns what `delegate_task` would.
+        its next prompt, in the background if it ran there, as a delegate call with `resume` would.
 
         Args:
             ctx: The run context.
@@ -1145,9 +1145,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner = self._owner()
         record = self._visible(ctx, owner, task_id)
         if record.status != 'running':
-            return await self.delegate_task(
-                ctx, record.agent_name, message, background=record.background, resume=task_id
-            )
+            return await self._resume_by_message(ctx, record, message)
         if record.parent_id != DelegationTasks.child_id():
             raise ModelRetry(f'Task {task_id} is steered by the task that started it, {record.parent_id}, not you.')
         if ctx.in_durable_context:
@@ -1163,6 +1161,23 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         elif not owner.steer(task_id, event.message):
             return f'Task {task_id} finished before the message reached it.'
         return f'Message sent to task {task_id}.'
+
+    async def _resume_by_message(self, ctx: RunContext[AgentDepsT], record: DelegationTask, message: str) -> object:
+        """Resume a finished task through the delegate tool, so the hooks, guards and approvals on it apply."""
+        tool_manager = ctx.tool_manager
+        assert tool_manager is not None, 'Tools run with the run step tool manager set'
+        args = {'agent_name': record.agent_name, 'task': message, 'background': record.background, 'resume': record.id}
+        call = ToolCallPart(self._tool_name, args, tool_call_id=f'{ctx.tool_call_id}-resume')
+        try:
+            result = await tool_manager.handle_call(call, wrap_validation_errors=False)
+        except (ApprovalRequired, CallDeferred):
+            raise ModelRetry(
+                f'Resuming task {record.id} needs approval. Call `{self._tool_name}` with '
+                f'`agent_name={record.agent_name!r}` and `resume={record.id!r}` instead.'
+            ) from None
+        if isinstance(result, ToolDenied):
+            return f'Task {record.id} was not resumed: {result.message}'
+        return result
 
     async def answer_task(self, ctx: RunContext[AgentDepsT], task_id: str, answer: str) -> str:
         """Answer the question a task you started is waiting on.

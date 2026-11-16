@@ -2013,8 +2013,7 @@ sandbox mounts the folder read-write, `pathlib` there can also delete and rename
 `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
 can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
-per run rather than bound to the agent. So is a `message_task` that would resume such a delegate's finished task.
-The model is told to do the work itself instead.
+per run rather than bound to the agent. The model is told to do the work itself instead.
 
 ### Compacting the conversation
 
