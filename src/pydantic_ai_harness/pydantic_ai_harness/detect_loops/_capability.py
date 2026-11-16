@@ -182,6 +182,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
 
+    _offered_tool_names: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Tool names offered by any model request in this run."""
+
     def __post_init__(self) -> None:
         if self.window < 2:
             raise ValueError(f'`window` must be at least 2, got {self.window}.')
@@ -232,6 +235,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         """Record the results of the previous response's tool calls, then act on the first loop found."""
+        self._offered_tool_names.update(ctx.tools)
         if self._results_pending:
             _record_results(self._steps[-1], request_context.messages)
             self._results_pending = False
@@ -347,8 +351,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
 
     async def _act(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
-        # The names come from the model's tool calls, so one the run doesn't offer is model output.
-        offered = ctx.tools
+        # The names come from the model's tool calls, so one the run never offered is model output.
+        offered = self._offered_tool_names
         unknown_tool_names = tuple(name for name in loop.tool_names if name not in offered)
         record_decision(
             ctx,

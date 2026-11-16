@@ -6,7 +6,7 @@ import asyncio
 import dataclasses
 import functools
 import inspect
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, ForwardRef, Optional
 
@@ -1481,13 +1481,12 @@ class TestInputGuardrailTracing:
             'guardrail.replacement': '[redacted]',
         }
 
-    async def test_redacted_prompt_reaches_no_span_when_content_is_traced(self):
+    async def test_redacted_prompt_reaches_no_span_when_content_is_traced(
+        self, instrumented: Callable[[bool], tuple[Any, Any]]
+    ):
         """With content capture on, every span holds the redacted prompt and none the original."""
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=redact_secrets)])
-        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+        tracing, exporter = instrumented(True)
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=redact_secrets), tracing])
 
         await agent.run(f'my key is {_SECRET}')
 
