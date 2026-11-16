@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
+`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, `KubernetesSandbox` for a pod on your own cluster, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -13,6 +13,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | --- | --- |
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
+| Files and commands start in a specific directory | `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
@@ -45,10 +46,13 @@ except UserError as e:
   or a sandbox capability, or pass `workspace=` to `run()`.
 - Set the directory **on the workspace**: `LocalWorkspace('./repo')`. `Coder('dir')`, `Shell(cwd=)`,
   `FileSystem(cwd=)`, `Macroscope(cwd=)`, `RepoContext(workspace_dir=)` warn and are **ignored**.
-- `LocalWorkspace` needs a POSIX host (use WSL or a sandbox on Windows) and is not a sandbox.
+- `LocalWorkspace` needs a POSIX host and is not a sandbox.
   Commands inherit only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`; pass the rest with
   `LocalWorkspace('.', env={'GH_TOKEN': ...})`. Never pass `os.environ` (leaks LLM API keys to the
   model's commands). Under `uv run`, `python`/`pytest` resolve from the agent's venv via `PATH`.
+- On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox); `Coder()` without a
+  workspace fails as on POSIX. Commands run in PowerShell and paths are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
+  `list_files` read the files when `rg` is missing.
 - **Harness files** (Shell job logs, sticky-`cd` state, tool-output spills) go in
   `.pydantic-ai-harness/` under the working directory, with a `.gitignore` of `*`. Spills are never
   pruned. `FileSystem` keeps that directory read-only.
@@ -404,6 +408,21 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   U+FFFF (most emoji). Anyone with the sandbox's preview link can see and control its desktop.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
+
+### KubernetesSandbox
+
+`KubernetesSandbox(*, warm_pool, namespace='default', connection='port-forward', sandbox_timeout=86_400,
+working_dir=None, env=None)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a pod from a
+[kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use. Credentials
+are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs `kubectl`.
+
+- The pool's `SandboxTemplate` must run sandboxd; commands run in that container, so its image decides the
+  tools. Commands start in sandboxd's root directory (`/workspace` by default).
+- The ref is `WorkspaceRef(provider='kubernetes', id='<namespace>/<claim name>')`. Runs never delete the claim;
+  `sandbox_timeout` does, or `await KubernetesSandbox(warm_pool=...).destroy(ref)` (quiet if gone).
+- From inside the cluster use `connection='in-cluster-pod-ip'` or `'in-cluster-service'`; the template's
+  NetworkPolicy must admit the agent on ports 8080 and 9090. Port-forward does not work on gVisor or Kata.
+- File operations go through the sandbox's shell.
 
 ### SmolSandbox
 
