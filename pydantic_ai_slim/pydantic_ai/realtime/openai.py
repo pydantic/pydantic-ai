@@ -1344,6 +1344,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             'tool_call' if response.status == 'completed' and function_call_only else response_finish_reason(response)
         )
         response_id = response.id
+        # An id-less done ends the active response, as `matches_active_response` in `_settle_response` takes it to.
+        ended_response_id = response_id if isinstance(response_id, str) else self._active_response_id
         # The cancelled response is now closed; stop suppressing its stragglers (its own usage still emits
         # below). A no-op for any other response.
         was_cancelled_response = isinstance(response_id, str) and response_id == self._cancelled_response_id
@@ -1351,15 +1353,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             response.status if response.status in ('cancelled', 'failed', 'incomplete') else 'completed'
         )
         self._lifecycle.response_done(
-            # An id-less done ends the active response, as `_settle_response` takes it to.
-            response_id or self._active_response_id,
+            ended_response_id or None,
             status=status,
             finish_reason=finish_reason,
             provider_details=response_provider_details(response),
         )
         self._close_cancelled_response(response_id)
         matches_active_response, superseded = await self._settle_response(
-            response, was_cancelled_response=was_cancelled_response
+            response, ended_response_id=ended_response_id, was_cancelled_response=was_cancelled_response
         )
         # Validated only now that all the response state above is settled: a malformed usage payload
         # raises `ValueError`, which `frames` surfaces as a recoverable frame error and keeps reading
@@ -1371,15 +1372,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         )
         return events, superseded
 
-    async def _settle_response(self, response: ProtocolResponse, *, was_cancelled_response: bool) -> tuple[bool, bool]:
+    async def _settle_response(
+        self, response: ProtocolResponse, *, ended_response_id: str | None, was_cancelled_response: bool
+    ) -> tuple[bool, bool]:
         """Release the connection's hold on a response that is done.
 
+        `ended_response_id` is the response the done ended, whose tool calls it closes.
         Returns `(matches_active_response, superseded)`, as `_handle_response_done` uses them.
         """
         response_id = response.id
-        # An id-less done ends the active response, as `matches_active_response` takes it to, so it closes that
-        # response's tool calls.
-        ended_response_id = response_id if isinstance(response_id, str) else self._active_response_id
         # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible protocol
         # implementations and defensive unit inputs that predate response tracking. An *unknown* active
         # id matches too — the window between `response.create` and its `response.created`, which a
