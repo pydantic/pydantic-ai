@@ -855,6 +855,7 @@ class TestSearchScope:
             warnings.simplefilter('error')  # any warning at all fails this test
             assert ConversationSearch(source, scope='conversation').effective_scope == 'conversation'
             assert ConversationSearch(source, scope='all').effective_scope == 'all'
+            assert ConversationSearch(source, scope=None).effective_scope == 'conversation'  # pyright: ignore[reportArgumentType]
             ConversationSearch(source, scope='conversation').get_toolset()
             ConversationSearchToolset[None](
                 source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'

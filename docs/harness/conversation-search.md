@@ -96,7 +96,7 @@ Scoping applies to the `RunRecord`s a `HistorySource` returns, so a custom sourc
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `source` | (required) | Where the corpus comes from. Use `SnapshotHistorySource(store)` over the store `StepPersistence` writes to. |
-| `scope` | `'conversation'` (unset warns) | Restricts search to the calling run's `conversation_id`. Use `'all'` only for a store isolated to one principal. |
+| `scope` | `'conversation'` | Restricts search to the calling run's `conversation_id`. Use `'all'` only for a store isolated to one principal. |
 | `max_matches` | `10` | Maximum matching excerpts the search tool returns. |
 | `context_lines` | `5` | Messages shown around each match (within the match's run). |
 | `bm25_k1` | `1.5` | BM25 term-frequency saturation. Lucene's `BM25Similarity` uses `1.2`. |

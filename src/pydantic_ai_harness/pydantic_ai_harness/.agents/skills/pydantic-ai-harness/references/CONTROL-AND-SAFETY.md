@@ -658,8 +658,7 @@ agent = Agent(
   A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
   text are escaped.
 - `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
-  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
-  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
+  requests (10th, 20th, ...). Each firing adds a note and the generated text to history for good, so a run of R requests
   gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
