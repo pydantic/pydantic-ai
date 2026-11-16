@@ -23,6 +23,7 @@ import anyio
 import anyio.to_thread
 import pytest
 import sniffio
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
@@ -40,6 +41,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceReadOnlyError,
+    WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
@@ -49,6 +51,7 @@ from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._jobs import Job
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._tool_calls import call_tool
 
@@ -2376,10 +2379,11 @@ class TestDetachedJobRoundTrip:
     async def test_start_check_stop(self, tmp_path: Path) -> None:
         ts = _shell_toolset(tmp_path)
         command_id = _parse_command_id(
-            await ts.start_command(_ctx(tmp_path), 'echo started; echo warn >&2; echo made > made.txt; exec sleep 300')
+            # `started` comes last, so once it shows, the stderr line and `made.txt` are already written.
+            await ts.start_command(_ctx(tmp_path), 'echo made > made.txt; echo warn >&2; echo started; exec sleep 300')
         )
         job_dir = Path((await _job(ts, _ctx(tmp_path), command_id)).directory)
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while 'started' not in (checked := await ts.check_command(_ctx(tmp_path), command_id)):
                 await anyio.sleep(0.05)  # pragma: lax no cover
         assert checked.endswith('[status: running]')
@@ -2479,3 +2483,57 @@ class TestWorkspaceFailures:
         tools = await ts.get_tools(ctx)
         with pytest.raises(WorkspaceUnavailableError, match='sandbox expired'):
             await ts.call_tool('run_command', {'command': 'true'}, ctx, tools['run_command'])
+
+
+_ALL_TOOLS = ['run_command', 'shell', 'start_command', 'check_command', 'stop_command']
+
+
+class _WindowsCommandsBackend:
+    """A `'windows'` workspace that runs nothing, for the tools offered on one."""
+
+    ref = WorkspaceRef(provider='windows', id='C:\\project')
+    workspace_platform = 'windows'
+
+    async def working_dir(self) -> str:
+        raise NotImplementedError
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        raise NotImplementedError
+
+
+class TestShellOnWindowsWorkspace:
+    async def test_tools_name_powershell_and_leave_out_run_command(self) -> None:
+        """`run_command` wraps commands in `sh`, and the `shell` description would otherwise teach `tail` and `kill`."""
+        offered: dict[str, str | None] = {}
+
+        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.update({tool.name: tool.description for tool in info.function_tools})
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(FunctionModel(capture), capabilities=[Shell[object](tools=_ALL_TOOLS)])
+        await agent.run('go', workspace=_WindowsCommandsBackend())
+        assert sorted(offered) == snapshot(['check_command', 'shell', 'start_command', 'stop_command'])
+        # Fails, rather than only changing the snapshot, if rewording `shell`'s docstring breaks the replacement.
+        assert offered['shell'] is not None and '`kill`' not in offered['shell'] and 'PowerShell' in offered['shell']
+        assert offered['shell'] == snapshot("""\
+Run a shell command and return its output.
+
+Foreground (the default) waits up to `timeout` seconds (at most 270) and
+returns the command's combined stdout/stderr inline (the last ~16 KB; any
+earlier output is marked as truncated), then the PID, log path, status file
+and exit status. A command that finished in the foreground needs no further
+reads: do not open its log or status file. Chain related commands in one
+call (e.g. `cmd1; cmd2`); read files with `read_file`, not `cat`, since long
+output is truncated. Background mode returns the handles
+immediately; only for background jobs, a foreground command still running
+at its timeout, or truncated long output, read the log or status file (e.g.
+`Get-Content -Tail` in a later shell call) and stop the process tree with the
+stop command the result names. Commands run in PowerShell, not `sh`. No notification arrives when a background job finishes.\
+""")

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 
@@ -47,7 +47,7 @@ def workspace(tmp_path: Path) -> Workspace:
 
 
 class _FakeClient:
-    """Stand-in for `httpx.AsyncClient` that returns a canned response or raises.
+    """Stand-in for `httpx2.AsyncClient` that returns a canned response or raises.
 
     `text` is the body for every URL, or a body per URL.
     """
@@ -57,7 +57,7 @@ class _FakeClient:
         *,
         text: str | Mapping[str, str] = '',
         status: int = 200,
-        error: httpx.HTTPError | None = None,
+        error: httpx2.HTTPError | None = None,
         requested: list[str],
     ) -> None:
         self._text = text
@@ -71,12 +71,12 @@ class _FakeClient:
     async def __aexit__(self, *exc: object) -> bool:
         return False
 
-    async def get(self, url: str) -> httpx.Response:
+    async def get(self, url: str) -> httpx2.Response:
         self._requested.append(url)
         if self._error is not None:
             raise self._error
         text = self._text if isinstance(self._text, str) else self._text[url]
-        return httpx.Response(self._status, text=text, request=httpx.Request('GET', url))
+        return httpx2.Response(self._status, text=text, request=httpx2.Request('GET', url))
 
 
 def _install_fake_httpx(
@@ -84,15 +84,15 @@ def _install_fake_httpx(
     *,
     text: str | Mapping[str, str] = '',
     status: int = 200,
-    error: httpx.HTTPError | None = None,
+    error: httpx2.HTTPError | None = None,
 ) -> list[str]:
-    """Replace `httpx.AsyncClient` with a factory yielding a `_FakeClient`; return the URLs it is asked for."""
+    """Replace `httpx2.AsyncClient` with a factory yielding a `_FakeClient`; return the URLs it is asked for."""
     requested: list[str] = []
 
     def factory(*args: object, **kwargs: object) -> _FakeClient:
         return _FakeClient(text=text, status=status, error=error, requested=requested)
 
-    monkeypatch.setattr(httpx, 'AsyncClient', factory)
+    monkeypatch.setattr(httpx2, 'AsyncClient', factory)
     return requested
 
 
@@ -166,7 +166,7 @@ class TestPydanticAIDocsToolset:
         assert result == '# Agent remote'
 
     async def test_remote_error_without_local_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _install_fake_httpx(monkeypatch, error=httpx.ConnectError('boom'))
+        _install_fake_httpx(monkeypatch, error=httpx2.ConnectError('boom'))
         toolset = PydanticAIDocsToolset[object](local_docs_path=None, cache=None)
 
         with pytest.raises(RuntimeError, match='no local checkout configured'):
@@ -259,7 +259,7 @@ class TestPydanticAIDocsToolset:
     async def test_returns_aliases_as_written_without_the_alias_file(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workspace: Workspace
     ) -> None:
-        requested = _install_fake_httpx(monkeypatch, error=httpx.ConnectError('offline'))
+        requested = _install_fake_httpx(monkeypatch, error=httpx2.ConnectError('offline'))
         (tmp_path / 'agent.md').write_text(_ALIASED_PAGE, encoding='utf-8')
         toolset = PydanticAIDocsToolset[object](local_docs_path=tmp_path, cache=None)
 

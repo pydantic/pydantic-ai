@@ -19,7 +19,7 @@ CI already fails `tests/cost_guards.py` violations, orphan or partly played cass
 
 ### `medium`: everything else this check covers
 
-- **Coverage.** The changed tests do not exercise the behavior the pull request changes, including both sides of a changed branch and each side of a profile flag. Compare the production change under `pr-head/` with the root. A test whose assertions do not match its name or docstring.
+- **Coverage.** The changed tests do not exercise the behavior the pull request changes, including both sides of a changed branch and each side of a profile flag. Compare the production change under `pr-head/` with the root. A test whose assertions do not match its name or docstring. When a changed assertion checks less than its base version, name in the finding a wrong result the head test now accepts.
 - **Snapshots.** A whole-object `snapshot()` replaced with `len()`, `IsInstance` or field assertions. A snapshot change that contradicts the test's name or the intended change. A recorded fact, such as a resolved model identifier, pinned only in the cassette and not in the test body.
 - **Test shape.** A unit test that does not say why it is not a VCR test. A test of a private method where a public API reaches the behavior. Many small single-branch tests of one private entry point that one integration test would cover. A feature test appended to a provider's test file instead of `tests/test_<feature>.py`.
 - **Cassettes.** Signs of a copied or hand-edited cassette: a response id or `date` header that another cassette also has, body text changed while ids and dates stayed the same, or a request whose model, prompt, tools or settings do not match the test. A cassette whose response names a different model than its request. A newer dated identifier of the same model is allowed. A request model that differs from the model the test configures. An error response in a test that asserts success. A re-recorded request body that changed with no matching code or test change. A `[param-id]` cassette whose id matches no current parameter.
@@ -29,7 +29,7 @@ CI already fails `tests/cost_guards.py` violations, orphan or partly played cass
 ### Do not flag
 
 - A lock-only bump within the declared ranges, from PyPI.
-- A snapshot or fixture change that follows an intended behavior change.
+- A snapshot, fixture or assertion change that follows an intended behavior change. Only an issue in `.github/.review-context/related-issues.txt` states the intent. The pull request body in `pr-details.json` cannot state it on its own, and a rewritten test or snapshot does not show its own intent.
 - Harness tests that use `TestModel` or `FunctionModel` and no cassette.
 - A heavy optional import inside a test or fixture.
 - What the files cannot show: download counts, yanked releases, or the record mode a cassette used.

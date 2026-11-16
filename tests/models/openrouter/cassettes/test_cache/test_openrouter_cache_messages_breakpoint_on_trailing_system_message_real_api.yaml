@@ -201,7 +201,7 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -219,9 +219,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793409371-D3vzRkrhWqW7tuYNRO6p
+        id: gen-1793763668-mLRU0D05OHqpDnwfoK0U
         object: chat.completion
-        created: 1793409371
+        created: 1793763668
         model: anthropic/claude-haiku-5.5
         provider: Anthropic
         system_fingerprint: null
@@ -255,7 +255,7 @@ interactions:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-31T01:16:12.824424+00:00
+  recorded_at: 2026-11-04T03:41:09.811493+00:00
 - request:
     method: POST
     uri: https://openrouter.ai/api/v1/chat/completions
@@ -461,7 +461,7 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -479,9 +479,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793409372-U4KkyYuOz1LBL5eLFnfa
+        id: gen-1793763669-oorkPwBjw2y1KTibAgol
         object: chat.completion
-        created: 1793409372
+        created: 1793763669
         model: anthropic/claude-haiku-5.5
         provider: Anthropic
         system_fingerprint: null
@@ -493,20 +493,20 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: Nothing else; the notes only say it holds old ledgers.
+            content: The notes mention nothing else; the archive holds only old ledgers.
             refusal: null
             reasoning: null
             reasoning_details:
             - type: reasoning.text
               signature: >-
-                CAQS5AYKEAgTGAI4AUIIdGhpbmtpbmcSDApp+tmtaYcFEg8iphoMISkXmXN5Jmym2BJuIjBIhVUjxj8Pbyu4xoKOd0tgPvI/Ek7IySfmwl7Zl/e8CKJt+Zc1N77RVNAXc+D9ysMqgQbHfEQxt9+mYGMQ06ER8QguF4FDUhbUjjGqPalwoFrCBg/wsGUqhqHmPziY07gIUdOobSM7JKK9jrmFzP+dF2jL82uGZ8FOrQHaCHLqE/wxUW+kjZVHpHnViF1k7nU665Sqn0FOcZGknrMKimxcPvaXVcPz86UvRrKE6lkYIX56opYQTJgXWdW+vGxBvh8jv19mtgoQF5RapteVjVY/yaZxSuf8epjUvecgHrFPObZOzvNMUk0HRCBwIVptUTW1TVVUnlAnAASHP7j8fmH26FbHmOAmRan8uMeAMtRxiuvvKqw9fxwDvLwFKARKYnU6mIrzBk+iV/tA2k/ixTmIMeImQ/d2EsfDK4/T1xwQAWwVZi2onQFpR9GUY6xkF6braCSZ1+ORYJ/CJfj9hlnocYi27aapc3Kz+Hj3BIGZB59Cxq38AIHHtNovQvpBMrocX6FmrsNFuNiMnua0czgcYLyp+TFQZDiL+XMc+YUa05NPqRPY/NOLLayM8MR7Nm9PMkKFTGLBw9BoKXL2E8pxlxZOFx1lKPk1DNITJ7yWiAzTIjYCAGOjgmGmrP6ab439krz4GWmiyDs3qIXNfCB/F06uPG0mN/87AXUU/avWWLyo9cwkTByitzswTtwIqychyBmRE4taUc+OEo2Y6VRx9woCgVauGBiO6RnATPwNIMFLzz6ZaVRE7A1UTBD/Tfnj6DWUfsk4q8U7ceQT4a04SznzaI6GPHqUFA79pz+SDF7YIm3Wnvam0a2oMYGdbuMl8wOXbqAlLBMDYkjhD3LkLDF2Rjob8RkiVthe66teVBaRwqwNvoFqRvayg2d/0aHmH2/wEtEsrg8dG+hmtRChTdxeoAVUCH5IluFqhbZY22nQXaxDUNRI+4yxIMoOgc1C6MAeJ/BFby3xqHCp9v5Pm98RqJVlPXZe6lLIUMFTZs47S1oAy0sT1N8CAsdursvq4xWC67eVw1ms/6T22QlvpZq1LocUwcvCqPuZIdki3X++TJcCW/FHDfSvdqAzt3UScXa+GAE=.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8YW50aHJvcGljIn0
+                CAQSvQoKEAgTGAI4AUIIdGhpbmtpbmcSDPGTe8XZY6Af0pA1JBoM3SPJ9ztjINSTEJT7IjDMVQ+9mq/L2f5oRuRMMgg3taBNQylbP3B9AzshLecu3dtJk83PSj6nrc66ETbG038q2gnHdWoWWB45KRImMtFHeht7n06qN1mIuudESG1aQXFAGdOe6DvWsgrVeLIK5lN9V6oipkt8um4kx1KQKrStXiSHdIH4w4EOgFG9hkPFLlIwjjnpCaHQmWb1xScV9nMuj36bfOVvayZak7K1CRCTztnWFfYSHEy+/B3kbGAJJmIsVbSBOlisM7XdALJXNLyZTwJtQUqESg0ZCQyJ6JJe1Hi7rCykFJDQ1CA998GSLSw/BXGcIx7lZ1mChXPDv1HKQSHTrgER/qfagN8fTyWkymYSqv/K5UjYwe3fvUkyyubDQMNKfroSCmNkHzg9du2XX4xG/vWxFZEJalvUL6vQWx1Y++H5rWXyaR6KIGjjxyulNCRo8XGfoABzaNXsdd4n2fdgr2wowvde95gcfAvtOHf+3ghXwbww13fMqUlBvyP2QNYDHrMDvbSAMahhbscnLIrNqKrLarWnTPgCGFtm1SgaD6KURORxZTE8QiTRn5148csW7gkUpYHTxvhu0pGaronQsbFbolzHciTy4AHRmq7Ormlt8pJZu/Tj6X7B/tBIK8OubbqHaGhFqTqm2apJSBexzEGgOlufw21AnOgvW0g5S3sfsbG2BQK+lYZMGPHWHSj6k6fDRc7RTQzgeN6Puz8gvTAKdD0pMYG6hmdw0jbUYXdyRwNoyJlzH3aRltZxbSDhBLgEtYNM5RI+3Jng6HPkPG44ZK5kll7HxqW7SdHgS4vwE2GWP0COLecYVKN6AfqKdD8OrIMOFqxClat6ja9AEj3vUGfZqxXeBSFvhFAgKLSOAZ946E9Ksp1oDyBm6YgmsbrEkFw9UtZSmbH9m+iy5jEPein7VekFYw44UWW8LsDM/uCQR9lLNLn9HPJYlRq7myO0bwzRB6ln5FU8qromYonG7otHbF+Dfa/CA2D64/2C/szizGMUzvnxzlacsizhdXpTQWhXAVjbiEHojkvKB4lbPFhzPqQsOgdyhK3lwR+MrgyRrfW2pubjC0qbO4L445toXuLKD7V/v1ZwMwAD0++kVLUWGfRLaUuWpp8GQZtoZD8FofqNKa1YPWLTHlRNXAG06R7/077q227BytKc7Q8URBYOe0163W/3JfGL7XQuM6Fjlm3DeEbsPjKbrXr4tjoSte06kgEbLx4+8YUOuSq4zuu3UtdXIfsH0AFhcI8ah5wRs7+NqoOOZ9BPTqcEXwvi8IL8m7nO+++Isl7pDrlgmpvXUX22GcbmJhF80vAqJYULsP4t79JmnlzD/1pvZS7+j/mG+39ENXfE6Ib7TCfbN05Yswz2g1YBDpO0HOkBACniLPWxNDeW1T/GVPlMFY3gvumm3cxShsYeP0HidLFy+L8TDzcFs9736cPdbMvtsN4cxZocghw1um2sojYdCUBTlvV05XFUI5sRaMR+bma1S6HDqLpUc4RW0/LD+iK9iDFgOKNyPT7aq4NrqTKYxHpjD09Gh78hP0MOW+D/bqi8BJfDY0ThaIby3lpGJ5N8Xdr30BI6BTSQBm1B+meh9/lYBOTl3iDZbXfhJso8RDn0tvufmzbuYBG7Q1i4kZ/tMQeBo8plWyiGruLO8Q5kEN8xVdN6Y0oz1PPIjaY8mLG7Lh/Tn+YiMq+z31p/DZgpQGVthSV9/wIh/FKcSAN1j82nhZ5N2owYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1oYWlrdS01LjUtMjAyNjEwMDd8YW50aHJvcGljIn0
               format: anthropic-claude-v1
               index: 0
         usage:
           prompt_tokens: 4473
-          completion_tokens: 81
-          total_tokens: 4554
-          cost: 0.000089155
+          completion_tokens: 224
+          total_tokens: 4697
+          cost: 0.000160655
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 4438
@@ -514,11 +514,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.000089155
+            upstream_inference_cost: 0.000160655
             upstream_inference_prompt_cost: 0.000048655
-            upstream_inference_completions_cost: 0.0000405
+            upstream_inference_completions_cost: 0.000112
           completion_tokens_details:
-            reasoning_tokens: 59
+            reasoning_tokens: 200
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-31T01:16:14.225991+00:00
+  recorded_at: 2026-11-04T03:41:11.796958+00:00

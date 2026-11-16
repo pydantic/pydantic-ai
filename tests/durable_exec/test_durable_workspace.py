@@ -86,6 +86,7 @@ class _Backend(CallableOperationBackend[dict[str, Any]]):
             call = cache_key[0]
             assert isinstance(call, WorkspaceCall)
             name = f'{name}:{call.method}'
+            self._durability.calls.append(call)
         self._durability.units.append(name)
         return await body()
 
@@ -104,6 +105,7 @@ class FakeDurability(BaseDurabilityCapability[Any]):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.units: list[str] = []
+        self.calls: list[WorkspaceCall] = []
 
     @property
     def in_durable_context(self) -> bool:
@@ -643,6 +645,21 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await agent.run('go', workspace=WorkspaceRef(provider='other', id='x'))
     with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
         await agent.run('go', workspace=WorkspaceRef(provider='fake', id='expired'))
+
+
+async def test_run_journals_cwd_and_checks_it_inside_the_unit(tmp_path: Path) -> None:
+    (tmp_path / 'sub').mkdir()
+    durability = FakeDurability()
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), durability])
+    workspace = (await agent.run('go')).workspace
+
+    assert (await workspace.run(['pwd'], cwd='sub')).stdout == f'{tmp_path.resolve() / "sub"}\n'
+    with pytest.raises(FileNotFoundError):
+        await workspace.run(['pwd'], cwd='missing')
+    assert _workspace_units(durability) == ['ensure', 'run', 'run']
+    assert [call.cwd for call in durability.calls if call.method == 'run'] == ['sub', 'missing']
+    call = durability.calls[-1]
+    assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, call)) == call
 
 
 def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:

@@ -7,8 +7,8 @@ a remote or containerized editor -- the machine the code actually lives on. ACP 
 `fs/write_text_file` for files, and the terminal lifecycle (`terminal/create`, `terminal/output`,
 `terminal/wait_for_exit`, `terminal/release`) for commands.
 
-[`AcpFileSystemToolset`][pydantic_ai_harness.experimental.acp.AcpFileSystemToolset] and
-[`AcpTerminalToolset`][pydantic_ai_harness.experimental.acp.AcpTerminalToolset] are those editor-native
+[`ACPFileSystemToolset`][pydantic_ai_harness.experimental.acp.ACPFileSystemToolset] and
+[`ACPTerminalToolset`][pydantic_ai_harness.experimental.acp.ACPTerminalToolset] are those editor-native
 counterparts. Build them per session with
 [`acp_filesystem`][pydantic_ai_harness.experimental.acp.acp_filesystem] /
 [`acp_terminal`][pydantic_ai_harness.experimental.acp.acp_terminal], which wrap the toolset in a capability only when the
@@ -35,8 +35,8 @@ from pydantic_ai.capabilities import Toolset
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.experimental.acp._session import AcpSession
-from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
+from pydantic_ai_harness.experimental.acp._session import ACPSession
+from pydantic_ai_harness.file_system import FileSystem, FileSystemToolset
 
 
 class _WorkspaceFileWriter(Protocol):
@@ -50,7 +50,7 @@ class _WorkspaceFileWriter(Protocol):
 class _FallbackFileWriter:
     """Writes with the `FileSystem` toolset, bounded by the session's `cwd`.
 
-    The write goes through the session's workspace (`AcpSessionConfig.workspace`) when one is
+    The write goes through the session's workspace (`ACPSessionConfig.workspace`) when one is
     configured, and otherwise to a local workspace at `cwd`.
     """
 
@@ -66,7 +66,7 @@ class _FallbackFileWriter:
         return await self._toolset.write_file(path, content, workspace=target)
 
 
-class AcpFileSystemToolset(FunctionToolset[AgentDepsT]):
+class ACPFileSystemToolset(FunctionToolset[AgentDepsT]):
     """`read_file`/`write_file` tools backed by the ACP client connection.
 
     Each call invokes the client's `fs/read_text_file` / `fs/write_text_file`, so the agent sees
@@ -127,16 +127,16 @@ class AcpFileSystemToolset(FunctionToolset[AgentDepsT]):
         return f'Wrote {path} ({len(content)} characters).'
 
 
-def acp_filesystem(session: AcpSession) -> Toolset[None] | None:
+def acp_filesystem(session: ACPSession) -> Toolset[None] | None:
     """Build an ACP-client-backed filesystem capability for `session`, or `None` if unsupported.
 
-    Returns a `Toolset` capability wrapping an `AcpFileSystemToolset` whenever the
+    Returns a `Toolset` capability wrapping an `ACPFileSystemToolset` whenever the
     client advertised `fs/read_text_file` during `initialize`:
 
     - read + write advertised: reads and writes both route through the editor.
     - read only (no `fs/write_text_file`): reads route through the editor, while writes go through
       [`FileSystem`][pydantic_ai_harness.FileSystem] bounded by `session.cwd`, in the session's
-      workspace when `AcpSessionConfig.workspace` sets one and otherwise on this machine. This is
+      workspace when `ACPSessionConfig.workspace` sets one and otherwise on this machine. This is
       coherent only when that workspace shares its disk with the editor (same machine, or an agent
       running inside the editor's container) -- for a *remote* editor the writes land on the agent's
       disk, not the editor's.
@@ -145,12 +145,12 @@ def acp_filesystem(session: AcpSession) -> Toolset[None] | None:
     back to a fully local capability:
 
     ```python
-    def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+    def session_config(session: ACPSession) -> ACPSessionConfig[None]:
         fs = acp_filesystem(session) or FileSystem()
-        return AcpSessionConfig(deps=None, capabilities=[fs], workspace=LocalWorkspaceBackend(session.cwd))
+        return ACPSessionConfig(deps=None, capabilities=[fs], workspace=LocalWorkspaceBackend(session.cwd))
     ```
 
-    For an agent with non-`None` deps, wrap `AcpFileSystemToolset[YourDeps](...)` in `Toolset`,
+    For an agent with non-`None` deps, wrap `ACPFileSystemToolset[YourDeps](...)` in `Toolset`,
     or pass the bare toolset in `toolsets`. This helper covers the common no-deps case.
     """
     capabilities = session.client_capabilities
@@ -159,7 +159,7 @@ def acp_filesystem(session: AcpSession) -> Toolset[None] | None:
         return None
     local_writer = None if fs.write_text_file else _FallbackFileWriter(session.cwd)
     return Toolset(
-        AcpFileSystemToolset[None](
+        ACPFileSystemToolset[None](
             client=session.client, session_id=session.session_id, cwd=session.cwd, local_writer=local_writer
         )
     )
@@ -178,7 +178,7 @@ def _format_terminal_output(result: schema.TerminalOutputResponse) -> str:
     return '\n'.join(parts)
 
 
-class AcpTerminalToolset(FunctionToolset[AgentDepsT]):
+class ACPTerminalToolset(FunctionToolset[AgentDepsT]):
     """A `run_command` tool backed by the ACP client's terminal lifecycle.
 
     Each call asks the client to create a terminal, waits for it to exit, reads its output, and
@@ -250,24 +250,24 @@ class AcpTerminalToolset(FunctionToolset[AgentDepsT]):
                     await self._client.release_terminal(session_id=self._session_id, terminal_id=terminal_id)
 
 
-def acp_terminal(session: AcpSession) -> Toolset[None] | None:
+def acp_terminal(session: ACPSession) -> Toolset[None] | None:
     """Build an ACP-client-backed terminal capability for `session`, or `None` if unsupported.
 
-    Returns a `Toolset` capability wrapping an `AcpTerminalToolset` only when the
+    Returns a `Toolset` capability wrapping an `ACPTerminalToolset` only when the
     client advertised terminal support during `initialize`; otherwise returns `None` so the caller
     can fall back to a local capability:
 
     ```python
-    def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+    def session_config(session: ACPSession) -> ACPSessionConfig[None]:
         shell = acp_terminal(session) or Shell()
         workspace = LocalWorkspaceBackend(session.cwd)
-        return AcpSessionConfig(deps=None, capabilities=[shell], workspace=workspace)
+        return ACPSessionConfig(deps=None, capabilities=[shell], workspace=workspace)
     ```
 
-    For an agent with non-`None` deps, wrap `AcpTerminalToolset[YourDeps](...)` in `Toolset`,
+    For an agent with non-`None` deps, wrap `ACPTerminalToolset[YourDeps](...)` in `Toolset`,
     or pass the bare toolset in `toolsets`. This helper covers the common no-deps case.
     """
     capabilities = session.client_capabilities
     if capabilities is None or not capabilities.terminal:
         return None
-    return Toolset(AcpTerminalToolset[None](client=session.client, session_id=session.session_id, cwd=session.cwd))
+    return Toolset(ACPTerminalToolset[None](client=session.client, session_id=session.session_id, cwd=session.cwd))
