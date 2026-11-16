@@ -429,15 +429,7 @@ def test_openai_gpt_5_4():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -491,15 +483,7 @@ def test_openai_gpt_5_6():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -547,15 +531,7 @@ def test_openai_gpt_6_astra():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -723,7 +699,7 @@ def test_openai_gpt_4o():
             'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_computer_tool': False,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
@@ -750,7 +726,7 @@ def test_openai_o3_mini():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'thinking_enabled_by_default': True,
@@ -796,15 +772,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
@@ -1033,7 +1001,7 @@ def test_gateway_gpt_oss_inline_defs():
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
@@ -2087,15 +2055,7 @@ def test_github_copilot_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'openai_chat_supports_max_completion_tokens': True,
         }
@@ -2346,15 +2306,7 @@ def test_azure_openai_gpt_5():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -2546,7 +2498,7 @@ def test_groq_gpt_oss():
             'groq_supports_graded_reasoning_effort': True,
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
             'default_framing_announcement': 'always',
@@ -2606,7 +2558,7 @@ def test_ollama_gpt_oss():
             'ignore_streamed_leading_whitespace': True,
             'default_framing_announcement': 'always',
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_supports_strict_tool_definition': False,
@@ -2646,7 +2598,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
@@ -2791,15 +2743,7 @@ def test_litellm_openai_gpt():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -2841,7 +2785,7 @@ def test_litellm_mistral_small_latest():
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'tool_call_id_length': 9,
             'may_tokenize_special_tokens_in_content': True,
@@ -2957,14 +2901,7 @@ def test_together_qwen():
                     'supports_json_object_output': True,
                     'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
-                        {
-                            CodeExecutionTool,
-                            ComputerTool,
-                            FileSearchTool,
-                            ImageGenerationTool,
-                            MCPServerTool,
-                            WebSearchTool,
-                        }
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
@@ -2982,14 +2919,7 @@ def test_together_qwen():
                     'supports_json_object_output': True,
                     'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
-                        {
-                            CodeExecutionTool,
-                            ComputerTool,
-                            FileSearchTool,
-                            ImageGenerationTool,
-                            MCPServerTool,
-                            WebSearchTool,
-                        }
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
@@ -3016,7 +2946,6 @@ def test_together_qwen():
                     'supported_native_tools': frozenset(
                         {
                             CodeExecutionTool,
-                            ComputerTool,
                             FileSearchTool,
                             ImageGenerationTool,
                             MCPServerTool,
@@ -3072,14 +3001,7 @@ def test_together_qwen():
                     'supports_json_object_output': True,
                     'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
-                        {
-                            CodeExecutionTool,
-                            ComputerTool,
-                            FileSearchTool,
-                            ImageGenerationTool,
-                            MCPServerTool,
-                            WebSearchTool,
-                        }
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'may_tokenize_special_tokens_in_content': True,
                 }
@@ -3110,14 +3032,7 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
                     'supports_json_object_output': True,
                     'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
-                        {
-                            CodeExecutionTool,
-                            ComputerTool,
-                            FileSearchTool,
-                            ImageGenerationTool,
-                            MCPServerTool,
-                            WebSearchTool,
-                        }
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
@@ -3323,15 +3238,7 @@ def test_github_openai_bare_name():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -3447,15 +3354,7 @@ def test_vercel_openai_gpt():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {
-                    CodeExecutionTool,
-                    ComputerTool,
-                    FileSearchTool,
-                    ImageGenerationTool,
-                    MCPServerTool,
-                    ToolSearchTool,
-                    WebSearchTool,
-                }
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -3717,7 +3616,7 @@ def test_crusoe_harmony():
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, ComputerTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,

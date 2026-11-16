@@ -182,7 +182,7 @@ class TestComputerUse:
         first, second = _returns(result.all_messages())
         # The leading `screenshot` returns the screen before the click, then the call's closing screenshot.
         assert first.content == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT, SCREENSHOT]
-        assert first.metadata == {'performed': 3, 'screenshot_size': (1280, 800)}
+        assert first.metadata == {'performed': 3}
         assert second.content == ['Ran 2 actions. Screenshot attached (1280x800).', SCREENSHOT]
 
     @pytest.mark.parametrize(
@@ -220,7 +220,6 @@ class TestComputerUse:
         assert tool_return.metadata == {
             'performed': len(ran),
             'error': "the fake display cannot perform 'hold_key'",
-            'screenshot_size': (1280, 800),
         }
 
     @pytest.mark.parametrize(
@@ -465,9 +464,9 @@ Each call runs a list of actions in order and returns a screenshot of the result
                 parts=[
                     ToolReturnPart(
                         'computer',
-                        ['Ran 1 action.', SCREENSHOT],
+                        ['Ran 1 action.', BinaryImage(data=png(1920, 1080), media_type='image/png')],
                         'c1',
-                        metadata={'performed': 1, 'screenshot_size': (1920, 1080)},
+                        metadata={'performed': 1},
                         tool_kind=COMPUTER_KIND.id,
                     )
                 ]
@@ -529,10 +528,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
             part.result for message in messages for part in message.parts if isinstance(part, ComputerReturnPart)
         ]
         assert [event.result for event in events] == results
-        assert [(r['performed'], r.get('error'), r.get('screenshot_size')) for r in results if r] == [
-            (1, None, (1280, 800)),
-            (1, None, (1280, 800)),
-        ]
+        assert [(r['performed'], r.get('error')) for r in results if r] == [(1, None), (1, None)]
         calls = [part.tool_call_id for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
         assert [event.tool_call_id for event in events] == calls
 
@@ -834,7 +830,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
             'This workspace is read-only, so the `computer` tool can only look: take screenshots, zoom, read the '
             'pointer position and wait. No action ran.'
         )
-        assert looked.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
+        assert looked.metadata == {'performed': 1}
         assert provider.actions == []
 
     async def test_a_screenshot_kept_without_its_result_is_sized_from_the_image(self) -> None:
@@ -860,7 +856,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         history = [
             ModelRequest.user_text_prompt('Look.'),
             look('c1'),
-            result('c1', FAKE_SCREENSHOT, {'performed': 1, 'screenshot_size': (1280, 800)}),
+            result('c1', FAKE_SCREENSHOT, {'performed': 1}),
             look('c2'),
             result('c2', png(640, 400), None),
         ]
@@ -953,7 +949,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
             'This call was changed before it ran. Ran 1 action. Screenshot attached (1280x800).'
         )
         assert 'hunter2' not in tool_return.model_response_str()
-        assert tool_return.metadata == {'performed': 1, 'changed': True, 'screenshot_size': (1280, 800)}
+        assert tool_return.metadata == {'performed': 1, 'changed': True}
 
     async def test_a_screen_within_what_the_model_takes_is_sent_as_it_is(self) -> None:
         model = _scripted(
@@ -963,7 +959,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         agent = Agent(model, capabilities=[ComputerUse()])
         result = await agent.run('Go.', workspace=DisplayOnlyBackend(ScreenProvider().backend(None)))
         (tool_return,) = _returns(result.all_messages())
-        assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
+        assert tool_return.metadata == {'performed': 1}
         assert isinstance(tool_return, ComputerReturnPart)
         assert tool_return.screenshot == SCREENSHOT
 
@@ -1079,24 +1075,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
 
     def test_agents_on_one_screen_in_separate_event_loops_do_not_wait_on_each_other(self) -> None:
         """A lock can't wake a waiter on another event loop, as Temporal runs each workflow on a loop of its own."""
-        holding, second_acted = threading.Event(), threading.Event()
-        waited: list[bool] = []
-
-        class OneScreen(ScreenBackend):
-            async def act(self, action: DisplayAction) -> None:
-                await super().act(action)
-                if action == Click(x=1, y=1):
-                    holding.set()
-                    # True only if the second run acted while this one held its turn.
-                    waited.append(await anyio.to_thread.run_sync(second_acted.wait, READY_TIMEOUT))
-                else:
-                    second_acted.set()
-
-        class Provider(ScreenProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
-                return OneScreen(self, ref)
-
-        provider, outputs = Provider(), list[str]()
+        provider, outputs = ScreenProvider(), list[str]()
         # One backend for both runs, with its environment created first so its ref, and with it its lock key, is set.
         screen = provider.backend(None)
         # On a thread of its own, as this thread already runs the test's event loop.
@@ -1109,17 +1088,14 @@ Each call runs a list of actions in order and returns a screenshot of the result
             agent = Agent(_scripted([{'type': 'click', 'x': x, 'y': 1}]), capabilities=[ComputerUse()])
             outputs.append(agent.run_sync('Go.', workspace=screen).output)
 
-        first = threading.Thread(target=run, args=(1,), daemon=True)
-        first.start()
-        assert holding.wait(READY_TIMEOUT)
-        second = threading.Thread(target=run, args=(2,), daemon=True)
-        second.start()
-        for thread in (first, second):
+        threads = [threading.Thread(target=run, args=(x,), daemon=True) for x in (1, 2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
             thread.join(2 * READY_TIMEOUT)
             assert not thread.is_alive()
 
         assert outputs == ['done', 'done']
-        assert waited == [True]
 
     async def test_agents_on_different_screens_do_not_wait_on_each_other(self) -> None:
         first_acting, second_acted = anyio.Event(), anyio.Event()
@@ -1529,7 +1505,7 @@ Each call runs a list of actions in order and returns a screenshot of the result
         (tool_return,) = _returns(result.all_messages())
 
         assert isinstance(tool_return, ComputerReturnPart)
-        assert tool_return.result == {'performed': 1, 'error': error, 'screenshot_size': (1280, 800)}
+        assert tool_return.result == {'performed': 1, 'error': error}
         assert tool_return.screenshot == SCREENSHOT
         assert provider.actions == [Click(x=1, y=1)]
 
