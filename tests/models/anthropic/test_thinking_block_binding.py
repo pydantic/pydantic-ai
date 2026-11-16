@@ -348,6 +348,10 @@ async def test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gav
     The transport raises `httpx2.HTTPStatusError` once its attempts run out, and `anthropic` wraps it in
     `APIConnectionError`, so the recovery reads the status and body from the transport's response. The first three
     requests are the transport's attempts; the fourth is the recovery.
+
+    Not a VCR test: `test_anthropic_drops_a_stale_thinking_block` records the rejection and the retry. What this adds
+    is the transport raising for the rejection, which depends only on its status and body, so a mock transport serves
+    them.
     """
     sent: list[tuple[str, bool]] = []
 
@@ -398,7 +402,11 @@ async def test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gav
 async def test_anthropic_does_not_retry_an_unrelated_bad_request_a_retrying_transport_gave_up_on(
     allow_model_requests: None,
 ):
-    """A 400 a retrying transport gave up on that isn't a stale thinking block raises, without a `drop_block` retry."""
+    """A 400 a retrying transport gave up on that isn't a stale thinking block raises, without a `drop_block` retry.
+
+    Not a VCR test, for the reason
+    `test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gave_up_on` gives.
+    """
     requests: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:

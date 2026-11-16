@@ -356,6 +356,11 @@ async def test_anthropic_code_execution_files_retrying_transport_gave_up_on_expi
     `APIConnectionError`, so the recovery reads the status and body from the transport's response. Each rejected
     request shows up three times, once per attempt of the transport. In the last case, the transport also gives up on
     the stale thinking block the request without the container hits, which the `drop_block` retry then absorbs.
+
+    Not a VCR test: `test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried` in
+    `tests/test_code_execution_files_vcr.py` records the 404 and the retry, and the 500 can't be recorded anymore.
+    What this adds is the transport raising for the rejection, which depends only on its status and body, so a mock
+    transport serves them.
     """
     sent: list[tuple[object, bool]] = []
 
