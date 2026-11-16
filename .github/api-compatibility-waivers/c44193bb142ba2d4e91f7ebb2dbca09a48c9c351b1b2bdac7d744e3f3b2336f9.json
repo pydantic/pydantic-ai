@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Harness 0.x: `PixeltableToolset.similarity_search`'s `idx` is renamed to `index_name` and kept as a deprecated keyword-only alias. `index_name` takes its positional slot, so positional calls behave as before. `similarity_search(idx=...)` still works and warns.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13673"
+}
