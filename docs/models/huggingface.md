@@ -103,7 +103,7 @@ agent = Agent(model)
 
 ## Logprobs
 
-You can return logprobs from the model by setting `huggingface_logprobs` and `huggingface_top_logprobs` in the [`HuggingFaceModelSettings`][pydantic_ai.models.huggingface.HuggingFaceModelSettings]. They are returned under `provider_details['logprobs']`, for both streamed and non-streamed requests. Logprobs are not requested by default, so `provider_details` has no `logprobs` key unless `huggingface_logprobs` is set.
+You can return logprobs from the model by setting `huggingface_logprobs` and `huggingface_top_logprobs` in the [`HuggingFaceModelSettings`][pydantic_ai.models.huggingface.HuggingFaceModelSettings]. They are returned under `provider_details['logprobs']`, for both streamed and non-streamed requests; a streamed response sets them once the stream has finished. Logprobs are not requested by default, so `provider_details` has no `logprobs` key unless `huggingface_logprobs` is set.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
