@@ -12,11 +12,11 @@ import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 from uuid import uuid4
 
 import anyio
@@ -24,7 +24,7 @@ import anyio.abc
 from opentelemetry import propagate
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._telemetry import current_span, record_decision, set_content_attribute
+from pydantic_ai._telemetry import record_decision
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import RunCancelled
@@ -34,7 +34,6 @@ from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
-    DelegationOutcome,
     ParentMessage,
     TaskAnswerEvent,
     TaskBackgroundedEvent,
@@ -76,12 +75,10 @@ RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
 
 @dataclass(frozen=True, kw_only=True)
 class TaskTelemetry:
-    """Records what `SubAgents` decided, and how each delegation ended, on the delegating run's tracer.
+    """What `SubAgents` needs to record its decisions on the delegating run's tracer.
 
-    Core's spans show the tool calls; these show what a listener or a limit decided about them, as
-    zero-duration spans, and how a delegation ended, on its tool call's span. Text that can quote a
-    prompt, such as a veto reason, a question, an answer, or an agent name the model chose, is attached
-    only when the run's instrumentation includes content.
+    Text that can quote a prompt, such as a veto reason, a question, an answer, or an agent name the model
+    chose, is recorded only as content.
     """
 
     ctx: RunContext[Any]
@@ -90,82 +87,15 @@ class TaskTelemetry:
     """Agent names the application configured. Any other name was chosen by the model, by creating that agent,
     so it is recorded only as content."""
 
-    def decision(
-        self,
-        name: str,
-        *,
-        agent_name: str | None,
-        task_id: str | None = None,
-        attributes: Mapping[str, str | float] | None = None,
-        content: Mapping[str, str] | None = None,
-    ) -> None:
-        """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
-        plain, quoted = self._attributes(agent_name, task_id, attributes, content)
-        record_decision(self.ctx, f'sub_agents {name}', attributes=plain, content=quoted)
+    def agent_name(self, agent_name: str) -> tuple[dict[str, str], dict[str, str]]:
+        """`sub_agents.agent_name` as `(attributes, content)`: an attribute only for an agent the app configured."""
+        attribute = {'sub_agents.agent_name': agent_name}
+        return (attribute, {}) if agent_name in self.configured_names else ({}, attribute)
 
-    def delegation_ended(
-        self,
-        *,
-        agent_name: str,
-        outcome: DelegationOutcome | Literal['max_calls'],
-        model: str | None,
-        record: DelegationTask | None = None,
-    ) -> None:
-        """Record how a delegation ended, on its tool call's `execute_tool` span.
 
-        A task in the background settles after its tool call returned the receipt, so its outcome is
-        the decision `sub_agents task settled` instead, with the same attributes and its task ID.
-        """
-        attributes = {'outcome': outcome} if model is None else {'outcome': outcome, 'model': model}
-        if record is not None and record.background:
-            self.decision('task settled', agent_name=agent_name, task_id=record.id, attributes=attributes)
-            return
-        span = current_span(self.ctx)
-        # The SDK warns about, and drops, an attribute set on a span that has already ended.
-        if not span.is_recording():
-            return
-        plain, quoted = self._attributes(agent_name, None, attributes, None)
-        span.set_attributes(plain)
-        for key, value in quoted.items():
-            set_content_attribute(self.ctx, span, key, value)
-
-    def _attributes(
-        self,
-        agent_name: str | None,
-        task_id: str | None,
-        attributes: Mapping[str, str | float] | None,
-        content: Mapping[str, str] | None,
-    ) -> tuple[dict[str, str | float], dict[str, str]]:
-        """`sub_agents.`-prefixed plain attributes, and content, which includes an agent name the model chose."""
-        plain: dict[str, str | float] = {f'sub_agents.{key}': value for key, value in (attributes or {}).items()}
-        quoted = {f'sub_agents.{key}': value for key, value in (content or {}).items()}
-        if task_id is not None:
-            plain['sub_agents.task_id'] = task_id
-        if agent_name is not None:
-            (plain if agent_name in self.configured_names else quoted)['sub_agents.agent_name'] = agent_name
-        return plain, quoted
-
-    def vetoed(self, event: ParentMessage | AgentCreatedEvent) -> None:
-        """Record that a listener vetoed `event`."""
-        reason = {'veto_reason': event.veto_reason} if event.veto_reason is not None else None
-        if isinstance(event, AgentCreatedEvent):
-            # The model chose this name, so it is content.
-            content = {'agent_name': event.name, **(reason or {})}
-            self.decision('vetoed', agent_name=None, attributes={'event': event.kind}, content=content)
-        else:
-            self.decision(
-                'vetoed',
-                agent_name=event.agent_name,
-                task_id=event.task_id,
-                attributes={'event': event.kind},
-                content=reason,
-            )
-
-    def backgrounded(self, event: TaskBackgroundedEvent) -> None:
-        """Record that a task moved to the background, and why."""
-        self.decision(
-            'task backgrounded', agent_name=event.agent_name, task_id=event.task_id, attributes={'reason': event.reason}
-        )
+def veto_reason_content(event: ParentMessage | AgentCreatedEvent) -> dict[str, str]:
+    """A listener's reason for vetoing `event`, as content: it can quote what was vetoed. Empty without a reason."""
+    return {} if event.veto_reason is None else {'sub_agents.veto_reason': event.veto_reason}
 
 
 def run_owned(owner: DelegationTasks) -> bool:
@@ -399,6 +329,7 @@ async def put_question(
     owner: DelegationTasks, record: DelegationTask, event: TaskQuestionEvent, telemetry: TaskTelemetry
 ) -> TaskAnswerEvent:
     """Get a task's question answered: by a listener of the delegating run, or else by its model."""
+    name_attributes, name_content = telemetry.agent_name(record.agent_name)
     event = await owner.publish(record, event)
     if event.answer is not None:
         answer = await owner.publish(
@@ -408,19 +339,29 @@ async def put_question(
             ),
         )
         if not answer.vetoed:
-            telemetry.decision(
-                'question answered',
-                agent_name=record.agent_name,
-                task_id=record.id,
-                content={'question': event.question, 'answer': answer.answer},
+            record_decision(
+                telemetry.ctx,
+                'sub_agents question answered',
+                attributes={**name_attributes, 'sub_agents.task_id': record.id},
+                content={**name_content, 'sub_agents.question': event.question, 'sub_agents.answer': answer.answer},
             )
             return answer
-        telemetry.vetoed(answer)
+        record_decision(
+            telemetry.ctx,
+            'sub_agents vetoed',
+            attributes={**name_attributes, 'sub_agents.event': answer.kind, 'sub_agents.task_id': record.id},
+            content={**name_content, **veto_reason_content(answer)},
+        )
     if record.status == 'running' and not record.background:
         # The delegating model can only answer once the delegation tool call waiting for the task returns.
         backgrounded = TaskBackgroundedEvent(task_id=record.id, agent_name=record.agent_name, reason='question')
         await owner.publish(record, backgrounded)
-        telemetry.backgrounded(backgrounded)
+        record_decision(
+            telemetry.ctx,
+            'sub_agents task backgrounded',
+            attributes={**name_attributes, 'sub_agents.reason': 'question', 'sub_agents.task_id': record.id},
+            content=name_content,
+        )
         owner.background(record.id)
     text = await owner.ask(record.id, question_id=event.question_id, question=event.question)
     return TaskAnswerEvent(task_id=record.id, agent_name=record.agent_name, question_id=event.question_id, answer=text)
@@ -465,11 +406,16 @@ async def run_remote(
             settled = await _relay(owner, record, start, transport, mailbox, accept_timeout, telemetry)
         if settled is None:
             assert accept_timeout is not None, 'only a timeout ends the wait for a worker'
-            telemetry.decision(
-                'task not accepted',
-                agent_name=record.agent_name,
-                task_id=record.id,
-                attributes={'accept_timeout': accept_timeout},
+            name_attributes, name_content = telemetry.agent_name(record.agent_name)
+            record_decision(
+                telemetry.ctx,
+                'sub_agents task not accepted',
+                attributes={
+                    **name_attributes,
+                    'sub_agents.task_id': record.id,
+                    'sub_agents.accept_timeout': accept_timeout,
+                },
+                content=name_content,
             )
             error = (
                 f'No worker picked up the task within {accept_timeout}s, so sub-agent {record.agent_name!r} '
@@ -486,7 +432,13 @@ async def run_remote(
             if settled is None:
                 # The task is ending without its worker's report, so stop it rather than leave it running there.
                 # This is teardown, not a decision listeners could veto.
-                telemetry.decision('remote task stopped', agent_name=record.agent_name, task_id=record.id)
+                name_attributes, name_content = telemetry.agent_name(record.agent_name)
+                record_decision(
+                    telemetry.ctx,
+                    'sub_agents remote task stopped',
+                    attributes={**name_attributes, 'sub_agents.task_id': record.id},
+                    content=name_content,
+                )
                 try:
                     await transport.send(TaskForceCancelEvent(task_id=record.id, agent_name=record.agent_name))
                 except Exception:

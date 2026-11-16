@@ -10,12 +10,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
+from pydantic_ai._telemetry import current_span, record_decision, set_content_attribute
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
 from pydantic_ai.durable_exec import DurableRunContext
@@ -62,6 +63,7 @@ from pydantic_ai_harness.subagents._control import (
     run_remote,
     task_group,
     validate_agent_name,
+    veto_reason_content,
 )
 from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
@@ -601,7 +603,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         counts[agent_name] = counts.get(agent_name, 0) + 1
         if counts[agent_name] <= sub_agent.max_calls:
             return None
-        self._telemetry(ctx).delegation_ended(agent_name=agent_name, outcome='max_calls', model=None)
+        _record_delegation_ended(
+            self._telemetry(ctx), agent_name=agent_name, record=None, outcome='max_calls', model=None
+        )
         return self._steer(
             sub_agent.on_failure,
             f'Delegate budget for {agent_name!r} is exhausted for this run '
@@ -911,8 +915,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Refuse a task while `max_running_tasks` tasks of the conversation are already running."""
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
-            self._telemetry(ctx).decision(
-                'task refused', agent_name=agent_name, attributes={'running_tasks': running, 'max_running_tasks': limit}
+            name_attributes, name_content = self._telemetry(ctx).agent_name(agent_name)
+            record_decision(
+                ctx,
+                'sub_agents task refused',
+                attributes={
+                    **name_attributes,
+                    'sub_agents.running_tasks': running,
+                    'sub_agents.max_running_tasks': limit,
+                },
+                content=name_content,
             )
             raise ModelRetry(
                 f'{running} tasks are already running, the most allowed at once. Wait for a report, or cancel a '
@@ -999,9 +1011,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if _emits_events(ctx):
             await ctx.emit(event)
         if isinstance(event, ParentMessage) and event.vetoed:
-            self._telemetry(ctx).vetoed(event)
+            name_attributes, name_content = self._telemetry(ctx).agent_name(event.agent_name)
+            record_decision(
+                ctx,
+                'sub_agents vetoed',
+                attributes={**name_attributes, 'sub_agents.event': event.kind, 'sub_agents.task_id': event.task_id},
+                content={**name_content, **veto_reason_content(event)},
+            )
         elif isinstance(event, TaskBackgroundedEvent):
-            self._telemetry(ctx).backgrounded(event)
+            name_attributes, name_content = self._telemetry(ctx).agent_name(event.agent_name)
+            record_decision(
+                ctx,
+                'sub_agents task backgrounded',
+                attributes={**name_attributes, 'sub_agents.reason': event.reason, 'sub_agents.task_id': event.task_id},
+                content=name_content,
+            )
         if record is not None:
             await owner.notify(record, event)
         return event
@@ -1188,7 +1212,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if _emits_events(ctx):
                 await ctx.emit(event)
             if event.vetoed:
-                self._telemetry(ctx).vetoed(event)
+                # The model chose this name, so it is content.
+                record_decision(
+                    ctx,
+                    'sub_agents vetoed',
+                    attributes={'sub_agents.event': event.kind},
+                    content={'sub_agents.agent_name': event.name, **veto_reason_content(event)},
+                )
                 return _vetoed_reply('The sub-agent was not created', event)
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model
@@ -1275,7 +1305,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
             )
             model = _served_model_label(serving_model, run_model, sub_agent)
-            telemetry.delegation_ended(agent_name=agent_name, outcome=outcome, model=model, record=record)
+            _record_delegation_ended(telemetry, agent_name=agent_name, record=record, outcome=outcome, model=model)
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
@@ -1294,7 +1324,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
         model = _served_model_label(serving_model, run_model, sub_agent)
-        telemetry.delegation_ended(agent_name=agent_name, outcome=ended.outcome, model=model, record=record)
+        _record_delegation_ended(telemetry, agent_name=agent_name, record=record, outcome=ended.outcome, model=model)
         if record is not None:
             record.outcome = ended.outcome
         if emits:
@@ -1502,6 +1532,41 @@ def _served_model_label(
     """
     model = serving_model.model or run_model or sub_agent.agent.model
     return None if model is None else model_label(model)
+
+
+def _record_delegation_ended(
+    telemetry: TaskTelemetry,
+    *,
+    agent_name: str,
+    record: DelegationTask | None,
+    outcome: DelegationOutcome | Literal['max_calls'],
+    model: str | None,
+) -> None:
+    """Record how a delegation ended, and on which model.
+
+    A task in the background settles after its tool call returned the receipt, so its end is the decision
+    `sub_agents task settled`. Any other delegation ends within its tool call, so its end goes on that call's
+    `execute_tool` span.
+    """
+    name_attributes, name_content = telemetry.agent_name(agent_name)
+    attributes: dict[str, str] = {**name_attributes, 'sub_agents.outcome': outcome}
+    if model is not None:
+        attributes['sub_agents.model'] = model
+    if record is not None and record.background:
+        record_decision(
+            telemetry.ctx,
+            'sub_agents task settled',
+            attributes={**attributes, 'sub_agents.task_id': record.id},
+            content=name_content,
+        )
+        return
+    span = current_span(telemetry.ctx)
+    # The SDK warns about, and drops, an attribute set on a span that has already ended.
+    if not span.is_recording():
+        return
+    span.set_attributes(attributes)
+    for key, value in name_content.items():
+        set_content_attribute(telemetry.ctx, span, key, value)
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:
