@@ -15,10 +15,7 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field
 
-from pydantic_ai._computer_labels import (
-    _candidate_models,  # pyright: ignore[reportPrivateUsage]
-    _smallest_limit,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai._computer_labels import candidate_models, smallest_limit
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -226,10 +223,10 @@ def _smallest(*values: int | None) -> int | None:
 
 def _model_limit(model: AbstractModel) -> _ScreenshotLimit:
     """The largest screenshot every model that may answer takes."""
-    models = _candidate_models(model)
+    models = candidate_models(model)
     return _ScreenshotLimit(
-        max_side=_smallest_limit(models, 'computer_use_screenshot_max_side'),
-        max_pixels=_smallest_limit(models, 'computer_use_screenshot_max_pixels'),
+        max_side=smallest_limit(models, 'computer_use_screenshot_max_side'),
+        max_pixels=smallest_limit(models, 'computer_use_screenshot_max_pixels'),
     )
 
 
@@ -857,7 +854,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         model = request_context.model
         blind = [
             answering
-            for answering in _candidate_models(model)
+            for answering in candidate_models(model)
             if not answering.profile.get('supports_image_input', True)
         ]
         if blind:

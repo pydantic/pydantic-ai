@@ -896,7 +896,13 @@ def test_google_gemini_3_pro_image_strict_tool_definition():
     assert profile is not None
     assert profile.get('supports_thinking') is True
     assert profile.get('google_supports_strict_tool_definition') is False
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_3_pro_image_has_no_computer_use_grid():
     # The computer-use grid is set for Gemini 3 models that aren't image models.
+    profile = GoogleProvider.model_profile('gemini-3-pro-image')
+    assert profile is not None
     assert 'computer_use_coordinate_grid' not in profile
 
 
