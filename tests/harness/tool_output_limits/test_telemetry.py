@@ -222,7 +222,8 @@ class TestToolOutputLimitsTelemetry:
         instrumentation, exporter = instrumented(False)
         await agent_with_tool(spill, output, instrumentation).run('go')
         attributes = limits_attributes(exporter)
-        assert attributes.pop('tool_output_limits.reduced_size') > 0
+        reduced_size = attributes.pop('tool_output_limits.reduced_size')
+        assert isinstance(reduced_size, int) and reduced_size > 0
         assert attributes == snapshot(
             {
                 'tool_output_limits.action': 'spill',
