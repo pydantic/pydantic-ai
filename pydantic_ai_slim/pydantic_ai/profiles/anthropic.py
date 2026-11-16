@@ -16,12 +16,10 @@ from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
-_ANTHROPIC_BASE_BUILTINS = frozenset(
-    {WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ComputerTool}
-)
+_ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below. `ComputerTool` is gated by `anthropic_computer_tool_version`."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool` and `ComputerTool`, which are gated
+per-model in the profile below."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -663,6 +661,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         computer_tool_version = 'computer_20251124'
     elif model_name.startswith('claude-haiku-4-5'):
         computer_tool_version = 'computer_20250124'
+    if computer_tool_version is not None:
+        supported_native_tools = supported_native_tools | {ComputerTool}
 
     profile = AnthropicModelProfile(
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
