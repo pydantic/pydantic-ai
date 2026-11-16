@@ -952,7 +952,8 @@ async def test_temporal_agent_run_in_workflow_with_runtime_external_toolset(allo
             task_queue=TASK_QUEUE,
         )
         assert result.output == DeferredToolRequests(
-            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+            validated_args={'call-1': {'query': 'runtime'}},
         )
 
 
