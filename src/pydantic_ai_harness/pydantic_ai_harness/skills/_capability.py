@@ -369,7 +369,8 @@ class Skills(AbstractCapability[AgentDepsT]):
             raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
         workspace, directory = entry.workspace, entry.skill.directory
         root = await workspace.realpath(directory)
-        target = await workspace.realpath(await workspace.resolve(path, base=directory))
+        # Joined, not normalized: `link/..` climbs from the link's target, as it would in a shell.
+        target = await workspace.realpath(workspace.paths.join(directory, path))
         if not target.startswith(root + workspace.paths.sep):
             raise ModelRetry(f'{path!r} is outside the directory of skill {skill!r}.')
         try:

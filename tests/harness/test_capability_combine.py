@@ -319,6 +319,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
     'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
+    '_SkillFiles': Anonymous('added once per run by `Skills`, which combines into one before it adds this'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     '_CoderGuidance': Rejected(

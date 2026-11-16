@@ -1021,6 +1021,13 @@ class TestSkillDirectoryPlaceholders:
 
         assert catalog.skills[0].render('${SKILL_DIR}').endswith('Review ${SKILL_DIR}.')
 
+    async def test_a_directory_is_not_read_as_arguments(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / '$ARGUMENTS', 'guide', body='Read ${SKILL_DIR}/a.md.')
+        catalog = await Skills('$ARGUMENTS').load(LocalWorkspaceBackend(tmp_path))
+
+        directory = tmp_path.resolve() / '$ARGUMENTS' / 'guide'
+        assert catalog.skills[0].render('src/app.py').endswith(f'Read {directory}/a.md.\n\nARGUMENTS: src/app.py')
+
 
 def _reader(results: list[str], load: str | None, reads: list[tuple[str, str]]) -> FunctionModel:
     """Load `load`, read each `(skill, path)` in one step, then record what each read returned."""
@@ -1107,6 +1114,16 @@ class TestSkillFiles:
         )
 
         assert results == [IsStr(regex=r".*is outside the directory of skill 'guide'.*")] * 3
+
+    async def test_dot_dot_climbs_from_a_symlink_s_target(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'guide', files={'notes.md': 'Inside.'})
+        (tmp_path / 'elsewhere' / 'deep').mkdir(parents=True)
+        (tmp_path / 'elsewhere' / 'notes.md').write_text('Outside.', encoding='utf-8')
+        (tmp_path / 'skills' / 'guide' / 'out').symlink_to(tmp_path / 'elsewhere' / 'deep')
+
+        results = await _read(Skills('skills', read_files=True), tmp_path, [('guide', 'out/../notes.md')])
+
+        assert results == [IsStr(regex=r".*is outside the directory of skill 'guide'.*")]
 
     async def test_missing_and_binary_files_are_reported(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'skills')
