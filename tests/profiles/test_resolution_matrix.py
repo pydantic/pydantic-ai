@@ -2494,6 +2494,24 @@ def test_ollama_gpt_oss():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['kimi-k3:cloud', 'kimi-k2-thinking:cloud'])
+def test_ollama_kimi(model_name: str):
+    """Kimi ids get the Moonshot family profile, and keep Ollama's `reasoning` thinking field."""
+    assert _normalize(OllamaProvider.model_profile(model_name)) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_ollama_unknown_falls_back_to_overlay_only():
     profile = OllamaProvider.model_profile('some-unknown-model')
     assert _normalize(profile) == snapshot(
@@ -2630,6 +2648,7 @@ def test_cerebras_kimi_k3_always_on_reasoning():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
             'openai_unsupported_model_settings': ('logit_bias',),
             'supports_thinking': True,
             'thinking_always_enabled': True,
@@ -2732,9 +2751,38 @@ def test_fireworks_llama():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_fireworks_unprofiled():
-    profile = FireworksProvider.model_profile('accounts/fireworks/models/kimi-k3')
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/minimax-m3')
     assert _normalize(profile) == snapshot(
         {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name', ['accounts/fireworks/models/kimi-k3', 'accounts/fireworks/routers/kimi-k3-fast', 'kimi-k2p6']
+)
+def test_fireworks_kimi(model_name: str):
+    """Kimi ids get the Moonshot family profile, with Fireworks' `p` spelling read as a version dot."""
+    assert _normalize(FireworksProvider.model_profile(model_name)) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'supports_json_schema_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_fireworks_kimi_non_reasoning():
+    """A non-reasoning Kimi id gets the family's streaming fact but no thinking support."""
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/kimi-k2-instruct-0905')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_json_schema_output': True,
+        }
     )
 
 
@@ -3218,6 +3266,19 @@ def test_vercel_unknown_bare_name():
     profile = VercelProvider.model_profile('gpt-5.4')
     assert _normalize(profile) == snapshot(
         {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': False}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['moonshotai/kimi-k3', 'moonshotai/kimi-k3.1-pro'])
+def test_vercel_moonshotai_kimi(model_name: str):
+    assert _normalize(VercelProvider.model_profile(model_name)) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
 
 
