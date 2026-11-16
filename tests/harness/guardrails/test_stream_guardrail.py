@@ -7,8 +7,12 @@ from dataclasses import replace
 
 import pytest
 from inline_snapshot import snapshot
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai.capabilities import CapabilityOrdering, Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -20,6 +24,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -200,16 +205,56 @@ class TestStreamGuardrail:
         with pytest.raises(UserError, match=f'cannot return GuardrailResult.{verdict.action}'):
             await agent.run('hello')
 
-    async def test_replacement_must_be_the_same_part_type(self):
+    @pytest.mark.parametrize('replacement', ['plain text', ThinkingPart(content='hi')])
+    async def test_replacement_must_be_the_same_part_type(self, replacement: object):
         agent = Agent(
             TestModel(custom_output_text='hi'),
-            capabilities=[StreamGuardrail(guard=lambda part: GuardrailResult.replace('plain text'))],
+            capabilities=[StreamGuardrail(guard=lambda part: GuardrailResult.replace(replacement))],
         )
         with pytest.raises(UserError, match='must provide a TextPart to replace the streamed one; guard at position 0'):
             await agent.run('hello')
 
     def test_is_excluded_from_agent_specs(self):
         assert StreamGuardrail.get_serialization_name() is None
+
+    def test_declares_outermost_inside_instrumentation(self):
+        ordering = StreamGuardrail(guard=lambda part: True).get_ordering()
+        assert ordering == CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])
+
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_block_and_redaction_spans_gate_content(self, include_content: bool):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        ctx = RunContext(
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            tracer=provider.get_tracer('test'),
+            trace_include_content=include_content,
+        )
+
+        def guard(part: StreamGuardrailPart) -> GuardrailResult:
+            assert isinstance(part, TextPart)
+            if part.content == 'secret':
+                return GuardrailResult.replace(TextPart(content='[redacted]'))
+            return GuardrailResult.block('no SSNs')
+
+        async def events() -> AsyncIterator[AgentStreamEvent]:
+            for index, content in enumerate(['secret', 'SSN']):
+                yield PartStartEvent(index=index, part=TextPart(content=content))
+                yield PartEndEvent(index=index, part=TextPart(content=content))
+
+        with pytest.raises(OutputBlocked):
+            async for _ in StreamGuardrail(guard=guard).wrap_run_event_stream(ctx, stream=events()):
+                pass
+
+        content = {'guardrail.replacement': str(TextPart(content='[redacted]'))} if include_content else {}
+        message = {'guardrail.message': 'no SSNs'} if include_content else {}
+        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
+            ('guardrail redacted stream', {'guardrail.direction': 'stream', 'guardrail.action': 'replace', **content}),
+            ('guardrail blocked stream', {'guardrail.direction': 'stream', 'guardrail.action': 'block', **message}),
+        ]
 
     async def test_tool_call_args_streamed_after_another_part_started_are_screened(self):
         async def interleaved(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -233,6 +278,31 @@ class TestStreamGuardrail:
 
         assert seen == []
         assert screened == ['{"city": "SSN 123"}']
+
+    async def test_a_closed_part_streamed_again_is_screened_again(self):
+        async def events() -> AsyncIterator[AgentStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart(content='Hi'))
+            yield PartEndEvent(index=0, part=TextPart(content='Hi'))
+            yield PartStartEvent(index=1, part=TextPart(content='second'))
+            yield PartStartEvent(index=0, part=TextPart(content='Hi'))
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' SSN'))
+            yield PartEndEvent(index=0, part=TextPart(content='Hi SSN'))
+            yield PartEndEvent(index=1, part=TextPart(content='second'))
+
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        guardrail = StreamGuardrail(guard=_redact_ssn)
+        released = [event async for event in guardrail.wrap_run_event_stream(ctx, stream=events())]
+
+        assert [_describe(event) for event in released] == snapshot(
+            [
+                "PartStartEvent 0 text 'Hi'",
+                "PartEndEvent 0 text 'Hi'",
+                "PartStartEvent 1 text 'second'",
+                "PartStartEvent 0 text '[redacted]'",
+                "PartEndEvent 0 text '[redacted]'",
+                "PartEndEvent 1 text 'second'",
+            ]
+        )
 
     async def test_other_parts_pass_through_unscreened(self):
         async def events() -> AsyncIterator[AgentStreamEvent]:
