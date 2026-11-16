@@ -634,6 +634,11 @@ inlined notes still in history, so a compaction frees room: a file that would go
 `None` removes the cap. It doesn't apply with
 `nested_inject='pointer'`.
 
+To pin files a user accepted (instruction files, `SKILL.md`, sub-agent definitions), record
+`file_digest(workspace, path)` at acceptance and pass the digests to
+`await pin_accepted_files(workspace, accepted, changed='none')` (both from `pydantic_ai_harness.repo_context`)
+before each run: a changed file is capped at `changed` in `authority_of` until its new digest is recorded.
+
 ## Macroscope
 
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
