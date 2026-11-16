@@ -173,15 +173,6 @@ def _without_result(response: ModelResponse, final: FinalResultEvent | None) -> 
 
 
 @dataclass(kw_only=True)
-class _LiveRun:
-    """A task's current run, whose history its owner sees as it streams."""
-
-    run_id: str
-    final: tuple[int, FinalResultEvent] | None = None
-    """The index in the run of the response that streamed a final result, and that event."""
-
-
-@dataclass(kw_only=True)
 class DelegationTaskEvent:
     """A task snapshot changed. Child stream events are correlated without entering the parent stream."""
 
@@ -380,7 +371,9 @@ class DelegationTasks:
         self._stops: set[str] = set()
         self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
         self._starting: dict[str, int] = {}
-        self._live: dict[str, _LiveRun] = {}
+        self._live: dict[str, tuple[int, FinalResultEvent] | None] = {}
+        """The running tasks whose history this owner sees as it streams, each with its final result once streamed:
+        the index in the run of the response that streamed it, and the event."""
         self._open = False
 
     @staticmethod
@@ -513,9 +506,9 @@ class DelegationTasks:
         context_window: int | None = None,
     ) -> None:
         """Send correlated activity, and the child's model when known, to the application's observer."""
-        if isinstance(event, FinalResultEvent) and (live := self._live.get(record.id)) is not None:
+        if isinstance(event, FinalResultEvent) and record.id in self._live:
             # The response streaming this event is not in the history yet, so it is the next one.
-            live.final = (len(_run_responses(record)), event)
+            self._live[record.id] = (len(_run_responses(record)), event)
         if self.observer is not None:
             await self.observer(
                 DelegationTaskEvent(task=record, event=event, model_name=model_name, context_window=context_window)
@@ -523,10 +516,7 @@ class DelegationTasks:
 
     def follow(self, record: DelegationTask) -> None:
         """Note that this owner sees the history of `record`'s current run as it streams."""
-        live = self._live.get(record.id)
-        # A durable unit of its own can run a copy of the task, whose history this owner doesn't see.
-        if self.records.get(record.id) is record and (live is None or live.run_id != record.run_id):
-            self._live[record.id] = _LiveRun(run_id=record.run_id)
+        self._live.setdefault(record.id, None)
 
     def snapshot(self, task_id: str) -> DelegationSnapshot:
         """A bounded view of what a task is doing, cheap to take repeatedly while it runs.
@@ -535,9 +525,9 @@ class DelegationTasks:
         before its listeners have processed it.
         """
         record = self.records[task_id]
-        live = self._live.get(task_id)
-        if live is None or live.run_id != record.run_id:
+        if task_id not in self._live:
             return self._snapshot(record, None, [])
+        final = self._live[task_id]
         responses = _run_responses(record)
         usage = RunUsage(requests=len(responses))
         for response in responses:
@@ -545,9 +535,7 @@ class DelegationTasks:
         parts = [
             part
             for index, response in enumerate(responses)
-            for part in _without_result(
-                response, live.final[1] if live.final is not None and live.final[0] == index else None
-            )
+            for part in _without_result(response, final[1] if final is not None and final[0] == index else None)
         ]
         return self._snapshot(record, usage, parts)
 

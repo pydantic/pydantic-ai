@@ -707,9 +707,9 @@ class TestSubAgentsTaskControl:
         snapshots: list[DelegationSnapshot] = []
 
         @dataclass
-        class Redactor(AbstractCapability[Any]):
+        class Redactor(AbstractCapability[object]):
             @on_event(TaskCompletedEvent)
-            async def redact(self, ctx: RunContext[Any], event: TaskCompletedEvent) -> None:
+            async def redact(self, ctx: RunContext[object], event: TaskCompletedEvent) -> None:
                 owner = DelegationTasks.current()
                 assert owner is not None
                 snapshots.append(owner.snapshot(event.task_id))
@@ -720,7 +720,7 @@ class TestSubAgentsTaskControl:
             answer: str
 
         finishing = ModelResponse(parts=[TextPart('Done looking.'), ToolCallPart('final_result', {'answer': 'secret'})])
-        child_agent: Agent[Any, Any] = (
+        child_agent: Agent[None, Answer] | Agent[None, str] = (
             Agent(scripted(finishing), output_type=Answer) if structured else Agent(scripted(text('secret')))
         )
 
@@ -737,7 +737,35 @@ class TestSubAgentsTaskControl:
         assert (snapshot.latest_text, snapshot.recent_tool_calls) == ('Done looking.' if structured else None, [])
         assert result.output.endswith('[redacted]')
 
+    async def test_check_task_on_a_durable_task_shows_no_activity(self) -> None:
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('slow')), tools=[gate.pause])
+
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await gate.entered.wait()
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            gate.opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Slow.', background=True),
+                check,
+                release,
+                text('Done.'),
+            ),
+            name='durable',
+            capabilities=[controlled(researcher(slow)), TemporalLikeDurability()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        checked = tool_returns(result.all_messages())[1]
+        assert checked.endswith('s. Its activity is not visible from here.')
+
     async def test_a_snapshot_is_bounded(self) -> None:
+        """Bounds that need a hand-built history: several runs, more tool calls than are kept, and long text."""
         task = DelegationTask(
             id='t',
             agent_name='researcher',
