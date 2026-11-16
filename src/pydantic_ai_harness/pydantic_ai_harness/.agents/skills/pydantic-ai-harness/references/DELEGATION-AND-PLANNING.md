@@ -394,13 +394,16 @@ agent = Agent('test', capabilities=[Advisor('anthropic:claude-opus-5-5', max_use
 typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=Decision)])
 ```
 
-`Advisor(model, *, mode='auto', output_type=str, max_uses=None, max_tokens=None, caching=None,
-forward_history=False)`. `mode`: `'auto'`, `'native'` (provider tool; history gets provider-native
-parts), or `'local'` (always the `advisor` function tool; history gets a `ToolCallPart` and
-`ToolReturnPart`).
+`Advisor(model, *, native=True, local=True, output_type=str, max_uses=None, max_tokens=None,
+caching=None, forward_history=False, id=None, defer_loading=False, description=None)`. By
+default it uses the provider tool where it applies (history gets provider-native parts) and the
+`advisor` function tool otherwise (history gets a `ToolCallPart` and `ToolReturnPart`). `local=False`
+requires the provider tool; `native=False` always uses the function tool. `mode=` is deprecated.
+
+<!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
 
 The executor decides when to consult. To require a consultation before a verdict, use
-`mode='local'` and check this run's history in an output validator:
+`native=False` and check this run's history in an output validator:
 
 ```python {test="skip" lint="skip"}
 @agent.output_validator
@@ -414,8 +417,8 @@ def advised(ctx: RunContext[None], output: str) -> str:
 Gotchas:
 
 - Raise at construction: `max_uses < 1`, `max_tokens < 1024`, a non-`str` `output_type` with
-  `mode='native'`, `mode='native'` without an `anthropic:`/`openrouter:` string, OpenRouter native
-  with `max_uses`. `mode='native'` with an executor on a different provider raises `UserError` at run time.
+  `local=False`, `local=False` without an `anthropic:`/`openrouter:` string, OpenRouter native
+  with `max_uses`. `local=False` with an executor on a different provider raises `UserError` at run time.
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
 - `max_uses` can be a callable `(ctx) -> int`, resolved per executor request, for a budget across runs
   kept in `deps`. Below 1, the native tool is omitted and the local tool returns its limit message.
@@ -426,10 +429,11 @@ Gotchas:
   `count_tokens` and retried once without the up-front count (limits checked after the response) on any
   pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
   consultation started, in which case the error propagates.
-- An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
-  other instance's value, two list `output_type`s combining, and any other option the later one's.
+- Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two
+  list `output_type`s combining, and any other option the later one's. With different `id`s, their
+  built `advisor` tools conflict.
 - Durable runs: DBOS records each local consultation under the default `id` (`advisor`; keep it stable once
-  deployed). Under Temporal and Prefect use `mode='native'`: their activity- or task-local usage doesn't merge
+  deployed). Under Temporal and Prefect use `local=False`: their activity- or task-local usage doesn't merge
   back into the run, so local execution is unsupported there.
 
 ## BackgroundTools
