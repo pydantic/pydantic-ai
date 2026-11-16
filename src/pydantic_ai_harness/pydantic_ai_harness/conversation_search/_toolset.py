@@ -362,7 +362,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         self._params = _Bm25Params(k1=bm25_k1, b=bm25_b)
         self._scope: SearchScope = scope
         description = SEARCH_HISTORY_DESCRIPTION
-        if scope == 'conversation':
+        if scope != 'all':
             description += _CONVERSATION_SCOPE_NOTE
         self.add_function(
             self.search_conversation_history,
@@ -389,7 +389,8 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
 
     async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
         conversation_id: str | None = None
-        if self._scope == 'conversation':
+        # Anything but an explicit `'all'`, such as a `None` forwarded from optional config, is conversation-scoped.
+        if self._scope != 'all':
             # Fail closed. Filtering on `conversation_id is None` would match every
             # unlabelled run in the store, which is the exposure the scope exists to
             # prevent, so an unlabelled run searches nothing rather than everything.

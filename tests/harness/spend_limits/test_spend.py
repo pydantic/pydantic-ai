@@ -752,6 +752,21 @@ class TestOrdering:
 
         assert (await guard.status())[0].spent.requests == 1
 
+    async def test_a_failed_request_outranks_a_pricing_error(self):
+        """A retryable rejection keeps propagating; a pricing error must not turn it into a dead run."""
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('-1'))
+        billed = _response(provider_response_id='billed')
+        request_context: Any = _UsageRequestContext()
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            setattr(request_context, '_usage_responses', (billed,))
+            raise ModelRetry('rejected after billing')
+
+        with pytest.raises(ModelRetry, match='rejected after billing'):
+            await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
+
+        assert (await guard.status())[0].spent.requests == 1
+
     async def test_each_wrapper_invocation_accrues_only_new_provider_responses(self):
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('1'))
         request_context: Any = _UsageRequestContext()

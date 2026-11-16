@@ -170,6 +170,6 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
         """
         if not self.add_instructions:
             return None
-        if self.scope == 'conversation':
+        if self.scope != 'all':
             return _CONVERSATION_INSTRUCTIONS
         return _ALL_INSTRUCTIONS

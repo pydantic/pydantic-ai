@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
 import anyio
@@ -62,6 +62,10 @@ class Shell(AbstractCapability[AgentDepsT]):
     whatever `FileSystem`'s `root_dir` says. Isolate untrusted work with a sandbox workspace.
     """
 
+    # Keyword-only since the positional `cwd` was removed, so an old positional call fails instead of
+    # landing its arguments on the command allowlist and denylist.
+    _: KW_ONLY
+
     allowed_commands: Sequence[str] = field(default_factory=list[str])
     """If non-empty, only these command names may be executed (allowlist)."""
 
@@ -81,7 +85,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     max_output_chars: int = 50_000
     """Maximum characters of output returned to the model. Must be positive."""
 
-    max_file_bytes: int | None = field(default=None, kw_only=True)
+    max_file_bytes: int | None = None
     """Optional per-file size limit for `run_command` and `start_command` commands, not total disk usage.
 
     Must be positive. Applied with the workspace shell's `ulimit -f`, rounded up to whole
@@ -89,7 +93,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     `shell` tool are rejected.
     """
 
-    max_log_bytes: int | None = field(default=100_000_000, kw_only=True)
+    max_log_bytes: int | None = 100_000_000
     """Size past which a background or `shell` command's log is emptied, leaving a notice. Must be positive.
 
     Checked once a second while the command runs, which keeps running, and once more when it ends. Bounds the disk a

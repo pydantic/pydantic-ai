@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -60,6 +60,10 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     its first file operation. `'/'` turns the containment checks off, while any
     access patterns still match a symlink's target.
     """
+
+    # Keyword-only since the positional `cwd` was removed, so an old positional call fails instead of
+    # shifting its access patterns onto the wrong field.
+    _: KW_ONLY
 
     allowed_patterns: Sequence[str] = field(default_factory=list[str])
     """If non-empty, only paths matching at least one glob pattern are accessible."""
@@ -128,7 +132,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     `read_only` further narrows the selection to `READ_ONLY_TOOL_NAMES`.
     """
 
-    max_retries: int | None = field(default=None, kw_only=True)
+    max_retries: int | None = None
     """How many consecutive retries each file tool allows before the run fails.
 
     A denied path, a missing parent, or an edit whose `old_text` no longer matches asks the model

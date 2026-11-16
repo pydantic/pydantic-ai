@@ -5303,9 +5303,8 @@ class TestCodeModeOSAccess:
         result = await wrapper.call_tool('run_code', {'code': "import os\nos.getenv('A')"}, ctx, tools['run_code'])
         assert result.return_value == "os.getenv('A', None)"
 
-    async def test_keyword_os_callback_missing_is_async_is_not_taken_as_positional(self) -> None:
-        """A keyword-only handler that forgot `is_async` is a broken handler, not the deprecated positional
-        form: it gets Monty's error about the missing argument, without a deprecation warning."""
+    async def test_keyword_os_callback_missing_is_async_gets_montys_error(self) -> None:
+        """A keyword-only handler that forgot `is_async` gets Monty's error about the missing argument."""
 
         def os_cb(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
             return 'unreachable'  # pragma: no cover

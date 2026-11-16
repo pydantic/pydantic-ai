@@ -842,7 +842,12 @@ class TestSearchScope:
                 source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
             )
         assert capability.scope == capability.effective_scope == 'conversation'
-        assert toolset is not None
+        assert 'conversation' in (toolset.tools['search_conversation_history'].description or '')
+
+    async def test_a_scope_other_than_all_is_conversation_scoped(self) -> None:
+        """A `None` forwarded from optional configuration fails closed rather than searching every run."""
+        rendered = await _search(_StubSource({'r1': [_user('SECRET')]}), 'SECRET', scope=None)  # pyright: ignore[reportArgumentType]
+        assert 'SECRET' not in rendered
 
     def test_explicit_scope_never_warns(self) -> None:
         source = SnapshotHistorySource(InMemoryStepStore())

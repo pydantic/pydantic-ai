@@ -36,9 +36,6 @@ from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-
-# Private import: pydantic-ai has no public way to tell capability-contributed
-# toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness._models import is_request_response_model

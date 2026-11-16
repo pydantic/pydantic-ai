@@ -621,7 +621,6 @@ conversation, not a message in it, and the application decides which copies reco
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
 
-
 ## Earlier checkpoints and notifications
 
 Set `capture_frontier=True` to save accepted request histories before model

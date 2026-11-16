@@ -302,10 +302,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 for billed in _billed_attempts(unanswered, partial(_attempt_token, unanswered_token)):
                     errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
             first_error = next((error for error in errors if error is not None), None)
-            # Only on the success path: pricing-policy and callback errors have never been
-            # able to outrank the request's own exception, and a retryable failure such as
-            # `ModelRetry` must keep propagating so the run retries instead of dying on a
-            # reporting error. The responses are accrued above either way.
+            # Only on the success path: a pricing-policy error never outranks the request's own
+            # exception, and a retryable failure such as `ModelRetry` must keep propagating so
+            # the run retries instead of dying on an accrual error. The responses are accrued
+            # above either way.
             if first_error is not None and response is not None:
                 raise first_error
         assert response is not None
