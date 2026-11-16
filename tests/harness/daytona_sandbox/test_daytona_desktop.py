@@ -250,6 +250,23 @@ async def test_a_key_daytona_refuses_to_hold_is_not_reported_held(fake_daytona: 
     assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
 
 
+async def test_a_key_daytona_did_not_confirm_holding_is_let_go(fake_daytona: FakeDaytona) -> None:
+    """Daytona may still press a key whose `keyboard.down` timed out, so it is released like one it pressed."""
+    backend, sandbox = await _started(fake_daytona)
+    down = sandbox.computer_use.keyboard.down
+
+    async def down_unconfirmed(key: str, request_timeout: float | None = None) -> None:
+        await down(key, request_timeout)
+        if key == 'a':
+            raise DaytonaTimeoutError('request timeout')
+
+    sandbox.computer_use.keyboard.down = down_unconfirmed
+    with pytest.raises(WorkspaceUnavailableError, match="didn't confirm the input"):
+        await screen(backend).act(HoldKeys(keys=('ctrl', 'a'), seconds=1))
+
+    assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keyup a', 'keyup ctrl']
+
+
 HOLDING_CTRL = MoveMouse(x=1, y=1, modifiers=('ctrl',))
 
 
