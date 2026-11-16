@@ -35,6 +35,7 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
@@ -500,6 +501,21 @@ async def test_a_desktop_size_is_set_on_a_new_sandbox(fake_daytona: FakeDaytona)
         {'DISPLAY': ':0', 'VNC_RESOLUTION': '1280x800'},
         None,
     ]
+
+
+async def test_a_public_sandbox_gets_no_desktop(fake_daytona: FakeDaytona) -> None:
+    """Daytona's VNC preview of the desktop has no password, and a public sandbox's previews need no token."""
+    sandbox = fake_daytona.sandbox()
+    sandbox.public = True
+    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[ComputerUse(native=False)])
+
+    with pytest.raises(
+        UserError, match=r"^The Daytona sandbox 'sb-existing' is public, so anyone with its preview URL"
+    ):
+        await agent.run(
+            'Click.', workspace=DaytonaSandboxBackend(ref=WorkspaceRef(provider='daytona', id=sandbox.id), desktop=True)
+        )
+    assert sandbox.desktop_calls == []
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display() -> None:

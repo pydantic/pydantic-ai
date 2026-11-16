@@ -11,6 +11,7 @@ import json
 from collections.abc import AsyncIterable, Callable
 from typing import Any, Literal
 
+import httpx2
 import pytest
 from hypothesis import given, settings, strategies as st
 from pydantic import TypeAdapter, ValidationError
@@ -18,7 +19,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import Agent, AgentStreamEvent, Tool, capture_run_messages
 from pydantic_ai.capabilities import Hooks, NativeTool, RawToolArgs, ValidatedToolArgs
 from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, PressKeys, TypeText
-from pydantic_ai.exceptions import IncompleteToolCall, ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import IncompleteToolCall, ModelConnectionError, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -627,6 +628,23 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
     starts = [(event.index, type(event.part)) for event in events if isinstance(event, PartStartEvent)]
     # Started once, with all its members, before the text that follows it, so events replay in the response's order.
     assert starts == [(0, ComputerCallPart), (1, TextPart)]
+
+
+async def test_a_stream_that_breaks_off_keeps_every_member_call_it_got(allow_model_requests: None) -> None:
+    blocks = [_tool_use('toolu_1', 'mouse_move', {'coordinate': [5, 6]}), _tool_use('toolu_2', 'type', {'text': 'hi'})]
+    # Both members arrive whole; the connection drops before the message ends.
+    events: list[BetaRawMessageStreamEvent | Exception] = [*_stream(*blocks)[:-2], httpx2.ReadError('connection lost')]
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
+    )
+    params = ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
+        with pytest.raises(ModelConnectionError):
+            async for _ in stream:
+                pass
+    assert [
+        (part.tool_call_id, part.args_as_dict()) for part in stream.get().parts if isinstance(part, ToolCallPart)
+    ] == [('toolu_1', {'actions': [{'type': 'move', 'x': 5, 'y': 6}, {'type': 'type', 'text': 'hi'}]})]
 
 
 async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow_model_requests: None) -> None:

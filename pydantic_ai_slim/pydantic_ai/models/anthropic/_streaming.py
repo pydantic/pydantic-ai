@@ -123,14 +123,20 @@ class AnthropicStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
             self._fetched_pages = list(self._history_fetched_pages)
-            async for event in MapStreamDecodeErrors(self._response, self._model_name):
-                for event_ in self._map_event(event):
-                    if self._computer_batch.blocks:
-                        self._after_computer_batch.append(event_)
-                    else:
-                        yield event_
-            if (part := self._computer_batch.call_part()) is not None:
-                yield self._parts_manager.handle_part(vendor_part_id=part.tool_call_id, part=part)
+            batch_start: ModelResponseStreamEvent | None = None
+            try:
+                async for event in MapStreamDecodeErrors(self._response, self._model_name):
+                    for event_ in self._map_event(event):
+                        if self._computer_batch.blocks:
+                            self._after_computer_batch.append(event_)
+                        else:
+                            yield event_
+            finally:
+                # Saved even if the stream breaks off, so the response keeps every call the batch got.
+                if (part := self._computer_batch.call_part()) is not None:
+                    batch_start = self._parts_manager.handle_part(vendor_part_id=part.tool_call_id, part=part)
+            if batch_start is not None:
+                yield batch_start
                 for event_ in self._after_computer_batch:
                     yield event_
 
