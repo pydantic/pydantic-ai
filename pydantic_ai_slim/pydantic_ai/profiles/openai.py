@@ -714,7 +714,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     return profile
 
 
-def _is_computer_use_model(model_name: str) -> bool:
+def _is_computer_use_model(model_name: str) -> bool:  # pyright: ignore[reportUnusedFunction]
     """Whether OpenAI serves its native `computer` tool to the model.
 
     GPT-5.4 (also mini and pro), GPT-5.5 (also pro), GPT-5.6 and GPT-6 take it. GPT-5.4 nano, GPT-5.3 Codex and GPT-5.2
