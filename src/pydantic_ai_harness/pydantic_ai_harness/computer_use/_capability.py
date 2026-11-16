@@ -224,9 +224,9 @@ class _NotRun:
         return UserError(self.message)
 
 
-def _not_run_error(outcome: _NotRun, run: _RunButtons | None, stray: list[MouseButton]) -> Exception:
+def _not_run_error(outcome: _NotRun, run: _RunButtons, stray: list[MouseButton]) -> Exception:
     """The error for a call that didn't run, keeping the buttons a failed call couldn't release for the run's end."""
-    if run is not None and outcome.kind == 'tool':
+    if outcome.kind == 'tool':
         run.stray = [*stray, *outcome.held]
     return outcome.error()
 
@@ -619,6 +619,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
         run = _run_buttons(ctx)
+        keeps_held = run is not None
+        # Without the run's record, such as for a capability loaded mid-run, each call releases its own buttons, so
+        # this throwaway one is never read.
+        run = run or _RunButtons(run_id=ctx.run_id)
         made = _the_call(ctx)
         call = made[1] if made else None
         plan = _Plan(
@@ -630,27 +634,24 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # The next request goes to the run's model, or with a sticky `ModelFallback` to the one that made the call,
             # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
             limit=_model_limit(ctx.model, call),
-            held=list(run.held) if run else [],
-            keeps_held=run is not None,
+            held=list(run.held),
+            keeps_held=keeps_held,
         )
-        stray = list(run.stray) if run else []
-        if run is not None:
-            # A call that never reports, such as an interrupted one, may leave any of these pressed for the run's end.
-            pressing: list[MouseButton] = [action.button for action in actions if isinstance(action, MouseDown)]
-            run.held, run.stray = [], [*stray, *plan.held, *pressing]
+        stray = list(run.stray)
+        # A call that never reports, such as an interrupted one, may leave any of these pressed for the run's end.
+        pressing: list[MouseButton] = [action.button for action in actions if isinstance(action, MouseDown)]
+        run.held, run.stray = [], [*stray, *plan.held, *pressing]
         try:
             outcome = await self._call(ctx, actions, plan)
             if isinstance(outcome, _NotRun):
                 raise _not_run_error(outcome, run, stray)
         except UserError:
             # Refused before anything acted, so this call's presses never ran.
-            if run is not None:
-                run.stray = [*stray, *plan.held]
+            run.stray = [*stray, *plan.held]
             raise
         tool_return, held = outcome
         result: ComputerResult = tool_return.metadata
-        if run is not None:
-            run.held, run.stray = held, stray
+        run.held, run.stray = held, stray
         # Emitted here rather than in the durable unit, which can't emit, so each is emitted once.
         await ctx.emit(ActionsPerformedEvent(result=result))
         return tool_return
