@@ -120,8 +120,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     can run a shell can install it and carry on, and the process gets a
     `BrowserUnavailableWarning` for the developer who is not reading tool results.
     Set `auto_install_chromium=True` to fetch the binary automatically instead.
-    Set `cdp_url` to attach to a Chromium that is already running
-    (managed-browser providers, benchmark harnesses) rather than launching one.
+    Set `cdp_url`, or `cdp_url_factory` to provision the endpoint on first use, to
+    attach to a Chromium that is already running (managed-browser providers,
+    benchmark harnesses) rather than launching one.
 
     Every browser operation runs inside an OpenTelemetry span, and what the page
     did during it (console output, responses, requests the egress policy refused,
@@ -200,8 +201,8 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     compromises from reaching the host. Set `False` where the sandbox cannot
     start -- a container without the kernel privileges it needs is the usual case
     -- and accept that a renderer exploit then runs with the agent's own access.
-    Ignored when `cdp_url` is set: that browser is already running under its own
-    configuration.
+    Ignored when `cdp_url` or `cdp_url_factory` is set: that browser is already
+    running under its own configuration.
     """
 
     auto_install_chromium: bool = False
