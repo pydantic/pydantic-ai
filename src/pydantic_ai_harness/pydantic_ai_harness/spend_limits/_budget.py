@@ -13,10 +13,19 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Generic, Literal, NamedTuple, TypeVar, assert_never
 
-from typing_extensions import TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+
+_CeilingT = TypeVar('_CeilingT', Decimal, int)
+
+Ceiling = TypeAliasType(
+    'Ceiling',
+    _CeilingT | Callable[[RunContext[AgentDepsT]], _CeilingT | None],
+    type_params=(_CeilingT, AgentDepsT),
+)
+"""A `Budget` ceiling: a fixed amount, or a callable resolving one from the run (`None` for no ceiling)."""
 
 Window = Literal['run', 'conversation', 'day', 'month', 'total']
 """The period a budget counts over."""
@@ -72,10 +81,10 @@ class Budget(Generic[AgentDepsT]):
     and reports, and never stops a run. That is how per-tenant accounting with
     no cap is expressed.
 
-    Generic in the agent's dependency type so `scope` is checked against it: the
-    parameter comes from the `Agent` the capability is passed to, so a scope
-    reaching for a field the deps do not have is a type error rather than an
-    `AttributeError` on the first request.
+    Generic in the agent's dependency type so `scope` and the ceiling callables are
+    checked against it: the parameter comes from the `Agent` the capability is passed
+    to, so a callable reaching for a field the deps do not have is a type error rather
+    than an `AttributeError` on the first request.
 
     ```python
     from decimal import Decimal
@@ -95,10 +104,10 @@ class Budget(Generic[AgentDepsT]):
     flip a replayed refusal.
     """
 
-    usd: Decimal | Callable[[RunContext[AgentDepsT]], Decimal | None] | None = None
+    usd: Ceiling[Decimal, AgentDepsT] | None = None
     """Ceiling in US dollars, or a callable resolving it from the run. `None` means this budget does not limit spend."""
 
-    tokens: int | Callable[[RunContext[AgentDepsT]], int | None] | None = None
+    tokens: Ceiling[int, AgentDepsT] | None = None
     """Ceiling in total tokens, or a callable resolving it from the run. `None` means this budget does not limit tokens."""
 
     window: Window = 'day'
@@ -285,9 +294,6 @@ class Ceilings(NamedTuple):
         return self.usd is not None or self.tokens is not None
 
 
-_CeilingT = TypeVar('_CeilingT', Decimal, int)
-
-
 def plain_ceilings(budget: Budget[Any]) -> Ceilings | None:
     """`budget`'s ceilings, or `None` when either is a callable, which only a run context can resolve."""
     usd, tokens = budget.usd, budget.tokens
@@ -312,7 +318,7 @@ def resolve_ceilings(budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT]) ->
 def _resolve_ceiling(
     name: str,
     kind: str,
-    ceiling: _CeilingT | Callable[[RunContext[AgentDepsT]], _CeilingT | None] | None,
+    ceiling: Ceiling[_CeilingT, AgentDepsT] | None,
     ctx: RunContext[AgentDepsT],
     expected: type[_CeilingT],
 ) -> _CeilingT | None:

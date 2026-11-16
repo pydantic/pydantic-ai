@@ -118,7 +118,7 @@ SpendLimits[Account](
 )
 ```
 
-The callable is typed against the agent's `deps` like `scope`, and is called alongside it whenever the budget is read, more than once per request, so keep it to reading what the application loaded before the run. Return `None` for no ceiling on that partition. Unlike a plain ceiling, a resolved zero or less is accepted: it means nothing is allowed, so the partition reads as exhausted and its requests are refused with `SpendLimitExceeded`. The refusal and `warn_at` use the resolved ceiling. `BudgetStatus.usd_limit` and `token_limit` report it, as `SpendRecordedEvent` does, and `BudgetStatus.budget` stays the budget as configured. If the callable raises, the response is still accrued, but neither `SpendRecordedEvent` nor `on_spend` reports it, and the run fails with that error. The counter key does not include the ceiling, so what a partition has spent carries over when its allowance changes.
+The callable is typed against the agent's `deps` like `scope` (the `Ceiling` type alias names the accepted forms), and is called alongside it whenever the budget is read, more than once per request, so keep it to reading what the application loaded before the run. Return `None` for no ceiling on that partition. Unlike a plain ceiling, a resolved zero or less is accepted: it means nothing is allowed, so the partition reads as exhausted and its requests are refused with `SpendLimitExceeded`. The refusal and `warn_at` use the resolved ceiling. `BudgetStatus.usd_limit` and `token_limit` report it, as `SpendRecordedEvent` does, and `BudgetStatus.budget` stays the budget as configured. If the callable raises, the response is still accrued, but neither `SpendRecordedEvent` nor `on_spend` reports it, and the run fails with that error. The counter key does not include the ceiling, so what a partition has spent carries over when its allowance changes.
 
 A budget with no ceiling is a counter. It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
@@ -410,6 +410,8 @@ Source: [`pydantic_ai_harness/spend_limits/`](https://github.com/pydantic/pydant
 ::: pydantic_ai_harness.spend_limits.SpendLimits
 
 ::: pydantic_ai_harness.spend_limits.Budget
+
+::: pydantic_ai_harness.spend_limits.Ceiling
 
 ::: pydantic_ai_harness.spend_limits.SpendSnapshot
 
