@@ -161,8 +161,10 @@ def run_until_complete(coro: Awaitable[T]) -> T:
     If the caller interrupts `loop.run_until_complete()` (e.g. by pressing Ctrl-C, raising
     `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
     `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
-    *our own* task and drive its cleanup to completion before re-raising, without touching any
-    other tasks on the (caller-owned) loop.
+    the task driving `coro` and drive its cleanup to completion before re-raising, without touching
+    any other tasks on the (caller-owned) loop. An `asyncio.Task` or `asyncio.Future` passed in is
+    that task, so a drive that fails before it completes, such as one attempted inside an already
+    running event loop, cancels it.
     """
     loop = get_event_loop()
     task = asyncio.ensure_future(coro, loop=loop)
