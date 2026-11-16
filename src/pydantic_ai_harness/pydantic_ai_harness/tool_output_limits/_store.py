@@ -185,9 +185,9 @@ class LocalFileOverflowStore:
     symlink, and on POSIX it must be owned by the current user and is tightened to `0700` if
     group or other bits are set; and `read` and `write` resolve the target (following symlinks)
     and reject anything that escapes the root via symlink, `..`, or an absolute path, before
-    `write` creates any directory. Handle
-    segments are also sanitized by `_safe_segment`. On Windows there is no uid, so the
-    default root is `pyai_harness_overflow` and the ownership check is skipped.
+    `write` creates any directory. Handle segments are also sanitized by `_safe_segment`. On
+    Windows there is no uid, so the default root is `pyai_harness_overflow` and the ownership
+    check is skipped.
 
     Files are kept after the run by default (a later `read_tool_result` may need them).
     Set `cleanup_after` to opt into age-based pruning; see that field.
@@ -252,7 +252,7 @@ class LocalFileOverflowStore:
 
     def _write(self, key: str, data: bytes) -> None:
         self._ensure_root()
-        target = self._resolve(key)
+        target = self._confined_path(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
 
@@ -261,9 +261,9 @@ class LocalFileOverflowStore:
 
     def _read(self, handle: str) -> bytes:
         self._check_root()
-        return self._resolve(handle).read_bytes()
+        return self._confined_path(handle).read_bytes()
 
-    def _resolve(self, handle: str) -> Path:
+    def _confined_path(self, handle: str) -> Path:
         """Return the file for `handle` with symlinks resolved, refusing one outside the root."""
         target = self._path(handle).resolve()
         if not target.is_relative_to(self._root.resolve()):
