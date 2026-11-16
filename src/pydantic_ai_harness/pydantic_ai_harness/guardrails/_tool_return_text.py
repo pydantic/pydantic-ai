@@ -182,6 +182,22 @@ def is_tool_return(value: object) -> TypeGuard[ToolReturn[object]]:
     return isinstance(value, ToolReturn)
 
 
+def _identifier_verdict(detector: TextDetector, value: list[UserContent]) -> GuardrailResult | None:
+    """A verdict on the first file identifier in `value` that `detector` does not allow.
+
+    Core shows the model each file's identifier (`See file <identifier>.`). An identifier
+    can't be rewritten in place, so one the detector would replace blocks the result.
+    """
+    for part in value:
+        if is_multi_modal_content(part):
+            verdict = detector(part.identifier)
+            if verdict.action == 'replace':
+                return GuardrailResult.block('A file identifier in the tool result was flagged by a detector.')
+            if verdict.action != 'allow':
+                return verdict
+    return None
+
+
 def detect_return_value(
     detector: TextDetector, value: str | list[UserContent]
 ) -> tuple[GuardrailResult | None, str | list[UserContent] | None]:
@@ -193,5 +209,7 @@ def detect_return_value(
     """
     if isinstance(value, str):
         return _detect_text(detector, value, 'a tool result')
+    if (verdict := _identifier_verdict(detector, value)) is not None:
+        return verdict, None
     verdict, rewritten = detect_tool_return_content(detector, value)
     return verdict, None if rewritten is None else list(rewritten)
