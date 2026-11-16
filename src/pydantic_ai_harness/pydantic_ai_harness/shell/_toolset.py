@@ -122,6 +122,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._secret_env = dict(secret_env) if secret_env is not None else None
         self._secrets = [(value, f'[REDACTED:{name}]') for name, value in (secret_env or {}).items() if value]
         self._secret_bytes = [value.encode() for value, _ in self._secrets]
+        self._longest_secret = max((len(value) for value, _ in self._secrets), default=0)
         self._tools = tuple(tools)
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
@@ -226,7 +227,11 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             raise type(exc)(masked) from None
         if not isinstance(result, str):
             return result
-        return truncate_tail(self._redact(result), self._max_output_chars)
+        if self._secrets:
+            # Enough of the end for the kept tail even if every character starts a secret, plus room for one the
+            # slice splits, so masking costs no more than the output it returns.
+            result = self._redact(result[-(self._max_output_chars + 2) * self._longest_secret :])
+        return truncate_tail(result, self._max_output_chars)
 
     def _redact(self, text: str) -> str:
         """`text` with every occurrence of a secret masked; overlapping occurrences form one masked span.

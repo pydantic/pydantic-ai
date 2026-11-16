@@ -2394,6 +2394,13 @@ class TestShellSecretEnv:
         assert output.endswith('y' * 20)
         assert '123abc' not in output
 
+    async def test_masking_reads_only_the_end_of_long_output(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'Q': 'q'}, max_output_chars=200)
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='printf "%10000s" | tr " " q')
+        assert output.startswith('[... output truncated, showing last ')
+        assert output.endswith('[REDACTED:Q]')
+        assert 'q' not in output
+
     async def test_persistent_tail_does_not_split_a_secret(self, tmp_path: Path) -> None:
         # One line, so the tail keeps the line it cuts: 16,003 bytes after the secret's first three.
         output = await call_tool(
