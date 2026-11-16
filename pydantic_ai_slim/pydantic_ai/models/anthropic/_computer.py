@@ -171,7 +171,7 @@ class ComputerBatch:
     between: list[str] = field(default_factory=list[str])
     """The other tools called since the batch's last call, which would run out of order if the batch ran as one."""
     actions: list[list[dict[str, Any]]] = field(default_factory=list[list[dict[str, Any]]])
-    """Each call's actions, mapped once as it's added, though a stream starts the batch's call again as it grows."""
+    """Each call's actions, mapped once as it's added."""
 
     def take(self, block: BetaToolUseBlock, parts: list[ModelResponsePart]) -> bool:
         """Collect `block` if it's a call of the computer use tool; otherwise note it as another tool's call."""
