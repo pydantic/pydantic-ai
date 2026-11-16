@@ -547,6 +547,19 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
     assert readme == docs
 
 
+def _version_policy(surface: str) -> str:
+    text = (_ROOT / surface).read_text(encoding='utf-8')
+    section = text.split('## Version policy\n', 1)[1].split('\n## ', 1)[0]
+    return re.sub(r'\]\([^)\s]+\)', ']', section)
+
+
+def test_version_policy_matches_across_surfaces() -> None:
+    """The README and the docs index state the same version policy, including what stays stable after 1.0."""
+    docs, readme = (_version_policy(surface) for surface in ('../../docs/harness/index.md', 'README.md'))
+    assert readme == docs
+    assert '### After 1.0' in docs
+
+
 def test_packaged_skill_routes_problem_index_needs() -> None:
     """Each curated problem in the docs index is routed by the packaged skill's Task Routing Table."""
     skill = (_PACKAGE / '.agents' / 'skills' / 'pydantic-ai-harness' / 'SKILL.md').read_text(encoding='utf-8')

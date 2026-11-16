@@ -396,6 +396,20 @@ make testcov   # pytest with 100% branch coverage
 
 Pydantic AI Harness uses **0.x versioning** to signal API stability, not maturity: the capabilities are tested end-to-end and meant for production use, but their APIs may change between minor releases (0.1 -> 0.2) through renamed parameters, changed defaults, or restructured APIs, with deprecation warnings where practical. Patch releases will not intentionally break existing behavior, and every breaking change is documented in release notes with migration guidance your agent can follow. Keeping the Harness a separate package from [Pydantic AI](https://github.com/pydantic/pydantic-ai), which has a [stricter version policy](https://ai.pydantic.dev/version-policy/), lets capabilities change faster than core.
 
+On 0.x, each Harness release ships alongside the Pydantic AI release with the same minor and patch number (Harness 0.51.0 ships with Pydantic AI 2.51.0) and pins that exact `pydantic-ai-slim` version, so upgrading the Harness upgrades Pydantic AI with it and every installable pair has been tested together.
+
+### After 1.0
+
+From 1.0, the Harness follows the rules of Pydantic AI's [version policy](https://ai.pydantic.dev/version-policy/): no intentional breaking changes in minor releases, and deprecated functionality is not removed until the next major version. The changes that policy does not consider breaking, such as bug fixes for code that relied on undocumented behavior, OpenTelemetry span attributes, and `__repr__` output, are not breaking for the Harness either. Neither is a change that follows a third-party service or SDK a capability integrates with, when that service removes or changes what the capability relied on. ACP, the one experimental capability, is excluded until it graduates.
+
+A capability's behavior includes what it sends to the model, so stability covers more than signatures:
+
+- **Defaults**: a minor release does not change a default in a way that changes what an existing agent does, such as enabling a tool, lowering a limit, or switching a fallback. New behavior arrives behind a new parameter, and a default changes only in a major release.
+- **Tools**: tool names and argument schemas end up in message history that you may store and replay, so a minor release can add optional arguments but does not rename or remove a tool or an argument.
+- **Prompt text**: the wording of instructions, tool descriptions, and other text a capability sends to the model can change in a minor release, since improving how models use a capability is part of maintaining it. Release notes list these changes. Where a capability accepts its own instructions or descriptions as parameters, passing them keeps your wording fixed.
+
+From 1.0, Harness version numbers no longer mirror Pydantic AI's: a Harness major release does not require a Pydantic AI major release or the reverse. Every Harness release still pins the exact `pydantic-ai-slim` release it was tested with.
+
 ## Part of the Pydantic Stack
 
 Related Pydantic projects:
