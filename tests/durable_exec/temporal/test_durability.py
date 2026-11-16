@@ -8418,6 +8418,7 @@ async def _keep_in_workflow(ctx: RunContext[None], tool_defs: list[ToolDefinitio
 placement_agent = Agent(
     FunctionModel(_placement_model_fn),
     name='durability_prepared_placement',
+    deps_type=type(None),
     toolsets=[
         FunctionToolset(
             tools=[Tool(_where_it_ran, name='in_workflow'), Tool(_where_it_ran, name='in_activity')], id='placement'
