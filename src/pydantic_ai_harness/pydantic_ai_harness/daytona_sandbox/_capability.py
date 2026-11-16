@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
@@ -16,7 +17,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
-from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox
+from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox, secrets_error
 
 if TYPE_CHECKING:
     from daytona import AsyncDaytona
@@ -81,12 +82,19 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
     for 1280x800, or its `(width, height)`, at least 1024x768. The size applies to a new sandbox; an attached one keeps
     its own."""
+    secrets: Mapping[str, str] | None = None
+    """Daytona's `secrets` for a new sandbox, passed to `AsyncDaytona.create` unchanged: environment
+    variable name to Secret name. The variable holds a placeholder, and Daytona swaps in the real value
+    in HTTPS request headers as requests leave for the Secret's `hosts` (any host if it has none). An
+    attached sandbox keeps the ones it was created with."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('DaytonaSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
+        if (error := secrets_error(self.secrets, self.env)) is not None:
+            raise UserError(f'{error}.')
 
     @classmethod
     def from_spec(
@@ -100,6 +108,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         allow_internet_access: bool = True,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> DaytonaSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -116,6 +125,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             allow_internet_access=allow_internet_access,
             working_dir=working_dir,
             env=env,
+            secrets=secrets,
         )
 
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:
@@ -146,6 +156,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             desktop=self.desktop,
+            secrets=self.secrets,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

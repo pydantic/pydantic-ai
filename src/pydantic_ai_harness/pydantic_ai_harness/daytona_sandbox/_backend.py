@@ -34,6 +34,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -136,6 +137,20 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
     finally:
         if owned is not None:
             await _close_quietly(owned)
+
+
+def secrets_error(secrets: Mapping[str, str] | None, env: Mapping[str, str] | None) -> TypeError | ValueError | None:
+    """What is wrong with `secrets` on its own (`TypeError`, as for `env`) or beside `env` (`ValueError`), if anything."""
+    if secrets is None:
+        return None
+    if not is_mapping(secrets) or any(type(key) is not str or type(value) is not str for key, value in secrets.items()):
+        return TypeError(
+            "`secrets` maps environment variable names to Secret names, such as {'GH_TOKEN': 'github-token'}"
+        )
+    if shadowed := sorted(name for name in env or {} if name in secrets):
+        # `env` is set on every command, so it would hide the placeholder the proxy replaces.
+        return ValueError(f'{", ".join(shadowed)} cannot be in both `env` and `secrets`')
+    return None
 
 
 def _in_deleted_state(sandbox: AsyncSandbox) -> bool:
@@ -453,6 +468,10 @@ class DaytonaSandboxBackend(
             started on first use: `True` for 1280x800, or its `(width, height)`, at least 1024x768. The size applies
             to a new sandbox, since Daytona can't resize a running one. The snapshot needs Daytona's desktop
             packages, which the default snapshot has.
+        secrets: Daytona's `secrets` for a newly created sandbox, passed to `AsyncDaytona.create`
+            unchanged: environment variable name to Secret name. The variable holds a placeholder, and
+            Daytona swaps in the real value in HTTPS request headers as requests leave for the Secret's
+            `hosts` (any host if it has none). An attached sandbox keeps the ones it was created with.
     """
 
     def __init__(
@@ -467,6 +486,7 @@ class DaytonaSandboxBackend(
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
         desktop: bool | tuple[int, int] = False,
+        secrets: Mapping[str, str] | None = None,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'daytona')
@@ -475,6 +495,8 @@ class DaytonaSandboxBackend(
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env_types(env)
+        if (error := secrets_error(secrets, env)) is not None:
+            raise error
         self._ref = ref if sandbox is None else WorkspaceRef(provider='daytona', id=sandbox.id)
         self._sandbox = sandbox
         self._client = client
@@ -500,6 +522,8 @@ class DaytonaSandboxBackend(
                 DaytonaDesktop(self._attached_computer_use), self._start_display, scope=self._display_scope
             )
         )
+        self._env = dict(env or {})
+        self._secrets = dict(secrets) if secrets is not None else None
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
         self._resolved_working_dir: str | None = None
@@ -576,6 +600,8 @@ class DaytonaSandboxBackend(
             name=name,
             snapshot=self._snapshot,
             env_vars=env_vars or None,
+            env_vars=self._env or None,
+            secrets=self._secrets,
             auto_stop_interval=self._auto_stop_interval,
             network_block_all=not self._allow_internet_access,
             labels={'created-by': 'pydantic-ai'},
