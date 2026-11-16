@@ -1366,13 +1366,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if limit == 'max_duration_secs':
             advice = _TIME_LIMIT_MESSAGE
         else:
-            advice = {
-                'max_memory': (
-                    'The sandbox ran out of memory and the session was reset. '
-                    'Re-run any imports, recreate any state you need, and use less memory: '
-                    'process smaller batches, avoid large intermediate values, and print less output.'
-                )
-            }[limit]
+            advice = (
+                'The sandbox ran out of memory and the session was reset. '
+                'Re-run any imports, recreate any state you need, and use less memory: '
+                'process smaller batches, avoid large intermediate values, and print less output.'
+            )
         return f'\n\n{advice}'
 
     @staticmethod
@@ -1380,9 +1378,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         error_kind, _ = worker_error_kind(error)
         if error_kind == 'resource_limit':
             return _TIME_LIMIT_MESSAGE
-        if error_kind == 'crashed':
+        if isinstance(error, MontyCrashedError):
             return 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
-        assert isinstance(error, MontyDisconnectError)
         if error.cause in ('session_timeout', 'idle_timeout'):
             return (
                 'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
