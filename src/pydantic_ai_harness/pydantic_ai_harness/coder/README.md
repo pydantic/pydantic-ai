@@ -200,10 +200,13 @@ everything the agent has -- the same model, workspace, instructions, and capabil
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
 
-On models that delegate unprompted (OpenAI's own models, per the `delegates_unprompted` trait in their
-model profile), `Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task`
-unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_agent`. The rule follows the model
-handling each request: after a fallback to a model without the trait, it's withdrawn. A delegate explores the project again from a fresh context, so
+On OpenAI's GPT models, `Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task`
+unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_agent`. Without it, GPT models delegate
+work nobody asked for, and the other models measured don't. The rule goes to models whose profile sets
+`delegates_unprompted`, and follows the model handling each request: after a fallback with the
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without it, the
+model is told the rule was withdrawn. A `FallbackModel` gets no rule. See
+[Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions). A delegate explores the project again from a fresh context, so
 delegation the user did not ask for multiplies tool calls and cost. To have the agent delegate, ask for it in the
 prompt, in `AGENTS.md`, or in `instructions=`.
 

@@ -136,14 +136,14 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     default, so two copies are rejected rather than merged. A delegate's text comes from
     `delegation_depth()`, which the delegating run sets before the child run is awaited, and which
     a recorded delegation sets again on the worker. The rule against unrequested delegation is a block of its own,
-    `delegation`, sent only to models with the `delegates_unprompted` trait.
+    `delegation`, sent only to models whose profile sets `delegates_unprompted`.
     """
 
     guidance: str
     delegated_guidance: str
     project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
     delegation: SubAgents[AgentDepsT] | None = None
-    """The `SubAgents` capability `Coder` adds, if any."""
+    """The `SubAgents` capability `Coder` adds, if any, whose tool the rule against unrequested delegation names."""
     delegate: bool = False
 
     def __post_init__(self) -> None:
@@ -296,12 +296,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            _CoderGuidance[AgentDepsT](
-                guidance,
-                delegated_guidance,
-                tuple(project),
-                delegation,
-            ),
+            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project), delegation),
             _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
                 denied_commands=[],

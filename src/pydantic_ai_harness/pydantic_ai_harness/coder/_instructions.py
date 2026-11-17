@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
-from pydantic_ai import TraitInstruction
+from pydantic_ai.messages import InstructionPart
+from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 Autonomy = Literal['low', 'medium', 'high', 'max']
@@ -44,7 +45,7 @@ _DELEGATION = (
 )
 """Overrides the instruction a `DelegationTasks` owner adds, which tells the model to delegate when it
 saves context. A delegate starts from a fresh context and re-explores the project, so unrequested
-delegation multiplies tool calls and cost. Only for models with the `delegates_unprompted` trait: other
+delegation multiplies tool calls and cost. Sent only to models whose profile sets `delegates_unprompted`: other
 models don't delegate unasked, and keep the `DelegationTasks` guidance as it is."""
 
 _TARGETS = 'Measure results against any numeric target the task states.'
@@ -103,13 +104,28 @@ def _compose(lead: str, *, context: Sequence[str], checks: str, suffix: str) -> 
     return '\n\n'.join([_INTRO, lead, *context, _READING, checks, _FINISHING]) + '\n' + suffix
 
 
-def delegation_instruction(delegate_tool: str) -> TraitInstruction:
-    """The rule against unrequested delegation, for the models that delegate unprompted.
+def delegation_instruction(delegate_tool: str) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
+    """The rule against unrequested delegation, as a block for the models that delegate unprompted.
 
-    Its own append-mode block, `capability:coder_instructions:delegation`, resolved against the model handling each
-    request: after a fallback to a model without the trait, the model is told the block was withdrawn.
+    The block, `capability:coder_instructions:delegation`, is contributed from the first request, empty for a model
+    without `delegates_unprompted`, and appends its changes. It's resolved against the model handling each request, so
+    a conversation that moves to a model without the key keeps the instructions it started with and is told the rule
+    was withdrawn, and one that moves to a model with it is sent the rule as a change.
     """
-    return TraitInstruction('delegates_unprompted', _DELEGATION.format(tool_name=delegate_tool), name='delegation')
+    text = _DELEGATION.format(tool_name=delegate_tool)
+
+    def delegation(ctx: RunContext[AgentDepsT]) -> InstructionPart:
+        return InstructionPart(text if _delegates_unprompted(ctx.model) else '', name='delegation', on_change='append')
+
+    return delegation
+
+
+def _delegates_unprompted(model: AbstractModel) -> bool:
+    try:
+        return isinstance(model, Model) and model.profile.get('delegates_unprompted', False)
+    except NotImplementedError:
+        # `FallbackModel` picks its model per request, so no one profile speaks for it.
+        return False
 
 
 def coder_instructions(

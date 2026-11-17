@@ -262,7 +262,6 @@ from .toolsets import (
     ToolsetTool,
     WrapperToolset,
 )
-from .trait_instructions import TraitInstruction
 from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
@@ -518,7 +517,6 @@ __all__ = (
     'BoolCriteria',
     # template
     'TemplateStr',
-    'TraitInstruction',
     # format_prompt
     'format_as_xml',
     # models
