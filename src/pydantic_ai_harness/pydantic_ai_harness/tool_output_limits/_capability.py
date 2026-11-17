@@ -6,7 +6,7 @@ import base64
 import logging
 import posixpath
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal
 
@@ -82,6 +82,9 @@ Besides the spill query tools, these are core's `load_capability` and `search_to
 structured content from history to decide which capabilities are loaded and which tools are revealed,
 so a reduced return would leave those locked.
 """
+
+_ReadUnit = Literal['lines', 'bytes']
+"""What `read_tool_result`'s `offset` and `limit` count."""
 
 _DEFAULT_THRESHOLD = 10_000
 """Default band threshold (characters) -- below this, returns pass through untouched."""
@@ -307,7 +310,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             limit: int = 200,
             from_end: bool = False,
             pattern: str | None = None,
-            unit: Literal['lines', 'bytes'] = 'lines',
+            unit: _ReadUnit = 'lines',
         ) -> str:
             """Read a slice of a spilled tool result.
 
@@ -911,7 +914,7 @@ async def _read_slice(
     limit: int,
     from_end: bool,
     pattern: str | None,
-    unit: Literal['lines', 'bytes'] = 'lines',
+    unit: _ReadUnit,
 ) -> str:
     """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
 
@@ -963,18 +966,40 @@ def _byte_slice(handle: str, data: bytes, offset: int, limit: int, from_end: boo
     return f'{header}\n{body}' if body else header
 
 
-def _grep_groups(lines: list[str], pattern: str, shown: list[int], context: int) -> str:
-    """Render the matches at `shown` with `context` lines around each, merging windows that overlap or touch."""
-    groups: list[tuple[int, int]] = []
-    for index in shown:
-        start, end = max(0, index - context), min(len(lines), index + context + 1)
-        if groups and start <= groups[-1][1]:
-            start = groups.pop()[0]
-        groups.append((start, end))
-    return '\n--\n'.join(
-        '\n'.join(f'{n + 1}{":" if pattern in lines[n] else "-"}{lines[n]}' for n in range(start, end))
-        for start, end in groups
-    )
+def _grep_lines(lines: list[str], page: list[int], context: int) -> Iterator[tuple[int | None, str]]:
+    """Yield `(line index, rendered line)` for the matches in `page` and their context, `None` for a separator.
+
+    Windows that overlap or touch merge into one group. Only lines in `page` are marked as matches.
+    """
+    hits = set(page)
+    end = 0
+    for index in page:
+        start = max(end, index - context)
+        if end and start > end:
+            yield None, '--'
+        end = min(len(lines), index + context + 1)
+        for n in range(start, end):
+            yield n, f'{n + 1}{":" if n in hits else "-"}{lines[n]}'
+
+
+def _grep_page(lines: list[str], page: list[int], context: int) -> tuple[str, int]:
+    """Render `page` until the output cap is reached, returning the body and how many matches it shows.
+
+    Stopping before the line that would cross the cap keeps the shown count, and so the continuation
+    offset, true to the body. Only a first line longer than the cap is left for `_cap` to cut.
+    """
+    hits = set(page)
+    rendered: list[str] = []
+    size = shown = 0
+    for n, text in _grep_lines(lines, page, context):
+        if rendered and size + len(text) > _MAX_READ_CHARS:
+            break
+        rendered.append(text)
+        size += len(text) + 1
+        shown += n in hits
+    if rendered[-1] == '--':
+        rendered.pop()
+    return '\n'.join(rendered), shown
 
 
 async def _grep(
@@ -1007,9 +1032,10 @@ async def _grep(
 
     lines = data.decode('utf-8', errors='replace').splitlines()
     matches = [index for index, line in enumerate(lines) if pattern in line]
-    shown = matches[offset : offset + max_matches]
-    body, capped = _cap(_grep_groups(lines, pattern, shown, context), 'lower context or max_matches')
-    more = len(matches) - offset - len(shown)
-    remaining = f', {more:,} more; continue with offset={offset + len(shown)}' if more > 0 else ''
-    header = f'[handle {handle!r}: {len(matches):,} matching line(s); showing {len(shown)}{remaining}{capped}]'
+    page = matches[offset : offset + max_matches]
+    body, shown = _grep_page(lines, page, context) if page else ('', 0)
+    body, capped = _cap(body, "read the rest of a long line with read_tool_result's unit='bytes'")
+    more = len(matches) - offset - shown
+    remaining = f', {more:,} more; continue with offset={offset + shown}' if more > 0 else ''
+    header = f'[handle {handle!r}: {len(matches):,} matching line(s); showing {shown}{remaining}{capped}]'
     return f'{header}\n{body}' if body else header

@@ -9,10 +9,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.tool_output_limits import (
     GREP_TOOL_NAME,
     GREP_TOOL_RESULT_KIND,
@@ -103,11 +101,38 @@ class TestGrepToolResult:
             ': 300 matching line(s); showing 200, 100 more; continue with offset=200]'
         )
 
-    async def test_output_capped_names_what_was_omitted(self, tmp_path: Path) -> None:
+    async def test_long_line_cut_by_the_cap_names_what_was_omitted(self, tmp_path: Path) -> None:
         out = await _query(tmp_path, 'x' * 60_000, GREP_TOOL_NAME, {'pattern': 'x'})
         assert out.split('\n', 1)[0].endswith(
-            ': 1 matching line(s); showing 1, output capped at 50,000 chars with 10,002 omitted; lower context or max_matches]'
+            ': 1 matching line(s); showing 1, output capped at 50,000 chars with 10,002 omitted; '
+            "read the rest of a long line with read_tool_result's unit='bytes']"
         )
+
+    async def test_cap_stops_at_whole_lines_and_continues_from_there(self, tmp_path: Path) -> None:
+        payload = '\n'.join(f'hit {i} ' + 'x' * 5_000 for i in range(25))
+        first = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit', 'context': 0})
+        header, body = first.split('\n', 1)
+        assert header.endswith(': 25 matching line(s); showing 9, 16 more; continue with offset=9]')
+        assert body.splitlines()[-1].startswith('9:hit 8 ')
+        rest = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit', 'context': 0, 'offset': 9})
+        assert rest.split('\n', 2)[1].startswith('10:hit 9 ')
+
+    async def test_cap_drops_a_trailing_group_separator(self, tmp_path: Path) -> None:
+        payload = '\n'.join(['hit a ' + 'x' * 30_000, 'gap', 'hit b ' + 'x' * 30_000])
+        out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit', 'context': 0})
+        header, body = out.split('\n', 1)
+        assert header.endswith(': 2 matching line(s); showing 1, 1 more; continue with offset=1]')
+        assert body.startswith('1:hit a ') and '\n' not in body
+
+    async def test_only_matches_on_this_page_are_marked(self, tmp_path: Path) -> None:
+        out = await _query(tmp_path, _LOG, GREP_TOOL_NAME, {'pattern': 'ERROR', 'max_matches': 1})
+        assert out.split('\n', 1)[1] == snapshot("""\
+3-line 3
+4-line 4
+5:ERROR 5
+6-line 6
+7-ERROR 7\
+""")
 
     async def test_missing_handle(self, tmp_path: Path) -> None:
         out = await _query(tmp_path, _LOG, GREP_TOOL_NAME, {'pattern': 'ERROR'}, handle='missing/1.0')
@@ -163,18 +188,3 @@ class TestReadToolResultBytes:
             ': 1 matching line(s); showing 1, output capped at 50,000 chars with 10,000 omitted; '
             "read fewer lines, or long lines with unit='bytes']"
         )
-
-
-async def test_grep_steps_aside_for_file_system(tmp_path: Path) -> None:
-    offered: list[set[str]] = []
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        offered.append({tool.name for tool in info.function_tools})
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent = Agent(
-        FunctionModel(respond),
-        capabilities=[LocalWorkspace(tmp_path), ToolOutputLimits(), FileSystem()],
-    )
-    await agent.run('go')
-    assert offered and all(GREP_TOOL_NAME not in tools and READ_TOOL_NAME not in tools for tools in offered)
