@@ -2,12 +2,12 @@
 
 Capabilities that keep a long run inside the model's context window and its prompt cache healthy:
 the compaction family (edit history before each request), `ToolOutputLimits` (shrink or spill big
-tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses), `LabelCrossModelHistory` (label turns
-another model wrote), and the media
-stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`, which needs
-`pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and needs no
-harness extra). All compaction strategies keep tool-call /
-tool-return pairs intact, and their edits persist into the run's message history.
+tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses),
+`LabelCrossModelHistory` (label turns another model wrote), and the media stores `StepPersistence`
+uses. None needs an extra, except `MongoMediaStore`, which needs `pydantic-ai-harness[mongodb]`
+(`PostgresMediaStore` takes your own `asyncpg` pool and needs no harness extra). All compaction
+strategies keep tool-call / tool-return pairs intact, and their edits persist into the run's message
+history.
 
 ## Pick a capability
 
