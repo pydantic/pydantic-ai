@@ -101,7 +101,15 @@ from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part, no_leaked_tasks
+from .conftest import (
+    IsDatetime,
+    IsInt,
+    IsNow,
+    IsStr,
+    assert_cancellation_leaks_no_tasks,
+    legacy_retry_prompt_part,
+    message_part,
+)
 from .realtime.simulation._loop import SimulatedLoop
 
 READINESS_WAIT_TIMEOUT = 5
@@ -7835,24 +7843,7 @@ async def test_stream_cancelled_at_any_point_leaves_no_task_behind(entry: Litera
                 async for _ in stream:
                     pass
 
-    for ticks in range(500):  # pragma: no branch
-        with no_leaked_tasks():
-            task = asyncio.create_task(consume())
-            for _ in range(ticks):
-                await asyncio.sleep(0)
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                completed = False
-            else:
-                completed = True
-            await asyncio.sleep(0)
-        if completed:
-            # The run finished before the cancellation arrived, so every point of it has been covered.
-            break
-    else:  # pragma: no cover
-        pytest.fail('run never completed before being cancelled')
+    await assert_cancellation_leaks_no_tasks(consume)
 
 
 # endregion

@@ -199,6 +199,7 @@ from .conftest import (
     IsNow,
     IsStr,
     TestEnv,
+    assert_cancellation_leaks_no_tasks,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -11078,24 +11079,7 @@ async def test_run_cancelled_at_any_point_leaves_no_task_behind():
     """
     agent = Agent(TestModel())
 
-    for ticks in range(500):  # pragma: no branch
-        with no_leaked_tasks():
-            run = asyncio.create_task(agent.run('test'))
-            for _ in range(ticks):
-                await asyncio.sleep(0)
-            run.cancel()
-            try:
-                await run
-            except asyncio.CancelledError:
-                completed = False
-            else:
-                completed = True
-            await asyncio.sleep(0)
-        if completed:
-            # The run finished before the cancellation arrived, so every point of it has been covered.
-            break
-    else:  # pragma: no cover
-        pytest.fail('run never completed before being cancelled')
+    await assert_cancellation_leaks_no_tasks(lambda: agent.run('test'))
 
 
 async def test_streaming_handoff_survives_absorbed_cancellation():
