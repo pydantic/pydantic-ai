@@ -592,10 +592,10 @@ async def test_plugin_key_prompts_record_the_kind_of_answer_not_the_key(exporter
     for script in answers:
         await choose_key(name='DEMO_TOKEN', label='Demo token', dialogs=ScriptedDialogs(script))
     assert [entry for entry in recorded(exporter) if entry[0] == 'key prompt'] == [
-        ('key prompt', {'label': 'Demo token', 'answer': 'saved key'}),
-        ('key prompt', {'label': 'Demo token', 'answer': 'typed'}),
-        ('key prompt', {'label': 'Demo token', 'answer': 'cancelled'}),
-        ('key prompt', {'label': 'Demo token', 'answer': 'no key'}),
+        ('key prompt', {'key_name': 'DEMO_TOKEN', 'answer': 'saved key'}),
+        ('key prompt', {'key_name': 'DEMO_TOKEN', 'answer': 'typed'}),
+        ('key prompt', {'key_name': 'DEMO_TOKEN', 'answer': 'cancelled'}),
+        ('key prompt', {'key_name': 'DEMO_TOKEN', 'answer': 'no key'}),
     ]
     assert 'secret' not in json.dumps([own for _, own in recorded(exporter)])
 

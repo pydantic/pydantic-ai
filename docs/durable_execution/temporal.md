@@ -152,7 +152,7 @@ async def main():
 1. The agent's `name` is used to uniquely identify its activities.
 2. Attach durability via `capabilities=[...]`. The capability discovers the agent's name, model, and toolsets when bound to the agent, and registers an activity for each. Outside a workflow, the capability is transparent — the agent behaves as a normal `Agent`.
 3. The workflow represents a deterministic piece of code that can use non-deterministic activities for operations that require I/O. Subclassing [`PydanticAIWorkflow`][pydantic_ai.durable_exec.temporal.PydanticAIWorkflow] is optional but provides proper typing for the `__pydantic_ai_agents__` class variable.
-4. List the agents used by this workflow. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] automatically registers the activities and child workflows contributed by each agent's [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. Alternatively, if modifying the worker initialization is easier than the workflow class, you can use [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register an agent's activities and child workflows directly on the worker. Use one of these plugin paths when any tool is configured with `child_workflow`; registering only `TemporalDurability.temporal_activities` is rejected because it would omit the required workflow definitions.
+4. List the agents used by this workflow. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] automatically registers the activities and child workflows contributed by each agent's [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. Alternatively, if modifying the worker initialization is easier than the workflow class, you can use [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register an agent's activities and child workflows directly on the worker. Use one of these plugin paths when any tool is configured with `child_workflow`; registering only `TemporalDurability.temporal_activities` is rejected because it would omit the required workflow definitions. A worker that only runs activities uses `AgentPlugin(agent, register_workflows=False)`, as [Child workflows](#child-workflows) describes.
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
@@ -273,7 +273,8 @@ listeners as they happen. Other tools run in activities and their events are not
 `CommandOutputEvent` and `CommandFinishedEvent` from `shell`
 ([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)). The tools still work and return their
 results. When Temporal replays a workflow, approval listeners run again, so make their external effects
-idempotent.
+idempotent. Keep the write tools in the workflow: one moved into an activity, for example with
+`SetToolMetadata(temporal=...)`, raises `UserError` rather than writing without asking listeners.
 
 **Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
 become activities of the same agent. A `SubAgents` whose only delegate is `self` does the same, also with a
@@ -1031,9 +1032,16 @@ without such tools register only their activities, as before. Metadata that firs
 for example from a capability that rewrites tool definitions during a run, fails the tool call
 with a `UserError`.
 
+[`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] registers an agent's child
+workflows on every worker it's passed to, including a worker that only runs activities, created
+without `workflows`, which then also polls the task queue for workflow tasks. For such a worker,
+use `AgentPlugin(agent, register_workflows=False)` to register only the agent's activities, and
+register the child workflows on the worker that runs your workflows, through
+[`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] or `AgentPlugin(agent)`.
+
 ## Activity Retries
 
-On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
+On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, and a retry inside the activity waits out the provider's `Retry-After` there, holding the worker, rather than as Temporal's retry delay described below.
 
 When using Temporal, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so the engine is the [one retry owner](../retries.md#choosing-one-retry-owner).
 
