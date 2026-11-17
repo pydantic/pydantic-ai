@@ -42,6 +42,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     AbstractToolset,
     Agent,
+    ExternalToolset,
     RunContext,
     Tool,
     ToolDefinition,
@@ -2245,6 +2246,38 @@ class TestCodeMode:
         tool_return = resumed.all_messages()[-2].parts[0]
         assert isinstance(tool_return, ToolReturnPart)
         assert tool_return.content == 'deleted a.txt'
+
+    async def test_external_tool_follows_deferred_flow_under_default_selector(self) -> None:
+        """A bare `CodeMode()` leaves an external tool native, so the run pauses for its result and resumes."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                assert sorted(tool.name for tool in info.function_tools) == ['run_code', 'upload']
+                return ModelResponse(parts=[ToolCallPart('upload', {'path': 'a.txt'}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        upload = ToolDefinition(
+            name='upload',
+            parameters_json_schema={'type': 'object', 'properties': {'path': {'type': 'string'}}, 'required': ['path']},
+        )
+        agent = Agent(
+            FunctionModel(model_fn),
+            toolsets=[ExternalToolset([upload])],
+            capabilities=[CodeMode[object]()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('upload a.txt')
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert [call.tool_name for call in paused.output.calls] == ['upload']
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(calls={'c1': 'uploaded'}),
+        )
+        assert resumed.output == 'done'
+        tool_return = resumed.all_messages()[-2].parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.content == 'uploaded'
 
     @pytest.mark.parametrize(
         ('tools', 'sandboxed'),
