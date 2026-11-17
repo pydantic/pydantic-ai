@@ -1574,52 +1574,31 @@ def cohere_over_transport(replies: Sequence[dict[str, object]], sent: list[httpx
     return CohereModel('command-a-03-2025', provider=CohereProvider(api_key='test', http_client=http_client))
 
 
-async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests: None):
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests: None, co_api_key: str):
     """A non-streamed `tool_plan` lands in history and goes back as `tool_plan` beside its tool call.
 
-    Not a VCR test: recording one needs a Cohere API key, so a mock transport answers and reads the outgoing JSON.
+    The follow-up body is read off the wire with a request hook, which fires on replay too. `CohereProvider` takes a
+    legacy `httpx.AsyncClient`, so the shared `request_capture` fixture, an `httpx2` client, can't be injected.
     """
-    plan = 'I will use the get_temperature tool to find the temperature in Paris.'
     sent: list[httpx.Request] = []
-    tool_call: dict[str, object] = {
-        'id': 'get_temperature_1',
-        'type': 'function',
-        'function': {'name': 'get_temperature', 'arguments': '{"city": "Paris"}'},
-    }
-    model = cohere_over_transport(
-        [
-            {'tool_plan': plan, 'tool_calls': [tool_call]},
-            {'content': [{'type': 'text', 'text': 'The temperature in Paris is 20 degrees.'}]},
-        ],
-        sent,
-    )
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key, http_client=http_client))
     agent = Agent(model)
 
     @agent.tool_plain
     def get_temperature(city: str) -> str:
-        return '20'
+        """Get the current temperature in a city."""
+        return '24 degrees Celsius'
 
-    result = await agent.run('What is the temperature in Paris?')
+    result = await agent.run('Use get_temperature to find the temperature in Paris, then report the result.')
 
-    assert result.all_messages()[1].parts == snapshot(
-        [
-            ThinkingPart(content=plan, provider_name='cohere', provider_details={'tool_plan': True}),
-            ToolCallPart(tool_name='get_temperature', args='{"city": "Paris"}', tool_call_id='get_temperature_1'),
-        ]
-    )
-    assert json.loads(sent[1].content)['messages'][1] == snapshot(
-        {
-            'role': 'assistant',
-            'tool_calls': [
-                {
-                    'id': 'get_temperature_1',
-                    'type': 'function',
-                    'function': {'name': 'get_temperature', 'arguments': '{"city":"Paris"}'},
-                }
-            ],
-            'tool_plan': plan,
-        }
-    )
+    assert result.all_messages()[1].parts == snapshot()
+    assert json.loads(sent[1].content)['messages'][1] == snapshot()
 
 
 ROLL_DIE_CALL = ToolCallPart(tool_name='roll_die', args='{}', tool_call_id='roll_die_1')
