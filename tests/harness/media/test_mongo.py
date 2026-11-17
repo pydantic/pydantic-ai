@@ -24,6 +24,7 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
+from tests.harness._mongo_handshake import HARNESS_DRIVER, handshake_server
 
 _MISSING_URI = 'media+sha256://' + ('0' * 64)
 
@@ -100,6 +101,18 @@ class TestMongoMediaStoreConstruction:
 
         monkeypatch.undo()
         await client.close()
+
+    async def test_db_url_client_names_harness_in_handshake(self) -> None:
+        """The handshake is MongoDB wire protocol, which cassettes cannot record, so a local server captures it."""
+        async with handshake_server() as (url, drivers):
+            store = await anyio.to_thread.run_sync(lambda: MongoMediaStore(db_url=url, database='t'))
+            try:
+                assert not await store.exists(_MISSING_URI)
+            finally:
+                await store.aclose()
+
+        assert drivers
+        assert all(driver == HARNESS_DRIVER for driver in drivers)
 
 
 class TestMongoMediaStoreRoundTrip:

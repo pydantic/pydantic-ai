@@ -70,7 +70,31 @@ def test_unknown_memory_attribute_raises() -> None:
         memory.MissingStore
 
 
-_PIXELTABLE = pytest.param(3, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra'))
+@pytest.fixture(scope='module')
+def pixeltable_catalog() -> None:
+    """Start Pixeltable's catalog, an embedded Postgres server, once per process before the tests that use it.
+
+    The first Pixeltable call in a process starts it, which takes seconds and more on a loaded runner. Started here, it
+    isn't charged to whichever test happens to run first against the per-test time budget.
+    """
+    import pixeltable as pxt
+
+    pxt.list_tables()  # Its first call in a process starts the catalog.
+
+
+_PIXELTABLE_INDEX = 3  # `_local_store` gives this index the Pixeltable store.
+
+
+@pytest.fixture(autouse=True)
+def _start_pixeltable_before_its_store(request: pytest.FixtureRequest) -> None:
+    """Have `pixeltable_catalog` start Pixeltable before a test that `_local_store` gives the Pixeltable store."""
+    if 'index' in request.fixturenames and request.getfixturevalue('index') == _PIXELTABLE_INDEX:
+        request.getfixturevalue('pixeltable_catalog')
+
+
+_PIXELTABLE = pytest.param(
+    _PIXELTABLE_INDEX, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra')
+)
 _STORE_INDEXES = (0, 1, 2, _PIXELTABLE)
 _VERSION_INDEXES = (0, 2, _PIXELTABLE)
 
@@ -84,7 +108,7 @@ def _local_stores(tmp_path: Path) -> list[Store]:
 
 
 def _local_store(tmp_path: Path, index: int) -> Store:
-    if index < 3:
+    if index != _PIXELTABLE_INDEX:
         return _local_stores(tmp_path)[index]
     from pydantic_ai_harness.memory import PixeltableMemoryStore
 
@@ -1017,6 +1041,7 @@ class FakePostgresDatabase:
     transactions: int = 0
     generation: int = 0
     versions_initialized: bool = False
+    schema_current: bool = False
 
 
 class FakeTransaction:
@@ -1072,6 +1097,8 @@ class FakePostgresConnection:
             for path, file in self._database.files.items():
                 self._database.generation += 1
                 self._database.files[path] = replace(file, version=self._database.generation)
+        elif query.startswith('CREATE TABLE IF NOT EXISTS agent_memory_metadata'):
+            self._database.schema_current = True
         return 'OK'
 
     async def fetchval(self, query: str, *args: object) -> object:
@@ -1081,6 +1108,8 @@ class FakePostgresConnection:
             return self._database.generation
         if query.startswith('SELECT pg_advisory_xact_lock'):
             return None
+        if query.startswith('SELECT to_regclass'):
+            return self._database.schema_current
         if query.startswith('INSERT INTO agent_memory_metadata'):
             if self._database.versions_initialized:
                 return None
@@ -1256,6 +1285,20 @@ async def test_postgres_store_concurrent_schema_initialization() -> None:
     assert len([query for query in pool.database.statements if query.startswith('CREATE TABLE')]) == 3
 
 
+async def test_postgres_store_on_a_current_schema_issues_no_ddl() -> None:
+    """A role without `CREATE` on the schema or ownership of the tables can use tables that exist."""
+    pool = FakePostgresPool()
+    await PostgresMemoryStore(pool).read('missing.md', max_chars=1_000)
+    pool.database.statements.clear()
+
+    await PostgresMemoryStore(pool).write('main.md', 'content', expected_version=None)
+
+    assert not any(
+        query.startswith(('CREATE', 'ALTER', 'SELECT pg_advisory', 'INSERT INTO agent_memory_metadata'))
+        for query in pool.database.statements
+    )
+
+
 async def test_postgres_store_missing_receipt_and_delete_contract() -> None:
     store = PostgresMemoryStore(FakePostgresPool())
     operation = MemoryOperation(id='delete-missing', fingerprint='delete:missing.md')
@@ -1318,7 +1361,8 @@ async def test_postgres_concurrent_store_initialization_cannot_regress_versions(
 
     assert len(set(versions)) == 2
     assert not any('setval' in statement for statement in pool.database.statements)
-    assert pool.database.statements[0].startswith('SELECT pg_advisory_xact_lock')
+    ddl = [statement for statement in pool.database.statements if not statement.startswith('SELECT to_regclass')]
+    assert ddl[0].startswith('SELECT pg_advisory_xact_lock')
 
 
 @pytest.mark.parametrize(

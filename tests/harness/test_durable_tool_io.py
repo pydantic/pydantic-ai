@@ -57,7 +57,6 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smart_search import SmartSearch
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from tests.conftest import detach_dbos_logging, without_admin_server
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -92,13 +91,12 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         'name': 'durable_tool_io',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
@@ -342,7 +340,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
     'advisor': _agent(
         'advisor_agent',
         Advisor[None](
-            _counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), mode='local'
+            _counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), native=False
         ),
         ('advisor', {'prompt': 'q'}),
     ),
@@ -672,7 +670,7 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
         pytest.param(lambda: KeenableSearch[None](client=_KeenableClient()), id='keenable_search'),
         pytest.param(lambda: LocalStack[None](), id='localstack'),
         pytest.param(lambda: CapabilityCreation[None](directory=_CREATION_DIRECTORY), id='capability_creation'),
-        pytest.param(lambda: Advisor[None]('test', mode='local'), id='advisor'),
+        pytest.param(lambda: Advisor[None]('test', native=False), id='advisor'),
         pytest.param(lambda: SmartSearch[None]('test'), id='smart_search'),
         pytest.param(
             lambda: ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all'),
