@@ -10,12 +10,12 @@ import shlex
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from fnmatch import fnmatchcase
-from typing import Any, Literal, Required
+from typing import Any, Generic, Literal, Required
 
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import ToolSelector
+from pydantic_ai.tools import AgentDepsT, ToolSelector
 from pydantic_ai_harness._judge import SerializableToolSelector
 
 PermissionVerdict = Literal['allow', 'ask', 'deny']
@@ -31,7 +31,7 @@ _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in
 
 
 @dataclass(frozen=True)
-class PermissionRule:
+class PermissionRule(Generic[AgentDepsT]):
     """Allow, ask about, or deny the tool calls that match every field set.
 
     When several rules match a call, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order;
@@ -43,7 +43,7 @@ class PermissionRule:
 
     _: KW_ONLY
 
-    tools: ToolSelector[Any] = 'all'
+    tools: ToolSelector[AgentDepsT] = 'all'
     """Which tools the rule applies to: `'all'`, a list of names, a metadata match, or a predicate."""
 
     command: str | None = None
@@ -59,7 +59,8 @@ class PermissionRule:
     args: Mapping[str, str] = field(default_factory=dict[str, str])
     """Globs for string arguments by name, such as `{'path': 'docs/*'}`. A missing or non-string argument does not match.
 
-    Each value is matched as given and as a normalized path: an `'allow'` rule needs both to match, others either.
+    Each value is matched as given and as a normalized path: an `'allow'` rule needs both to match, others either,
+    and also match the end of a longer path, so `'secrets/*'` covers `/project/secrets/key`.
     """
 
     reason: str | None = None
@@ -168,7 +169,7 @@ def _contains(words: Sequence[str], rule: Sequence[str]) -> bool:
     )
 
 
-def _matches_segment(rule: PermissionRule, segment: _Segment) -> bool:
+def _matches_segment(rule: PermissionRule[Any], segment: _Segment) -> bool:
     words = _words(rule.command or '')
     if rule.verdict == 'allow':
         return not segment.redirected and segment.words[: len(words)] == words
@@ -176,22 +177,22 @@ def _matches_segment(rule: PermissionRule, segment: _Segment) -> bool:
     return _contains(_loose(arguments), _loose(words))
 
 
-def _strictest(rules: Iterable[PermissionRule]) -> PermissionRule | None:
-    found: PermissionRule | None = None
+def _strictest(rules: Iterable[PermissionRule[Any]]) -> PermissionRule[Any] | None:
+    found: PermissionRule[Any] | None = None
     for rule in rules:
         if found is None or _SEVERITY[rule.verdict] > _SEVERITY[found.verdict]:
             found = rule
     return found
 
 
-_UNSPLITTABLE_RULE = PermissionRule(
+_UNSPLITTABLE_RULE = PermissionRule[Any](
     'ask', reason='Permission rules cannot split this command into simple commands, so it asks first.'
 )
 
 
-def _unsplittable_rule(rules: Sequence[PermissionRule], command: str) -> PermissionRule | None:
-    """Match a command too complex to split word by word, quotes removed; with command rules, it asks at least."""
-    if not rules:
+def _unsplittable_rule(rules: Sequence[PermissionRule[Any]], command: str) -> PermissionRule[Any] | None:
+    """Match a command too complex to split word by word, quotes removed; with ask or deny rules, it asks at least."""
+    if all(rule.verdict == 'allow' for rule in rules):
         return None
     words = _loose([re.sub(r'[\'"\\]', '', command)])
     restrictive = _strictest(
@@ -201,8 +202,8 @@ def _unsplittable_rule(rules: Sequence[PermissionRule], command: str) -> Permiss
 
 
 def _command_rule(
-    rules: Sequence[PermissionRule], command: str, segments: list[_Segment] | None
-) -> PermissionRule | None:
+    rules: Sequence[PermissionRule[Any]], command: str, segments: list[_Segment] | None
+) -> PermissionRule[Any] | None:
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
     if segments is None:
         return _unsplittable_rule(rules, command)
@@ -213,10 +214,11 @@ def _command_rule(
     return deciders[0] if deciders else None
 
 
-def _arg_matches(rule: PermissionRule, value: object, glob: str, *, posix: bool) -> bool:
+def _arg_matches(rule: PermissionRule[Any], value: object, glob: str, *, posix: bool) -> bool:
     """Whether a string argument matches `glob`, as given and as a normalized path: both for `'allow'`, either otherwise.
 
-    On Windows paths are compared case-insensitively, with `/` for separators.
+    For `'ask'` and `'deny'` the glob also matches the end of a longer path, such as an absolute one. On Windows
+    paths are compared case-insensitively, with `/` for separators.
     """
     if not isinstance(value, str):
         return False
@@ -224,13 +226,14 @@ def _arg_matches(rule: PermissionRule, value: object, glob: str, *, posix: bool)
     if not posix:
         forms = [form.replace('\\', '/').lower() for form in (value, ntpath.normpath(value))]
         glob = glob.lower()
-    matches = [fnmatchcase(form, glob) for form in forms]
-    return all(matches) if rule.verdict == 'allow' else any(matches)
+    if rule.verdict == 'allow':
+        return all(fnmatchcase(form, glob) for form in forms)
+    return any(fnmatchcase(form, glob) or fnmatchcase(form, f'*/{glob}') for form in forms)
 
 
 def decide(
-    rules: Sequence[PermissionRule], *, command: str | None, args: Mapping[str, Any], posix: bool
-) -> PermissionRule | None:
+    rules: Sequence[PermissionRule[Any]], *, command: str | None, args: Mapping[str, Any], posix: bool
+) -> PermissionRule[Any] | None:
     """The rule deciding a call to a tool `rules` all apply to, or `None` when no rule does.
 
     With `posix=False`, for a Windows workspace, a command is never split, since PowerShell quotes differently.
@@ -247,5 +250,5 @@ def decide(
     decided = _command_rule([rule for rule in applicable if rule.command is not None], command, segments)
     rule = _strictest([*found, decided] if decided is not None else found)
     if segments is None and rule is not None and rule.verdict == 'allow':
-        return _UNSPLITTABLE_RULE
+        return None
     return rule

@@ -165,7 +165,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    rules: Sequence[PermissionRule] = ()
+    rules: Sequence[PermissionRule[AgentDepsT]] = ()
     """Rules that allow, ask about, or deny matching calls, checked before the mode."""
 
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
@@ -209,7 +209,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         """Build the serializable configuration: a fixed mode, and rules as mappings of `PermissionRule` fields."""
         return cls(
             mode,
-            rules=[PermissionRule(**rule) for rule in rules],
+            rules=[PermissionRule[AgentDepsT](**rule) for rule in rules],
             ask_commands=ask_commands,
             id=id,
             description=description,
@@ -338,7 +338,7 @@ def _subject(
 
 
 def _rule_asks(
-    ctx: RunContext[Any], rule: PermissionRule, subject: tuple[PermissionAction, str] | None
+    ctx: RunContext[AgentDepsT], rule: PermissionRule[Any], subject: tuple[PermissionAction, str] | None
 ) -> _Asked | None:
     """What an `'ask'` rule asks about a call; raises `SkipToolExecution` for a `'deny'` rule."""
     what = 'tool call' if subject is None else _WHAT[subject[0]]

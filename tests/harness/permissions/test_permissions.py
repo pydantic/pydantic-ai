@@ -550,11 +550,11 @@ class TestPermissionRules:
         ('command', 'rules', 'verdict'),
         [
             ('echo $(date)', [], 'allow'),
-            ('ls $(pwd)', [PermissionRule('allow', command='git status')], 'ask'),
+            ('ls $(pwd)', [PermissionRule('allow', command='git status')], 'allow'),
             ('echo $(date)', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('rm$IFS-rf /', [PermissionRule('deny', command='rm -rf')], 'ask'),
             ('X=-rf; rm $X /', [PermissionRule('deny', command='rm -rf')], 'ask'),
-            ('echo $(date)', [PermissionRule('allow', tools=['run_command'])], 'ask'),
+            ('echo $(date)', [PermissionRule('allow', tools=['run_command'])], 'allow'),
             (
                 'sh -c "rm -rf /; $(x)"',
                 [PermissionRule('allow', tools=['run_command']), PermissionRule('deny', command='rm -rf')],
@@ -565,12 +565,13 @@ class TestPermissionRules:
     async def test_unsplittable_commands_ask_when_command_rules_apply(
         self, command: str, rules: list[PermissionRule], verdict: str
     ) -> None:
-        """With rules for the tool, a command they cannot split asks unless one denies it; without, the mode decides."""
+        """With ask or deny rules for the tool, a command they cannot split asks unless one denies it; else the mode decides."""
         assert await _verdict(command, rules, 'full') == verdict
 
     async def test_powershell_commands_are_never_split(self) -> None:
         """PowerShell quoting differs from `sh`, so on a `'windows'` workspace an allow rule cannot vouch for a command."""
-        agent = _rules_agent(_calls(('run_command', {'command': 'echo hi'})), [PermissionRule('allow', command='echo')])
+        rules = [PermissionRule('allow', command='echo')]
+        agent = _rules_agent(_calls(('run_command', {'command': 'echo hi'})), rules, 'read-only')
 
         result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
 
@@ -605,14 +606,25 @@ class TestPermissionRules:
         assert not (tmp_path / 'secrets').exists()
         assert isinstance(result.output, DeferredToolRequests) is held
 
-    async def test_windows_path_globs_ignore_case_and_separators(self) -> None:
+    @pytest.mark.parametrize(
+        ('path', 'windows'),
+        [
+            ('/project/secrets/key', False),
+            ('../secrets/key', False),
+            ('SECRETS\\key', True),
+            ('C:\\p\\secrets\\k', True),
+        ],
+    )
+    async def test_deny_path_globs_match_any_spelling_of_the_path(self, path: str, windows: bool) -> None:
+        """A deny glob also matches the end of a longer path, and on Windows ignores case and separator style."""
+
         def save(path: str) -> str:
             raise NotImplementedError
 
         rules = [PermissionRule('deny', tools=['save'], args={'path': 'secrets/*'})]
-        agent = _rules_agent(_calls(('save', {'path': 'SECRETS\\key'})), rules, 'full', Tool(save))
+        agent = _rules_agent(_calls(('save', {'path': path})), rules, 'full', Tool(save))
 
-        result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
+        result = await agent.run('go', workspace=Workspace(_WindowsBackend()) if windows else None)
 
         assert result.output == 'A permission rule denied this tool call, so it did not run. Do not retry it.'
 
