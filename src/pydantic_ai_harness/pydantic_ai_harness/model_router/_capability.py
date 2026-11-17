@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from functools import cache
-from typing import Annotated, Literal, TypeGuard, Union
+from typing import Annotated, Literal, Union
 
 from opentelemetry.metrics import NoOpMeterProvider
 from opentelemetry.trace import NoOpTracerProvider, Span, Status, StatusCode
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, create_model
 from typing_extensions import TypeForm
 
 from pydantic_ai import Agent
-from pydantic_ai._utils import replace_no_init
+from pydantic_ai._utils import is_str_dict, replace_no_init
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Instrumentation,
@@ -249,14 +249,10 @@ def _uninstrumented() -> InstrumentationSettings:
 
 def _pick_probability(provider_details: Mapping[str, object] | None, pick: str) -> float | None:
     probabilities = (provider_details or {}).get('probabilities')
-    if not _is_object_mapping(probabilities):
+    if not is_str_dict(probabilities):
         return None
     options = probabilities.get('choice')
-    if not _is_object_mapping(options):
+    if not is_str_dict(options):
         return None
     probability = options.get(pick)
     return float(probability) if isinstance(probability, (int, float)) and not isinstance(probability, bool) else None
-
-
-def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    return isinstance(value, Mapping)
