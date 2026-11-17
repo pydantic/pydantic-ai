@@ -42,6 +42,7 @@ def _run_bump(
     branch_exists: bool = False,
     branch_content: str | None = None,
     pin_prs: str | None = None,
+    current_pr: str = '',
 ) -> tuple[subprocess.CompletedProcess[str], list[str], str, str, str]:
     workflow: object = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
     jobs = WORKFLOW_ADAPTER.validate_python(workflow)['jobs']
@@ -112,7 +113,8 @@ fi
 set -e
 printf '%s\\n' "$*" >> "$GH_CALLS"
 case "$*" in
-  "pr list --state open --author app/pydantic-docs "*) printf '%s' "$GH_PIN_PRS" ;;
+  "pr list --state open --head gh-aw-engine-pin-"*) printf '%s' "$GH_CURRENT_PR" ;;
+  "pr list --state open --app pydantic-docs "*) printf '%s' "$GH_PIN_PRS" ;;
   "pr close "*) ;;
   "pr list "*) if [[ -n "$GH_EXISTING_TITLE" ]]; then printf '%s\\n' "$GH_EXISTING_TITLE"; fi ;;
   "api repos/fixture/repository/git/ref/heads/main --jq .object.sha") printf 'base-sha\\n' ;;
@@ -170,6 +172,7 @@ esac
         'GH_BRANCH_CONTENT': str(branch_definition),
         'GH_BRANCH_READ': str(tmp_path / 'branch-read.md'),
         'GH_PIN_PRS': pin_prs or '',
+        'GH_CURRENT_PR': current_pr,
     }
     shell = shutil.which('bash')
     assert shell is not None
@@ -331,10 +334,13 @@ PIN_PRS = (
 
 @pytest.mark.parametrize('existing_title', ['', 'Bump the gh-aw engine pin to `0.55.0`'])
 def test_open_pin_bump_closes_the_app_pin_bumps_for_lower_versions(tmp_path: Path, existing_title: str):
-    process, calls, _, _, _ = _run_bump(tmp_path, '0.53.0', '0.55.0', existing_title=existing_title, pin_prs=PIN_PRS)
+    process, calls, _, _, _ = _run_bump(
+        tmp_path, '0.53.0', '0.55.0', existing_title=existing_title, pin_prs=PIN_PRS, current_pr='45\n'
+    )
 
     assert process.returncode == 0, process.stderr
-    assert any(call.startswith('pr list --state open --author app/pydantic-docs ') for call in calls)
+    assert any(call.startswith('pr list --state open --head gh-aw-engine-pin-0.55.0 ') for call in calls)
+    assert any(call.startswith('pr list --state open --app pydantic-docs ') for call in calls)
     assert [call for call in calls if call.startswith('pr close ')] == [
         'pr close 40 --comment Superseded by #45, which bumps the pin to `0.55.0`.',
         'pr close 41 --comment Superseded by #45, which bumps the pin to `0.55.0`.',
@@ -347,5 +353,5 @@ def test_no_open_pin_bump_for_the_release_closes_nothing(tmp_path: Path):
     )
 
     assert process.returncode == 0, process.stderr
-    assert any(call.startswith('pr list --state open --author app/pydantic-docs ') for call in calls)
-    assert not any(call.startswith('pr close ') for call in calls)
+    assert any(call.startswith('pr list --state open --head gh-aw-engine-pin-0.55.0 ') for call in calls)
+    assert not any(call.startswith(('pr list --state open --app ', 'pr close ')) for call in calls)

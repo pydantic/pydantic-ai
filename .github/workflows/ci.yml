@@ -2669,13 +2669,17 @@ jobs:
         run: |
           # The author and the branch name together pick out the pull requests this job opened:
           # the App opens other pull requests too, and people can name a branch anything.
-          pin_prs=$(gh pr list --state open --author app/pydantic-docs --limit 100 \
-            --json number,headRefName --jq '.[] | [.number, .headRefName] | @tsv')
-          current=$(awk -F '\t' -v branch="gh-aw-engine-pin-${RELEASED}" '$2 == branch { print $1 }' <<< "$pin_prs")
+          # `--head` reads the pull request list, while `--app` goes through search, whose index
+          # can lag behind the pull request the step above opened seconds ago.
+          current=$(gh pr list --state open --head "gh-aw-engine-pin-${RELEASED}" --json number,author \
+            --jq '.[] | select(.author.login == "app/pydantic-docs") | .number')
           if [[ -z "$current" ]]; then
             echo "No open pull request bumps the gh-aw engine pin to ${RELEASED}."
             exit 0
           fi
+          # Earlier release runs opened the pull requests this closes, so search has indexed them.
+          pin_prs=$(gh pr list --state open --app pydantic-docs --limit 100 \
+            --json number,headRefName --jq '.[] | [.number, .headRefName] | @tsv')
           # Only lower versions: a patch release for an older minor can follow a newer release.
           superseded=$(awk -F '\t' -v released="$RELEASED" '
             BEGIN { split(released, r, "[.]") }
