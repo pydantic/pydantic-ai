@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal
 import pytest
 from inline_snapshot import snapshot
 
+# `_display` is private: the banner test resets the once-per-process banner state, as core's banner tests do.
 from pydantic_ai import Agent, _display
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
