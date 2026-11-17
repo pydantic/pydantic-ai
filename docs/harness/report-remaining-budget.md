@@ -15,19 +15,18 @@ Tell the model, on every model request, how much of the run's usage limits and t
 pip/uv-add pydantic-ai-harness
 ```
 
-```python {test="skip"}
+```python
 from decimal import Decimal
 
-from pydantic_ai import Agent, UsageLimits
+from pydantic_ai import Agent
 from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
 from pydantic_ai_harness.spend_limits import Budget
 
 spend = SpendLimits(budgets=[Budget(usd=Decimal(10), window='day')])
 agent = Agent('{{ anthropic:large }}', capabilities=[spend, ReportRemainingBudget(spend_limits=spend)])
-result = agent.run_sync('...', usage_limits=UsageLimits(request_limit=20, total_tokens_limit=200_000))
 ```
 
-Without `spend_limits`, only the run's limits are reported. The run's figures come from the `UsageLimits` the run enforces ([`RunContext.usage_limits`][pydantic_ai.tools.RunContext.usage_limits]), so they are not configured twice.
+Without `spend_limits`, only the run's limits are reported. The run's figures come from the `UsageLimits` the run enforces, such as `agent.run(..., usage_limits=UsageLimits(request_limit=20, total_tokens_limit=200_000))` ([`RunContext.usage_limits`][pydantic_ai.tools.RunContext.usage_limits]), so they are not configured twice.
 
 ## What the model sees
 
@@ -41,7 +40,7 @@ Budget remaining:
 ```
 
 - **This run** lists each `UsageLimits` ceiling that is set: requests (counting the one being sent), tool calls, input, output and total tokens, and the USD `cost_limit`. `per_request_input_tokens_limit` caps one request's context rather than a running total, so it is not reported. With no limit set, the line is left out.
-- **Spend budgets** get one line per `Budget` with a `usd` or `tokens` ceiling, labelled by window (`this run`, `this conversation`, `today`, `this month`, `in total`) and by `name` unless it is `'default'`, so a daily or per-tenant remainder is not read as the run's. A budget with neither ceiling only counts spend and is left out.
+- **Spend budgets** get one line per `Budget` with a `usd` or `tokens` ceiling, labelled by window (`spend limit for this run`, `this conversation`, `today`, `this month`, `in total`) and by `name` unless it is `'default'`, so a run-window, daily or per-tenant spend remainder is not read as the run's usage limits. A budget with neither ceiling only counts spend and is left out.
 - Token counts below 1,000 are exact; larger ones are rounded (`about 1.3k`, `about 38k`, `about 1.2M`), so the status stays short. Remainders never go below zero.
 - A `cost_limit` counts a run with no price data as having spent nothing; core warns with `CostNotFoundWarning` in that case.
 

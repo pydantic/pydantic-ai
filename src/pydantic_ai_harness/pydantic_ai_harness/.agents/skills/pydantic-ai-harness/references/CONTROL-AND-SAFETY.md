@@ -893,7 +893,7 @@ Budget remaining:
 
 - The run line lists requests (including the one being sent), tool calls, input/output/total tokens and
   `cost_limit`, for each limit set; `per_request_input_tokens_limit` isn't reported. Spend lines are labelled
-  by window (`this run`, `this conversation`, `today`, `this month`, `in total`) plus `name` unless
+  by window (`spend limit for this run`, `this conversation`, `today`, `this month`, `in total`) plus `name` unless
   `'default'`; counter-only budgets are left out. Tokens of 1,000 or more are rounded (`about 38k`).
 - Pass the same `SpendLimits` instance the agent carries; its store is read on every request.
 - Nothing is sent when no limit applies. No spans: the status is part of the recorded model request.

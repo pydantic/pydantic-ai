@@ -105,21 +105,26 @@ Budget remaining:
                 Budget(usd=Decimal(10), tokens=1_000_000, window='day'),
                 Budget(tokens=500, window='month', name='tenant'),
                 Budget(window='total', name='accounting'),
+                Budget(usd=Decimal(3), window='run'),
             ]
         )
         agent = _agent(_model(RequestUsage(input_tokens=300, output_tokens=100)), spend, ReportRemainingBudget(spend))
-        result = await agent.run('go', usage_limits=UsageLimits(request_limit=None))
+        result = await agent.run('go', usage_limits=UsageLimits(request_limit=4))
         assert _reports(result.all_messages()) == snapshot(
             [
                 """\
 Budget remaining:
+- this run: 4 requests including this one
 - today: $10.00, about 1M tokens
-- this month (tenant): 500 tokens\
+- this month (tenant): 500 tokens
+- spend limit for this run: $3.00\
 """,
                 """\
 Budget remaining:
+- this run: 3 requests including this one
 - today: $10.00, about 1M tokens
-- this month (tenant): 100 tokens\
+- this month (tenant): 100 tokens
+- spend limit for this run: $3.00\
 """,
             ]
         )

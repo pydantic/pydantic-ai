@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 _WINDOW_LABELS = {
-    'run': 'this run',
+    'run': 'spend limit for this run',
     'conversation': 'this conversation',
     'day': 'today',
     'month': 'this month',
