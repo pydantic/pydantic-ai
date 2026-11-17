@@ -322,8 +322,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
 
-        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
-        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
+        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6,
+        GPT-6.1 and GPT-6.2 model), while the Responses API on the same models accepts it, and the providers declare their
         tiers per model rather than per API.
         """
         retentions = profile.get('supported_cache_retentions', ())

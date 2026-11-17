@@ -143,27 +143,27 @@ _GPT_6_MODEL_PREFIXES = (
     'gpt-6.2-astra',
 )
 
-_GPT_6_ASTRA_REASONING = _ReasoningSupport(
+_GPT_6_ALWAYS_ON_REASONING = _ReasoningSupport(
     enabled_by_default=True,
     can_be_disabled=False,
     supports_mode=True,
     supports_context=True,
     efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
 )
-"""GPT-6 Astra's reasoning: on by default, efforts `low` through `max`, no `effort='none'`."""
+"""The GPT-6 models that always reason, at efforts `low` through `max`: they reject `effort='none'` and `'minimal'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
     # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
     # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
-    'gpt-6-astra': _GPT_6_ASTRA_REASONING,
+    'gpt-6-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol
-    'gpt-6.1-sol': _GPT_6_ASTRA_REASONING,
+    'gpt-6.1-sol': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.2 Sol and Astra follow GPT-6 Astra too (live-verified 2026-11).
     # https://developers.openai.com/api/docs/guides/latest-model
-    'gpt-6.2-sol': _GPT_6_ASTRA_REASONING,
-    'gpt-6.2-astra': _GPT_6_ASTRA_REASONING,
+    'gpt-6.2-sol': _GPT_6_ALWAYS_ON_REASONING,
+    'gpt-6.2-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
     'gpt-6.1-terra': _ReasoningSupport(
