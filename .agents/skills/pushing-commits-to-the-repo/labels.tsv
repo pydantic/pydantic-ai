@@ -22,6 +22,7 @@ bedrock
 better ai	improvements to infra that aids ai coding agents in developing pydantic-ai (and with - pydantic-ai)
 breaking change
 bug	Report that something isn't working, or PR implementing a fix
+bug:unreleased	Fixes a defect no release shipped; left out of the changelog
 caching	Prompt caching, cache retention, cached-token usage, and cache-bust detection.
 cancellation/interruption
 capability-internals	Shared capability APIs and mechanics: lifecycle, loading, state, composition, ordering, and tracing.

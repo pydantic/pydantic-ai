@@ -207,7 +207,11 @@ Commit refreshed catalog changes.
 The helper uses at most two requests and verifies completeness before replacing the catalog.
 Never fetch labels individually or pass raw label API responses.
 
-Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
+Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
+A bug fix takes `bug:unreleased` in place of `bug` when no release shipped the defect. Release notes leave `bug:unreleased` PRs out, because no user saw the bug.
+To check, find the commit that introduced the defect, and fetch the tags of `pydantic/pydantic-ai`.
+Empty output from `git tag --contains <sha> --list 'v[0-9]*'` means no release shipped the defect.
+When you cannot identify that commit, use `bug`.
 A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.github/workflows/package-label.yml` fails it otherwise.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.

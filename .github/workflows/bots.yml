@@ -142,7 +142,8 @@ jobs:
         id: check-label
         run: |
           LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
-          CATEGORY_LABELS=("bug" "feature" "docs" "chore" "dependency")
+          # The PR author applies `bug:unreleased`; the classifier never picks it, so `ALLOWED` leaves it out.
+          CATEGORY_LABELS=("bug" "bug:unreleased" "feature" "docs" "chore" "dependency")
 
           for label in "${CATEGORY_LABELS[@]}"; do
             if echo "$LABELS" | grep -q "^${label}$"; then
