@@ -24,10 +24,12 @@ PermissionVerdict = Literal['allow', 'ask', 'deny']
 _SEVERITY: dict[PermissionVerdict, int] = {'allow': 0, 'ask': 1, 'deny': 2}
 _SEPARATORS = frozenset({';', '&', '&&', '|', '||', '|&'})
 _OPERATOR_CHARS = frozenset('();<>|&')
-_UNSPLITTABLE = ('$', '`', '<(', '>(', '\n')
+_UNSPLITTABLE = ('$', '`', '<(', '>(', '\n', '\r')
 _LOOSE_SPLIT = re.compile(r'[\s;&|()<>`${}]+')
 _UNSPLITTABLE_OPERATOR = re.compile(r'[()]|<<|;;')
 _GLOB = re.compile(r'[*?\[]')
+_GLOB_LIMIT = 4096
+"""Longer argument values aren't globbed, which could take quadratic time: ask and deny rules match them, allow rules don't."""
 _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in range(10))})
 
 
@@ -241,6 +243,8 @@ def _arg_matches(rule: PermissionRule[Any], value: object, glob: str, *, posix: 
     """
     if not isinstance(value, str):
         return False
+    if len(value) > _GLOB_LIMIT:
+        return rule.verdict != 'allow'
     forms = [value, posixpath.normpath(value)]
     if not posix:
         forms = [form.replace('\\', '/').lower() for form in (value, ntpath.normpath(value))]

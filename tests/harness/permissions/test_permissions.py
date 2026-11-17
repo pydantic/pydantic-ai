@@ -519,6 +519,7 @@ class TestPermissionRules:
             ('echo $(rm -rf /)', 'deny'),
             ('(rm -rf /)', 'deny'),
             ('git status\nrm -rf /', 'deny'),
+            ('ls\r/payload', 'ask'),
             ('ls && git push origin main', 'ask'),
             ('git status; curl https://example.com', 'ask'),
             ('gitx status', 'ask'),
@@ -660,6 +661,23 @@ class TestPermissionRules:
 
         assert await _verdict('git status; python evil.py', rules) == 'ask'
         assert await _verdict('git status', rules) == 'ask'
+
+    async def test_long_argument_values_are_not_globbed(self) -> None:
+        """Globbing a huge value could take quadratic time, so ask and deny rules match it and allow rules don't."""
+
+        def save(path: str, content: str) -> str:
+            raise NotImplementedError
+
+        tool = Tool(save, tool_kind=WRITE_FILE_KIND)
+        call = ('save', {'path': 'a/' * 3000, 'content': 'x'})
+        deny = [PermissionRule('deny', tools=['save'], args={'path': 'secrets/*'})]
+        allow = [PermissionRule('allow', tools=['save'], args={'path': 'a/*'})]
+
+        denied = await _rules_agent(_calls(call), deny, 'full', tool).run('go')
+        held = await _rules_agent(_calls(call), allow, 'read-only', tool).run('go')
+
+        assert denied.output == 'A permission rule denied this file write, so it did not run. Do not retry it.'
+        assert isinstance(held.output, DeferredToolRequests)
 
     async def test_an_allow_rule_skips_read_only_asks_but_not_ask_commands(self) -> None:
         """`ask_commands` still asks about a command an allow rule matches; remove a pattern from it to opt out."""
