@@ -294,7 +294,7 @@ orchestrator = Agent(
 |---|---|
 | `delegate_task(agent_name, task, background=False, resume=None)` | Start a task, or resume a finished one with its task ID. `background=True` returns a receipt right away. |
 | `list_tasks()` | The tasks this run started and the tasks they started, with status and IDs (the 50 most relevant). |
-| `message_task(task_id, message)` | Steer a running task; it reads the message, as sent, at its next model request. A task's instructions tell it its delegating agent may send it messages. A finished task resumes with the message as its prompt, in the background if it ran there, as `delegate_task(resume=...)` would. |
+| `message_task(task_id, message)` | Steer a running task; it reads the message, as sent, at its next model request. A task's instructions tell it its delegating agent may send it messages. A finished task resumes with the message as its prompt, in the background if it ran there, through a `delegate_task(resume=...)` call that the delegate tool's hooks and approvals see and that counts as a second tool call. |
 | `answer_task(task_id, answer)` | Answer the question a task is waiting on. |
 | `cancel_task(task_id, force=False)` | Stop a task before its next model request, or right away with `force=True`, together with the tasks it started. |
 
