@@ -1,0 +1,329 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, Literal, cast
+from weakref import WeakKeyDictionary
+
+from hatchet_sdk import DurableContext, Hatchet, Standalone
+from pydantic import JsonValue, TypeAdapter
+
+from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities.abstract import WrapRunHandler
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
+from pydantic_ai.durable_exec._operation import (
+    DurableOperationId,
+    ToolsetCallToolId,
+    ToolsetKind,
+    ToolsetValidateToolArgumentsId,
+)
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelQuotaExceededError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    UserError,
+)
+from pydantic_ai.models import Model
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import ToolsetTool
+from pydantic_ai.toolsets.function import FunctionToolsetTool
+
+from ._operation_backend import (
+    HatchetOperationBackend,
+    HatchetOperationConfig,
+    HatchetTaskConfig,
+    TaskOutput,
+    validate_task_config,
+)
+from ._run_context import HatchetRunContext, deserialize_run_context
+from ._spec import HATCHET_ENGINE_SPEC
+from ._transports import HatchetParameterTransports, TaskInput
+
+_DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
+    ModelRequestRejectedError,
+    ModelQuotaExceededError,
+    ModelRequestTimeout,
+)
+"""The model errors another attempt of the same request can't fix, which Hatchet doesn't retry by default."""
+
+_DEFAULT_TASK_CONFIG = HatchetTaskConfig(execution_timeout=timedelta(seconds=60))
+
+_runs_by_context: WeakKeyDictionary[DurableContext, int] = WeakKeyDictionary()
+"""How many agent runs each durable task has started, which tells its runs' default IDs apart."""
+
+
+@dataclass(init=False, kw_only=True)
+class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
+    """Capability that makes an agent durable by running its model requests and tool calls as Hatchet tasks.
+
+    When the agent runs inside a Hatchet [durable task](https://docs.hatchet.run/home/durable-execution),
+    each model request, MCP communication and tool call is spawned as a child task, whose result the durable
+    task's event log records: a durable task that's replayed after a crash, an eviction or a retry gets the
+    results back without making the requests again. Outside a durable task, the capability is transparent.
+
+    The tasks are registered on `hatchet` when the capability is attached to an agent. Pass
+    [`workflows`][pydantic_ai.durable_exec.hatchet.HatchetDurability.workflows] to the worker
+    alongside the durable task that runs the agent.
+
+    Example:
+        ```python {test="skip"}
+        from hatchet_sdk import DurableContext, Hatchet
+
+        from pydantic_ai import Agent
+        from pydantic_ai.durable_exec.hatchet import HatchetDurability
+
+        hatchet = Hatchet()
+        durability = HatchetDurability(hatchet)
+        agent = Agent('openai:gpt-5.6-sol', name='my_agent', capabilities=[durability])
+
+
+        @hatchet.durable_task(name='answer', input_validator=dict[str, str])
+        async def answer(input: dict[str, str], ctx: DurableContext) -> str:
+            result = await agent.run(input['question'])
+            return result.output
+
+
+        worker = hatchet.worker('agent-worker', workflows=[answer, *durability.workflows])
+        ```
+    """
+
+    engine_spec = HATCHET_ENGINE_SPEC
+
+    hatchet: Hatchet
+    """The Hatchet client the capability registers its tasks on."""
+
+    run_context_type: type[HatchetRunContext[AgentDepsT]]
+    """The `HatchetRunContext` subclass used to serialize/deserialize the run context."""
+
+    def __init__(
+        self,
+        hatchet: Hatchet,
+        *,
+        models: Mapping[str, Model] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        name: str | None = None,
+        deps_type: type[AgentDepsT] | None = None,
+        task_config: HatchetTaskConfig | None = None,
+        model_task_config: HatchetTaskConfig | None = None,
+        event_stream_handler_task_config: HatchetTaskConfig | None = None,
+        toolset_task_config: Mapping[str, HatchetTaskConfig] | None = None,
+        run_context_type: type[HatchetRunContext[AgentDepsT]] = HatchetRunContext[AgentDepsT],
+        non_retryable_model_errors: Sequence[type[ModelAPIError]] = _DEFAULT_NON_RETRYABLE_MODEL_ERRORS,
+    ) -> None:
+        """Create a `HatchetDurability` capability.
+
+        The agent's model, name, and toolsets are discovered when the capability is attached to an agent.
+
+        Args:
+            hatchet: The Hatchet client to register the agent's tasks on.
+            models: Additional models keyed by ID for runtime model switching. The agent's primary model is
+                always registered as `'default'`. A `Model` instance can't be serialized into a task, so a
+                run-time model instance has to be registered here and referenced by key; model name strings
+                cross as written and are built on the worker.
+            event_stream_handler: Optional event stream handler. Model events are handled live inside the
+                model request tasks, and other events in a task per event.
+            name: Unique agent name used in the Hatchet task names. Defaults to the agent's `name`.
+            deps_type: The type of the agent's dependencies, used to serialize them into tasks as JSON.
+                Defaults to the agent's own `deps_type`.
+            task_config: Base Hatchet task config for all tasks. Defaults to a 60-second
+                `execution_timeout` and no retries.
+            model_task_config: Task config merged on top of the base for model request tasks.
+            event_stream_handler_task_config: Task config merged on top of the base for event stream
+                handler tasks.
+            toolset_task_config: Per-toolset task configs keyed by toolset ID, merged on top of the base.
+            run_context_type: The `HatchetRunContext` subclass used to serialize the run context into tasks.
+            non_retryable_model_errors: Model error classes that fail a model task without Hatchet retrying
+                it, whatever its `retries` say, subclasses included. The durable task still receives the error
+                as its own class. Defaults to
+                [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
+                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
+                [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]; `()` retries them all.
+
+        Note:
+            A tool's `'hatchet'` metadata can override the run options of its task (`priority`, `sticky`,
+            `desired_worker_labels` and `additional_metadata`), or be `False` to run an async function tool
+            directly in the durable task instead of in a task of its own:
+
+            ```python {test="skip" lint="skip"}
+            @my_toolset.tool(metadata={'hatchet': {'desired_worker_labels': [DesiredWorkerLabel(key='gpu', value='true')]}})
+            async def my_gpu_tool(...): ...
+            ```
+        """
+        super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
+        self.hatchet = hatchet
+        self.run_context_type = run_context_type
+        self._deps_type = deps_type
+        self._non_retryable_model_errors = tuple(non_retryable_model_errors)
+        base = {**_DEFAULT_TASK_CONFIG, **validate_task_config(task_config or {}, '`task_config`')}
+        self._task_config = cast(HatchetTaskConfig, base)
+        self._model_task_config = cast(
+            HatchetTaskConfig, {**base, **validate_task_config(model_task_config or {}, '`model_task_config`')}
+        )
+        self._event_task_config = cast(
+            HatchetTaskConfig,
+            {
+                **base,
+                **validate_task_config(event_stream_handler_task_config or {}, '`event_stream_handler_task_config`'),
+            },
+        )
+        self._toolset_task_config = {
+            toolset_id: validate_task_config(config, f'`toolset_task_config[{toolset_id!r}]`')
+            for toolset_id, config in (toolset_task_config or {}).items()
+        }
+        self._operation_backend: HatchetOperationBackend | None = None
+        self._deps_adapter: TypeAdapter[Any] | None = None
+        # Shared with the bound copies `for_agent()` makes, so `workflows` on the instance the user holds lists
+        # the tasks of every agent it's attached to.
+        self._registered_tasks: list[Standalone[TaskInput, TaskOutput]] = []
+
+    @property
+    def in_durable_context(self) -> bool:
+        return isinstance(self.hatchet.current_context, DurableContext)
+
+    def _durable_context(self) -> DurableContext:
+        ctx = self.hatchet.current_context
+        assert isinstance(ctx, DurableContext)
+        return ctx
+
+    def _check_bindable(self) -> None:
+        if self.in_durable_context:
+            raise UserError(
+                'An agent with `HatchetDurability` must be constructed outside of a Hatchet durable task, '
+                'so its tasks can be registered with the worker before the durable task runs. '
+                'Construct the agent at module level (or in worker setup code) and reference it from the task.'
+            )
+
+    def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        if self._deps_type is None:
+            self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
+        self._deps_adapter = TypeAdapter(self._deps_type)
+        backend = HatchetOperationBackend(
+            self.hatchet,
+            runtime=self,
+            agent_name=self.name,
+            config=HatchetOperationConfig(
+                model=self._model_task_config,
+                event=self._event_task_config,
+                capability=self._task_config,
+                tool=self._task_config,
+                toolset=self._toolset_config,
+                resolve_tool=self._resolve_tool_config,
+            ),
+            parameter_transports=HatchetParameterTransports(self),
+            non_retryable_model_errors=self._non_retryable_model_errors,
+        )
+        self._operation_backend = backend
+        # Bind events first, as the durable model and toolset wrappers capture this operation.
+        if self._event_stream_handler is not None:
+            self._bound_event_operation = self._bind_event_operation(backend)
+        default_model = self._models_by_id.get('default')
+        model_name = self.default_model_id or (default_model.model_id if default_model is not None else 'default')
+        self._bound_model_operations = self._bind_model_operations(backend, model_id=None, model_name=model_name)
+        self._register_toolsets(agent)
+
+    def get_durable_operation_backend(self) -> HatchetOperationBackend:
+        backend = self._operation_backend
+        if backend is None:
+            raise UserError('`HatchetDurability` must be attached to an agent before its tasks are used.')
+        return backend
+
+    @property
+    def workflows(self) -> list[Standalone[TaskInput, TaskOutput]]:
+        """The Hatchet tasks the capability registered, to pass to `hatchet.worker(workflows=...)`.
+
+        A worker that runs the durable task running the agent needs them, or another worker on the same
+        Hatchet tenant does: a child task runs on whichever worker serves it.
+        """
+        return list(self._registered_tasks)
+
+    def _register_task(self, task: Standalone[TaskInput, TaskOutput]) -> None:
+        self._registered_tasks.append(task)
+
+    # --- Configuration ---
+
+    def _toolset_config(self, toolset_id: str) -> HatchetTaskConfig:
+        return cast(HatchetTaskConfig, {**self._task_config, **self._toolset_task_config.get(toolset_id, {})})
+
+    def _toolset_operation_config(self, kind: ToolsetKind, toolset_id: str) -> HatchetTaskConfig:
+        return self._toolset_config(toolset_id)
+
+    def _resolve_tool_config(
+        self, operation_id: DurableOperationId, tool: object | None, name: str
+    ) -> HatchetTaskConfig | Literal[False]:
+        base = self._toolset_config(cast(Any, operation_id).toolset_id)
+        typed_tool = cast(ToolsetTool[Any] | None, tool)
+        metadata = typed_tool.tool_def.metadata if typed_tool is not None else None
+        tool_config = metadata.get('hatchet') if metadata is not None else None
+        if tool_config is None:
+            return base
+        if tool_config is False:
+            is_tool_operation = isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId)
+            if is_tool_operation and operation_id.toolset_kind != 'function':
+                raise UserError(
+                    f'Hatchet task config for tool {name!r} has been explicitly set to `False`, but only function '
+                    'tools can run outside a task: MCP and dynamic toolset tools may perform I/O.'
+                )
+            if not isinstance(tool, FunctionToolsetTool) or not tool.is_async:
+                raise UserError(
+                    f'Hatchet task config for tool {name!r} has been explicitly set to `False`, but non-async '
+                    'tools run in threads, which a durable task does not replay. Make the tool function async.'
+                )
+            return False
+        if not isinstance(tool_config, Mapping):
+            raise UserError(f"Tool {name!r} has invalid `'hatchet'` metadata: expected a dict or `False`.")
+        return cast(
+            HatchetTaskConfig,
+            {**base, **validate_task_config(cast(Mapping[str, object], tool_config), f'Tool {name!r} metadata')},
+        )
+
+    # --- Transport runtime ---
+
+    def serialize_operation_run_context(self, ctx: RunContext[Any]) -> dict[str, Any]:
+        return self.run_context_type.serialize_run_context(ctx)
+
+    def deserialize_operation_run_context(self, serialized: dict[str, Any], deps: Any) -> RunContext[AgentDepsT]:
+        return deserialize_run_context(self.run_context_type, serialized, deps=deps, agent=self._agent)
+
+    def dump_deps(self, deps: Any) -> JsonValue:
+        assert self._deps_adapter is not None
+        return cast(JsonValue, self._deps_adapter.dump_python(deps, mode='json'))
+
+    def load_deps(self, payload: JsonValue) -> Any:
+        assert self._deps_adapter is not None
+        return self._deps_adapter.validate_python(payload)
+
+    # --- Capability hooks ---
+
+    def get_default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        ctx = self._durable_context()
+        # A replayed durable task starts its agent runs in the same order, so they get the same IDs.
+        index = _runs_by_context.get(ctx, 0)
+        _runs_by_context[ctx] = index + 1
+        return f'{ctx.task_run_id}:{index}'
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    async def wrap_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        handler: WrapRunHandler,
+    ) -> AgentRunResult[Any]:
+        """Make the agent graph's waits durable sleeps, which a replayed durable task doesn't sleep again."""
+        if not self.in_durable_context:
+            return await handler()
+        durable_ctx = self._durable_context()
+
+        async def durable_sleep(seconds: float) -> None:
+            await durable_ctx.aio_sleep_for(timedelta(seconds=seconds))
+
+        with set_agent_graph_sleep(durable_sleep):
+            return await super().wrap_run(ctx, handler=handler)

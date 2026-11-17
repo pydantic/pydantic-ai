@@ -26,7 +26,7 @@ conflicts = [[
 ]]
 
 [options]
-exclude-newer = "2026-11-10T18:57:08.410626Z"
+exclude-newer = "2026-11-10T19:10:03.672953Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -35,7 +35,6 @@ prefect = "2026-10-21T03:46:00Z"
 pydantic-monty-runtime = false
 k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 pydantic-handlebars = false
-hatchet-sdk = "2026-11-13T18:51:00Z"
 pydantic-extra-types = false
 pydantic = false
 pydantic-core = false
@@ -104,10 +103,7 @@ constraints = [
     { name = "urllib3", specifier = ">=2.8.0" },
     { name = "xgrammar", specifier = ">=0.1.32" },
 ]
-overrides = [
-    { name = "pillow", specifier = ">=13.0.0" },
-    { name = "protobuf", specifier = ">=7.36.1" },
-]
+overrides = [{ name = "pillow", specifier = ">=13.0.0" }]
 excludes = ["browser-use"]
 build-constraints = [{ name = "hatchling", specifier = "<1.32" }]
 
@@ -3334,8 +3330,8 @@ wheels = [
 
 [[package]]
 name = "hatchet-sdk"
-version = "1.46.0"
-source = { registry = "https://pypi.org/simple" }
+version = "2.0.0a3"
+source = { git = "https://github.com/hatchet-dev/hatchet?subdirectory=sdks%2Fpython&rev=9eb39e18a93f840a55aa408815fad43c1e8d9e8c#9eb39e18a93f840a55aa408815fad43c1e8d9e8c" }
 dependencies = [
     { name = "aiohttp", marker = "python_full_version >= '3.11.5' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "grpcio", marker = "python_full_version >= '3.11.5' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
@@ -3348,10 +3344,6 @@ dependencies = [
     { name = "tenacity", marker = "python_full_version >= '3.11.5' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "typing-inspection", marker = "python_full_version >= '3.11.5' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "urllib3", marker = "python_full_version >= '3.11.5' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/c7/d9635194ac3ccb5fbd2879aa9230afae866be648281ddd38dfb8c9ab13ab/hatchet_sdk-1.46.0.tar.gz", hash = "sha256:ab49e3c5f6fcc6032ce25bad022a850b3a702c46be7c200fbe7715cc8ef5ecfd", size = 5400, upload-time = "2026-11-13T18:50:32.091Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/72/099213eeedb6137315d7142cc0513750349c55e9eda7345b4497fed008cf/hatchet_sdk-1.46.0-py3-none-any.whl", hash = "sha256:d4788d6e4795c5a4a3173165e5a2ec54d7d2523846f502883f4cb1b6022e5983", size = 728450, upload-time = "2026-11-13T18:50:33.922Z" },
 ]
 
 [[package]]
@@ -7979,7 +7971,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0,<3" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0,<2" },
-    { name = "hatchet-sdk", marker = "extra == 'hatchet'", specifier = ">=1.46.0" },
+    { name = "hatchet-sdk", marker = "extra == 'hatchet'", git = "https://github.com/hatchet-dev/hatchet?subdirectory=sdks%2Fpython&rev=9eb39e18a93f840a55aa408815fad43c1e8d9e8c" },
     { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },
     { name = "httpx", marker = "extra == 'retries'", specifier = ">=0.27" },
     { name = "httpx2", specifier = ">=2.7" },

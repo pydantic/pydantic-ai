@@ -181,9 +181,9 @@ dbos = ["dbos>=3.4.0"]
 # a current FastAPI.
 prefect = ["prefect>=3.9.0"]
 # Hatchet
-# 1.44.0 added durable streams (`hatchet.streams`) and 1.38.0 embedded mode (`Hatchet.from_embedded`); 1.46.0
-# is the first without the `grpcio-tools` runtime dependency, which has no Python 3.15 wheels for `protobuf<7`.
-hatchet = ["hatchet-sdk>=1.46.0"]
+# 2.0.0 is the first release that allows protobuf 7, which other extras need.
+# TODO(mrkaye97): Raise to `>=2.0.0` once it is released; the pre-release floor is for development only.
+hatchet = ["hatchet-sdk>=2.0.0a3"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 

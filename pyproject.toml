@@ -106,6 +106,9 @@ pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 pydantic-ai-harness = { workspace = true }
 pydantic-clai2 = { workspace = true }
+# TODO(mrkaye97): Remove once `hatchet-sdk` 2.0.0 is on PyPI and past the `exclude-newer` window; the
+# `hatchet` extra's floor needs `protobuf<8` (hatchet-dev/hatchet#5552) and the 2.0 API.
+hatchet-sdk = { git = "https://github.com/hatchet-dev/hatchet", rev = "9eb39e18a93f840a55aa408815fad43c1e8d9e8c", subdirectory = "sdks/python" }
 
 [tool.uv.workspace]
 members = [
@@ -195,10 +198,7 @@ constraint-dependencies = [
 # `gradio` (an examples dependency) caps `pillow<13`, even in its latest release, so without
 # this override the `pillow>=13.0.0` security floor above leaves `uv lock` unsatisfiable.
 # Remove once a `gradio` release allows Pillow 13.
-# `hatchet-sdk` caps `protobuf<7`, even in its latest release, while other extras (such as the harness's
-# `kubernetes`) need protobuf 7. Its protobuf 6 generated code imports and runs on protobuf 7.
-# Remove once a `hatchet-sdk` release allows protobuf 7.
-override-dependencies = ["pillow>=13.0.0", "protobuf>=7.36.1"]
+override-dependencies = ["pillow>=13.0.0"]
 # `browser-use` pins every one of its dependencies exactly (anyio, openai, anthropic, groq, pillow, ...),
 # so resolving `pydantic-ai-harness[browser-use]` here would hold the whole workspace to those versions.
 # The extra stays in the published metadata; this lock leaves it out, and the `harness browser-use`
@@ -265,11 +265,6 @@ k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 durabletask = "2026-11-02T22:34:00Z"
 durabletask-azuremanaged = "2026-11-02T22:34:00Z"
-# hatchet-sdk 1.46.0 is the `hatchet` floor: it is the first release without the `grpcio-tools` runtime
-# dependency, which has no Python 3.15 wheels compatible with `protobuf<7`.
-# TODO(mrkaye97): Remove after 2026-11-20 18:51 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-hatchet-sdk = "2026-11-13T18:51:00Z"
 
 [dependency-groups]
 dev = [

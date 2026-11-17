@@ -1,67 +1,60 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from opentelemetry.trace import NoOpTracer
+from typing_extensions import TypeVar
 
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.durable_exec._run_context import DurableRunContext
+from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
+from pydantic_ai.tools import RunContext
+
+from ._spec import HATCHET_ENGINE_SPEC
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
+
+AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 
 
-class SerializedHatchetRunContext(BaseModel):
-    retries: dict[str, int] = Field(default_factory=dict)
-    tool_call_id: str | None = None
-    tool_name: str | None = None
-    tool_call_approved: bool = False
-    retry: int = 0
-    run_step: int = 0
+class HatchetRunContext(DurableRunContext[AgentDepsT]):
+    """The [`RunContext`][pydantic_ai.tools.RunContext] used inside the Hatchet tasks a durable agent run spawns.
 
+    A task may run on another worker, so only the fields
+    [`DurableRunContext`][pydantic_ai.durable_exec.DurableRunContext] serializes cross into it, and reading
+    any other field raises a `UserError` explaining how to make it available. `agent` is re-attached from the
+    worker's agent instance, and `tracer` is resolved from it.
 
-class HatchetRunContext(RunContext[AgentDepsT]):
-    """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Hatchet task.
-
-    By default, only the `deps`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry` and `run_step` attributes will be available.
-    To make another attribute available, create a `HatchetRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`HatchetAgent`][pydantic_ai.durable_exec.hatchet.HatchetAgent].
+    To make another attribute available, create a `HatchetRunContext` subclass with a custom
+    `serialize_run_context` class method that returns a dictionary that includes the attribute, and pass it
+    as the `run_context_type` argument to [`HatchetDurability`][pydantic_ai.durable_exec.hatchet.HatchetDurability].
     """
 
-    def __init__(self, deps: AgentDepsT, **kwargs: Any):
-        self.__dict__ = {**kwargs, 'deps': deps}
-        setattr(
-            self,
-            '__dataclass_fields__',
-            {name: field for name, field in RunContext.__dataclass_fields__.items() if name in self.__dict__},
-        )
-
-    def __getattribute__(self, name: str) -> Any:
-        try:
-            return super().__getattribute__(name)
-        except AttributeError as e:  # pragma: no cover
-            if name in RunContext.__dataclass_fields__:
-                raise UserError(
-                    f'{self.__class__.__name__!r} object has no attribute {name!r}. '
-                    'To make the attribute available, create a `HatchetRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to `HatchetAgent`.'
-                )
-            else:
-                raise e
-
-    @classmethod
-    def serialize_run_context(cls, ctx: RunContext[Any]) -> SerializedHatchetRunContext:
-        """Serialize the run context to a `SerializedHatchetRunContext`."""
-        return SerializedHatchetRunContext(
-            retries=ctx.retries,
-            tool_call_id=ctx.tool_call_id,
-            tool_name=ctx.tool_name,
-            tool_call_approved=ctx.tool_call_approved,
-            retry=ctx.retry,
-            run_step=ctx.run_step,
+    def unavailable_field_message(self, name: str) -> str:
+        return (
+            f'{name!r} is not available on {self.__class__.__name__!r} inside a Hatchet task. '
+            'To make the attribute available, create a `HatchetRunContext` subclass with a custom '
+            '`serialize_run_context` class method that returns a dictionary that includes the attribute and pass it '
+            'as the `run_context_type` argument to `HatchetDurability`.'
         )
 
     @classmethod
-    def deserialize_run_context(
-        cls, ctx: SerializedHatchetRunContext, deps: AgentDepsT
-    ) -> HatchetRunContext[AgentDepsT]:
-        """Deserialize the run context from a `SerializedHatchetRunContext`."""
-        return cls(
-            deps=deps,
-            **ctx.model_dump(),
-        )
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> HatchetRunContext[Any]:
+        return cls(**ctx, deps=deps)
+
+
+def deserialize_run_context(
+    run_context_type: type[HatchetRunContext[Any]],
+    serialized: dict[str, Any],
+    *,
+    deps: Any,
+    agent: AbstractAgent[Any, Any] | None,
+) -> RunContext[Any]:
+    """Rebuild a task's run context, resolving `tracer` from the worker's agent unless the subclass set it."""
+    ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=HATCHET_ENGINE_SPEC)
+    if 'tracer' not in ctx.__dict__:
+        settings = agent_instrumentation_settings(agent) if agent is not None else None
+        ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
+        assert isinstance(ctx, DurableRunContext)
+        ctx._expose_field('tracer')  # pyright: ignore[reportPrivateUsage]
+    return ctx
