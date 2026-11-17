@@ -1016,17 +1016,18 @@ def _part_position(messages: Sequence[_messages.ModelMessage], part: _messages.C
     raise AssertionError('The compacted history was checked to contain its `CompactionPart`.')  # pragma: no cover
 
 
-def _compaction_timestamp(holder: _messages.ModelMessage, answered: _messages.ModelMessage) -> datetime:
+def _compaction_timestamp(holder: _messages.ModelMessage, step_request: _messages.ModelRequest) -> datetime:
     """When a compaction's usage is priced: a timestamp from the history, not the clock.
 
     A durable replay or recovery reads the clock differently, which could price it differently and flip a cost limit.
-    The provider's compaction response has its own; a summary written into a request is priced at the request being
-    answered, which the request step stamped before the attempt.
+    The provider's compaction response has its own; a summary written into a request is priced at the step's own
+    request, which the request step always stamps before the attempt. The history's last message isn't used: a
+    `before_model_request` hook may have appended an unstamped request after it.
     """
     if isinstance(holder, _messages.ModelResponse):
         return holder.timestamp
-    assert isinstance(answered, _messages.ModelRequest) and answered.timestamp is not None
-    return answered.timestamp
+    assert step_request.timestamp is not None
+    return step_request.timestamp
 
 
 def _is_empty_summary(part: _messages.CompactionPart) -> bool:
@@ -4050,7 +4051,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_name=model.model_name,
             provider_name=model.system,
             provider_url=model.base_url,
-            timestamp=_compaction_timestamp(holder, history[-1]),
+            timestamp=_compaction_timestamp(holder, self.request),
         )
         self._record_response_usage(ctx, compaction.billed, request_context=request_context)
         # Before the request is sent, like the check a later attempt gets for an earlier one's rejected response.

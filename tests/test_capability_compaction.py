@@ -1981,6 +1981,45 @@ async def test_substitutes_of_another_kind_and_left_out_parts():
     assert texts(result.all_messages()) == ['summary', 'q', 'private', 'a', 'again', 'done']
 
 
+async def test_compaction_usage_is_priced_at_the_step_request_when_a_hook_appended_one(monkeypatch: pytest.MonkeyPatch):
+    """A hook may append an unstamped request to the history; the summary is still priced, at the step's request."""
+    import pydantic_ai._agent_graph as agent_graph
+
+    priced: list[ModelResponse] = []
+    original = agent_graph.fill_response_cost
+
+    def record(response: ModelResponse) -> None:
+        priced.append(response)
+        original(response)
+
+    monkeypatch.setattr(agent_graph, 'fill_response_cost', record)
+
+    @dataclass
+    class AppendsToHistory(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.messages.append(ModelRequest(parts=[UserPromptPart('appended')]))
+            return request_context
+
+    agent = Agent(
+        seen_by([]),
+        system_prompt='You are a pirate.',
+        capabilities=[AppendsToHistory(), RequestOnce(), Returns(_summary_after_the_system_prompt)],
+    )
+    result = await agent.run('hi')
+
+    [record_] = result.compactions
+    [compaction_billed] = [r for r in priced if r.parts and r.parts[0] is record_.part]
+    [step_request] = [
+        m
+        for m in result.all_messages()
+        if isinstance(m, ModelRequest) and any(isinstance(p, UserPromptPart) and p.content == 'hi' for p in m.parts)
+    ]
+    assert step_request.timestamp is not None
+    assert compaction_billed.timestamp == step_request.timestamp
+
+
 @pytest.mark.parametrize('append_reminder', [False, True])
 @pytest.mark.parametrize('build', [_summary_after_the_system_prompt, _provider_response_after_the_system_prompt])
 async def test_compaction_usage_is_priced_at_a_timestamp_from_the_history(
