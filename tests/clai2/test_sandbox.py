@@ -1308,11 +1308,12 @@ class CommandOnlyBackend:
 
     commands: FakeSandboxBackend
 
+    # Required by the backend protocol; seeding and the login never read them.
     @property
-    def ref(self) -> WorkspaceRef:
+    def ref(self) -> WorkspaceRef:  # pragma: no cover
         return self.commands.ref
 
-    async def working_dir(self) -> str:
+    async def working_dir(self) -> str:  # pragma: no cover
         return await self.commands.working_dir()
 
     async def run(
