@@ -1035,7 +1035,8 @@ steer: decide\
             capabilities=[SubAgents(agents=[SubAgent(boomer, on_failure='steer: decide', on_model_error='retry')])],
         )
         result = await parent.run('go')
-        assert _delegate_retries(result)[0].startswith("Sub-agent 'boomer' failed: kaboom")
+        assert _delegate_retries(result) == snapshot(["Sub-agent 'boomer' failed: kaboom"])
+        assert _delegate_returns(result) == snapshot([])
 
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
