@@ -316,6 +316,26 @@ These files you read were deleted from the workspace:
         result = await agent.run('go')
         assert _notices(result.all_messages()) == [[], [], []]
 
+    async def test_file_replaced_by_a_link_to_a_denied_file_is_not_read(self, tmp_path: Path) -> None:
+        """A link inside the root to a file the file tools deny isn't followed to check the file either."""
+        target = tmp_path / 'notes.txt'
+        target.write_text('one\n')
+        (tmp_path / 'secret.txt').write_text('two\n')
+
+        def link_to_secret() -> None:
+            target.unlink()
+            target.symlink_to(tmp_path / 'secret.txt')
+
+        agent = _agent(
+            tmp_path,
+            (None, _read('notes.txt')),
+            (link_to_secret, _LIST),
+            (None, 'done'),
+            file_system=FileSystem(denied_patterns=['secret.txt']),
+        )
+        result = await agent.run('go')
+        assert _notices(result.all_messages()) == [[], [], []]
+
     async def test_durable_execution_is_refused(self) -> None:
         agent = Agent(TestModel(), name='stale', capabilities=[ReportStaleFiles(), RecordingDurability()])
         with pytest.raises(UserError, match='`ReportStaleFiles` cannot run under durable execution'):

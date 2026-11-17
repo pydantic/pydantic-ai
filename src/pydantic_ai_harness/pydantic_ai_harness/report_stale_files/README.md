@@ -63,9 +63,11 @@ agent = Agent(
 | `max_reported_files` | `20` | How many paths one notice names. The rest are counted (`- and 3 more`). |
 | `max_checked_bytes` | `8 << 20` (8 MiB) | How many bytes of recorded files to read before one request, most recently read or written first. A file that doesn't fit in what is left is not checked on that request. |
 
-Every check reads each recorded file in full, which detects a rewrite that keeps the size, but costs a `stat` and a
-read per file per request. `max_checked_bytes` bounds the bytes read before one request; on a remote workspace each
-file is also a round trip, so lower `max_tracked_files` if requests slow down.
+Every check reads each recorded file in full, which detects a rewrite that keeps the size. Before every request, each
+recorded file costs a `realpath`, a `stat` and a read, one file after another, even when nothing changed. On a
+remote workspace each is a round trip, and on a backend without native `realpath` that one runs a shell command, so
+with the defaults a remote sandbox can pay up to 300 sequential round trips per request. `max_checked_bytes` bounds
+the bytes read; lower `max_tracked_files` if requests slow down.
 
 ## Scope
 
@@ -75,8 +77,8 @@ file is also a round trip, so lower `max_tracked_files` if requests slow down.
   starts with no records, and a run in another workspace than the one a file was read in doesn't check that file.
   An instance keeps the 1,024 most recently used conversations.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
-- **A check doesn't follow a link out of the file tool's root.** A recorded file that now resolves outside the root
-  of the tool that read it, such as one replaced by a symlink, is skipped rather than read.
+- **A check doesn't follow a path that now leads elsewhere.** A recorded file whose real path changed since it was
+  read, such as one replaced by a symlink to a file the file tools would refuse, is skipped rather than read.
 - **Durable execution is refused.** Under a durability capability such as `TemporalDurability`, the run fails at its
   start: the records are process memory, which a replay or another worker does not have.
 

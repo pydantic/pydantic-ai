@@ -53,8 +53,8 @@ class StaleFilesPart(InstructionCapabilityPart, namespace='report_stale_files', 
 @dataclass(frozen=True)
 class _Observation:
     content_hash: str
-    root: str
-    """The root of the file tool that read or wrote the file, which a check doesn't follow a symlink out of."""
+    realpath: str
+    """Where the path led when the file was read; a check doesn't follow it anywhere else."""
     workspace: WorkspaceRef | None
     """The workspace the file was read in; a run in another workspace of the conversation doesn't check it."""
 
@@ -136,7 +136,8 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
     @on_event(FileReadEvent, FileWrittenEvent)
     async def _observe(self, ctx: RunContext[AgentDepsT], event: FileReadEvent | FileWrittenEvent) -> None:
         path = await ctx.workspace.resolve(event.path, base=event.root_dir)
-        self._observations[path] = _Observation(event.content_hash, event.root_dir, ctx.workspace.ref)
+        realpath = await ctx.workspace.realpath(path)
+        self._observations[path] = _Observation(event.content_hash, realpath, ctx.workspace.ref)
         self._observations.move_to_end(path)
         while len(self._observations) > self.max_tracked_files:
             self._observations.popitem(last=False)
@@ -186,10 +187,11 @@ async def _state(
 ) -> tuple[Literal['fresh', 'changed', 'deleted', 'unknown'], int]:
     """Whether the file at `path` still has the observed content, and how many bytes were read to tell.
 
-    `'unknown'` when it can't be read, is larger than `budget`, or now resolves outside the observing tool's root.
+    `'unknown'` when it can't be read, is larger than `budget`, or now leads somewhere else, such as through a link
+    to a file the file tools would refuse to read.
     """
     try:
-        if not _contains(workspace.paths, observation.root, await workspace.realpath(path)):
+        if await workspace.realpath(path) != observation.realpath:
             return 'unknown', 0
         entry = await workspace.stat(path)
         if entry.is_dir or (entry.size is not None and entry.size > budget):

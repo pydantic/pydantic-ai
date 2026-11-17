@@ -659,7 +659,8 @@ capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_report
 ```
 
 Each check reads every recorded file in full, most recent first, up to `max_checked_bytes` per request; lower
-`max_tracked_files` on a slow remote workspace. A file that now resolves outside the reading tool's root is skipped.
+`max_tracked_files` on a slow remote workspace. Each recorded file costs a `realpath`, a `stat` and a read per request, sequentially; a file whose real
+path changed since it was read is skipped.
 Not supported under durable execution: the run fails at its start.
 
 ## Macroscope
