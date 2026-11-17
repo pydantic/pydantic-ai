@@ -50,7 +50,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...exceptions import UserError
+from ...exceptions import ModelRequestRejectedError, UserError
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -131,7 +131,12 @@ from ._citations import map_chat_content
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
 from ._model_response_streaming import ModelResponseStreamedResponse
-from ._reasoning import drop_sampling_params_for_reasoning, reasoning_active, resolve_openai_thinking_effort
+from ._reasoning import (
+    drop_sampling_params_for_reasoning,
+    reasoning_active,
+    resolve_openai_thinking_effort,
+    supports_reasoning_effort_none,
+)
 from ._response_fields import map_usage
 from ._settings import (
     OpenAIChatModelSettings,
@@ -525,6 +530,29 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = self.profile
 
+        # A flagged model rejects any request that sends tools while reasoning is on, output tools included, with a
+        # 400 pointing at `/v1/responses` or `reasoning_effort='none'`. `thinking=False` maps to `'none'` only where
+        # the model accepts it; elsewhere it maps to the lowest effort, which the API rejects too. The error is the
+        # category of that 400, so `FallbackModel` and `except ModelAPIError` handle it as they handle the 400.
+        if (
+            tools
+            and profile.get('openai_chat_function_tools_require_reasoning_off', False)
+            and reasoning_active(profile, model_settings, model_request_parameters)
+        ):
+            remedy = ''
+            if supports_reasoning_effort_none(profile):
+                # An explicit `openai_reasoning_effort` wins over `thinking`, so `thinking=False` alone wouldn't help.
+                remedy = (
+                    ", or set `openai_reasoning_effort='none'`"
+                    if model_settings.get('openai_reasoning_effort') is not None
+                    else ', or disable reasoning with `thinking=False`'
+                )
+            raise ModelRequestRejectedError(
+                self.model_name,
+                f'OpenAI rejects tools, output tools included, while reasoning is enabled on {self.model_name!r} over '
+                f'Chat Completions. Use `OpenAIResponsesModel`{remedy} instead.',
+            )
+
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
         self._finalize_cache_breakpoints(tools, openai_messages)
 
@@ -595,6 +623,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
+                # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
