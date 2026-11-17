@@ -863,7 +863,7 @@ class AgentControl(AbstractCapability[AgentDepsT]):
         return CombinedCapability([self, _AgentControlOverrides(self)])
 
     def _model_selector(self) -> Callable[[ModelSelectionContext[AgentDepsT]], ModelSelection]:
-        """Build the per-run selector a nameless `get_model` returns.
+        """Build the per-run selector `get_model` returns.
 
         Pydantic AI evaluates a selector once per new request step, but the managed model is a
         run-stable config value, so the selector memoizes its first choice and every later step
@@ -872,7 +872,7 @@ class AgentControl(AbstractCapability[AgentDepsT]):
         run, so nothing leaks across runs. On the first evaluation it derives the backing variable
         from `ctx.agent` (the same derivation `wrap_run` performs), reads the managed model, and
         falls back to the model Pydantic AI already selected (`ctx.model`) when none is managed --
-        raising only when there is no model at all (a nameless, model-less agent with nothing
+        raising only when there is no model at all (a model-less agent with nothing
         published yet), so the misconfiguration surfaces clearly instead of downstream.
         """
         selected: list[ModelSelection] = []
@@ -889,7 +889,7 @@ class AgentControl(AbstractCapability[AgentDepsT]):
                     selected.append(ctx.model)
                 else:
                     raise UserError(
-                        'A nameless `AgentControl` on a model-less agent has no model to run: the agent '
+                        '`AgentControl` has no model to run: the agent '
                         'defines no model and none is published in Logfire yet. Give the agent a model, '
                         'pass one to `run(model=...)`, or publish a `model` in the managed config.'
                     )

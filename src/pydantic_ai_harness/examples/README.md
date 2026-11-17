@@ -37,7 +37,7 @@ examples' `main()` starts an interactive session.
 ### Pointing `agent_control.py` at a Logfire
 
 With no Logfire configured, `agent_control.py` resolves nothing and runs exactly
-as the code says -- it reports `reason='code_default'` and prints the prompt it
+as the code says -- it reports no label or version and prints the prompt it
 assembled. That is the path to check first, and it needs no setup at all.
 
 Two more environment variables point it at a Logfire instead:

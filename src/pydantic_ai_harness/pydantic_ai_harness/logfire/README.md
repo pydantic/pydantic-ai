@@ -48,8 +48,8 @@ patch on what's written in code -- absent fields keep their code values, and a m
 or unreachable remote value degrades to exactly the agent the developer wrote, so under the default
 `on_unmatched` it cannot crash a run (`on_unmatched='error'` raises instead). Values resolve **once per run** and the resolved label + version ride as baggage on every
 span of the run, so traces always show which version produced which behavior. Each capability's
-`resolved` exposes the active run's `ResolvedVariable`, whose `reason` says *why* it resolved the way
-it did (e.g. a `'code_default'` fallback).
+`resolved` exposes the active run's `ResolvedVariable`; on Logfire 4.34 and later its `reason` says
+*why* it resolved the way it did (e.g. a `'code_default'` fallback).
 
 **These capabilities never write to a variable.** They read a value and nothing else, so the
 credential a deployment holds needs `project:read_variables` and nothing more. Creating the variable

@@ -1355,3 +1355,110 @@ async def test_rename_routes_to_the_tool_the_model_was_handed(capfire: CaptureLo
         ).run('hello')
 
     assert authorized == ['first']
+
+
+def hinted_variables(capfire: CaptureLogfire) -> list[str]:
+    """The variable each `agent_control_config_hint` span reported, in order."""
+    return [
+        span['attributes']['agent_control.variable_name']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['name'] == 'agent_control_config_hint'
+    ]
+
+
+@pytest.mark.parametrize(
+    ('agent_name', 'variable_name'),
+    [(' Checkout Assistant #2 ', 'agent__checkout_assistant_2'), ('pydanty-explorer', 'agent__pydanty_explorer')],
+)
+async def test_a_nameless_control_derives_its_variable_from_the_agent_name(
+    capfire: CaptureLogfire, agent_name: str, variable_name: str
+) -> None:
+    with variables_provider(capfire, VariablesConfig(variables={})):
+        await Agent(TestModel(), name=agent_name, capabilities=[AgentControl()]).run('hello')
+    assert hinted_variables(capfire) == [variable_name]
+
+
+def test_an_inferred_agent_name_is_refused_at_construction() -> None:
+    """An agent with no `name` of its own is refused, not silently given the inferred one.
+
+    Pydantic AI fills `Agent.name` in on the first run from the variable the agent was assigned to,
+    which would make renaming a local silently repoint the agent at a different managed config. The
+    capability is bound (`for_agent`) at construction, before that inference runs, so it can see the
+    difference and say so there -- at the line the user would have to change anyway.
+    """
+    with pytest.raises(UserError, match='would infer one from the variable'):
+        Agent(TestModel(), capabilities=[AgentControl()])
+
+
+async def test_an_explicit_name_keeps_its_case_and_maps_hyphens(capfire: CaptureLogfire) -> None:
+    with variables_provider(capfire, VariablesConfig(variables={})):
+        await Agent(TestModel(), capabilities=[AgentControl('Checkout-Agent')]).run('hello')
+    assert hinted_variables(capfire) == ['agent__Checkout_Agent']
+    with pytest.raises(ValueError, match='invalid variable name'):
+        AgentControl('Checkout Agent')
+
+
+async def test_a_prefixed_name_warns_at_the_call_site(capfire: CaptureLogfire) -> None:
+    with pytest.warns(UserWarning, match='added automatically') as caught:
+        control = AgentControl('agent__checkout')
+    assert caught[0].filename == __file__
+    with variables_provider(capfire, VariablesConfig(variables={})):
+        await Agent(TestModel(), capabilities=[control]).run('hello')
+    assert hinted_variables(capfire) == ['agent__checkout']
+
+
+async def test_a_nameless_control_sources_the_model_for_a_model_less_agent(publish: Publish) -> None:
+    # There is no agent at construction, so the model comes from a selector Pydantic AI evaluates once
+    # it has a `ModelSelectionContext`; it derives `agent__solo` from the agent's name.
+    publish('solo', {'model': 'test'})
+    result = await Agent(None, name='solo', capabilities=[AgentControl(label='production')]).run('hello')
+    assert result.output.startswith('success')
+
+
+async def test_a_model_less_agent_with_nothing_published_raises() -> None:
+    agent = Agent(None, name='unpublished', capabilities=[AgentControl()])
+    with pytest.raises(UserError, match='`AgentControl` has no model to run'):
+        await agent.run('hello')
+
+
+async def test_a_shared_nameless_control_derives_a_variable_per_agent(capfire: CaptureLogfire) -> None:
+    # One capability instance can back several agents -- `SubAgents.shared_capabilities` hands the same
+    # object to each -- so each has to read its own `agent__<name>`. A single cache would serve every
+    # later agent whichever variable the first one to run happened to build.
+    control = AgentControl()
+    with variables_provider(capfire, VariablesConfig(variables={})):
+        await Agent(TestModel(), name='first_agent', capabilities=[control]).run('hello')
+        await Agent(TestModel(), name='second_agent', capabilities=[control]).run('hello')
+    assert hinted_variables(capfire) == ['agent__first_agent', 'agent__second_agent']
+
+
+async def test_an_agent_name_with_nothing_to_derive_from_raises() -> None:
+    # Normalization is lossy by design, but an empty result is not two agents reading alike -- it is
+    # every such agent landing on the bare prefix, naming no agent at all.
+    agent = Agent(TestModel(), name='!!!', capabilities=[AgentControl()])
+    with pytest.raises(UserError, match='has no letters, digits, or underscores'):
+        await agent.run('hello')
+
+
+async def test_a_failed_model_selection_leaves_no_resolution_behind() -> None:
+    # `wrap_run` consumes the handoff, and a selection that raises never reaches it. Setting it before
+    # the model decision would leave this run's instructions, settings and tool overrides behind, and
+    # the next run, which skips selection, would reuse them instead of resolving for itself.
+    keys: list[str] = []
+
+    def targeting(ctx: TargetingContext[object]) -> str:
+        keys.append('resolved')
+        return 'key'
+
+    agent = Agent(None, name='stranded', capabilities=[AgentControl(targeting_key=targeting)])
+    with pytest.raises(UserError, match='has no model to run'):
+        await agent.run('hello')
+    await agent.run('again', model=TestModel())
+    assert keys == ['resolved', 'resolved']
+
+
+async def test_an_agent_whose_name_was_removed_is_refused_at_run_time() -> None:
+    agent = Agent(TestModel(), name='checkout', capabilities=[AgentControl()])
+    agent.name = None
+    with pytest.raises(UserError, match='this agent has none'):
+        await agent.run('hello', infer_name=False)

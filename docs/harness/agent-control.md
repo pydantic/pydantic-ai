@@ -308,7 +308,8 @@ instruction block computed per request contributes that it exists and never what
 Tool definitions are different: the baseline records the names, descriptions, and parameter
 descriptions assembled for that request. If a dynamic toolset derives those fields from `deps` or
 user input, that text reaches the hint span and may become the variable's example. Keep request data
-and secrets out of tool-definition metadata. Settings the contract has no field for are omitted,
+and secrets out of tool-definition metadata. Tools the client defines and runs (`kind='external'`, such as AG-UI frontend tools)
+are left out. Settings the contract has no field for are omitted,
 which keeps `extra_headers` and `extra_body` out of the baseline. An MCP toolset or capability whose
 `id` was derived from its server URL is reported as `[REDACTED]`, as it is in every other trace, so
 the blocks and tools it contributes appear without the hostname.
@@ -342,7 +343,7 @@ receives a [`TargetingContext`][pydantic_ai_harness.logfire.TargetingContext] ra
 [`RunContext`][pydantic_ai.tools.RunContext]: the config is resolved during model selection, before the
 run context exists, so the callable gets the `deps`, `prompt` and `messages` both share.
 `AgentControl.resolved` exposes the config the current run picked up (`value`, `label`, `version`,
-`reason`), and is `None` outside a run.
+and on Logfire 4.34 and later `reason`), and is `None` outside a run.
 
 ## API reference
 

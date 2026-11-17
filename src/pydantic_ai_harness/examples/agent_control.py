@@ -231,14 +231,12 @@ def build_agent(model: Model | str = DEFAULT_MODEL) -> Agent[SupportDeps, str]:
 
 
 def describe_resolution() -> str:
-    """One line for what Logfire resolved on the current run: the reason, label, version, sections."""
+    """One line for what Logfire resolved on the current run: the label, version, sections."""
     resolved = control.resolved
     if resolved is None:
         return 'nothing (outside a run)'
     sections = sorted(resolved.value.model_dump(exclude_none=True))
-    return (
-        f'reason={resolved.reason!r} label={resolved.label!r} version={resolved.version} sections={sections or "none"}'
-    )
+    return f'label={resolved.label!r} version={resolved.version} sections={sections or "none"}'
 
 
 def print_configuration(*, logfire_configured: bool) -> None:
