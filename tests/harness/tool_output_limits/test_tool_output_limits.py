@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
+import anyio
+import anyio.lowlevel
 import pytest
 from inline_snapshot import snapshot
 from pydantic_core import to_json
@@ -36,6 +38,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.tool_output_limits import (
     READ_TOOL_RESULT_KIND,
     Band,
@@ -46,6 +49,7 @@ from pydantic_ai_harness.tool_output_limits import (
     ToolOutputLimits,
     Truncate,
     TruncationStrategy,
+    WorkspaceOverflowStore,
     indented_json,
     json_lines,
 )
@@ -1418,6 +1422,27 @@ class TestReadBack:
             assert file.closed
             assert sum(file.reads) == len(payload)
             assert max(file.reads) == 8
+
+    async def test_read_slice_splits_a_whole_read_in_chunks(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """A store with no ranged read is read whole, then split one chunk at a time, yielding to the loop in between."""
+        monkeypatch.setattr('pydantic_ai_harness.tool_output_limits._store._CHUNK_SIZE', 8)
+        payload = '\n'.join(f'line {i}' for i in range(1_000)).encode('utf-8')
+        store = WorkspaceOverflowStore().bind(Workspace(LocalWorkspaceBackend(working_dir=tmp_path)))
+        handle = await store.write('run/call.0', payload)
+        turns = 0
+
+        async def count_turns() -> None:
+            nonlocal turns
+            while True:
+                turns += 1
+                await anyio.lowlevel.checkpoint()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(count_turns)
+            out = await _read_slice(store, handle, offset=10, limit=3, from_end=False, pattern=None)
+            tg.cancel_scope.cancel()
+            assert out == f'[handle {handle!r}: 1,000 matching line(s); showing 3]\nline 10\nline 11\nline 12'
+        assert turns >= len(payload) // 8
 
     @pytest.mark.parametrize('from_end', [False, True])
     async def test_read_slice_accepts_an_offset_past_sys_maxsize(self, tmp_path: Path, from_end: bool):

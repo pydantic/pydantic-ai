@@ -24,6 +24,7 @@ from io import BufferedReader
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import anyio.lowlevel
 import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
@@ -170,7 +171,7 @@ def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
     """Yield a stored payload in chunks.
 
     A `LocalFileOverflowStore` is streamed from disk unless a subclass overrides `read`, such as to decode what it
-    wrote; any other store is read whole.
+    wrote; any other store is read whole, then yielded in chunks of the same size.
     """
     if isinstance(store, LocalFileOverflowStore) and type(store).read is LocalFileOverflowStore.read:
         return store._chunks(handle)  # pyright: ignore[reportPrivateUsage]
@@ -178,7 +179,11 @@ def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
 
 
 async def _read_whole(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
-    yield await store.read(handle)
+    data = await store.read(handle)
+    for start in range(0, len(data), _CHUNK_SIZE):
+        yield data[start : start + _CHUNK_SIZE]
+        # The caller splits each chunk without awaiting, so return to the event loop between chunks.
+        await anyio.lowlevel.checkpoint()
 
 
 def _default_root() -> Path:
