@@ -192,7 +192,7 @@ The schema replaces the sub-agent's `output_type` for that run, through
 caveats apply: it is sent to the model as the output schema, and the returned `dict` is not
 validated against it. The sub-agent's own output type, and any validation it does, is bypassed for
 that call, which is why it is opt-in per sub-agent. A schema that is not an object schema, or that
-uses `$defs`, fails the call before it counts against `max_agent_calls`. A sub-agent with
+uses `$ref` or `$defs`, fails the call before it counts against `max_agent_calls`. A sub-agent with
 [output validators](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions)
 cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in
 the script.

@@ -655,12 +655,17 @@ except RuntimeError as e:
 @pytest.mark.parametrize(
     ('schema', 'error'),
     [
-        ('"object"', 'output_schema must be a dict with string keys'),
+        ('"object"', 'output_schema must be a JSON object'),
         ('{"type": "string"}', 'output_schema is not usable: Schema must be an object'),
         (
             '{"type": "object", "$defs": {"A": {"type": "string"}}, "properties": {"a": {"$ref": "#/$defs/A"}}}',
-            r'output_schema cannot use \$defs; write nested objects inline',
+            r'output_schema cannot use \$ref or \$defs; write nested objects inline',
         ),
+        (
+            '{"type": "object", "properties": {"a": {"type": "string"}, "b": {"$ref": "#/properties/a"}}}',
+            r'output_schema cannot use \$ref or \$defs; write nested objects inline',
+        ),
+        ('{"$ref": "#"}', r'output_schema cannot use \$ref or \$defs; write nested objects inline'),
     ],
 )
 async def test_unusable_output_schema_rejected_before_budget_is_spent(schema: str, error: str) -> None:

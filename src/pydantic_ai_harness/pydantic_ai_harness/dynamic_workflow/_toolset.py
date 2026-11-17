@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, cast
 
-from pydantic import Field, TypeAdapter, ValidationError
+from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
@@ -155,7 +155,7 @@ class _WorkflowArgs(TypedDict):
 _WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArgs)
 _WORKFLOW_ARGS_JSON_SCHEMA = _WORKFLOW_ARGS_ADAPTER.json_schema()
 _WORKFLOW_ARGS_VALIDATOR: SchemaValidatorProt = _WORKFLOW_ARGS_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
-_JSON_SCHEMA_ADAPTER = TypeAdapter(JsonSchemaValue)
+_JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
 class _BudgetExhaustedError(RuntimeError):
@@ -209,8 +209,8 @@ values.\
 
 _OUTPUT_SCHEMA_DESCRIPTION = """\
 A sub-agent with an `output_schema` overload can return a result in a shape you choose: pass a JSON
-schema with `"type": "object"` and no `$defs`, and the call returns a dict in that shape instead of the
-agent's own output:
+schema with `"type": "object"` and no `$ref` or `$defs`, and the call returns a dict in that shape
+instead of the agent's own output:
 
 ```python
 finding = await researcher(task="...", output_schema={
@@ -225,9 +225,9 @@ finding = await researcher(task="...", output_schema={
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
 # return schema, plus an `output_schema` overload for an entry that allows it. Render each catalog
 # entry through core's `FunctionSignature` (the renderer code_mode and Pydantic AI already use).
-# This keeps the catalog format consistent across capabilities, forces keyword-only `task` to match `dispatch` (which reads `kwargs['task']`), and
-# renders docstrings safely -- a hand-rolled f-string breaks on a newline or a quote inside a
-# description.
+# This keeps the catalog format consistent across capabilities, forces keyword-only `task` to
+# match `dispatch` (which reads `kwargs['task']`), and renders docstrings safely -- a hand-rolled
+# f-string breaks on a newline or a quote inside a description.
 _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
     'type': 'object',
     'properties': {'task': {'type': 'string'}},
@@ -627,14 +627,28 @@ def _dispatched_call(
     try:
         json_schema = _JSON_SCHEMA_ADAPTER.validate_python(schema, strict=True)
     except ValidationError as exc:
-        raise TypeError(f'{agent_name}() output_schema must be a dict with string keys') from exc
-    # `StructuredDict` inlines `$defs` on the host, where references can expand a small schema without bound.
-    if '$defs' in json_schema:
-        raise TypeError(f'{agent_name}() output_schema cannot use $defs; write nested objects inline')
+        raise TypeError(f'{agent_name}() output_schema must be a JSON object') from exc
+    # References are inlined on the host, where they can expand a small schema without bound.
+    if _uses_references(json_schema):
+        raise TypeError(f'{agent_name}() output_schema cannot use $ref or $defs; write nested objects inline')
     try:
         return task, StructuredDict(json_schema)
     except UserError as exc:
         raise TypeError(f'{agent_name}() output_schema is not usable: {exc}') from exc
+
+
+def _uses_references(schema: dict[str, JsonValue]) -> bool:
+    """Whether a `$ref` or `$defs` key appears anywhere in `schema`, walked without recursion."""
+    stack: list[JsonValue] = [schema]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if '$ref' in node or '$defs' in node:
+                return True
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return False
 
 
 async def _run_recorded(run: Callable[[], Awaitable[object]]) -> dict[str, Any]:
