@@ -376,7 +376,6 @@ class LivePrompt:
         elif self.interrupts.active:
             cancelled = self.interrupts.cancel(exit_on_repeat=False)
             telemetry.record('prompt interrupt', key='escape', cancelled_turn=cancelled)
-            self._unqueue()
         elif self.buffer.search is not None:
             self.search('escape')
         elif self._completions or self._completion_pending:
@@ -405,40 +404,20 @@ class LivePrompt:
         self.buffer.replace(self._shelved_draft)
         self.refresh_completions()
 
-    def _unqueue(self) -> None:
-        """Move queued prompts into the draft after an interrupt, as Claude Code and Codex do, so none runs on its own.
+    def _end_edit_on_interrupt(self) -> None:
+        """Put the prompt being edited back before the queue runs on after Ctrl-C, as on `main` and in Claude Code.
 
-        Only prompts move, one per line ahead of the draft: a `/command` or `!` shell line would make the lines
-        after it part of the command, so those stay queued, as Claude Code keeps queued shell commands. So do
-        control signals, and a prompt such as a bare `!` that would turn the joined text into a command.
-        A prompt being edited keeps its place with the edit, unless the edit is a command or shell line, and the
-        draft set aside to edit it comes last.
+        A prompt edit is kept; an edit into a command or shell line is not, since only Enter makes one runnable.
+        The draft set aside to edit it comes back, as Esc brings it back.
         """
-        draft = self._typed_draft()
-        if (editing := self._editing) is not None:
-            self._end_edit(editing)
-        moved = [entry for entry in self.queued_prompts() if input_kind(entry.text) == 'prompt']
-        # A bare `!` is a prompt alone, but would send the lines after it to the shell: it stays queued.
-        while moved and input_kind('\n'.join([*(entry.text for entry in moved), draft])) != 'prompt':
-            moved.pop(0)
-        if editing is None and not moved:
+        if (editing := self._editing) is None:
             return
-        for entry in moved:
-            self._discard(entry)
+        draft = self._shelved_draft
+        self._end_edit(editing)
         self.buffer.search = None
         self.buffer.history_index = None
-        self.buffer.replace('\n'.join(filter(None, [*(entry.text for entry in moved), draft])))
+        self.buffer.replace(draft)
         self.refresh_completions()
-        if moved:
-            self.notice = 'Queued messages moved to the input. Press Enter to send them.'
-
-    def _typed_draft(self) -> str:
-        """The draft the user typed, not a queued prompt being edited or a history entry or search match shown."""
-        if self._editing is not None:
-            return self._shelved_draft
-        if self.buffer.search is not None:
-            return self.buffer.search_original
-        return self.buffer.saved_draft if self.buffer.history_index is not None else self.buffer.text
 
     def _end_edit(self, editing: QueuedPrompt) -> None:
         """Return the prompt being edited to the queue with the edit in the draft, or remove it if that is empty."""
@@ -492,7 +471,7 @@ class LivePrompt:
         cancelled = self.interrupts.cancel()
         telemetry.record('prompt interrupt', key='ctrl-c', cancelled_turn=cancelled)
         if cancelled:
-            self._unqueue()
+            self._end_edit_on_interrupt()
         else:
             self.buffer.replace('')
             self.buffer.search = None
