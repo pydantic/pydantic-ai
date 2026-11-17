@@ -51,10 +51,13 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
-
-# Private, like `_authority_layers` below: the same ordering `Workspace.authority` uses, not yet public.
-from pydantic_ai.workspaces._authority_paths import lowest_authority
+from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    lowest_authority_under,
+)
 from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
@@ -1821,63 +1824,23 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     """`workspace`, rooted at `directory`, with no more [authority][pydantic_ai.messages.Authority] than `parent` gives it.
 
     A delegate's `working_directory` workspace comes from the host's resolver, which knows nothing of the parent's
-    levels, as it knows nothing of its read-only policy. The delegate's files all get one level, the lowest of:
+    levels, as it knows nothing of its read-only policy. The delegate's files all get one level, the lower of:
 
-    - what the parent gives `directory`: `authority_of`, which accounts for links, or the parent's own level for a
-      directory outside its working directory;
+    - the lowest level the parent gives any path at or under `directory`, as
+      [`lowest_authority_under`][pydantic_ai.workspaces.lowest_authority_under] finds it, with `directory` counted as
+      part of the parent's workspace: a directory outside the parent's working directory starts from the parent's own
+      level rather than `'none'`, and a `path_authority` entry containing it or inside it still lowers it;
     - the parent's own level, which a capability reading above the delegate's directory, such as `RepoContext`'s
-      walk-up, gives the ancestors the parent doesn't list;
-    - every parent `path_authority` entry inside `directory` or containing it: its level where it's written, and
-      what `authority_of` gives where it leads, since core caps a link's target at its location's level.
+      walk-up, gives the ancestors the parent doesn't list.
 
     It's conservative: a file the parent gives more can get less in the delegate, but none gets more. Wrapping only
     ever lowers, so the resolver's own levels still apply where they're lower.
     """
-    # Core has no public way to read a workspace's `path_authority` entries yet, so this reads the wrapper chain's
-    # private layers, as `Workspace.authority` does; core and harness ship together.
-    layers = parent._authority_layers()  # pyright: ignore[reportPrivateUsage]
-    if not layers:
+    if not parent.attached:
+        # A parent without a workspace has no files whose levels the delegate could raise.
         return workspace
-    parent_root = await parent.working_dir()
-    sep = parent.paths.sep
-    inside = _folded_dir(directory, sep)
-    in_parent = inside.startswith(_folded_dir(parent_root, sep))
-    levels: list[Authority] = [
-        await parent.authority_of(directory) if in_parent else parent.authority,
-        parent.authority,
-    ]
-    for _, path_authority in layers:
-        for path, level in path_authority.items():
-            levels.extend(await _entry_levels(parent, parent_root, path, level, directory))
-    lowest = lowest_authority(levels)
+    # Naming `directory` at `'operator'` in a wrapper brings it into the workspace without raising any level.
+    view = AuthorityWorkspace(parent, authority='operator', path_authority={directory: 'operator'})
+    levels = {await lowest_authority_under(view, directory), parent.authority}
+    lowest: Authority = 'none' if 'none' in levels else 'user' if 'user' in levels else 'operator'
     return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
-
-
-async def _entry_levels(
-    parent: Workspace, parent_root: str, path: str, level: Authority, directory: str
-) -> list[Authority]:
-    """The levels a parent `path_authority` entry gives a delegate rooted at `directory`, if it's inside or contains it.
-
-    Checked where the entry is written, at its level, and where it leads, at the level `authority_of` gives the target:
-    core caps a link's target at what the link's own location gets, which can be below the entry's level.
-    """
-    written = await parent.resolve(path, base=parent_root)
-    levels: list[Authority] = []
-    sep = parent.paths.sep
-    inside = _folded_dir(directory, sep)
-    for location in {written, await parent.realpath(written)}:
-        folded = _folded_dir(location, sep)
-        if not (folded.startswith(inside) or inside.startswith(folded)):
-            continue
-        levels.append(level if location == written else await parent.authority_of(location))
-    return levels
-
-
-def _folded_dir(path: str, sep: str) -> str:
-    """`path` case-folded with one trailing `sep`, so `a.startswith(b)` says whether `a` is inside or at `b`.
-
-    Case-folded like core's `layer_authority`, which also matches paths case-folded and only ever lowers with it, so
-    another spelling of a lower directory on a case-insensitive filesystem still counts. `sep` is the workspace's
-    separator, a backslash on a `'windows'` workspace, as core's `authority_of` matches with.
-    """
-    return path.casefold().rstrip(sep) + sep
