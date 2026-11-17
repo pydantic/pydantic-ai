@@ -516,9 +516,9 @@ store at an existing database:
 - The statements are skipped when all of the store's tables already exist, so
   only the call that creates them needs `CREATE` on the schema. After that, a
   role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables is
-  enough, plus `SELECT` and `INSERT` on `{table}_media` unless you pass
-  `media_store=None`. A role without `CREATE` on a database missing a table fails on the
-  first operation, not at construction.
+  enough, plus `SELECT` and `INSERT` on `{table}_media` when using the default
+  media store. A role without `CREATE` on a database missing a table fails on
+  the first operation, not at construction.
 - Processes that start together wait on the advisory lock instead of colliding
   in the catalog, which `CREATE TABLE IF NOT EXISTS` alone does not rule out.
   The lock is released when the transaction ends.
