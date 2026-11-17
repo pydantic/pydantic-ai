@@ -42,6 +42,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -1196,10 +1197,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'To resume task {record.id}, call the delegate tool {resume}')
         args = {'agent_name': record.agent_name, 'task': message, 'background': record.background, 'resume': record.id}
         call = ToolCallPart(names[0], args, tool_call_id=f'{ctx.tool_call_id}-resume')
+        reserved = reserve_nested_call(ctx)
         try:
             result = await tool_manager.handle_call(call, wrap_validation_errors=False)
         except (ApprovalRequired, CallDeferred):
             raise ModelRetry(f'Resuming task {record.id} needs approval. Call `{names[0]}` {resume}') from None
+        finally:
+            ctx.usage.tool_calls -= reserved
         if isinstance(result, ToolDenied):
             return f'Task {record.id} was not resumed: {result.message}'
         return result

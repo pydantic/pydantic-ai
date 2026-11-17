@@ -662,6 +662,32 @@ class TestSubAgentsTaskControl:
         assert expected in result.output
         assert not recorder.of(TaskResumedEvent)
 
+    async def test_a_message_to_a_finished_one_shot_task_says_it_cannot_resume(self) -> None:
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled(researcher(resumable=False))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert 'cannot resume; it is one-shot' in result.output
+
+    async def test_a_resume_by_message_counts_against_tool_calls_limit(self) -> None:
+        recorder = Recorder()
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            return call('message_task', task_id=task_id_in(tool_returns(messages)[-1]), message='And then?')
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled(), recorder],
+        )
+        with anyio.fail_after(WAIT), pytest.raises(UsageLimitExceeded, match='tool_calls_limit of 2'):
+            await parent.run('Go.', usage_limits=UsageLimits(tool_calls_limit=2))
+        assert not recorder.of(TaskResumedEvent)
+
     @pytest.mark.parametrize('tool_name', ['delegate_task', 'task'])
     @pytest.mark.parametrize('prefix', ['', 'ns_'])
     async def test_a_resume_by_message_finds_the_delegate_tool_by_its_exposed_name(
