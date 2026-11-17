@@ -66,7 +66,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
-from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, UNRUN_MESSAGES, SlowBatchTestModel
+from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, READINESS_WAIT_TIMEOUT, UNRUN_MESSAGES, SlowBatchTestModel
 from ..continuation_utils import ScriptedContinuationModel, scripted_response
 
 Outcome = Literal['ran', 'expired', 'canceled', 'missing'] | int | ModelAPIError
@@ -399,20 +399,36 @@ async def test_a_check_that_would_fail_again_reaches_the_run(error: ModelAPIErro
     assert wrapped.failed == 1
 
 
-async def test_runs_sharing_a_failed_check_each_get_their_own_error() -> None:
+async def test_runs_sharing_a_failed_check_each_get_their_own_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A run gives the error it raises its conversation, so runs waiting on one check each need their own error."""
+    release = asyncio.Event()
 
-    class SlowFailingCheckModel(SlowBatchTestModel):
+    class GatedFailingCheckModel(SlowBatchTestModel):
         async def batch_status(self, batch: Batch) -> Batch:
             self._record('batch_status')
-            await asyncio.sleep(0.05)
+            await release.wait()
             raise ModelHTTPError(status_code=401, model_name='test', body={'error': 'denied'})
 
+    polling: list[object] = []
+    both_polling = asyncio.Event()
+    poll = BatchPool.poll
+
+    async def counting_poll(self: BatchPool, *args: Any) -> Any:
+        # `poll` joins a running check before it first awaits, so a run counted here has joined it once the other is.
+        polling.append(args)
+        if len(polling) == 2:
+            both_polling.set()
+        return await poll(self, *args)
+
+    monkeypatch.setattr(BatchPool, 'poll', counting_poll)
     checks: list[str] = []
-    wrapped = SlowFailingCheckModel(on_batch_call=checks.append)
+    wrapped = GatedFailingCheckModel(on_batch_call=checks.append)
     agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
 
-    first, second = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+    runs = asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+    await asyncio.wait_for(both_polling.wait(), READINESS_WAIT_TIMEOUT)
+    release.set()
+    first, second = await runs
 
     assert checks.count('batch_status') == 1
     assert isinstance(first, ModelHTTPError) and isinstance(second, ModelHTTPError)
