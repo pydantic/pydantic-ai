@@ -31,6 +31,7 @@ except ImportError as _import_error:
 
 from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
+    OpenAIAPIKey as OpenAIAPIKey,
     _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -163,6 +164,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.
                 openai_supports_batch_api=True,
+                # Measured live on Chat Completions and Responses: a tool call with no result, or a result naming no
+                # call, fails the request with a 400 (https://github.com/pydantic/pydantic-ai/issues/13404). Set here
+                # rather than in `openai_model_profile`, which OpenAI-compatible endpoints share without being
+                # verified to reject it.
+                rejects_unpaired_tool_calls=True,
             ),
             special_token_route_profile('openai', model_name),
         )
@@ -178,7 +184,7 @@ class OpenAIProvider(_OpenAISDKProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: OpenAIAPIKey | None = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -186,7 +192,7 @@ class OpenAIProvider(_OpenAISDKProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: OpenAIAPIKey | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -196,7 +202,8 @@ class OpenAIProvider(_OpenAISDKProvider):
             base_url: The base url for the OpenAI requests. If not provided, the `OPENAI_BASE_URL` environment variable
                 will be used if available. Otherwise, defaults to OpenAI's base url.
             api_key: The API key to use for authentication, if not provided, the `OPENAI_API_KEY` environment variable
-                will be used if available.
+                will be used if available. For short-lived or rotating credentials, pass an async callable that
+                returns the key, which the OpenAI SDK calls before each request.
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
