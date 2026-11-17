@@ -111,6 +111,7 @@ def test_a_removed_positional_argument_cannot_shift_onto_the_next_field(construc
 @pytest.mark.parametrize(
     ('module', 'name', 'kwargs'),
     [
+        ('advisor', 'Advisor', {'model': 'test', 'mode': 'native'}),
         ('coder', 'Coder', {'workspace': '.'}),
         ('file_system', 'FileSystem', {'cwd': '.'}),
         ('file_system', 'FileSystem', {'protected_patterns': ['*.py']}),
@@ -128,6 +129,8 @@ def test_a_removed_positional_argument_cannot_shift_onto_the_next_field(construc
         ('exa', 'ExaSearch', {'num_results': 3}),
         ('youdotcom', 'YouSearch', {'num_results': 3}),
         ('code_mode', 'CodeMode', {'monty_sandbox_url': 'http://x'}),
+        ('modal_sandbox', 'ModalSandbox', {'sandbox_id': 'sb-1'}),
+        ('modal_sandbox', 'ModalSandbox', {'workdir': '/root'}),
         ('warn_on_cache_busts', 'WarnOnCacheBusts', {'collapse_ratio': 0.5}),
         ('warn_on_cache_busts', 'WarnOnCacheBusts', {'min_prefix_tokens': 1}),
         ('warn_on_cache_busts', 'WarnOnCacheBusts', {'cache_ttl_seconds': 60}),

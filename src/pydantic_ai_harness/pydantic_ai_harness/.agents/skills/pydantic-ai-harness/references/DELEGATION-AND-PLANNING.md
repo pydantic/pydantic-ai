@@ -398,9 +398,7 @@ typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=De
 caching=None, forward_history=False, id=None, defer_loading=False, description=None)`. By
 default it uses the provider tool where it applies (history gets provider-native parts) and the
 `advisor` function tool otherwise (history gets a `ToolCallPart` and `ToolReturnPart`). `local=False`
-requires the provider tool; `native=False` always uses the function tool. `mode=` is deprecated.
-
-<!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
+requires the provider tool; `native=False` always uses the function tool.
 
 The executor decides when to consult. To require a consultation before a verdict, use
 `native=False` and check this run's history in an output validator:
