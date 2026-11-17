@@ -209,8 +209,9 @@ ancestors' files as before. Only files at `'operator'` go in the instructions:
   sent as a `ContextFilePart` with the run's first request: repository data on
   the user channel, with a note saying who wrote it. It's sent again when its
   text changed, and put back on the next request when a compaction drops it.
-- When the workspace or any `path_authority` entry puts files below
-  `'operator'`, the instructions leave out the sentence on how nested
+- When the workspace or a `path_authority` entry puts any file in the working
+  directory below `'operator'`, or the walk-up loads an instruction file below
+  it, the instructions leave out the sentence on how nested
   instruction files relate ("the more deeply nested one takes precedence"),
   which would rank repository files over the operator's.
 
