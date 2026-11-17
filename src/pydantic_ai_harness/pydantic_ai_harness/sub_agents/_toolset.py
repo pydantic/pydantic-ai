@@ -1839,8 +1839,9 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     if not layers:
         return workspace
     parent_root = await parent.working_dir()
-    inside = _folded_dir(directory)
-    in_parent = inside.startswith(_folded_dir(parent_root))
+    sep = parent.paths.sep
+    inside = _folded_dir(directory, sep)
+    in_parent = inside.startswith(_folded_dir(parent_root, sep))
     levels: list[Authority] = [
         await parent.authority_of(directory) if in_parent else parent.authority,
         parent.authority,
@@ -1862,19 +1863,21 @@ async def _entry_levels(
     """
     written = await parent.resolve(path, base=parent_root)
     levels: list[Authority] = []
-    inside = _folded_dir(directory)
+    sep = parent.paths.sep
+    inside = _folded_dir(directory, sep)
     for location in {written, await parent.realpath(written)}:
-        folded = _folded_dir(location)
+        folded = _folded_dir(location, sep)
         if not (folded.startswith(inside) or inside.startswith(folded)):
             continue
         levels.append(level if location == written else await parent.authority_of(location))
     return levels
 
 
-def _folded_dir(path: str) -> str:
-    """`path` case-folded with one trailing slash, so `a.startswith(b)` says whether `a` is inside or at `b`.
+def _folded_dir(path: str, sep: str) -> str:
+    """`path` case-folded with one trailing `sep`, so `a.startswith(b)` says whether `a` is inside or at `b`.
 
     Case-folded like core's `layer_authority`, which also matches paths case-folded and only ever lowers with it, so
-    another spelling of a lower directory on a case-insensitive filesystem still counts.
+    another spelling of a lower directory on a case-insensitive filesystem still counts. `sep` is the workspace's
+    separator, a backslash on a `'windows'` workspace, as core's `authority_of` matches with.
     """
-    return path.casefold().rstrip('/') + '/'
+    return path.casefold().rstrip(sep) + sep

@@ -33,6 +33,9 @@ from pydantic_ai_harness.sub_agents import (
     SubAgentToolset,
     TaskControl,
 )
+from pydantic_ai_harness.sub_agents._toolset import _with_parent_authority  # pyright: ignore[reportPrivateUsage]
+
+from ..file_system.test_windows_paths import DriveBackend
 
 
 def is_toolset(value: object) -> TypeIs[SubAgentToolset[object]]:
@@ -140,6 +143,18 @@ async def test_the_resolvers_own_lower_level_still_applies(tmp_path: Path) -> No
         Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'vendor': 'none'}
     )
     await _assert_delegate_levels(workspace, 'lib', 'none', resolver_authority='none')
+
+
+async def test_a_windows_parent_caps_a_delegate_in_a_lowered_directory(tmp_path: Path) -> None:
+    # A `'windows'` workspace's paths use backslashes, so `vendor\\lib` is inside the parent's `none` entry for `vendor`.
+    (tmp_path / 'project' / 'vendor' / 'lib').mkdir(parents=True)
+    parent = AuthorityWorkspace(
+        Workspace(DriveBackend(tmp_path)), authority='operator', path_authority={'vendor': 'none'}
+    )
+    directory = await parent.resolve('vendor\\lib')
+    assert await parent.authority_of('vendor\\lib\\AGENTS.md') == 'none'
+    delegate = await _with_parent_authority(parent, Workspace(DriveBackend(tmp_path)), directory)
+    assert delegate.authority == 'none'
 
 
 async def _assert_delegate_levels(
