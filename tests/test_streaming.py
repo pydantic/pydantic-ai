@@ -89,7 +89,8 @@ from pydantic_ai.capabilities import (
     WrapModelRequestHandler,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.models import CompletedStreamedResponse
+from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+from pydantic_ai.models import CompletedStreamedResponse, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -7879,3 +7880,52 @@ async def test_completed_streamed_response_replays_canonical_system():
             ('part_end', 1, None),
         ]
     )
+
+
+async def test_stream_text_matches_response_text_around_builtin_tool_call() -> None:
+    """`stream_text()` joins text parts split by a built-in tool call like `ModelResponse.text` does."""
+
+    class BuiltinToolResponse(StreamedResponse):
+        model_name = 'demo'
+        provider_name = 'demo'
+        provider_url = None
+        timestamp = _datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        before: tuple[str, ...] = ()
+        after: tuple[str, ...] = ()
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for chunk in self.before:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id='before', content=chunk):
+                    yield event
+            yield self._parts_manager.handle_part(
+                vendor_part_id='call',
+                part=NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='c1'),
+            )
+            yield self._parts_manager.handle_part(
+                vendor_part_id='return',
+                part=NativeToolReturnPart(tool_name='web_search', content='found', tool_call_id='c1'),
+            )
+            for chunk in self.after:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id='after', content=chunk):
+                    yield event
+
+    class DemoModel(FunctionModel):
+        def __init__(self, before: tuple[str, ...], after: tuple[str, ...]):
+            super().__init__(lambda messages, info: None)
+            self.before = before
+            self.after = after
+
+        @asynccontextmanager
+        async def request_stream(  # pyright: ignore[reportIncompatibleMethodOverride]
+            self, messages, model_settings, model_request_parameters, run_context=None
+        ):
+            _, params = self.prepare_request(model_settings, model_request_parameters)
+            response = BuiltinToolResponse(model_request_parameters=params)
+            response.before = self.before
+            response.after = self.after
+            yield response
+
+    for before, after in [(('Searching.',), ('Found it.',)), (('Searching', ' now.'), ())]:
+        async with Agent(DemoModel(before, after)).run_stream('go') as result:
+            streamed = ''.join([text async for text in result.stream_text(delta=True, debounce_by=None)])
+        assert streamed == result.response.text

@@ -410,17 +410,41 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # we don't currently make use of the part_index, but in principle this may be useful
             # so we retain it here for now to make possible future refactors simpler
             msg = self.response
+            last_text_index: int | None = None
+            # Text parts separated by a built-in tool call are joined with a blank line, like
+            # `ModelResponse.text` does. The blank line is emitted lazily, right before the next
+            # non-empty text, so a response that ends with the tool call has no trailing one.
+            separator_pending = False
+
+            def _take_separator() -> str | None:
+                nonlocal separator_pending
+                if separator_pending:
+                    separator_pending = False
+                    return '\n\n'
+                return None
+
             for i, part in enumerate(msg.parts):
                 if isinstance(part, _messages.TextPart) and part.content:
+                    # Text received before this iteration started still counts as seen, otherwise
+                    # a built-in call that follows it would not be separated from the next text.
+                    separator = _take_separator()
+                    if separator is not None:
+                        yield separator, i
+                    last_text_index = i
                     yield part.content, i
+                elif isinstance(part, _messages.NativeToolCallPart) and last_text_index is not None:
+                    separator_pending = True
+                    last_text_index = None
 
-            last_text_index: int | None = None
             async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
+                    separator = _take_separator()
+                    if separator is not None:
+                        yield separator, event.index
                     last_text_index = event.index
                     yield event.part.content, event.index
                 elif (
@@ -428,6 +452,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
                 ):
+                    separator = _take_separator()
+                    if separator is not None:
+                        yield separator, event.index
                     last_text_index = event.index
                     yield event.delta.content_delta, event.index
                 elif (
@@ -436,7 +463,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and last_text_index is not None
                 ):
                     # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
+                    separator_pending = True
                     last_text_index = None
 
         async def _stream_text_deltas() -> AsyncGenerator[str, None]:
