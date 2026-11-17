@@ -59,15 +59,16 @@ Token counts anchor on the provider-reported usage of the most recent model resp
 available: its `input_tokens` measured the whole request that produced it (instructions, tool
 definitions, every prior message), so only the messages added since are estimated. The estimate for
 those, and the fallback when no response carries usage yet, is the text estimate: ~4 characters per
-token for English-like prose, one token per CJK character, three per emoji or
-other character outside the Basic Multilingual Plane, ~1.5 characters per token for other
-non-ASCII text and base64-like runs, and in compact JSON one token per punctuation character and
-half a token per digit. Dense content is deliberately estimated high, since an undercount can send a
-request over the context window. The same estimate measures `keep_tokens`, `max_part_tokens`,
-`ToolOutputLimits(over_tokens=True)` bands and the `compaction.tokens_*` span attributes. Pass a
-`tokenizer` callable (e.g. `tiktoken`) to measure with a real tokenizer instead. Instruction
-replacement and withdrawal records contribute their full rendered system text to token estimates.
-Superseded updates before a new instruction baseline are excluded.
+token for English-like prose, one token per CJK character, three per character outside the Basic
+Multilingual Plane (most emoji, CJK Extension B), ~1.5 characters per token for other non-ASCII text
+and ~1.25 for base64-like runs, and about 1.25 tokens per `{}[],:"` character and half a token per
+digit beyond the share prose and code carry, which is what makes compact JSON dense. Dense content
+is deliberately estimated high, since an undercount can send a request over the context window. The
+same estimate measures `keep_tokens`, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands
+and the `compaction.tokens_*` span attributes. Pass a `tokenizer` callable (e.g. `tiktoken`) to
+measure with a real tokenizer instead. Instruction replacement and withdrawal records contribute
+their full rendered system text to token estimates. Superseded updates before a new instruction
+baseline are excluded.
 Newly revealed tool schemas that are pending in the request are conservatively
 estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is
 cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` /

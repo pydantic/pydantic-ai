@@ -651,12 +651,14 @@ class TestTruncate:
         assert out.metadata == {'k': 1}
 
     async def test_dense_output_obeys_token_budget(self):
-        """over_tokens=True prices base64 densely: 232 estimated tokens, where 4 characters per token gave 87."""
+        """over_tokens=True prices this 348-character base64 payload at 278 tokens, and 4 characters per token gave 87."""
         payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
-        cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=200, action=Truncate(max_chars=50))], over_tokens=True
-        )
-        out = await _run(cap, payload)
+
+        def limits(over: int) -> ToolOutputLimits[object]:
+            return ToolOutputLimits(bands=[Band(over=over, action=Truncate(max_chars=50))], over_tokens=True)
+
+        assert await _run(limits(300), payload) == payload
+        out = await _run(limits(200), payload)
         assert isinstance(out, str) and len(out) == 50 and out == payload[:20] + payload[-30:]
 
 

@@ -239,12 +239,27 @@ That rules out paths and identifiers, and leaves lowercase hex (hashes, UUIDs) a
 """
 
 _JSON_PUNCTUATION = '{}[],:"'
-"""In compact JSON each costs about a token, and each digit about half of one."""
 
-_DENSE_CHARS_PER_TOKEN = 1.5
-"""Characters per token of encoded runs and of non-ASCII text outside CJK (Cyrillic measures ~1.9)."""
+_PROSE_PUNCTUATION_SHARE = 0.12
+_PROSE_DIGIT_SHARE = 0.08
+"""The shares of a text prose and code stay under; only JSON punctuation and digits beyond them are surcharged.
 
-_DENSE_SURCHARGE = 1 / _DENSE_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
+Charging the surplus rather than switching on a density threshold keeps the estimate monotone: added text
+never lowers it, since the surplus shrinks by at most 0.14 tokens per added character against the
+baseline's 0.25.
+"""
+
+_PUNCTUATION_SURCHARGE = 1.0
+"""A surplus `_JSON_PUNCTUATION` character costs ~1.25 tokens, and a surplus digit half of one."""
+
+_NON_ASCII_CHARS_PER_TOKEN = 1.5
+"""Characters per token of non-ASCII text outside CJK and the astral planes (Cyrillic measures ~1.9)."""
+
+_ENCODED_CHARS_PER_TOKEN = 1.25
+"""Characters per token of encoded runs (random base64 measures ~1.4 on cl100k_base)."""
+
+_NON_ASCII_SURCHARGE = 1 / _NON_ASCII_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
+_ENCODED_SURCHARGE = 1 / _ENCODED_CHARS_PER_TOKEN - 1 / CHARS_PER_TOKEN
 _TOKEN_SURCHARGE = 1 - 1 / CHARS_PER_TOKEN
 _DIGIT_SURCHARGE = 1 / 2 - 1 / CHARS_PER_TOKEN
 _ASTRAL_SURCHARGE = 3 - 1 / CHARS_PER_TOKEN
@@ -267,20 +282,28 @@ def _dense_surcharge(text: str) -> float:
     ]
     encoded = sum(map(len, runs))
     surcharge = (
-        cjk * _TOKEN_SURCHARGE + astral * _ASTRAL_SURCHARGE + (non_ascii - cjk - astral + encoded) * _DENSE_SURCHARGE
+        cjk * _TOKEN_SURCHARGE
+        + astral * _ASTRAL_SURCHARGE
+        + (non_ascii - cjk - astral) * _NON_ASCII_SURCHARGE
+        + encoded * _ENCODED_SURCHARGE
     )
+    plain = len(text) - encoded
+    if plain < 32:
+        return surcharge
     punctuation = sum(text.count(c) for c in _JSON_PUNCTUATION)
-    if ascii_chars - encoded >= 32 and punctuation * 5 >= len(text) - encoded:
-        digits = sum(text.count(c) - sum(run.count(c) for run in runs) for c in string.digits)
-        surcharge += punctuation * _TOKEN_SURCHARGE + digits * _DIGIT_SURCHARGE
-    return surcharge
+    digits = sum(text.count(c) - sum(run.count(c) for run in runs) for c in string.digits)
+    return (
+        surcharge
+        + max(0, punctuation - plain * _PROSE_PUNCTUATION_SHARE) * _PUNCTUATION_SURCHARGE
+        + max(0, digits - plain * _PROSE_DIGIT_SHARE) * _DIGIT_SURCHARGE
+    )
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
     """Approximate the token count of a single string.
 
     Uses *tokenizer* when given, otherwise ~4 characters per token, priced up for non-ASCII
-    scripts, base64-like runs and compact JSON.
+    scripts, base64-like runs and compact JSON (see the compaction docs' Triggers section).
     """
     return _count_segments([text], tokenizer)
 
@@ -301,7 +324,8 @@ def estimate_token_count(
     Args:
         messages: Messages to count tokens for.
         tokenizer: Optional callable that returns the token count for a string.
-            When `None`, uses the `estimate_text_tokens` heuristic.
+            When `None`, uses ~4 characters per token, priced up for non-ASCII scripts,
+            base64-like runs and compact JSON (see the compaction docs' Triggers section).
     """
     return _count_segments(_collect_text(messages), tokenizer)
 
@@ -321,9 +345,9 @@ def estimate_context_tokens(
     that response. A response whose usage sums several model requests re-counts the context of each,
     so it anchors on the input tokens of the one that measures the context instead: the first
     request of a Google long decode, the last sampling pass of an Anthropic response that reported
-    its passes. Only the messages after the anchor are estimated with the `estimate_text_tokens`
-    heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
-    covers; when the instructions changed since the anchor, the estimate swaps the old set for
+    its passes. Only the messages after the anchor are estimated with *tokenizer* or ~4
+    characters per token, priced up for non-ASCII scripts, base64-like runs and compact JSON,
+    without re-counting instructions, which the anchor already covers; when the instructions changed since the anchor, the estimate swaps the old set for
     the new one rather than adding the new set on top. Tool schemas named by availability
     deltas after the anchor are estimated from the pending request parameters. The tool
     definitions the heuristic cannot see, and the exact count of token-dense content before the
@@ -370,9 +394,9 @@ def estimate_message_tokens(
 ) -> list[int]:
     """Tokens each message adds to a request, measured with provider-reported usage where the history has it.
 
-    The text estimate (`tokenizer`, or `estimate_text_tokens`) misses what a provider counts but
-    does not return as text, such as thinking kept as an empty part with a signature, and it
-    underestimates token-dense content. Usage measures both. A response counts at least its
+    The text estimate (`tokenizer`, or ~4 characters per token priced up for dense text) misses
+    what a provider counts but does not return as text, such as thinking kept as an empty part
+    with a signature, and only approximates token-dense content. Usage measures both. A response counts at least its
     `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
     earlier one is exactly what the earlier response and the requests after it added, so those
     messages share that difference in proportion to their estimates. Where the history did not grow
