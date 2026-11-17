@@ -121,6 +121,9 @@ members = [
 # `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
+# No patched `soupsieve` (>= 4.0.0, see the floor below) supports Python < 3.11.5, so the lock
+# leaves those patch versions out. Lock-only: the published `requires-python` stays `>=3.11`.
+environments = ["python_full_version >= '3.11.5'"]
 exclude-newer = "7 days"
 conflicts = [
     # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
@@ -185,7 +188,7 @@ constraint-dependencies = [
     "datasets>=5.0.1",
     "sentence-transformers>=5.6.0",
     "oauthlib>=4.0.0",
-    "soupsieve>=2.9.0",
+    "soupsieve>=4.0.0",
     "certifi>=2026.10.19",
 ]
 # `gradio` (an examples dependency) caps `pillow<13`, even in its latest release, so without

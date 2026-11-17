@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, fields
@@ -37,6 +38,8 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
 from .._tool_calls import call_tools
 from .fake_e2b import FakeE2B
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def test_env_is_not_shown_in_repr() -> None:
@@ -125,11 +128,11 @@ async def test_a_capability_can_use_each_users_client_from_deps(fake_e2b: FakeE2
     assert fake_e2b.clients == ['a', 'b']
 
 
-def test_agent_spec_schema_publishes_every_field_but_the_client() -> None:
-    """`from_spec` lists its fields by hand, so a new field must be added there too."""
+def test_agent_spec_schema_publishes_every_field_but_the_client_and_network() -> None:
+    """`from_spec` lists its fields by hand, so a new field must be added there too; `network` is code-only."""
     definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
     published = set(definitions['spec_params_E2BSandbox']['properties'])
-    assert published == {field.name for field in fields(E2BSandbox)} - {'client'}
+    assert published == {field.name for field in fields(E2BSandbox)} - {'client', 'network'}
 
 
 def test_from_spec_forwards_the_spec_fields() -> None:
@@ -275,7 +278,9 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
         working_dir='/work',
         env={'FOO': 'bar'},
         allow_internet_access=False,
+        network={'rules': {'github.com': [{'transform': {'headers': {'Authorization': 'Basic secret'}}}]}},
     )
+    assert 'secret' not in repr(capability)
     agent = Agent(TestModel(call_tools=['run_command']), capabilities=[capability])
 
     @agent.tool
@@ -286,6 +291,7 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
     assert 'ok' in result.output
     call = fake_e2b.create_calls[0]
     assert (call.template, call.timeout, call.envs, call.allow_internet_access) == ('base', 120, {'FOO': 'bar'}, False)
+    assert call.network == {'rules': {'github.com': [{'transform': {'headers': {'Authorization': 'Basic secret'}}}]}}
     assert fake_e2b.sandboxes[0].commands.calls[-1].cwd == '/work'
     assert fake_e2b.sandboxes[0].killed is False
     assert isinstance(result.workspace, Workspace)
@@ -467,6 +473,7 @@ async def test_agent_history_attaches_same_workspace(fake_e2b: FakeE2B) -> None:
     assert fake_e2b.connect_calls == [('sbx-1', 3_600)]
 
 
+@posix_only
 async def test_coder_works_in_the_sandbox(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     # Host mode: the fake sandbox runs commands and file calls under `tmp_path`, so the model's
     # shell and file tools are observable end to end.
