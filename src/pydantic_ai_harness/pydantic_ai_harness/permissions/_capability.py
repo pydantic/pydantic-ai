@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -35,10 +34,10 @@ PermissionMode = Literal['full', 'auto', 'read-only']
 - `'read-only'`: every file write and every command asks first.
 """
 
-PermissionAction = Literal['command', 'write', 'call']
-"""What a call that asks would do: run a shell command, write a file, or call another tool (asked by a rule)."""
+PermissionAction = Literal['command', 'write']
+"""What a call that asks would do: run a shell command, or write a file."""
 
-_WHAT: dict[PermissionAction, str] = {'command': 'command', 'write': 'file write', 'call': 'tool call'}
+_WHAT: dict[PermissionAction, str] = {'command': 'command', 'write': 'file write'}
 
 DEFAULT_ASK_COMMANDS: tuple[str, ...] = (
     r'\brm\s+(-\S*[rRf]|--recursive\b|--force\b)',
@@ -110,10 +109,10 @@ class PermissionRequest:
     """The call waiting for approval, with the arguments it will run with."""
 
     action: PermissionAction
-    """Whether the call runs a command, writes a file, or calls another tool."""
+    """Whether the call runs a command or writes a file."""
 
     subject: str
-    """The command, the path written, or for another tool its arguments as JSON."""
+    """The command, or the path written."""
 
     reason: str
     """Why the current mode or a rule asks about this call, for the person deciding."""
@@ -265,11 +264,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         command = _command(tool_def, args)
         rule = decide(self.rules, tool_name=tool_def.name, command=command, args=args)
         if rule is not None and rule.verdict != 'allow':
-            action, subject = _subject(tool_def, args, command)
-            if rule.verdict == 'deny':
-                raise SkipToolExecution(ToolDenied(_rule_denial_message(action, rule.reason)))
-            reason = rule.reason or f'A permission rule asks before this {_WHAT[action]}.'
-            return _Asked(action=action, subject=subject, reason=reason)
+            return _rule_asks(ctx, rule, _subject(tool_def, args, command))
         mode = self.mode_for(ctx)
         if rule is not None or mode == 'full':
             return None
@@ -302,19 +297,33 @@ def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
     return command if isinstance(command, str) else None
 
 
-def _subject(tool_def: ToolDefinition, args: dict[str, Any], command: str | None) -> tuple[PermissionAction, str]:
-    """What a call asked about by a rule does, and what it does it to."""
+def _subject(
+    tool_def: ToolDefinition, args: dict[str, Any], command: str | None
+) -> tuple[PermissionAction, str] | None:
+    """Whether a call runs a command or writes a file, and which; `None` for any other call."""
     if command is not None:
         return 'command', command
     path = args.get('path')
     if tool_def.tool_kind in _WRITE_KINDS and isinstance(path, str):
         return 'write', path
-    return 'call', json.dumps(args, sort_keys=True, default=str)
+    return None
 
 
-def _rule_denial_message(action: PermissionAction, reason: str | None) -> str:
-    message = f'A permission rule denied this {_WHAT[action]}, so it did not run. Do not retry it.'
-    return f'{message} Reason: {reason}' if reason else message
+def _rule_asks(
+    ctx: RunContext[Any], rule: PermissionRule, subject: tuple[PermissionAction, str] | None
+) -> _Asked | None:
+    """What an `'ask'` rule asks about a call; raises `SkipToolExecution` for a `'deny'` rule."""
+    what = 'tool call' if subject is None else _WHAT[subject[0]]
+    if rule.verdict == 'deny':
+        message = f'A permission rule denied this {what}, so it did not run. Do not retry it.'
+        raise SkipToolExecution(ToolDenied(f'{message} Reason: {rule.reason}' if rule.reason else message))
+    if subject is None:
+        # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
+        if ctx.tool_call_approved:
+            return None
+        raise ApprovalRequired
+    reason = rule.reason or f'A permission rule asks before this {what}.'
+    return _Asked(action=subject[0], subject=subject[1], reason=reason)
 
 
 def _nests_tool_return(result: object) -> bool:

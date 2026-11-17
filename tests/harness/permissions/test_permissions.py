@@ -571,26 +571,23 @@ class TestPermissionRules:
             PermissionRule('ask', tool='deploy', args={'env': 'prod*'}),
             PermissionRule('ask', tool='deploy', args={'replicas': '*'}),
         ]
-        person = _Person(PermissionDecision(approved=False))
-        agent = Agent[None, str](
+        agent = _rules_agent(
             _calls(('deploy', {'env': 'staging', 'replicas': 3}), ('deploy', {'env': 'production'})),
-            deps_type=type(None),
-            tools=[Tool(deploy)],
-            capabilities=[
-                Permissions(rules=rules),
-                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
-            ],
+            rules,
+            'full',
+            Tool(deploy),
         )
 
-        result = await agent.run('go')
+        held = await agent.run('go')
 
-        [request] = person.asked
-        assert (request.action, request.subject, request.reason) == (
-            'call',
-            '{"env": "production", "replicas": 1}',
-            'A permission rule asks before this tool call.',
+        assert isinstance(held.output, DeferredToolRequests)
+        [call] = held.output.approvals
+        assert (call.args_as_dict(), permission_requests(held.output)) == ({'env': 'production'}, [])
+        resumed = await agent.run(
+            message_history=held.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
         )
-        assert result.output == 'The user denied this tool call, so it did not run.'
+        assert resumed.output == 'deployed production'
 
     async def test_allow_rule_overrides_the_mode_and_ask_rule_names_the_written_path(self, tmp_path: Path) -> None:
         rules = [

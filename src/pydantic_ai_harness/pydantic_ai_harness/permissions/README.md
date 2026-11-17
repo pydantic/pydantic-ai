@@ -89,7 +89,7 @@ permissions = Permissions(
 A `PermissionRule` matches a call when every field it sets matches: `tool` is a glob for the tool name, `args` maps argument names to globs for their string values, and `command` is the words of a shell command. When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order, so a broad allow rule cannot override a deny rule.
 
 - **`'allow'`** runs the call without asking, even in `'read-only'` mode or when it matches `ask_commands`.
-- **`'ask'`** holds the call like the mode does, with the rule's `reason` for the person deciding. A held call to a tool that neither writes files nor runs commands has the `action` `'call'` and its arguments as JSON for its `subject`.
+- **`'ask'`** holds the call like the mode does, with the rule's `reason` for the person deciding. A call to a tool that neither writes files nor runs commands is held with a plain `ApprovalRequired`, like `requires_approval=True`, so `ask_permissions` leaves it for the next handler.
 - **`'deny'`** refuses the call without running it, even when it was approved, for example by another capability's approval. The model gets a tool result with `outcome='denied'` saying a permission rule refused it, with the rule's `reason`.
 
 A `command` rule only matches tools that declare a shell command argument (see [Which calls are checked](#which-calls-are-checked)), and judges a compound command by each of its simple commands, split at `;`, `&&`, `||`, `|`, and `&`:
