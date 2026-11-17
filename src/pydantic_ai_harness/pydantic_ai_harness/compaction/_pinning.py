@@ -47,9 +47,7 @@ def pin(content: str, *, source: PinSource = 'user') -> UserPromptPart:
         return UserPromptPart(content=[TextContent(content, metadata=_PIN_METADATA)])
     text = wrap(_PINNED_TAG, content, source=source)
     metadata = {'origin': _PIN_METADATA, 'source': source}
-    return UserPromptPart(
-        content=[framework_frame_text(text, metadata=metadata, author='tool' if source == 'tool' else None)]
-    )
+    return UserPromptPart(content=[framework_frame_text(text, metadata=metadata, author='tool')])
 
 
 def is_pinned(part: object) -> bool:
