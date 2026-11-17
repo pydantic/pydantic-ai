@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, 
 from weakref import WeakValueDictionary
 
 import anyio
+import pydantic_core
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar
 
@@ -152,6 +153,7 @@ from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOut
 from .settings import ModelSettings, ThinkingEffort
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     NativeToolFunc,
@@ -843,8 +845,13 @@ class _FailedAttempts:
         request_context: ModelRequestContext,
         failure: Exception | _messages.ModelResponse,
         start: AttemptStart,
+        retry: exceptions.RetryModelRequest | None = None,
     ) -> None:
-        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
+        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response.
+
+        `retry` is what a hook raised to move on from it, if it asked for another attempt: one without a model
+        retried the same model, and is recorded as a retry rather than a fallback.
+        """
         ledger = request_context._usage_response_ledger  # pyright: ignore[reportPrivateUsage]
         if isinstance(failure, _messages.ModelResponse):
             # Described by what the provider billed for it, recorded just before the hook rejected it: a copy
@@ -858,6 +865,7 @@ class _FailedAttempts:
             start,
             parent=policy.span if policy else None,
             tracer=policy.tracer if policy else None,
+            kind='retry' if retry is not None and retry.model is None else 'fallback',
         )
         if isinstance(failure, _messages.ModelResponse):
             # The rejected response now has its own span, which reports its usage, so the `chat` span
@@ -923,6 +931,11 @@ class GraphAgentState:
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
     """
+    conversation_deferred_tool_requests: DeferredToolRequests | None = None
+    """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
+
+    A run that fails before it adds a message leaves them waiting, so its failed conversation keeps them.
+    """
     conversation_unchecked: bool = False
     """Whether the messages before `conversation_unsaved` may have changed since they were stored, say after the conversation was serialized.
 
@@ -965,21 +978,26 @@ class GraphAgentState:
         # thread-safe list subclass. Pydantic deserialization also runs this hook.
         self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
 
-    def check_incomplete_tool_call(self) -> None:
-        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
+    def check_incomplete_tool_call(self, call: _messages.ToolCallPart | None = None) -> None:
+        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call.
+
+        When `call` is given, only raise if it is the tool call that was truncated.
+        """
         if (
             self.message_history
             and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
             and model_response.finish_reason == 'length'
             and model_response.parts
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+            and (call is None or call.tool_call_id == tool_call.tool_call_id)
+            and isinstance(tool_call.args, str)
+            and tool_call.args
         ):
+            # Only JSON that doesn't parse was cut off: complete JSON the schema rejects is retried like any other.
             try:
-                tool_call.args_as_dict(raise_if_invalid=True)
-            except Exception:
-                raise exceptions.IncompleteToolCall(
-                    f'Model token limit ({self.last_max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                )
+                pydantic_core.from_json(tool_call.args)
+            except ValueError:
+                raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 
     def consume_output_retry(
         self,
@@ -2654,9 +2672,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
             await _serve_stream_offers(handoff, ready_waiter, wrap.task)
+            # Inside the `try`: on Python 3.11, draining even a finished `ready_waiter` yields to the event loop, so a
+            # cancellation can land here after `_streaming_handler` has parked on `stream_done.wait()`. Nothing has
+            # reached the consumer yet, so it needs the same cleanup as one that lands before the handoff.
+            await cancel_and_drain(ready_waiter)
         except BaseException as exc:
-            # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
-            # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            # `BaseException` to also catch `CancelledError`. The stream hasn't been yielded to the
+            # consumer, so both tasks are still ours; drain them so cleanup runs before we re-raise.
             #
             # Unblock `_streaming_handler` before draining: if `wrap.task`'s model
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
@@ -2675,10 +2697,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 request_messages = (_handler_request_context or wrap_request_context).messages
                 self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
-        else:
-            # Handoff succeeded: `wrap.task` is owned by the rest of the streaming
-            # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
-            await cancel_and_drain(ready_waiter)
 
         # `_prepare_request` ran in this task before wrap hooks were added. Preserve that
         # behavior by carrying ContextVar writes from its new location in the wrap task back
@@ -3050,8 +3068,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return await ctx.deps.root_capability.after_model_request(
                     run_context, request_context=request_context, response=response
                 )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, outcome, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, outcome, start, retry)
             await self._cancel_rejected_job(request_context, outcome, state)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
@@ -3961,8 +3979,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error
             )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, error, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, error, start, retry)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
             failed.record_exhausted(request_context, error, start, unrecovered)
@@ -5188,6 +5206,104 @@ def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
         yield messages
     finally:
         _messages_ctx_var.reset(token)
+
+
+class CapturedConversation:
+    """What [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] captured."""
+
+    def __init__(self) -> None:
+        self._build: Callable[[], Conversation] | None = None
+        self._ended = False
+        self._conversation: Conversation | None = None
+
+    @property
+    def conversation(self) -> Conversation | None:
+        """The conversation of the first run started in the context, as far as it got, or `None` if none started.
+
+        Built when read, so read it after the run raised: it holds the messages the run got to,
+        including a partial response with `state='interrupted'`, and saving it to a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just
+        what the run added. After a run that finished, prefer its result's
+        [`conversation`][pydantic_ai.agent.AgentRunResult.conversation], which also carries the
+        tool calls a paused run waits on.
+
+        Once the run has ended, it's built on the first read and the same instance is returned after
+        that, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] that saves
+        it advances the revision every later read sees. A read while the run is still going returns a
+        new snapshot of it so far.
+        """
+        if self._conversation is not None or self._build is None:
+            return self._conversation
+        conversation = self._build()
+        if self._ended:
+            self._conversation = conversation
+        return conversation
+
+
+_captured_conversation: ContextVar[CapturedConversation | None] = ContextVar('_captured_conversation', default=None)
+
+
+@contextmanager
+def capture_run_conversation() -> Generator[CapturedConversation]:
+    """Context manager to get the conversation of a run that raised, so it can still be stored.
+
+    Like [`capture_run_messages`][pydantic_ai.agent.capture_run_messages], it captures the first
+    [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync],
+    [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] or
+    [`iter`][pydantic_ai.agent.Agent.iter] call started inside it, but as a
+    [`Conversation`][pydantic_ai.conversation.Conversation] a
+    [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save, whatever the
+    run raised, including an exception from a tool's own code. For errors Pydantic AI raises, an
+    [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] carries the same as its
+    [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation].
+
+    ```python
+    from pydantic_ai import Agent, capture_run_conversation
+    from pydantic_ai.conversation_store import InMemoryConversationStore
+
+    agent = Agent('test')
+    store = InMemoryConversationStore()
+
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ConnectionError('The database is down.')
+
+
+    async def main():
+        with capture_run_conversation() as captured:
+            try:
+                await agent.run('Look it up')
+            except ConnectionError:
+                conversation = captured.conversation
+                assert conversation is not None
+                entries = await store.save(conversation)
+                print(len(entries))
+                #> 3
+    ```
+
+    Contexts can be nested: a run is captured by the innermost active context.
+    """
+    captured = CapturedConversation()
+    token = _captured_conversation.set(captured)
+    try:
+        yield captured
+    finally:
+        _captured_conversation.reset(token)
+
+
+def capture_conversation_of(build: Callable[[], Conversation]) -> None:
+    """Let the innermost [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] context capture a run starting now, unless it already captured one."""
+    captured = _captured_conversation.get()
+    if captured is not None and captured._build is None:  # pyright: ignore[reportPrivateUsage]
+        captured._build = build  # pyright: ignore[reportPrivateUsage]
+
+
+def end_captured_run(build: Callable[[], Conversation]) -> None:
+    """Tell the context that captured the run with `build` that the run has ended, so its conversation can be kept."""
+    captured = _captured_conversation.get()
+    if captured is not None and captured._build is build:  # pyright: ignore[reportPrivateUsage]
+        captured._ended = True  # pyright: ignore[reportPrivateUsage]
 
 
 def get_captured_run_messages() -> _RunMessages:

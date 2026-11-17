@@ -8,10 +8,12 @@ from .agent import (
     AgentRetries,
     AgentRunEvents,
     CallToolsNode,
+    CapturedConversation,
     EndStrategy,
     InstrumentationSettings,
     ModelRequestNode,
     UserPromptNode,
+    capture_run_conversation,
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
@@ -264,7 +266,7 @@ from .toolsets import (
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
 
-__all__ = (
+__all__: tuple[str, ...] = (
     '__version__',
     'BANNER_ENABLED',
     # agent
@@ -278,6 +280,8 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
+    'capture_run_conversation',
+    'CapturedConversation',
     'InstrumentationSettings',
     # embeddings
     'Embedder',
