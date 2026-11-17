@@ -92,6 +92,10 @@ client construction.
 
 The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client, including for an `AsyncAnthropicBedrock` or `AsyncAnthropicVertex` client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
 
+## Image input {#image-input}
+
+Claude reads JPEG, PNG, GIF and WebP images, and an `image/jpg` file is sent as `image/jpeg`, the spelling the API accepts. An image of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance). `AnthropicModel` also takes PDF and plain-text documents, and no audio or video.
+
 ## Model settings
 
 You can customize model behavior using [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]:
@@ -678,6 +682,28 @@ Responses that ran in fast mode carry `provider_details['speed'] == 'fast'`, so 
 !!! note "Bedrock, Vertex, and Foundry"
     Fast mode is only available on the direct Anthropic API. Bedrock, Vertex, and Foundry clients do not support the `speed` parameter, so `anthropic_speed='fast'` is ignored with a `UserWarning` on those clients.
 
+## Data residency
+
+To control where model inference runs, set [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]: `'us'` keeps inference on US-based infrastructure, and `'global'` lets it run in any available geography. When it's unset, the workspace's default inference geo applies. US-only inference is priced at 1.1x the standard rate, which [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], `usage.cost` and [usage limits](../agent.md#usage-limits) don't include yet. The setting is sent on the Claude API, Claude Platform on AWS and Claude on Google Cloud (Anthropic managed), including in [Message Batches](#batch-api). See the [Anthropic data residency docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for supported models, pricing and workspace-level restrictions.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    model_settings=AnthropicModelSettings(anthropic_inference_geo='us'),
+)
+...
+```
+
+When the setting is used, where the request ran is reported in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
+
+Models that don't support data residency (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 and older) reject the setting with a 400 error, which Pydantic AI raises rather than dropping the setting.
+
+!!! note "Bedrock, Vertex AI, and Foundry"
+    On Bedrock and Vertex AI, the endpoint or inference profile decides the inference region, and on Foundry the deployment type does, so `anthropic_inference_geo` is ignored with a `UserWarning` on those clients.
+
 ## Forced tool choice
 
 Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled. [Adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) accepts forcing, but Claude answers a forced tool choice without thinking. Anthropic documents **Claude Fable 5.1** and **5.2**, **Claude Mythos 5.1** and **5.2**, **Claude Opus 5.5**, and **Claude Sonnet 5.5** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those with [`supports_forced_tool_choice=False`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice].
@@ -986,6 +1012,6 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` and `20260318` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, unless [citations route them to direct calls](#web-tool-callers), which only happens on the Anthropic API, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
 
-If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
+If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic answers a history-derived container with an HTTP 404 `not_found_error` saying the container wasn't found, or with an HTTP 500, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
 
 Set [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] explicitly when container continuity is required. An explicitly configured container is never replaced automatically; Anthropic's original error is raised instead.

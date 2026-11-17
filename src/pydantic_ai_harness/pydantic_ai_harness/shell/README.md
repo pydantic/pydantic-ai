@@ -175,6 +175,14 @@ of output past the limit before it is emptied. No telemetry spans are emitted
 for a clear: it shows as the notice in the log and, when it happens while a
 `shell` call waits, as `truncated=True` on its finished event.
 
+On a Windows workspace (`WindowsWorkspace`), `shell` and the background-command
+tools run PowerShell, and the `shell` tool's description tells the model so. A
+stop runs the job's `stop.ps1`, the stop command a `shell` result names: it ends
+the process tree with `taskkill` while the PID is still the job's, and records
+the exit code. `max_log_bytes` applies there too. `run_command` is not offered
+there, since it wraps commands in `sh`, so `persist_cwd` has no effect;
+`max_file_bytes` needs a POSIX workspace.
+
 ## Environment control
 
 A command gets the workspace's environment plus `Shell(env=...)`.
@@ -355,7 +363,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts) to raise it.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`, and runs its `shell` tool under [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/) and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/); the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts) to raise it.
 
 ## Further reading
 

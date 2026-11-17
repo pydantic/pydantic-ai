@@ -118,7 +118,7 @@ print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
 
-The profile also says which kinds of file the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] (narrowed to particular document types by [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types]), [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
+The profile also says which files the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input], [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] for each kind of file, narrowed to particular media types by [`supported_image_media_types`][pydantic_ai.profiles.ModelProfile.supported_image_media_types], [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types], [`supported_audio_media_types`][pydantic_ai.profiles.ModelProfile.supported_audio_media_types] and [`supported_video_media_types`][pydantic_ai.profiles.ModelProfile.supported_video_media_types]. The image, audio and video sets are unset by default, so a file of those kinds is judged by its kind alone; where a profile sets one, a file of a media type outside it counts as one the model can't read. The [OpenAI](openai.md#image-input), [Anthropic](anthropic.md#image-input), [Google](google.md#document-image-audio-and-video-input) and [xAI](xai.md#image-input) pages list the formats their models read. Each model class also turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents, and [OpenAI Chat Completions](openai.md#audio-input) takes only WAV and MP3 audio. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
 Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. With the [`ModelFallback`](../capabilities/model-fallback.md) capability, each attempt is made with a model of its own, so a capability hook reads the profile of the model serving the attempt from `request_context.model`. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
@@ -294,7 +294,7 @@ these categories, whichever provider it came from:
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
 | [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
 | [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. A [`request_timeout`](../timeouts.md#model-request-deadlines) deadline over all attempts raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead. |
-| [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] | The provider rejected the request itself, e.g. an HTTP 400 or 422, so sending it again unchanged won't succeed. |
+| [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] | The provider rejected the request itself, e.g. an HTTP 400, 413 or 422, so sending it again unchanged won't succeed. |
 | [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. A subclass of `ModelRequestRejectedError`. |
 | [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] | The provider rejected the credentials, or doesn't allow them to make the request, e.g. an HTTP 401 or 403. A subclass of `ModelRequestRejectedError`. |
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
@@ -302,10 +302,11 @@ these categories, whichever provider it came from:
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
 provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
 its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
-overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
-`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
-`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
-the provider sends them as a 400, as Anthropic and the Gemini API do.
+overloaded. Anthropic's tier spend cap is a 429 too, but its `enforced_spend_limit_reached` error code makes it a
+`ModelQuotaExceededError`. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says
+why: a `ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API
+sends `API_KEY_INVALID` as a 400). Exhausted credits, a reached spend limit, or disabled billing are a
+`ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
@@ -384,9 +385,11 @@ that it belongs to, if any. The exception exposes the
 attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
 surface headers, such as gRPC-based providers). Its
 [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is parsed from the `retry-after-ms` or
-`Retry-After` header, handling both the integer delta-seconds and HTTP-date formats, and
+`Retry-After` header, handling both the integer delta-seconds and HTTP-date formats, or, for a Google error without
+them, from the `RetryInfo` in its [body](google.md#http-retries), and
 [`provider_retry_hint`][pydantic_ai.exceptions.ModelHTTPError.provider_retry_hint] from the `x-should-retry` header
-that OpenAI and Anthropic send to say whether retrying may help.
+that OpenAI and Anthropic send to say whether retrying may help. A status a
+[retrying transport](../retries.md#error-handling) gave up on carries its body and headers too.
 
 When [OpenAI](openai.md), [Anthropic](anthropic.md), the [Google Gemini API](google.md),
 [Amazon Bedrock](bedrock.md), or [Groq](groq.md) reports that a requested model identifier is

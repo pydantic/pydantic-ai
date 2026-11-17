@@ -44,8 +44,9 @@ class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
         base_config = _parse_step_config(base)
         self.base_step_config = base_config
         """The `StepConfig` every step gets unless a tool's metadata overrides it."""
-        self.parallel_config = _parallel_config(base_config)
-        """Checkpoints a `parallel` operation's results with the configured `serdes`, as steps are."""
+        self.serdes = _serdes(base_config)
+        """The configured `serdes`, which a `parallel` operation's results are checkpointed with too."""
+        self.parallel_config = _parallel_config(self.serdes)
 
         def resolve_tool(
             operation_id: DurableOperationId, tool: object | None, tool_name: str
@@ -105,11 +106,12 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
         return await bridge.run_step(name, body, config)
 
 
-def _parallel_config(config: StepConfig | None) -> ParallelConfig | None:
-    serdes: SerDes[Any] | None = config.serdes if config is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    if serdes is None:
-        return None
-    return ParallelConfig(serdes=_BatchResultSerDes(serdes), item_serdes=serdes)
+def _serdes(config: StepConfig | None) -> SerDes[Any] | None:
+    return config.serdes if config is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+
+
+def _parallel_config(serdes: SerDes[Any] | None) -> ParallelConfig | None:
+    return None if serdes is None else ParallelConfig(serdes=_BatchResultSerDes(serdes), item_serdes=serdes)
 
 
 class _BatchResultSerDes(SerDes[BatchResult[Any]]):

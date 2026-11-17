@@ -7,10 +7,12 @@ import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, assert_never, overload
+from typing import TYPE_CHECKING, Literal, assert_never, overload
 
 import anyio
 
+from .. import _model_errors
+from .._capability_parts import render_capability_parts_for_live_channel
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
@@ -55,6 +57,9 @@ from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import TextContext
 from .settings import ReconnectPolicy
+
+if TYPE_CHECKING:
+    from websockets.exceptions import InvalidStatus
 
 
 def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
@@ -116,7 +121,8 @@ def render_instruction_change(
 def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     """Turn the mid-conversation `SystemPromptPart`s in seeded history into `<system>`-tagged user text.
 
-    The standing system prompt is left for the seeders to skip, as `session_instructions` carries it.
+    The standing system prompt is left for the seeders to skip, as `session_instructions` carries it. Capability parts
+    are rendered in place, after the standing prompt is counted: none is ever part of it.
     A later system prompt stays where it was in the conversation, and a request-scoped one whose request
     has been answered is left out: what `Model.prepare_messages` does for a model without inline or
     request-scoped system prompts.
@@ -124,6 +130,7 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     # Counted on the history as authored, as `prepare_messages` does: dropping a leading request-scoped
     # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
+    messages = render_capability_parts_for_live_channel(list(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
     return _wrap_non_leading_system_prompts(
         messages, standing_prompt_count=standing_prompt_count, sealed=False, keep_request_scoped=False
@@ -238,6 +245,13 @@ async def reconnect_with_backoff(
         if await attempt():
             return True
     return False
+
+
+def read_rejected_upgrade(error: InvalidStatus) -> tuple[str, dict[str, str]]:
+    """The body, or the reason phrase when it has none, and the headers of a rejected WebSocket upgrade's response."""
+    response = error.response
+    body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+    return body, _model_errors.joined_headers(response.headers)
 
 
 def inject_trace_context(headers: MutableMapping[str, str]) -> None:

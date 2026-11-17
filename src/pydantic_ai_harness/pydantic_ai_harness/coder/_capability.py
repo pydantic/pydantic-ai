@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -14,15 +14,20 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
-from pydantic_ai_harness.coder._instructions import Autonomy, coder_instructions, project_instructions
+from pydantic_ai_harness.coder._instructions import (
+    BENCHMARK_INSTRUCTIONS,
+    Autonomy,
+    coder_instructions,
+    project_instructions,
+)
 from pydantic_ai_harness.compaction import ClearToolResults
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
-from pydantic_ai_harness.subagents import SubAgents, TaskControl
-from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
-from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES, delegation_depth
+from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents._tasks import ASK_PARENT_TOOL_NAME
+from pydantic_ai_harness.sub_agents._toolset import CONTROL_TOOL_NAMES, delegation_depth
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 if TYPE_CHECKING:
@@ -149,6 +154,22 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
         return replace(self, delegate=True)
 
 
+@dataclass
+class BenchmarkInstructions(AbstractCapability[AgentDepsT]):
+    """Benchmark-only guidance, bound next to `Coder` for runs a verifier grades.
+
+    It says deliverables are checked in a clean directory with only the requested files, and that
+    every field of the provided data matters. Neither holds for everyday work in a project, so
+    `Coder` leaves both out. `delegate_task`'s `self` delegate re-runs the same agent, so it gets it too.
+    """
+
+    _: KW_ONLY
+    id: str | None = 'benchmark_instructions'
+
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
+        return BENCHMARK_INSTRUCTIONS
+
+
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
         content_hashes=False,
@@ -157,7 +178,7 @@ def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
         max_retries=MAX_FILE_TOOL_RETRIES,
     )
     if unrestricted:
-        # Workspace paths are POSIX, so the filesystem root is `/` whatever the host platform.
+        # `/` is the filesystem root, or on Windows the working directory's drive.
         return replace(file_system, root_dir='/', read_only_patterns=[])
     return file_system
 
@@ -167,10 +188,10 @@ class Coder(CombinedCapability[AgentDepsT]):
     """Autonomous coding with six tools, delegation, and context management, in the run's workspace.
 
     Files and commands go through `ctx.workspace`, and the project directory is
-    its working directory: attach `LocalWorkspace('.')` for a local checkout, or
-    a sandbox provider's capability for untrusted work, alongside `Coder()`. A
-    run without a workspace fails at its start. Commands are unrestricted and
-    can outlive runs.
+    its working directory: attach `LocalWorkspace('.')` (or `WindowsWorkspace('.')`
+    on Windows) for a local checkout, or a sandbox provider's capability for
+    untrusted work, alongside `Coder()`. A run without a workspace fails at its
+    start. Commands are unrestricted and can outlive runs.
 
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.

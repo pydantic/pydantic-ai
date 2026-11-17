@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
@@ -23,6 +24,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponseStreamEvent,
     ModelRetry,
+    ModelSource,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -45,7 +47,13 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.messages import InstructionBaselinePart, InstructionPart
+from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionCapabilityPart,
+    InstructionPart,
+    OperatorSource,
+    OperatorText,
+)
 from pydantic_ai.models import Model, ModelProfile, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -221,6 +229,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -561,6 +570,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -659,6 +669,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -764,6 +775,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -1886,6 +1898,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -2901,6 +2914,29 @@ async def test_wrapped_model_receives_unprepared_request():
     assert seen[-1] == baseline, 'instrumentation changed the instructions the wrapped model received'
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_instrumented', name='reminder'):
+    pass
+
+
+def test_a_downgraded_instruction_part_takes_the_role_the_model_saw_it_in():
+    """A trace mustn't show text with no authority as if the application had said it."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                _ReminderPart(content='From the application.', source=OperatorSource()),
+                _ReminderPart(content='From a judge.', source=ModelSource('trajectory judge')),
+            ]
+        )
+    ]
+    assert InstrumentationSettings(include_content=True, version=6).messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'From the application.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'From a judge.'}]},
+        ]
+    )
+
+
 def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | None = None) -> Agent[None, str]:
     """An agent that adds a request-scoped reminder to each of its three requests: two tool calls, then an answer."""
 
@@ -2916,7 +2952,11 @@ def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | N
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            ctx.enqueue(SystemPromptPart(f'Reminder {ctx.run_step}.', scope='request'))
+            ctx.enqueue(
+                _ReminderPart(
+                    content=OperatorText(f'Reminder {ctx.run_step}.'), source=OperatorSource(), scope='request'
+                )
+            )
             return request_context
 
     agent = Agent(

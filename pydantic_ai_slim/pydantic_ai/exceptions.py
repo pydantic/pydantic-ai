@@ -265,7 +265,8 @@ class RetryModelRequest(Exception):
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
     the model that is about to serve it, so preparation a capability does there for that model is
     redone rather than inherited from the previous attempt, as are the model's own message preparation
-    and token counting.
+    and token counting. An attempt at another model than the step's also resolves the instructions
+    and model settings again, with that model as `ctx.model`.
     `before_model_request` and `wrap_model_request` are *not* re-run: they belong to the request as a
     whole, not to a single attempt.
     """
@@ -641,7 +642,7 @@ class ModelAPIError(AgentRunError):
     """The provider's machine-readable error code, if it sent one.
 
     For example `'rate_limit_exceeded'` or `'context_length_exceeded'` (OpenAI), `'ThrottlingException'` (Bedrock),
-    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3051'` (Mistral).
+    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3059'` (Mistral).
     """
 
     provider_error_type: str | None
@@ -718,8 +719,8 @@ class ModelQuotaExceededError(ModelAPIError):
     """Raised when the provider refused the request because the account's quota, credits, or billing is exhausted.
 
     Only raised when the provider says so explicitly, e.g. an HTTP 402, OpenAI's `insufficient_quota`,
-    Anthropic's `billing_error`, Bedrock's `ServiceQuotaExceededException`, a Gemini API `RESOURCE_EXHAUSTED` that
-    names a daily quota, or its `FAILED_PRECONDITION` asking to enable billing. Unlike a
+    Anthropic's `billing_error` or a reached spend limit, Bedrock's `ServiceQuotaExceededException`, a Gemini API
+    `RESOURCE_EXHAUSTED` that names a daily quota, or its `FAILED_PRECONDITION` asking to enable billing. Unlike a
     [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], retrying after a wait won't help.
     """
 
@@ -819,8 +820,8 @@ class ModelTimeoutError(ModelConnectionError):
 class ModelRequestRejectedError(ModelAPIError):
     """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
 
-    For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
-    subclasses say why, where the provider does:
+    For example an HTTP 400, 413 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies.
+    Its subclasses say why, where the provider does:
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
     [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
     [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].

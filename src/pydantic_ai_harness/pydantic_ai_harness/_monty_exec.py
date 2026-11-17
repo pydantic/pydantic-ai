@@ -278,7 +278,7 @@ class MontyExecutor:
       scheduled as `asyncio.Task`s. Resolved at `FutureSnapshot` via `asyncio.gather`.
     - **Per-call sequential** (`def`, name in `sequential_names`): resolved inline at
       `FunctionSnapshot`. Any pending parallel tasks are awaited first (barrier).
-    - **Global sequential** (when selected by the run context): all calls deferred but
+    - **Global sequential** (selected by the caller): all calls deferred but
       stored as bare coroutines and awaited one-at-a-time to prevent interleaving.
     """
 
@@ -296,7 +296,8 @@ class MontyExecutor:
     # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
     os_handler: OsHandler | None = None
     # Awaited before deferred calls are resolved. Every call dispatched so far has started by then, so
-    # a host can run the calls it collected from them as one batch, in dispatch order.
+    # a host can run the calls it collected from them as one batch, in dispatch order. That holds for
+    # parallel dispatch only: under `global_sequential`, calls start after this.
     flush: Callable[[], Awaitable[None]] | None = None
 
     _slept_seconds: float = field(default=0.0, init=False)

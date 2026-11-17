@@ -293,7 +293,7 @@ to trigger the deployed task.
 
 The capability registers definitions for these operations:
 
-- model requests, buffered stream requests, compaction, and suspended-response cleanup;
+- model requests, buffered stream requests, compaction, token counts, and suspended-response cleanup;
 - per named function toolset, shared by its tools, argument validation and tool calls;
 - per MCP and dynamic toolset, discovery, instructions, validation, and calls;
 - `event_stream_handler` delivery;
@@ -343,7 +343,7 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 ## Memory
 
 `Memory` can read and write through Render task runs when its store is accessible to every worker. Use a shared
-external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryStore` and files on an individual worker
+external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryMemoryStore` and files on an individual worker
 do not persist across task instances.
 
 ## Task options and tool opt-out
@@ -385,8 +385,10 @@ Each named toolset shares its call and validation task definitions. For the exam
 
 At registration, the resolver receives `tool=None` and `tool_name=''` for the toolset default. It also receives each statically known function tool and its name. Return the same settings for the toolset and its tools; `None` uses `tool_options`. Different per-tool settings are rejected because Render fixes task options when registering each definition.
 
-Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run. The
-shared toolset definitions remain registered. `False` is rejected for MCP and dynamic tools.
+Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run, as
+`metadata={'render_workflows': False}` on the tool does. The shared toolset definitions remain registered. `False` is
+rejected for MCP and dynamic tools. The harness `FileSystem` write tools opt out this way, so their file-change
+requests reach listeners in the parent task.
 
 ## Execution limits
 

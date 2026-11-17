@@ -31,11 +31,13 @@ from pydantic_ai._instrumentation import (
 )
 
 from .. import _otel_messages
+from .._capability_parts import effective_authority
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -585,14 +587,18 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     OpenAI Responses, a tool-search exchange where schemas are withheld. `tool` is the one role that would actively
     mislead, being paired with `tool_call_response`.
     """
-    if isinstance(
-        part,
-        SystemPromptPart
-        | ToolAvailabilityDeltaPart
-        | CapabilityLoadDeltaPart
-        | InstructionDeltaPart
-        | ModelSettingsDeltaPart,
-    ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
+    if (
+        isinstance(
+            part,
+            SystemPromptPart
+            | ToolAvailabilityDeltaPart
+            | CapabilityLoadDeltaPart
+            | InstructionDeltaPart
+            | ModelSettingsDeltaPart,
+        )
+        or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
+        or (isinstance(part, CapabilityPart) and effective_authority(part) == 'operator')
+    ):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
     # records the stored history rather than the prepared one.
