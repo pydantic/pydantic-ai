@@ -120,7 +120,7 @@ An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a
 
 ### Choosing the shape per call
 
-The script can also choose the shape of a single call's result: pass `output_schema`, a JSON schema with `"type": "object"`, and that call returns a `dict` in that shape instead of the sub-agent's own output. This lets the orchestrating model define the format a later step consumes:
+A sub-agent wrapped in `WorkflowAgent(agent, allow_output_schema=True)` lets the script choose the shape of a single call's result: pass `output_schema`, a JSON schema with `"type": "object"`, and that call returns a `dict` in that shape instead of the sub-agent's own output. This lets the orchestrating model define the format a later step consumes:
 
 ```python
 finding = await researcher(task="Who first described the effect?", output_schema={
@@ -131,7 +131,7 @@ finding = await researcher(task="Who first described the effect?", output_schema
 finding["source_url"]
 ```
 
-The schema replaces the sub-agent's `output_type` for that run, through [`StructuredDict`](../output.md#structured-dict), so the same caveats apply: it is sent to the model as the output schema, and the returned `dict` is not validated against it. A schema that is not an object schema fails the call before it counts against `max_agent_calls`. A sub-agent with [output validators](../output.md#output-validator-functions) cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in the script.
+The schema replaces the sub-agent's `output_type` for that run, through [`StructuredDict`](../output.md#structured-dict), so the same caveats apply: it is sent to the model as the output schema, and the returned `dict` is not validated against it. The sub-agent's own output type, and any validation it does, is bypassed for that call, which is why it is opt-in per sub-agent. A schema that is not an object schema, or that uses `$defs`, fails the call before it counts against `max_agent_calls`. A sub-agent with [output validators](../output.md#output-validator-functions) cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in the script.
 
 ## How results come back
 
@@ -356,6 +356,7 @@ WorkflowAgent(
     agent,                        # AbstractAgent, required, positional
     name=None,                    # sandbox function name; falls back to agent.name
     description=None,             # function docstring; None falls back to agent.description, '' hides it
+    allow_output_schema=False,    # let the script pass output_schema to replace the output type per call
 )
 ```
 

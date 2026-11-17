@@ -194,20 +194,7 @@ reviews = await asyncio.gather(reviewer(task="check auth"), reviewer(task="check
 ```
 
 `asyncio.gather` accepts positional awaitables but no keyword arguments, including
-`return_exceptions=True`. Other task creation and wait APIs are unavailable.
-
-To get a result in a shape you choose, also pass `output_schema`, a JSON schema with `"type": "object"`:
-the call then returns a dict in that shape instead of the agent's own output.
-
-```python
-finding = await reviewer(task="...", output_schema={
-    "type": "object",
-    "properties": {"claim": {"type": "string"}, "confidence": {"type": "number"}},
-    "required": ["claim", "confidence"],
-})
-```
-
-A sub-agent failure
+`return_exceptions=True`. Other task creation and wait APIs are unavailable. A sub-agent failure
 surfaces as `RuntimeError`: catch it with `try`/`except RuntimeError`, or let it abort the whole
 script and retry.
 
@@ -220,9 +207,23 @@ bounded previews of up to the 20 most recent results are reported so a retry can
 values.\
 """
 
+_OUTPUT_SCHEMA_DESCRIPTION = """\
+A sub-agent with an `output_schema` overload can return a result in a shape you choose: pass a JSON
+schema with `"type": "object"` and no `$defs`, and the call returns a dict in that shape instead of the
+agent's own output:
+
+```python
+finding = await researcher(task="...", output_schema={
+    "type": "object",
+    "properties": {"claim": {"type": "string"}, "confidence": {"type": "number"}},
+    "required": ["claim", "confidence"],
+})
+```\
+"""
+
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
-# return schema; the type-check stubs add an `output_schema` overload. Render each catalog entry
+# return schema, plus an `output_schema` overload for an entry that allows it. Render each catalog entry
 # through core's `FunctionSignature` (the renderer code_mode and Pydantic AI already use). This keeps the catalog format consistent across
 # capabilities, forces keyword-only `task` to match `dispatch` (which reads `kwargs['task']`), and
 # renders docstrings safely -- a hand-rolled f-string breaks on a newline or a quote inside a
@@ -400,24 +401,23 @@ def _agent_signature(name: str, agent: AbstractAgent[AgentDepsT, object]) -> Fun
     )
 
 
-def _with_output_schema_overload(name: str, rendered: str) -> str:
-    """Overload a stub so a call passing `output_schema` type-checks as returning a dict."""
+def _with_output_schema_overload(name: str, rendered: str, body: str) -> str:
+    """Overload a function so a call passing `output_schema` returns a dict."""
     return (
         f'@overload\n{rendered}\n\n'
         f'@overload\nasync def {name}(*, task: str, output_schema: dict[str, Any]) -> dict[str, Any]:\n'
-        f'    {_STUB_BODY}\n\n'
-        f'async def {name}(*, task: str, output_schema: dict[str, Any] | None = None) -> Any:\n    {_STUB_BODY}'
+        f'    {body}\n\n'
+        f'async def {name}(*, task: str, output_schema: dict[str, Any] | None = None) -> Any:\n    {body}'
     )
 
 
 def _signature_blocks(
-    catalog: Mapping[str, WorkflowAgent[AgentDepsT]], shown: Sequence[str], *, body: str, stubs: bool = False
+    catalog: Mapping[str, WorkflowAgent[AgentDepsT]], shown: Sequence[str], *, body: str
 ) -> list[str]:
     """Render the `shown` sub-agents' type definitions and async functions.
 
     Type names are disambiguated against every agent in `catalog`, which holds the agents the
-    model knew about when `shown` was first presented to it. With `stubs`, each function also gets
-    its `output_schema` overload.
+    model knew about when `shown` was first presented to it.
     """
     signatures = {name: _agent_signature(name, entry.agent) for name, entry in catalog.items()}
     conflicting = FunctionSignature.get_conflicting_type_names(list(signatures.values()))
@@ -430,7 +430,9 @@ def _signature_blocks(
             is_async=True,
             conflicting_type_names=conflicting,
         )
-        blocks.append(_with_output_schema_overload(signature.name, rendered) if stubs else rendered)
+        if catalog[signature.name].allow_output_schema:
+            rendered = _with_output_schema_overload(signature.name, rendered, body)
+        blocks.append(rendered)
     return blocks
 
 
@@ -441,7 +443,10 @@ def _render_catalog(catalog: Mapping[str, WorkflowAgent[AgentDepsT]], *, max_age
         f'This run can make at most {max_agent_calls} sub-agent calls in total -- one budget shared across '
         'every `run_workflow` call in the run, not per script; plan fan-out width accordingly.'
     )
-    return f'{_WORKFLOW_BASE_DESCRIPTION}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
+    description = _WORKFLOW_BASE_DESCRIPTION
+    if any(entry.allow_output_schema for entry in catalog.values()):
+        description = f'{description}\n\n{_OUTPUT_SCHEMA_DESCRIPTION}'
+    return f'{description}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
 
 
 def _reveal_announcement(
@@ -591,7 +596,9 @@ def _completed_workflow_result(
     return _workflow_result(completed_output, printed)
 
 
-def _dispatched_call(agent_name: str, kwargs: Mapping[str, object]) -> tuple[str, type[JsonSchemaValue] | None]:
+def _dispatched_call(
+    agent_name: str, kwargs: Mapping[str, object], *, allow_output_schema: bool
+) -> tuple[str, type[JsonSchemaValue] | None]:
     """The `task` a sandbox call to sub-agent `agent_name` passed, and the output type its `output_schema` asks for."""
     # Monty does not validate kwargs against the sandbox signature at runtime, and the static
     # check can be evaded through `Any` (e.g. `json.loads` results) -- so check here: a dropped
@@ -599,10 +606,11 @@ def _dispatched_call(agent_name: str, kwargs: Mapping[str, object]) -> tuple[str
     # input. Each raises before the budget is touched.
     if 'task' not in kwargs:
         raise TypeError(f'{agent_name}() missing required keyword argument: task')
-    extra = sorted(set(kwargs) - {'task', 'output_schema'})
+    accepted = ['task', 'output_schema'] if allow_output_schema else ['task']
+    extra = sorted(set(kwargs) - set(accepted))
     if extra:
         raise TypeError(
-            f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only task and output_schema'
+            f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only {" and ".join(accepted)}'
         )
     task = kwargs['task']
     if not isinstance(task, str):
@@ -614,6 +622,9 @@ def _dispatched_call(agent_name: str, kwargs: Mapping[str, object]) -> tuple[str
         json_schema = _JSON_SCHEMA_ADAPTER.validate_python(schema, strict=True)
     except ValidationError as exc:
         raise TypeError(f'{agent_name}() output_schema must be a dict with string keys') from exc
+    # `StructuredDict` inlines `$defs` on the host, where references can expand a small schema without bound.
+    if '$defs' in json_schema:
+        raise TypeError(f'{agent_name}() output_schema cannot use $defs; write nested objects inline')
     try:
         return task, StructuredDict(json_schema)
     except UserError as exc:
@@ -649,6 +660,11 @@ class WorkflowAgent(Generic[AgentDepsT]):
     """Description shown to the model in the sub-agent catalog, rendered as the sandbox
     function's docstring. An explicit value, including `''`, overrides the agent's own
     `description`. When neither is set, the model sees only the bare signature."""
+
+    allow_output_schema: bool = False
+    """Let the script pass `output_schema`, an object JSON schema that replaces the agent's
+    `output_type` for that call. The returned dict is not validated against the schema, and the
+    agent's own output type, including any validation it does, is bypassed for the call."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -1011,10 +1027,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         """
         baseline = {name: entry for name, entry in self._by_name.items() if name in self._baseline_names}
         parts = ['import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal, overload']
-        parts.extend(_signature_blocks(baseline, list(baseline), body=_STUB_BODY, stubs=True))
+        parts.extend(_signature_blocks(baseline, list(baseline), body=_STUB_BODY))
         for name in self._by_name:
             if name not in self._baseline_names:
-                parts.extend(_signature_blocks(self._catalog_through(name), [name], body=_STUB_BODY, stubs=True))
+                parts.extend(_signature_blocks(self._catalog_through(name), [name], body=_STUB_BODY))
         return '\n\n'.join(parts)
 
     def _catalog_through(self, name: str) -> dict[str, WorkflowAgent[AgentDepsT]]:
@@ -1049,7 +1065,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
 
         async def dispatch(agent_name: str, kwargs: dict[str, Any]) -> Any:
             nonlocal budget_exhausted
-            task, output_type = _dispatched_call(agent_name, kwargs)
+            task, output_type = _dispatched_call(
+                agent_name, kwargs, allow_output_schema=self._by_name[agent_name].allow_output_schema
+            )
             try:
                 output = await self._run_one(agent_name, task, ctx, branches, output_type)
             except _BudgetExhaustedError:

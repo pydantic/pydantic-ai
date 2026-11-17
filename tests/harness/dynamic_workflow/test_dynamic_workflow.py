@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ObjectJsonSchema
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
@@ -396,20 +397,7 @@ reviews = await asyncio.gather(reviewer(task="check auth"), reviewer(task="check
 ```
 
 `asyncio.gather` accepts positional awaitables but no keyword arguments, including
-`return_exceptions=True`. Other task creation and wait APIs are unavailable.
-
-To get a result in a shape you choose, also pass `output_schema`, a JSON schema with `"type": "object"`:
-the call then returns a dict in that shape instead of the agent's own output.
-
-```python
-finding = await reviewer(task="...", output_schema={
-    "type": "object",
-    "properties": {"claim": {"type": "string"}, "confidence": {"type": "number"}},
-    "required": ["claim", "confidence"],
-})
-```
-
-A sub-agent failure
+`return_exceptions=True`. Other task creation and wait APIs are unavailable. A sub-agent failure
 surfaces as `RuntimeError`: catch it with `try`/`except RuntimeError`, or let it abort the whole
 script and retry.
 
@@ -568,7 +556,7 @@ finding = await researcher(task='x', output_schema={
 
 
 async def test_output_schema_sets_the_call_output_type() -> None:
-    seen_schemas: list[dict[str, Any]] = []
+    seen_schemas: list[ObjectJsonSchema] = []
 
     def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         (output_tool,) = info.output_tools
@@ -578,7 +566,7 @@ async def test_output_schema_sets_the_call_output_type() -> None:
         )
 
     researcher: Agent[object, str] = Agent(FunctionModel(researcher_fn), name='researcher')
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher)])
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher, allow_output_schema=True)])
     assert await _run_script(ts, _FINDING_SCHEMA_CODE) == ['water is wet', 0.9]
     assert seen_schemas == snapshot(
         [
@@ -593,23 +581,61 @@ async def test_output_schema_sets_the_call_output_type() -> None:
 
 async def test_output_schema_replaces_a_structured_output_type() -> None:
     reviewer = _review_agent({'claim': 'c', 'confidence': 1}, name='researcher')
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=reviewer)])
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=reviewer, allow_output_schema=True)])
     assert await _run_script(ts, _FINDING_SCHEMA_CODE) == ['c', 1]
 
 
 async def test_output_schema_is_type_checked_per_call() -> None:
     # Without `output_schema`, the call still returns the agent's own `str`, which takes no string key.
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent(name='researcher')])
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(name='researcher'), allow_output_schema=True)])
     with pytest.raises(ModelRetry, match='Type error in workflow'):
         await _run_script(ts, "r = await researcher(task='x')\nr['claim']")
     with pytest.raises(ModelRetry, match='Type error in workflow'):
         await _run_script(ts, "await researcher(task='x', output_schema='object')")
 
 
+async def test_output_schema_is_shown_only_for_agents_that_allow_it() -> None:
+    ts = DynamicWorkflowToolset[object](
+        agents=[WorkflowAgent(_sub_agent(name='researcher'), allow_output_schema=True), _wf_agent(name='plain')]
+    )
+    desc = (await ts.get_tools(_ctx()))['run_workflow'].tool_def.description
+    assert desc is not None
+    assert 'A sub-agent with an `output_schema` overload can return a result in a shape you choose' in desc
+    assert desc.split('Available sub-agents:\n\n')[1] == snapshot("""\
+```python
+@overload
+async def researcher(*, task: str) -> str:
+    ...
+
+@overload
+async def researcher(*, task: str, output_schema: dict[str, Any]) -> dict[str, Any]:
+    ...
+
+async def researcher(*, task: str, output_schema: dict[str, Any] | None = None) -> Any:
+    ...
+
+async def plain(*, task: str) -> str:
+    ...
+```\
+""")
+    with pytest.raises(ModelRetry, match='Type error in workflow'):
+        await _run_script(ts, "await plain(task='x', output_schema={'type': 'object'})")
+    # Smuggled through `json.loads` (typed `Any`), so only the runtime guard can catch it.
+    with pytest.raises(ModelRetry, match=r'plain\(\) got unexpected keyword argument\(s\): output_schema; only task'):
+        await _run_script(ts, 'import json\nawait plain(task="x", **json.loads(\'{"output_schema": {}}\'))')
+
+
+async def test_tool_description_is_unchanged_without_output_schema() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
+    desc = (await ts.get_tools(_ctx()))['run_workflow'].tool_def.description
+    assert desc is not None
+    assert 'output_schema' not in desc
+
+
 async def test_output_schema_fails_the_call_on_an_agent_with_output_validators() -> None:
     validated = _sub_agent(name='validated')
     validated.output_validator(lambda output: output)
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=validated)])
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=validated, allow_output_schema=True)])
     code = """\
 plain = await validated(task='x')
 try:
@@ -625,11 +651,17 @@ except RuntimeError as e:
     [
         ('"object"', 'output_schema must be a dict with string keys'),
         ('{"type": "string"}', 'output_schema is not usable: Schema must be an object'),
+        (
+            '{"type": "object", "$defs": {"A": {"type": "string"}}, "properties": {"a": {"$ref": "#/$defs/A"}}}',
+            r'output_schema cannot use \$defs; write nested objects inline',
+        ),
     ],
 )
 async def test_unusable_output_schema_rejected_before_budget_is_spent(schema: str, error: str) -> None:
     # Smuggled through `json.loads` (typed `Any`), so only the runtime guard can catch it.
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], max_agent_calls=1)
+    ts = DynamicWorkflowToolset[object](
+        agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)], max_agent_calls=1
+    )
     with pytest.raises(ModelRetry, match=f'sub\\(\\) {error}'):
         await _run_script(ts, f'import json\nawait sub(task="x", output_schema=json.loads({schema!r}))')
     assert await _run_script(ts, "await sub(task='x')") == 'ok'
