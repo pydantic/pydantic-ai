@@ -56,15 +56,16 @@ async def test_context_usage_event() -> None:
     # pydantic-ai 2.41 derives a run-local synthetic id for anonymous capabilities, so pin one
     # rather than asserting on whichever derivation policy the installed core uses.
     capability.id = 'report_context_usage'
-    await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
+    await Agent(TestModel(), capabilities=[capability, hooks]).run(
+        'Summarize the open pull requests for this repository.'
+    )
 
-    [event] = events
-    assert event == ContextUsageMeasuredEvent(
-        used_tokens=event.used_tokens,
-        window_tokens=1_000,
-        resolved=True,
-        fraction=event.used_tokens / 1_000,
-        capability_id='report_context_usage',
+    assert events == snapshot(
+        [
+            ContextUsageMeasuredEvent(
+                used_tokens=13, window_tokens=1_000, resolved=True, fraction=0.013, capability_id='report_context_usage'
+            )
+        ]
     )
 
 
