@@ -113,7 +113,7 @@ def test_a_removed_positional_argument_cannot_shift_onto_the_next_field(construc
         ('shell', 'Shell', {'cwd': '.'}),
         ('macroscope', 'Macroscope', {'cwd': '.'}),
         ('repo_context', 'RepoContext', {'workspace_dir': '.'}),
-        ('repo_context', 'RepoContext', {'traversal_tool_names': frozenset()}),
+        ('repo_context', 'RepoContext', {'traversal_tool_names': frozenset({'read_file'})}),
         ('sub_agents', 'SubAgents', {'inherit_tools': True}),
         ('spend_limits', 'SpendLimits', {'on_spend': print}),
         ('compaction', 'ReportContextUsage', {'on_usage': print}),
