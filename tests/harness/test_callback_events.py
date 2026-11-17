@@ -41,7 +41,7 @@ async def test_spend_event() -> None:
 
     assert len(events) == 1
     assert events[0].usd == Decimal('1.25')
-    assert events[0].usage.total_tokens == result.usage.total_tokens
+    assert events[0].usage == result.response.usage
 
 
 async def test_context_usage_event() -> None:

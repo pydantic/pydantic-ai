@@ -50,6 +50,7 @@ def test_renamed_event_keeps_its_old_kind(module: ModuleType, old_name: str, new
     """The old class name is gone, but the wire kind is unchanged. An abstract event has no kind, which is the empty string."""
     assert getattr(module, new_name).kind == kind
     assert new_name in module.__all__
+    assert old_name not in module.__all__
     assert not hasattr(module, old_name)
 
 
