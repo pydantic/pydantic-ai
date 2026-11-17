@@ -847,11 +847,28 @@ def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
     if len(messages) <= keep:
         return 0
 
-    target = len(messages) - keep
+    target = _keeping_workspace(messages, len(messages) - keep)
     for index in range(target, -1, -1):
         if _is_safe_cutoff(messages, index):
             return index
     return 0  # pragma: no cover
+
+
+def _keeping_workspace(messages: list[ModelMessage], cutoff: int) -> int:
+    """*cutoff*, moved back so the kept tail holds the latest response when it names a workspace.
+
+    The next run finds its workspace from that response's `workspace_ref`, so a tail of requests alone, such as
+    a large user turn after it, would move the conversation out of its workspace.
+    """
+    for index in range(len(messages) - 1, cutoff - 1, -1):
+        message = messages[index]
+        if isinstance(message, ModelResponse):
+            return cutoff
+    for index in range(cutoff - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, ModelResponse):
+            return index if message.workspace_ref is not None else cutoff
+    return cutoff
 
 
 def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int:
@@ -916,8 +933,8 @@ def find_token_cutoff(
                 lo = mid + 1
             else:
                 hi = mid
-        return _include_tool_dependencies(messages, max(0, lo - 1))
-    return _legacy_token_cutoff(messages, target_tokens, tail_tokens)
+        return _keeping_workspace(messages, _include_tool_dependencies(messages, max(0, lo - 1)))
+    return _keeping_workspace(messages, _legacy_token_cutoff(messages, target_tokens, tail_tokens))
 
 
 def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_tokens: Callable[[int], int]) -> int:
