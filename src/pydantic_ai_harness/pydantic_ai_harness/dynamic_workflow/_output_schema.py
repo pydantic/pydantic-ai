@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import StructuredDict
 
 _MAX_ERRORS = 10
-_MAX_SCHEMA_VALUES = 10_000
+_MAX_SCHEMA_VALUES = 1_000
 
 _JsonType = Literal['object', 'array', 'string', 'integer', 'number', 'boolean', 'null']
 

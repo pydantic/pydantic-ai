@@ -744,7 +744,7 @@ s = {'type': 'string'}
 for _ in range(40):
     s = {'type': 'object', 'anyOf': [{'properties': {'a': s}}, {'properties': {'a': s}}]}
 await sub(task='x', output_schema=s)"""
-    with pytest.raises(ModelRetry, match='output_schema is not usable: it has more than 10000 values'):
+    with pytest.raises(ModelRetry, match='output_schema is not usable: it has more than 1000 values'):
         await _run_script(ts, code)
 
 

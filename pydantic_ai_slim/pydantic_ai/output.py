@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import itertools
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
@@ -483,6 +484,7 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
     try:
         from jsonschema import Draft202012Validator
         from jsonschema.exceptions import SchemaError
+        from referencing import Registry
     except ImportError as e:
         raise exceptions.UserError(
             '`StructuredDict(validate=True)` requires the `jsonschema` package. '
@@ -492,15 +494,16 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         Draft202012Validator.check_schema(json_schema)
     except SchemaError as e:
         raise exceptions.UserError(f'`StructuredDict` got an invalid JSON schema: {e.message}') from e
-    schema_validator = Draft202012Validator(json_schema)
+    # An empty registry resolves references within the schema only, so a remote `$ref` is never fetched.
+    schema_validator = Draft202012Validator(json_schema, registry=Registry())
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
-        errors = [
-            f'{error.json_path}: {error.message}'
-            for error in schema_validator.iter_errors(value)  # pyright: ignore[reportUnknownMemberType]
-        ]
-        if errors:
-            raise ValueError('\n'.join(errors[:_MAX_JSON_SCHEMA_ERRORS]))
+        errors = itertools.islice(
+            schema_validator.iter_errors(value),  # pyright: ignore[reportUnknownMemberType]
+            _MAX_JSON_SCHEMA_ERRORS,
+        )
+        if messages := [f'{error.json_path}: {error.message}' for error in errors]:
+            raise ValueError('\n'.join(messages))
         return value
 
     return validate

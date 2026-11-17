@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVa
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter, field_validator
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter, ValidationError, field_validator
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
 from typing_extensions import TypedDict
@@ -3153,6 +3153,34 @@ def test_structured_dict_without_validate_accepts_output_not_matching_the_schema
 
     result = Agent(FunctionModel(return_person), output_type=PersonDict).run_sync('Create a person')
     assert result.output == {'age': 'x'}
+
+
+@requires_jsonschema
+def test_structured_dict_validate_resolves_local_refs_but_never_fetches_remote_ones(monkeypatch: pytest.MonkeyPatch):
+    from referencing.exceptions import Unresolvable
+
+    def no_fetch(*args: object, **kwargs: object) -> None:
+        raise AssertionError('fetched a remote schema')  # pragma: no cover
+
+    monkeypatch.setattr('urllib.request.urlopen', no_fetch)
+    LocalDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'tire': {'$ref': '#/$defs/Tire'}},
+            '$defs': {'Tire': {'type': 'object', 'properties': {'size': {'type': 'integer'}}}},
+        },
+        validate=True,
+    )
+    adapter = TypeAdapter(LocalDict)
+    assert adapter.validate_python({'tire': {'size': 17}}) == {'tire': {'size': 17}}
+    with pytest.raises(ValidationError, match=r"\$\.tire\.size: 'x' is not of type 'integer'"):
+        adapter.validate_python({'tire': {'size': 'x'}})
+
+    RemoteDict = StructuredDict(
+        {'type': 'object', 'properties': {'a': {'$ref': 'http://127.0.0.1:9/schema.json'}}}, validate=True
+    )
+    with pytest.raises(Unresolvable):
+        TypeAdapter(RemoteDict).validate_python({'a': 1})
 
 
 @requires_jsonschema

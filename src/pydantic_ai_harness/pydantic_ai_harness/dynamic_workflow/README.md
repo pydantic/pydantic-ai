@@ -201,7 +201,7 @@ it can use only the keywords `type`, `properties`, `required`, `additionalProper
 `maxLength`, `minItems`, `maxItems`, `uniqueItems`, `minProperties`, `maxProperties`), and the
 annotations `format`, `title`, `description`, `default` and `examples`. A schema that is not an
 object schema, that uses any other keyword (such as `$ref`, `$defs` or `pattern`), or that holds
-more than 10,000 values, fails the call before it counts against `max_agent_calls`. A sub-agent with
+more than 1,000 values, fails the call before it counts against `max_agent_calls`. A sub-agent with
 [output validators](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions)
 cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in
 the script.
