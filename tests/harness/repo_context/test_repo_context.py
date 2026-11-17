@@ -119,6 +119,26 @@ class TestDiscoverInstructionFiles:
         assert await find_dir_context_file(workspace, directory, ('AGENTS.md',)) is None
 
     @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_linked_directory_in_a_filename_must_resolve_inside_the_scanned_directory(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        project = tmp_path / 'project'
+        _write(tmp_path / 'outside' / 'copilot-instructions.md', 'outside')
+        _write(project / 'docs' / 'copilot-instructions.md', 'inside')
+        filenames = ('.github/copilot-instructions.md',)
+
+        (project / '.github').symlink_to(tmp_path / 'outside', target_is_directory=True)
+        assert await discover_instruction_files(workspace, project, None, filenames) == []
+        assert await find_dir_context_file(workspace, project, filenames) is None
+
+        (project / '.github').unlink()
+        (project / '.github').symlink_to('docs', target_is_directory=True)
+        files = await discover_instruction_files(workspace, project, None, filenames)
+        assert [f.content for f in files] == ['inside']
+        found = await find_dir_context_file(workspace, project, filenames)
+        assert found is not None and found.content == 'inside'
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
     async def test_does_not_load_a_link_to_a_file_that_is_not_an_instruction_file(
         self, tmp_path: Path, workspace: Workspace
     ) -> None:
