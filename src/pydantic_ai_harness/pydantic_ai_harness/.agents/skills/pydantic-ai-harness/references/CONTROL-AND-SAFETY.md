@@ -16,6 +16,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Stop tool calls failing on trailing commas, single quotes, truncated JSON | `RepairToolArguments()` |
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
+| Screen each streamed text, thinking or tool-call part before the caller sees it | `StreamGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
 | Mask API keys, tokens, PII in text | `guardrails.detectors.redact_secrets` / `redact_personal_data` in a guard |
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
@@ -30,7 +31,8 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
-| Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
+| Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
+| Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 
 ## RepairToolArguments
@@ -75,9 +77,9 @@ validation/retry. `Coder` already includes it.
 
 ## Guardrails
 
-`InputGuardrail`, `OutputGuardrail`, `ToolGuardrail`, `GuardrailResult`, `InputBlocked`,
+`InputGuardrail`, `OutputGuardrail`, `StreamGuardrail`, `ToolGuardrail`, `GuardrailResult`, `InputBlocked`,
 `OutputBlocked`, `GuardrailError` are top-level (`from pydantic_ai_harness import ...`);
-`ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `detectors` live in `pydantic_ai_harness.guardrails`.
+`ToolBlocked`, `ToolCallInfo`, `ToolResultInfo`, `StreamGuardrailPart`, `detectors` live in `pydantic_ai_harness.guardrails`.
 
 A guard is a sync or async callable taking the value, optionally preceded by `RunContext` (taken
 when a second positional parameter is required, for `*args` with another parameter, or when the
@@ -89,12 +91,12 @@ returns `bool` (`True` = allow) or a `GuardrailResult`: `allow()`, `block(messag
 `numpy.bool_`) is read for truthiness with a `HarnessDeprecationWarning` (a truthy label allows the
 value); return `bool(...)` instead.
 
-| Verdict | `InputGuardrail` | `OutputGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
-|---|---|---|---|---|
-| block | skip the model call; message becomes the response | raise `OutputBlocked` | skip tool; message is the tool result | message replaces the result |
-| replace | rewrite the prompt (text prompts, sequential only) | substitute output | run with new args mapping | substitute result |
-| retry | `UserError` | `ModelRetry` to the model (counts output retries) | `ModelRetry` | `ModelRetry` (tool already ran) |
-| approve | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
+| Verdict | `InputGuardrail` | `OutputGuardrail` | `StreamGuardrail` | `ToolGuardrail.guard` (args) | `ToolGuardrail.result_guard` |
+|---|---|---|---|---|---|
+| block | skip the model call; message becomes the response | raise `OutputBlocked` | raise `OutputBlocked`, part never released | skip tool; message is the tool result | message replaces the result |
+| replace | rewrite the prompt (text prompts, sequential only) | substitute output | stream a same-type text or thinking part instead (events only); `UserError` for a tool call | run with new args mapping | substitute result |
+| retry | `UserError` | `ModelRetry` to the model (counts output retries) | `UserError` | `ModelRetry` | `ModelRetry` (tool already ran) |
+| approve | `UserError` | `UserError` | `UserError` | defer via `ApprovalRequired` | not valid |
 
 ```python
 from pydantic_ai import Agent
@@ -174,6 +176,15 @@ Key parameters:
   `lambda out: redact_secrets(pydantic_core.to_json(out).decode()).action == 'allow'` blocks on a
   match (and also works on the JSON data a Temporal worker passes); to redact,
   return `GuardrailResult.replace(Model.model_validate_json(verdict.replacement))`.
+- `StreamGuardrail(guard)`: holds each streamed `TextPart`, `ThinkingPart` or `ToolCallPart` until it
+  is complete and passes the whole part to the guard before its events reach `run_stream_events()`,
+  a run's `event_stream_handler` argument or a UI adapter; `ProcessEventStream` and `on_event`
+  see raw events. Adds the part's generation time to its first chunk; a tool call is held until
+  the model response ends.
+  `run_stream()`'s `stream_text()`/`stream_output()` are not screened (a `block` still raises), and
+  the run's history and output are not changed; pair with `OutputGuardrail`/`ToolGuardrail` for
+  those. Makes `run()` stream every request; raises `UserError` under durable execution and in a
+  realtime session.
 - `ToolGuardrail(guard=None, result_guard=None, tools=None, hidden=())`: `tools` restricts both
   guards to those names; `hidden` drops tools from the model's tool list (no tokens; a call
   to one is rejected as an unknown tool). A `tools` name no step offered warns (`UserWarning`) after each successful
@@ -273,7 +284,9 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 `semantic_detection=True` without ONNX Runtime. Importing the module without the extra raises
 `ImportError`. Not scanned: provider-native tools, externally supplied deferred results,
 `ModelRetry` messages, `ToolReturn.metadata`, mapping keys, media. A withheld result carries
-diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
+diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). Every flagged verdict
+emits a zero-duration `prompt_injection flagged` span (`prompt_injection.action`, `.risk_level`,
+`.detections`; sanitized field names only with content tracing). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup (on the worker, under durable execution).
 Under Temporal, DBOS, and Prefect, semantic warmup and classification with `semantic_detection=True`
 or a supplied `defense` are durable operations. Give every defender on a durable-capable agent a
@@ -308,7 +321,7 @@ Each decision emits an `artifact_scan flagged` span (source and excerpts only wi
 
 Gotchas: regex only, so paraphrases slip through and quoted attacks false-positive. `html_comment`
 flags linter directives in skills; narrow `threats` there. Memory files read via `FileSystem` and
-bundled skill files are not scanned. Subclass and override `scan` to plug in another detector.
+bundled skill files read other than through `Skills(read_files=True)` are not scanned. Subclass and override `scan` to plug in another detector.
 
 ## ToolCallJudge
 
@@ -491,12 +504,18 @@ limits = SpendLimits(
 windows: `'run' | 'conversation' | 'day' | 'month' | 'total'` (UTC). `'conversation'` keys on
 `ctx.conversation_id` (`run(conversation_id=...)`, else inherited from `message_history`, else new), so
 separate `agent.run` calls that pass the history share one bucket, kept 30 days by default. A budget
-with no ceiling is a counter only. `scope` returns a partition key string (tenant, user, model). `SpendLimits(budgets=(),
+with no ceiling is a counter only. `scope` returns a partition key string (tenant, user, model). `usd` and
+`tokens` also take a callable of the run context, so each partition gets its own ceiling
+(`usd=lambda ctx: ctx.deps.allowance_usd`; `None` means no ceiling); `status()` without `ctx` omits such a
+budget, and a spec cannot express one. `SpendLimits(budgets=(),
 store=InMemorySpendStore(), price=None, on_unpriced='zero', expose_tools=False, ...)`.
 
 - Readings: `await limits.status(ctx_or_none, scope='acme')` returns `BudgetStatus` list (`spent`,
-  `remaining_usd`, `warning`, `exhausted`); `await limits.exhausted(scope=...)` for an admission
-  decision (raises if scoped budgets cannot be resolved; `status` leaves them out of its list).
+  `usd_limit`/`token_limit` holding the resolved ceilings, `remaining_usd`, `warning`, `exhausted`;
+  read those rather than `status.budget.usd`, which holds the callable itself when the ceiling is
+  given as a callable); `await limits.exhausted(scope=...)` for an admission decision (raises if a
+  scoped, run-windowed, or callable-ceiling budget cannot be resolved; `status` leaves them out of
+  its list).
 - Per-response events: subscribe to `SpendRecordedEvent` with `@agent.on_event(...)` (`on_spend` is deprecated).
 - `expose_tools=True` adds a `get_spend` tool for the model.
 - `price=lambda response: Decimal(...) | None` prices models genai-prices does not know.
@@ -527,7 +546,7 @@ Gotchas:
 - For a `FallbackModel` rejection, `price` receives a `ModelResponse` rebuilt from the attempt's model,
   provider and usage, with no `parts` and no `provider_url`, so a `price` that reads the output or keys
   on the endpoint will misprice it. A `ModelFallback` capability rejection reaches `price` as the real response.
-- Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
+- Spec-loadable except callables (`store`, `price`, `scope`, `clock`, callable `usd`/`tokens`).
 
 ## AskUser
 
@@ -650,6 +669,10 @@ agent = Agent(
   as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
   with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
+  `skip_unchanged=True` (requires `scope='conversation'`) skips a firing while a copy of the same text
+  is still in the history the model sees, across runs too, and records it again once compaction drops it.
+  List any `ProcessHistory`/compaction that drops messages before `SystemReminders`, or a trimmed
+  copy still suppresses the firing.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.
@@ -666,6 +689,11 @@ agent = Agent(
   construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
   traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
   the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
+- `LLMReminder` vs `TrajectoryJudge`: `LLMReminder` adds a model-written goal refresher on every
+  firing, blocks the request it precedes, and falls back to `GoalReanchor` text on error;
+  `TrajectoryJudge` runs alongside the agent (outside durable execution), steers only when the
+  run drifts, and raises an evaluation error on the run. Use `LLMReminder` for a regular goal
+  refresher, the judge for course correction, and `GoalReanchor` for free re-anchoring.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
@@ -764,8 +792,80 @@ except LoopDetectedError as error:
   `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
   DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
 - Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
+- Also checks each response on its own, as it streams: `stream_detector` (default
+  `RepetitionDetector()`: a passage of `min_period=20` to `max_period=2000` chars with
+  `min_distinct_chars=8`, repeated `min_repeats=8` times covering `min_chars=2000`, so grids, table
+  rules and a few dozen identical rows don't count) runs every `stream_check_every=256` chars and at
+  each part's end over `stream_channels=('thinking', 'text', 'tool_args')`, giving
+  `repeated_thinking`, `repeated_stream_text`, `repeated_tool_args`; `repeated_parallel_call` is the
+  same call `repeated_parallel_call_threshold=5` times in one response, reported before any runs. A
+  response that isn't streamed gets the same checks on arrival; `DetectLoops` never makes a run
+  stream.
+- Within a response, `'nudge'` also stops the stream and retries via `ModelRetry`, with the nudge
+  request-scoped (counts against output retries; a stopped stream is dropped from history and its
+  tokens aren't in run usage). A handler that returns lets the response continue; it can raise `ModelRetry` to retry. Under
+  `run_stream()`, a loop found once output (text or an output tool call) has started streaming
+  can't be retried and ends the run with `UnexpectedModelBehavior`. `UsageLimits` don't see
+  stopped streams.
+- `LoopJudge(model=...)` asks a small, fast "System 1" model (not a reasoning model) on heuristic
+  suspicion, plus every `every` chars if set; failure or `timeout=5.0` falls back to the heuristic.
+  It's never asked in durable workflow code (Temporal, DBOS, Prefect), where only the heuristic runs
+  on the whole response. A custom `LoopDetector` runs in workflow code too, so keep it deterministic
+  and free of I/O. Subclass `LoopDetector` (`async detect(ctx, sample: StreamSample) ->
+  Repetition | None`) for your own methodology.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
-  `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
+  `.tool_names`; `.fingerprints` and `.passage` only with `trace_include_content`); no
+  arguments or results otherwise. A failed judge emits `loop judge failed`
+  (`error.type`). A `model=` judge isn't instrumented; its usage is added to the run's.
+
+## ToolBudgets
+
+In `wrap_tool_execute`, refuses a function tool call that is over its `per_tool` budget, over the run's
+`total`, or (for tools in `refuse_repeats`) an exact repeat of a call that already ran in this run.
+The refused call doesn't run: `SkipToolExecution` answers it with a `ToolReturn` naming the budget
+("3 of 3 `web_search` calls used; no more are allowed in this run."), and the run continues.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ToolBudgets
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) < 5:
+        return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'pydantic'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+budgets = ToolBudgets(per_tool={'web_search': 3}, total=20, refuse_repeats={'web_search'})
+agent = Agent(FunctionModel(model), capabilities=[budgets])
+
+
+@agent.tool_plain
+def web_search(query: str) -> str:
+    return f'results for {query}'
+
+
+messages = agent.run_sync('Research Pydantic').all_messages()
+parts = [part for message in messages for part in message.parts]
+print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and part.metadata])
+#> [{'origin': 'pydantic-ai-harness.tool_budgets.refusal.v1', 'reason': 'repeat'}]
+```
+
+- Find refusals by `metadata['origin'] == 'pydantic-ai-harness.tool_budgets.refusal.v1'`, never by text;
+  `metadata['reason']` is `'per_tool'`, `'total'` or `'repeat'` (`ToolBudgetReason`).
+  `UsageLimits.tool_calls_limit` stays the hard ceiling and counts refused calls.
+- A call counts when execution starts (success, `ModelRetry`, failure or `CallDeferred`); calls another
+  capability skips or holds for approval, and refused calls, don't. Repeats match tool name plus sorted-key
+  JSON arguments; a failed call isn't remembered. Parallel calls can't overshoot: they are checked against
+  calls still in flight, so one refused because of a call that is then skipped stays refused.
+- Counts live on the per-run instance from `for_run`, so compaction doesn't reset them; hooks run in
+  workflow code under Temporal, DBOS, and Prefect, so replay reaches the same refusals. Each new run
+  starts at zero, including one resumed after an approval round outside the run, so with approval
+  rounds the budget is per round, not per task.
+- Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
 ## RefineOutput
 

@@ -122,7 +122,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs `DAYTONA_API_KEY` too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
 
-`snapshot`, `auto_stop_interval`, and `allow_internet_access` only shape a new sandbox; `working_dir` and `env` apply to every command, including after you reattach. A new sandbox gets `working_dir` created for it; on an attached or caller-supplied sandbox it must already exist, or commands fail with `WorkspaceError`.
+`snapshot`, `auto_stop_interval`, `allow_internet_access`, and `secrets` only shape a new sandbox; `working_dir` and `env` apply to every command, including after you reattach. A new sandbox gets `working_dir` created for it; on an attached or caller-supplied sandbox it must already exist, or commands fail with `WorkspaceError`.
 
 Already have a `daytona.AsyncSandbox`? Pass `workspace=DaytonaSandboxBackend(sandbox=sandbox)` to a run, with `DaytonaSandboxBackend` from `pydantic_ai_harness.daytona_sandbox`. `DaytonaSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
@@ -155,6 +155,42 @@ async def run_in_prepared_sandbox() -> str:
 ```
 
 The run uses the backend as it is, so `DaytonaSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the sandbox instead, store `backend.ref` and pass it as `workspace=` to reattach later.
+
+## Keep a token out of the sandbox
+
+Pass `secrets` to give a new sandbox Daytona [Secrets](https://www.daytona.io/docs/en/secrets), as a map from environment variable name to Secret name. The variable holds a placeholder, and Daytona swaps in the real value as requests leave for the Secret's `hosts`. Create the Secret once, then use it:
+
+```python {test="skip"}
+from daytona import AsyncDaytona, CreateSecretParams
+
+from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
+
+
+async def create_github_secret(token: str) -> None:  # a GitHub token, such as the output of `gh auth token`
+    async with AsyncDaytona() as daytona:
+        await daytona.secret.create(
+            CreateSecretParams(
+                name='github-token',
+                value=token,
+                hosts=['github.com', 'api.github.com', 'uploads.github.com'],
+            )
+        )
+
+
+sandbox = DaytonaSandbox(secrets={'GH_TOKEN': 'github-token'})
+```
+
+`gh` then works as the token's owner, while `echo $GH_TOKEN` in the sandbox prints the placeholder. For `git push`, have git send the placeholder as its password:
+
+```bash
+git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+```
+
+- Always set `hosts` on the Secret. Without them, Daytona sends the real value to any host.
+- Daytona swaps the value only in HTTPS request headers, including git's password. Request bodies, query strings and plain HTTP keep the placeholder. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- The agent can't see the token, but it can use it for anything the token allows.
+- An attached sandbox keeps the Secrets it was created with. To swap the token, call `daytona.secret.update` with the Secret's ID; running sandboxes pick it up within seconds.
+- To change which Secrets a running sandbox has, call `update_secrets` on `await backend.get_sandbox()`. It replaces the whole set, new variables reach only commands started after it, and a sandbox created without Secrets must restart first.
 
 ## Clean up
 
@@ -212,6 +248,9 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 | `allow_internet_access` | Whether a new sandbox can reach the internet. When `False`, what is blocked depends on your Daytona organization's tier: on Tier 3 and 4 everything, while lower tiers keep package registries, GitHub, and AI APIs reachable, so there it is not an exfiltration boundary. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). Default: `True`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/daytona`, where commands run as non-root `daytona`); set a project directory, or use relative paths for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `secrets` | Daytona's `secrets` for a new sandbox, passed to `AsyncDaytona.create` unchanged: environment variable name to the name of an existing organization Secret. Default: `None`. An attached sandbox keeps the ones it was created with. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). |
 
 Daytona runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 
