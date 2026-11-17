@@ -9,7 +9,7 @@ every target `tests/test_history_properties.py` renders them for. That file chec
 from __future__ import annotations as _annotations
 
 from dataclasses import replace
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 from pydantic import JsonValue
@@ -89,7 +89,7 @@ def _dump(messages: list[ModelMessage]) -> list[JsonValue]:
 
 
 @pytest.mark.parametrize(('history_case', 'case'), history_case_params())
-async def test_passes_drop_only_what_they_declare(history_case: HistoryCase, case: MapperCase):
+async def test_passes_drop_only_what_they_declare(history_case: HistoryCase, case: MapperCase[Any]):
     """No pass leaves a part kind out of the history that it doesn't declare it consumes or drops."""
     model = case.model()
     projection = _Projection(repair_messages(await history_case.history()), ModelRequestParameters())
@@ -102,7 +102,7 @@ async def test_passes_drop_only_what_they_declare(history_case: HistoryCase, cas
 
 
 @pytest.mark.parametrize(('history_case', 'case'), history_case_params())
-async def test_passes_read_only_what_they_declare(history_case: HistoryCase, case: MapperCase):
+async def test_passes_read_only_what_they_declare(history_case: HistoryCase, case: MapperCase[Any]):
     """A pass's output doesn't depend on the parts of a kind some pass consumes or drops, unless it declares reading it.
 
     Each pass runs on the stored history, which still holds every kind, so a pass that reads a kind an earlier pass
