@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, create_model
 from typing_extensions import TypeForm
 
 from pydantic_ai import Agent
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Instrumentation,
@@ -134,9 +135,7 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelRouter[AgentDepsT]:
         """Return a run-scoped router with its own selection cache and the run's context."""
-        router = replace(self)
-        router._run_ctx = ctx
-        return router
+        return replace_no_init(self, _run_ctx=ctx, _cached_choice=None)
 
     def get_model(self) -> ModelSelector[AgentDepsT]:
         """Return the selector used by Pydantic AI before each request step."""

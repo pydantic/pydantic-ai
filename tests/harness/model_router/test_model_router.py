@@ -216,6 +216,22 @@ class TestModelRouter:
 
         assert result.output == 'fast'
 
+    async def test_a_subclass_with_its_own_init_routes_each_run(self) -> None:
+        class PresetRouter(ModelRouter[object]):
+            def __init__(self, router_model: FunctionModel) -> None:
+                super().__init__(
+                    choices={
+                        'fast': ModelChoice(_answer_model('fast'), 'Use for lookups.'),
+                        'capable': ModelChoice(_answer_model('capable'), 'Use for difficult work.'),
+                    },
+                    router_model=router_model,
+                    default='capable',
+                )
+
+        agent = Agent(capabilities=[PresetRouter(_router_model('fast'))])
+
+        assert [(await agent.run('Choose')).output for _ in range(2)] == ['fast', 'fast']
+
     async def test_resuming_with_pending_tool_calls_routes_on_their_results(self) -> None:
         received: list[list[ModelMessage]] = []
 
