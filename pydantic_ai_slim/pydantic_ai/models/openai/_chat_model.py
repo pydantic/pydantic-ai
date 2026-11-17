@@ -990,15 +990,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _auto_thinking_field(self, part: ThinkingPart) -> str | None:
         """The custom field `part` goes back in under `openai_chat_send_back_thinking_parts='auto'`, or `None` for tags.
 
-        It goes back in a field when it came from a custom field of this same provider. `id='content'` means it came
-        from tags in the content, not a custom field.
+        It goes back in a field when it came from this same provider and its id is the profile's
+        `openai_chat_thinking_field`, or, with none set, `reasoning` or `reasoning_content`. Any other id is not a
+        field: `id='content'` marks thinking parsed from tags, and an `OpenAIResponsesModel` reasoning item id
+        (`rs_...`) shares this provider's `system`.
         """
         custom_field = self.profile.get('openai_chat_thinking_field', None)
-        if (
-            part.id
-            and part.id != 'content'
-            and part.provider_name == self.system
-            and (not custom_field or part.id == custom_field)
+        if part.provider_name == self.system and part.id in (
+            (custom_field,) if custom_field else ('reasoning', 'reasoning_content')
         ):
             return part.id
         return None
@@ -1101,8 +1100,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             profile = self._model.profile
             include_method = profile.get('openai_chat_send_back_thinking_parts', 'auto')
 
-            # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
-            # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
                 if field := self._model._auto_thinking_field(item):
                     # Store both content and field name for later use in _into_message_param
