@@ -110,9 +110,9 @@ The instructions ask the model to make reasonable decisions, but do not authoriz
 
 Set `headless=False` to retain the goal instructions without running the verifier. This lets an interactive run ask a question and return control to its user. Mode is explicit; `Goal` does not infer it from the terminal or interface.
 
-Multiple `Goal` instances contribute independent instructions and completion checks. Every check must accept. A capability instance keeps no per-run retry counter and can be reused across runs. Callable verifiers are not serializable in agent specifications.
+Each `Goal` has the default `id` `'goal'`. Two sharing an `id` are one goal stated twice when they agree, and a `UserError` when they differ. To enforce several goals, give each its own `id`: each contributes its own instructions and completion check, and every check must accept. A capability instance keeps no per-run retry counter and can be reused across runs. Callable verifiers are not serializable in agent specifications.
 
-Under a [durable execution](../durable_execution/overview.md) capability, the verifier runs as the durable operation `verify`, so a replay reuses its recorded result instead of checking again. Give the `Goal` an explicit `id` there; a durable agent rejects one without it.
+Under a [durable execution](../durable_execution/overview.md) capability, the verifier runs as the durable operation `verify` under the capability's `id`, so a replay reuses its recorded result instead of checking again.
 
 Use `run()` or `run_sync()` when rejected output must stay private. Partial streamed outputs are not checked. Core does not support output retries through `run_stream()`; a rejected final streamed output raises `UnexpectedModelBehavior`, and the caller may already have received partial content. Deferred tool approvals are not completed answers and remain the host's responsibility.
 

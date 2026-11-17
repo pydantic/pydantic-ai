@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -11,6 +12,7 @@ from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai_harness._combine import one_per_id
 
 _HEADLESS_INSTRUCTIONS = (
     'This run is unattended: nobody is available to answer questions. '
@@ -50,9 +52,21 @@ class Goal(AbstractCapability[AgentDepsT]):
     headless: bool = True
     """Set to `False` to allow interactive questions without enforcing completion."""
 
+    id: str | None = 'goal'
+    """Stable capability ID, so its instructions are addressable and its verifier is a durable operation.
+
+    Two `Goal`s sharing this `id` are one goal stated twice when they agree, and an error when they
+    differ. To enforce several goals, give each its own `id`.
+    """
+
     def __post_init__(self) -> None:
         if not self.goal.strip():
             raise UserError('Goal requires a nonempty goal.')
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one goal stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities, remedy='Give each its own `id`')
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

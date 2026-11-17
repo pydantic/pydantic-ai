@@ -42,6 +42,7 @@ from pydantic_ai_harness import (
     DeduplicateFileReads,
     FallbackCompaction,
     FileSystem,
+    Goal,
     Grain,
     InputGuardrail,
     Macroscope,
@@ -310,6 +311,10 @@ def _time_reminder(ctx: RunContext[Any]) -> str:
     return f'It is now {CLOCK.now:%H:%M} UTC.'
 
 
+async def _goal_met(ctx: RunContext[Any], output: object) -> None:
+    return None
+
+
 FIXTURES: dict[str, Fixture] = {
     **{cls.__name__: _hosted(cls) for cls in _HOSTED_MCP},
     'Advisor': lambda _: Advisor(TestModel()),
@@ -329,6 +334,7 @@ FIXTURES: dict[str, Fixture] = {
         fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
     ),
     'FileSystem': _workspace(FileSystem),
+    'Goal': lambda _: Goal(goal='Report the weather.', verify=_goal_met),
     'InputGuardrail': lambda _: InputGuardrail(guard=lambda text: True),
     # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
     # launching a kernel process for every provider.

@@ -124,10 +124,17 @@ class TestGoal:
         goal = Goal(goal='Finish', verify=complete)
         assert goal.get_serialization_name() is None
         agent = Agent(
-            TestModel(custom_output_text='done'), capabilities=[goal, Goal(goal='Also finish', verify=complete)]
+            TestModel(custom_output_text='done'),
+            capabilities=[goal, Goal(goal='Also finish', verify=complete, id='also')],
         )
         for _ in range(2):
             assert (await agent.run('Start')).output == 'done'
+
+    def test_goals_sharing_an_id_must_agree(self) -> None:
+        goal = Goal(goal='Finish', verify=complete)
+        assert Agent(TestModel(), capabilities=[goal, Goal(goal='Finish', verify=complete)])
+        with pytest.raises(UserError, match=r"disagree on 'goal'\. Give each its own `id`"):
+            Agent(TestModel(), capabilities=[goal, Goal(goal='Also finish', verify=complete)])
 
     @pytest.mark.parametrize('goal', ['', ' \n'])
     def test_empty_goal(self, goal: str) -> None:
@@ -173,17 +180,9 @@ class TestGoal:
         agent = Agent(
             TestModel(custom_output_text='done'),
             name='goal_agent',
-            capabilities=[Goal(goal='Finish', verify=complete, id='finish'), RecordingDurability()],
+            capabilities=[Goal(goal='Finish', verify=complete), RecordingDurability()],
         )
         assert (await agent.run('Start')).output == 'done'
         bound = RecordingDurability.from_agent(agent)
         assert bound is not None
-        assert 'goal_agent__capability__finish.verify' in {name for name, _ in bound.calls}
-
-    async def test_durable_agent_requires_an_id(self) -> None:
-        with pytest.raises(UserError, match='needs an explicit `id`'):
-            Agent(
-                TestModel(),
-                name='goal_agent',
-                capabilities=[Goal(goal='Finish', verify=complete), RecordingDurability()],
-            )
+        assert 'goal_agent__capability__goal.verify' in {name for name, _ in bound.calls}

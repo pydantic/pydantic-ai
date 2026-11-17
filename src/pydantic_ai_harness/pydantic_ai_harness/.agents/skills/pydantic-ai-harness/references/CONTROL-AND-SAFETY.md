@@ -920,7 +920,8 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
   inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
 - Output functions run before the check and can run again after a rejection, so keep them idempotent.
 - `headless=False` keeps the instructions but never vetoes, so interactive runs can stop to ask.
-- `verify` runs as the durable operation `verify`; under a durability capability give the `Goal` an `id`.
+- Default `id='goal'`: two that disagree under one `id` raise, so give each extra `Goal` its own `id`.
+  `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect.
 - Emits a `goal.verify` span (`goal.met`; `goal.description`/`goal.gap` with `trace_include_content`).
 
 ## See also

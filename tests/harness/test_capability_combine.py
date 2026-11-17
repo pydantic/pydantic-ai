@@ -88,6 +88,11 @@ async def _decline(request: AskUserRequest) -> AskUserResponse:
     return AskUserResponse(cancelled=True)  # pragma: no cover
 
 
+async def _goal_met(ctx: object, output: object) -> None:
+    """Only here to construct `Goal`; the combine tests never end a run."""
+    return None  # pragma: no cover
+
+
 _TMP_A = Path(tempfile.mkdtemp(prefix='combine-a-'))
 _TMP_B = Path(tempfile.mkdtemp(prefix='combine-b-'))
 """Two distinct roots, so a `Collides` pair differs in the way its `Anonymous` reason once claimed
@@ -360,7 +365,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'FallbackCompaction': Anonymous('drives a fallback chain; several independent chains compose'),
     'InputGuardrail': Anonymous('several guards is the design'),
     'OutputGuardrail': Anonymous('several guards is the design'),
-    'Goal': Anonymous('several goals compose; every completion check must accept'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
     'StreamGuardrail': Anonymous('several guards is the design'),
     'ToolGuardrail': Anonymous('several guards is the design'),
@@ -406,6 +410,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'FileSystem': Collides(
         'its toolset registers `read_file` and friends under fixed names',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
+    ),
+    'Goal': Narrows(
+        'one goal per id; several goals each need their own id, and every completion check must accept',
+        lambda cls: (cls(goal='Finish', verify=_goal_met), cls(goal='Also finish', verify=_goal_met)),
     ),
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
