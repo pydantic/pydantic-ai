@@ -47,6 +47,7 @@ CURATED = {
     'grain',
     'linear',
     'web',
+    'sandbox',
     'workspaces',
 }
 OPT_IN = {

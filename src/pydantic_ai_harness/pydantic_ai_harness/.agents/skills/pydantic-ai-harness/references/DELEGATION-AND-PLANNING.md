@@ -128,7 +128,7 @@ orchestrator = Agent(
 ```
 
 `SubAgent(agent, name=None, description=None, models=None, usage_limits=None, timeout_seconds=None,
-max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate controls.
+max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets per-delegate controls.
 
 `SubAgents` parameters that change behaviour:
 
@@ -170,7 +170,10 @@ Gotchas:
   `DeferredToolRequests` or `PendingModelResponse` (the parent cannot resume it) are soft: a steering
   message (or `on_failure`) comes back as the tool result, with outcome `failed`. A model request the
   child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
-  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`;
+  `on_model_error='return'` returns the error plus the steering message as a tool result instead, and `'retry'`
+  keeps the `ModelRetry` even with `on_failure` set. If it's unset, setting `on_failure` returns that message alone,
+  without the error. Other
   crashes abort the parent unless `contain_errors=True`.
 - `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
   `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
@@ -203,7 +206,8 @@ orchestrator = Agent(
 ```
 
 - `delegate_task` takes `background=True` and `resume=<task_id>`; the model also gets `list_tasks`,
-  `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
+  `check_task` (a running task's recent activity, from `DelegationTasks.snapshot(task_id)`),
+  `message_task` (which resumes a finished task), `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
   (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot, as
   `DelegationTasks(one_shot=...)` does by name for an owner the application binds).
 - Without a bound `DelegationTasks`, each run opens its own owner: background reports arrive as

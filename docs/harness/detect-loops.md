@@ -267,6 +267,7 @@ When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span 
 
 - Several `DetectLoops` on one agent run independently. Each reports the loops its own settings describe, so you can, for example, nudge at the defaults and add a second one with higher thresholds and `action='error'` to stop a run that ignores the nudge.
 - [System Reminders](system-reminders.md) re-inject guidance on a cadence or condition, and [Trajectory Judge](trajectory-judge.md) asks a second model whether the run is on track. By default `DetectLoops` needs no second model and only acts on exact repetition; a [`LoopJudge`](#a-model-judge) adds a small model for loops within a response that aren't exact.
+- A loop found within a response while an [`InputGuardrail(parallel=True)`](guardrails.md#parallel-input-guards) is still deciding waits for its verdict, whatever the action. If the guard allows the prompt, the action runs as usual. If it blocks, the run ends with the guard's outcome instead of the action.
 
 `DetectLoops` does not detect a run that keeps exceeding the model's context window, and it doesn't truncate, restart, or roll back the run: compaction and your own handler cover those.
 

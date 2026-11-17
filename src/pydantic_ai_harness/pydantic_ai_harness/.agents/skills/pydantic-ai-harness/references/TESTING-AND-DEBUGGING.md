@@ -353,7 +353,7 @@ latest response's `input_tokens`. A payload with no separators, such as `'x' * 4
 token once a response follows it, so `max_tokens`/`max_fraction` may never fire. Use real words, or set
 the count from the script with `ModelResponse(..., usage=RequestUsage(input_tokens=...))`
 (`from pydantic_ai.usage import RequestUsage`); `tokenizer=` measures only the messages after that
-anchor. `ToolOutputLimits` measures characters (or ~4 chars/token, or `tokenizer=`, with
+anchor. `ToolOutputLimits` measures characters (or the compaction text estimate, or `tokenizer=`, with
 `over_tokens=True`) and does not read model usage.
 
 **Summary requests reach the script.** `SummarizingCompaction` without `model=` sends its summary
