@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic_ai import exceptions
-from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
+from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates, SpecModelError, spec_list
 from pydantic_ai._unsupported_settings import raise_warnings as raise_unsupported_setting_warnings
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
@@ -33,27 +33,9 @@ if TYPE_CHECKING:
 
 __all__ = ('ModelFallback',)
 
-_SpecFallbackError = Literal[
-    'ModelAPIError',
-    'ModelHTTPError',
-    'ModelRateLimitError',
-    'ModelQuotaExceededError',
-    'ModelUnavailableError',
-    'ModelOverloadedError',
-    'ModelServerError',
-    'ModelConnectionError',
-    'ModelTimeoutError',
-    'ModelRequestRejectedError',
-    'ModelContextWindowExceededError',
-    'ModelAuthenticationError',
-    'ModelNotFoundError',
-    'ModelRequestTimeout',
-    'ContentFilterError',
-    'OutputTokenLimitExceeded',
-    'UnsupportedSettingWarning',
-]
-"""The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: every public `ModelAPIError` class,
-`ContentFilterError`, `OutputTokenLimitExceeded` and `UnsupportedSettingWarning`."""
+_SpecFallbackError = Literal[SpecModelError, 'UnsupportedSettingWarning']
+"""The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: those `RetryOnModelErrors` takes, and
+`UnsupportedSettingWarning`."""
 
 _SPEC_FALLBACK_ERRORS: dict[
     str, type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded | UnsupportedSettingWarning]
@@ -413,12 +395,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """
         # Spec arguments reach here unvalidated: the annotations above are what the published spec schema
         # advertises, not something that rejects other values on the way in.
-        given_models = _spec_list(models, 'models')
+        given_models = spec_list(models, owner='ModelFallback', param='models')
         model_names = [model for model in given_models if isinstance(model, str)]
         if len(model_names) != len(given_models):
             invalid = [model for model in given_models if not isinstance(model, str)]
             raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
-        given_errors = _spec_list(fallback_on, 'fallback_on')
+        given_errors = spec_list(fallback_on, owner='ModelFallback', param='fallback_on')
         error_types = [
             _SPEC_FALLBACK_ERRORS[name]
             for name in given_errors
@@ -469,18 +451,6 @@ class _JudgingSettingsModel(WrapperModel):
         # Under `BatchModelRequests`, the model prepares the request here instead of in `request`.
         with raise_unsupported_setting_warnings():
             return await super().batch_encode(request)
-
-
-def _spec_list(value: object, name: str) -> Sequence[object]:
-    """A `ModelFallback` spec argument given as one name or a list of them, as a list.
-
-    Anything else, like a mapping, whose keys iterating would silently take as the names, is rejected.
-    """
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, Sequence):
-        return cast(Sequence[object], value)
-    raise UserError(f'`ModelFallback` `{name}` in an agent spec must be a name or a list of names, got {value!r}.')
 
 
 def _pin_id(model: Model | str) -> str:

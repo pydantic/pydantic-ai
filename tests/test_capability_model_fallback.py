@@ -49,7 +49,7 @@ from pydantic_ai import (
     exceptions,
     messages as _messages,
 )
-from pydantic_ai._fallback import FALLBACK_MODEL_PIN_KEY, stamp_continuation_pin
+from pydantic_ai._fallback import FALLBACK_MODEL_PIN_KEY, SpecModelError, stamp_continuation_pin
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -2590,6 +2590,7 @@ def test_spec_fallback_on_names_every_public_model_api_error():
         'OutputTokenLimitExceeded',
         'UnsupportedSettingWarning',
     }
+    assert set(get_args(SpecModelError)) == public_errors | {'ContentFilterError', 'OutputTokenLimitExceeded'}
 
 
 @pytest.mark.parametrize(
