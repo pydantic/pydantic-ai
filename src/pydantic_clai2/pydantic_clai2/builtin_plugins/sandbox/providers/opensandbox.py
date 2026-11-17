@@ -26,7 +26,6 @@ from pydantic_clai2.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
     give_github_login,
-    keep_env,
     saved_key,
 )
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
@@ -147,9 +146,6 @@ class OpenSandboxProvider:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
 
         return OpenSandboxBackend(ref=ref, connection=self._connection(), working_dir=self.working_dir, env=SANDBOX_ENV)
-
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend

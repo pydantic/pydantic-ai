@@ -355,11 +355,6 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         """Identity of the sandbox, or `None` before one has been created."""
         return self._ref
 
-    @property
-    def env(self) -> dict[str, str]:
-        """The variables every command gets, under the command's own; add one to give it to later commands."""
-        return self._env
-
     @asynccontextmanager
     async def _mapped_errors(
         self, sandbox: modal.Sandbox, context: str, path: str | None = None

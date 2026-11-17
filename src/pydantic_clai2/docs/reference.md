@@ -2856,16 +2856,20 @@ it. A fork or copy of the conversation uses the same sandbox, and stops working 
 Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
 Without a `gh` login, the sandbox has no GitHub access, and its copy has no `origin` remote.
 
-| Provider | Install extra | Keys | Where your GitHub token is | Who can read it | Keys the agent asks for (`request_env`) |
-|---|---|---|---|---|---|
-| `e2b` | `pydantic-clai2[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own | kept with the sandbox |
-| `boxd` | `pydantic-clai2[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below | kept with the machine; only a machine made with a `gh` login takes one |
-| `daytona` | `pydantic-clai2[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token | for this CLAI session, sent to Daytona inside each command |
-| `opensandbox` | `pydantic-clai2[opensandbox]` | `OPEN_SANDBOX_DOMAIN`, and `OPEN_SANDBOX_API_KEY` if your server needs one | your OpenSandbox server's credential proxy, in the memory of the sandbox's egress sidecar | anyone with your server's API key can use it; anyone who can read the sidecar's memory on the server's machine | for this CLAI session |
-| `modal` | `pydantic-clai2[modal]` | Modal's own login: `modal token new` | in the sandbox | anything run in the sandbox | for this CLAI session |
-| `render` | `pydantic-clai2[render]` | `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` | in the sandbox | anything run in the sandbox | for this CLAI session, sent to Render inside each command |
-| `sprites` | `pydantic-clai2[sprites]` | `SPRITE_TOKEN` | in the Sprite | anything run in the Sprite | for this CLAI session, sent to Sprites in each command's URL |
-| `kubernetes` | `pydantic-clai2[kubernetes]` | `CLAI_KUBERNETES_WARM_POOL`, and `CLAI_KUBERNETES_NAMESPACE` if it is not `default`; `kubectl`'s current context | in the sandbox pod | anything run in the pod, and anyone who can exec into it | for this CLAI session |
+| Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
+|---|---|---|---|---|
+| `e2b` | `pydantic-clai2[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own |
+| `boxd` | `pydantic-clai2[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below |
+| `daytona` | `pydantic-clai2[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token |
+| `opensandbox` | `pydantic-clai2[opensandbox]` | `OPEN_SANDBOX_DOMAIN`, and `OPEN_SANDBOX_API_KEY` if your server needs one | your OpenSandbox server's credential proxy, in the memory of the sandbox's egress sidecar | anyone with your server's API key can use it; anyone who can read the sidecar's memory on the server's machine |
+| `modal` | `pydantic-clai2[modal]` | Modal's own login: `modal token new` | in the sandbox | anything run in the sandbox |
+| `render` | `pydantic-clai2[render]` | `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` | in the sandbox | anything run in the sandbox |
+| `sprites` | `pydantic-clai2[sprites]` | `SPRITE_TOKEN` | in the Sprite | anything run in the Sprite |
+| `kubernetes` | `pydantic-clai2[kubernetes]` | `CLAI_KUBERNETES_WARM_POOL`, and `CLAI_KUBERNETES_NAMESPACE` if it is not `default`; `kubectl`'s current context | in the sandbox pod | anything run in the pod, and anyone who can exec into it |
+
+A key the agent asks for with `request_env` reaches every command it starts in the sandbox afterwards,
+on every provider, until CLAI exits; after a restart it asks again and you pick the same saved `/keys` entry.
+It goes to the provider with each command: inside the command for `daytona` and `render`, in its URL for `sprites`.
 
 Install a provider with `uv tool install 'pydantic-clai2[PROVIDER]'`, and add its keys in `/keys`.
 `/sandbox PROVIDER` says what is missing.

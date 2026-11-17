@@ -106,19 +106,6 @@ class BoxdProvider:
         self._clients[backend] = client
         return backend
 
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        import boxd
-
-        assert backend.ref is not None
-        try:
-            # boxd merges `env` into the machine's spec, so `GH_TOKEN` stays, and gives it to every new command.
-            await self._clients[backend].machines.update_spec(backend.ref.id, {'env': {name: value}})
-        except boxd.ConflictError as exc:
-            # Only a machine made from a spec has one to update: `create` makes one only with a GitHub login.
-            raise RuntimeError(
-                'this boxd machine was made without a GitHub login, so boxd cannot add variables to it'
-            ) from exc
-
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
             await client.close()

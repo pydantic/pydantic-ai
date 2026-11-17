@@ -11,7 +11,7 @@ A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the 
 """
 
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
@@ -24,7 +24,14 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import (
+    CommandResult,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceRef,
+    WrapperWorkspace,
+)
 from pydantic_clai2.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
 from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
@@ -58,6 +65,8 @@ class _Sandbox:
 
     provider: SandboxProvider
     ref: WorkspaceRef
+    env: dict[str, str] = field(default_factory=dict[str, str])
+    """What `request_env` gave in this CLAI session, added to every command; asked again after a restart."""
     backend: SandboxBackend | None = None
     deleted: bool = False
 
@@ -135,7 +144,6 @@ class _ConversationSandbox(ConversationWorkspace[None]):
             return f'CLAI sets {name} in the sandbox itself, so it cannot be replaced.'
         ref = _owned(ctx.workspace.ref)
         assert ref is not None  # `_in_sandbox` offers the tool only there.
-        sandbox = self.plugin.sandbox(ref)
         async with self.plugin.host.full_screen():
             key = await choose_key(
                 name=name,
@@ -147,11 +155,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         saved = (await to_thread.run_sync(load_keys)).get(key.name)
         if saved is None:  # Deleted in `/keys` since the picker showed it.
             return f'The user did not give {name}.'
-        value = saved.get_secret_value()
-        try:
-            await sandbox.provider.set_env(sandbox.open(), name, value)
-        except RuntimeError as exc:
-            return f'{name} could not be set: {exc}.'
+        self.plugin.sandbox(ref).env[name] = saved.get_secret_value()
         return f'{name} is set for every command started from now on. Restart a server started before it.'
 
     def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
@@ -161,7 +165,32 @@ class _ConversationSandbox(ConversationWorkspace[None]):
             ref = history_sandbox(conversation.messages)
         if (ref := _owned(ref)) is None:
             return None
-        return self.plugin.sandbox(ref).open()
+        sandbox = self.plugin.sandbox(ref)
+        # The provider's backend stays unwrapped on `_Sandbox`, as `provider.close` keys its clients by it.
+        return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env)
+
+
+class _EnvWorkspace(WrapperWorkspace):
+    """Adds the variables `request_env` gave the sandbox to every command, read as each one starts."""
+
+    def __init__(self, wrapped: Workspace, *, env: Mapping[str, str]) -> None:
+        super().__init__(wrapped)
+        self._env = env
+        """The sandbox's own `env`, not a copy, so a grant mid-run reaches the run's later commands."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        cwd: str | None = None,
+    ) -> CommandResult:
+        if self._env:
+            # The caller's own `env` wins, so a tool that sets a variable on purpose keeps it.
+            env = {**self._env, **(env or {})}
+        return await super().run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
 
 
 class SandboxPlugin(Plugin):

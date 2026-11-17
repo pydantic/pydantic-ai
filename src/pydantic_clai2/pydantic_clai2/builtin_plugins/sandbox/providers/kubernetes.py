@@ -20,7 +20,6 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_clai2.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
-    keep_env,
     saved_key,
 )
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
@@ -78,9 +77,6 @@ class KubernetesProvider:
         from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
 
         return KubernetesSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
-
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         # Stops the `kubectl port-forward` the backend started.

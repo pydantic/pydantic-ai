@@ -21,7 +21,6 @@ from pydantic_clai2.builtin_plugins.sandbox.providers.base import (
     GITHUB_HOSTS,
     SANDBOX_ENV,
     GitHubCredential,
-    keep_env,
     saved_key,
 )
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
@@ -121,10 +120,6 @@ class DaytonaProvider:
         backend = DaytonaSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
         self._clients[backend] = client
         return backend
-
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        # Daytona forgets a running sandbox's added variables when it stops (proven live).
-        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

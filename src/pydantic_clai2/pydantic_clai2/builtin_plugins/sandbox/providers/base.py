@@ -5,7 +5,7 @@ import os
 import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
@@ -82,17 +82,6 @@ class SandboxProvider(Protocol):
         """The sandbox `ref` names, attached on first use; its commands get `SANDBOX_ENV`."""
         ...
 
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        """Give every command started in the sandbox from now on the variable `name`.
-
-        It is kept with the sandbox where the provider can keep it there, as E2B and boxd can; otherwise it lasts
-        for this CLAI session, and a sandbox reopened later has it no more.
-
-        A command that sets `name` itself keeps its own value; a process already running keeps the
-        environment it started with. `RuntimeError` says why this sandbox cannot take it.
-        """
-        ...
-
     async def delete(self, ref: WorkspaceRef) -> None:
         """Delete the sandbox `ref` names, and the provider's copy of the token with it; one already gone is fine."""
         ...
@@ -113,18 +102,6 @@ def saved_key(name: str) -> str | None:
     if any(char.isspace() or not char.isprintable() for char in key):
         raise UserError(f'{name} contains a space or control character; save it again in /keys.')
     return key or None
-
-
-@runtime_checkable
-class _KeepsEnv(Protocol):
-    @property
-    def env(self) -> dict[str, str]: ...
-
-
-def keep_env(backend: SandboxBackend, name: str, value: str) -> None:
-    """`set_env` for a backend that adds its `env` to each command, as the sandbox's own cannot be changed."""
-    assert isinstance(backend, _KeepsEnv)
-    backend.env[name] = value
 
 
 async def give_github_login(backend: SandboxBackend, github: GitHubCredential) -> None:

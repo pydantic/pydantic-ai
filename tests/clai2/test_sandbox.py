@@ -48,6 +48,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import Shell
 from pydantic_clai2 import Session
 from pydantic_clai2.builtin_plugins import sandbox
 from pydantic_clai2.builtin_plugins.sandbox import SandboxPlugin, history_sandbox
@@ -137,8 +138,6 @@ class FakeProvider:
     creating: anyio.Event | None = None
     """When set, `create` waits for it after starting, as a slow provider would."""
     delete_error: Exception | None = None
-    envs: list[tuple[WorkspaceRef, str, str]] = field(default_factory=list[tuple[WorkspaceRef, str, str]])
-    env_error: RuntimeError | None = None
 
     def missing(self) -> str | None:
         return self.requirement
@@ -159,11 +158,6 @@ class FakeProvider:
     def reopen(self, ref: WorkspaceRef) -> FakeSandboxBackend:
         self.reopened.append(ref)
         return self._backend(ref, {})
-
-    async def set_env(self, backend: FakeSandboxBackend, name: str, value: str) -> None:
-        if self.env_error is not None:
-            raise self.env_error
-        self.envs.append((backend.ref, name, value))
 
     async def delete(self, ref: WorkspaceRef) -> None:
         if self.delete_error is not None:
@@ -270,11 +264,19 @@ def worked_in(ref: WorkspaceRef) -> list[ModelRequest | ModelResponse]:
 
 
 def on_screen(
-    loaded: LoadedPlugin[None], checkout: Path, *, model: TestModel | FunctionModel | None = None
+    loaded: LoadedPlugin[None],
+    checkout: Path,
+    *,
+    model: TestModel | FunctionModel | None = None,
+    shell: bool = False,
 ) -> Session[None, str]:
-    """A session over `loaded`'s capabilities, put on screen as the conversation the plugin's commands act on."""
+    """A session over `loaded`'s capabilities, put on screen as the conversation the plugin's commands act on.
+
+    With `shell`, the agent also has harness `Shell`'s tools, which run in the run's workspace.
+    """
     agent = Agent(model or TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
-    session = Session(agent, deps=None, plugins=[*loaded.capabilities], workspace=checkout)
+    plugins = [*loaded.capabilities, *([Shell[None]()] if shell else [])]
+    session = Session(agent, deps=None, plugins=plugins, workspace=checkout)
     loaded.host.conversation = session
     return session
 
@@ -827,6 +829,37 @@ def asks_for_a_key(name: str = 'ANTHROPIC_API_KEY') -> tuple[FunctionModel, list
     return FunctionModel(stream_function=respond), returns, offered
 
 
+Step = tuple[str, dict[str, str]] | str
+"""A tool call the model makes, by name and arguments, or a text answer that ends the turn."""
+
+
+def steps(*script: Step) -> tuple[FunctionModel, list[str]]:
+    """A model that takes `script`'s steps in order, one per request, across turns; and the tool returns it read."""
+    pending = list(script)
+    returns: list[str] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        last = messages[-1].parts[-1]
+        if isinstance(last, ToolReturnPart):
+            returns.append(str(last.content))
+        step = pending.pop(0)
+        if isinstance(step, str):
+            yield step
+        else:
+            name, args = step
+            yield {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
+
+    return FunctionModel(stream_function=respond), returns
+
+
+ASK = ('request_env', {'name': 'ANTHROPIC_API_KEY', 'reason': 'run the eval script'})
+
+
+def write_key(file: str) -> Step:
+    """A shell call that writes the command's `ANTHROPIC_API_KEY` to `file` in the sandbox, never to the model."""
+    return ('run_command', {'command': f'printf %s "${{ANTHROPIC_API_KEY-unset}}" > {file}'})
+
+
 def scripted(dialogs: ScriptedDialogs) -> Callable[[object], ScriptedDialogs]:
     """Stands in for `TerminalDialogs`, whatever runners it is given."""
     return lambda runners: dialogs
@@ -841,15 +874,21 @@ class TestRequestEnv:
         dialogs = ScriptedDialogs([Type(text='sk-typed')])
         monkeypatch.setattr(sandbox, 'TerminalDialogs', scripted(dialogs))
         loaded = load(checkout, terminal=True)
-        model, returns, _ = asks_for_a_key()
-        session = on_screen(loaded, checkout, model=model)
+        model, returns = steps(write_key('before'), ASK, write_key('same-turn'), 'done', write_key('next-turn'), 'done')
+        session = on_screen(loaded, checkout, model=model, shell=True)
         await plugin_of(loaded).command(['fake'])
-        result = await session.prompt('run the evals')
-        ref = WorkspaceRef(provider='fake', id='sbx-1')
-        assert provider.envs == [(ref, 'ANTHROPIC_API_KEY', 'sk-typed')]
-        assert returns == [
-            'ANTHROPIC_API_KEY is set for every command started from now on. Restart a server started before it.'
+        await session.prompt('run the evals')
+        result = await session.prompt('and again')
+        folder = provider.folder(WorkspaceRef(provider='fake', id='sbx-1'))
+        # What each command's own environment held: a later command in the same turn and the next turn get it.
+        assert [(folder / file).read_text() for file in ('before', 'same-turn', 'next-turn')] == [
+            'unset',
+            'sk-typed',
+            'sk-typed',
         ]
+        assert returns[1] == (
+            'ANTHROPIC_API_KEY is set for every command started from now on. Restart a server started before it.'
+        )
         [asked] = dialogs.asked
         assert asked.title == (
             'The agent asks for ANTHROPIC_API_KEY to run the eval script. Anything run in the sandbox can read it.'
@@ -864,31 +903,52 @@ class TestRequestEnv:
         save_key(name='WORK_ANTHROPIC', value='sk-saved')
         monkeypatch.setattr(sandbox, 'TerminalDialogs', scripted(ScriptedDialogs([Pick(value='WORK_ANTHROPIC')])))
         loaded = load(checkout, terminal=True)
-        model, _, _ = asks_for_a_key()
-        session = on_screen(loaded, checkout, model=model)
+        model, _ = steps(ASK, write_key('seen'), 'done')
+        session = on_screen(loaded, checkout, model=model, shell=True)
         await plugin_of(loaded).command(['fake'])
         await session.prompt('run the evals')
-        assert provider.envs == [(WorkspaceRef(provider='fake', id='sbx-1'), 'ANTHROPIC_API_KEY', 'sk-saved')]
+        assert (provider.folder(WorkspaceRef(provider='fake', id='sbx-1')) / 'seen').read_text() == 'sk-saved'
+
+    async def test_a_background_command_gets_the_key(
+        self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`start_command` launches its job with the workspace's `run`, so the job starts with the key."""
+        launched: list[Mapping[str, str] | None] = []
+
+        async def run(
+            self: FakeSandboxBackend,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            launched.append(env)
+            return await LocalWorkspaceBackend.run(self, command, shell=shell, env=env, timeout=timeout)
+
+        monkeypatch.setattr(FakeSandboxBackend, 'run', run)
+        monkeypatch.setattr(sandbox, 'TerminalDialogs', scripted(ScriptedDialogs([Type(text='sk-typed')])))
+        loaded = load(checkout, terminal=True)
+        model, _ = steps(ASK, ('start_command', {'command': 'true'}), 'done')
+        session = on_screen(loaded, checkout, model=model, shell=True)
+        await plugin_of(loaded).command(['fake'])
+        launched.clear()  # `/sandbox`'s own setup commands.
+        await session.prompt('start the server')
+        assert launched and all(env is not None and env['ANTHROPIC_API_KEY'] == 'sk-typed' for env in launched)
 
     @pytest.mark.parametrize(
-        ('name', 'env_error', 'expected'),
+        ('name', 'expected'),
         [
-            ('ANTHROPIC_API_KEY', None, 'The user did not give ANTHROPIC_API_KEY.'),
-            ('api key', None, "'api key' is not an environment variable name: use capitals, digits, and underscores."),
+            ('ANTHROPIC_API_KEY', 'The user did not give ANTHROPIC_API_KEY.'),
+            ('api key', "'api key' is not an environment variable name: use capitals, digits, and underscores."),
             # `$` alone would let a trailing newline through, splitting E2B's profile line.
             (
                 'API_KEY\n',
-                None,
                 "'API_KEY\\n' is not an environment variable name: use capitals, digits, and underscores.",
             ),
-            ('GH_TOKEN', None, 'CLAI sets GH_TOKEN in the sandbox itself, so it cannot be replaced.'),
-            (
-                'ANTHROPIC_API_KEY',
-                RuntimeError('this sandbox takes no variables'),
-                'ANTHROPIC_API_KEY could not be set: this sandbox takes no variables.',
-            ),
+            ('GH_TOKEN', 'CLAI sets GH_TOKEN in the sandbox itself, so it cannot be replaced.'),
         ],
-        ids=['declined', 'bad name', 'trailing newline', 'GitHub stand-in', 'provider refused'],
+        ids=['declined', 'bad name', 'trailing newline', 'GitHub stand-in'],
     )
     async def test_nothing_is_set(
         self,
@@ -896,19 +956,16 @@ class TestRequestEnv:
         provider: FakeProvider,
         monkeypatch: pytest.MonkeyPatch,
         name: str,
-        env_error: RuntimeError | None,
         expected: str,
     ) -> None:
-        answer = Back() if env_error is None else Type(text='sk-typed')
-        monkeypatch.setattr(sandbox, 'TerminalDialogs', scripted(ScriptedDialogs([answer])))
-        provider.env_error = env_error
+        monkeypatch.setattr(sandbox, 'TerminalDialogs', scripted(ScriptedDialogs([Back()])))
         loaded = load(checkout, terminal=True)
         model, returns, _ = asks_for_a_key(name)
         session = on_screen(loaded, checkout, model=model)
         await plugin_of(loaded).command(['fake'])
         await session.prompt('run the evals')
         assert returns == [expected]
-        assert provider.envs == []
+        assert plugin_of(loaded).sandbox(WorkspaceRef(provider='fake', id='sbx-1')).env == {}
 
     async def test_a_key_deleted_while_picking(
         self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
@@ -922,7 +979,7 @@ class TestRequestEnv:
         await plugin_of(loaded).command(['fake'])
         await session.prompt('run the evals')
         assert returns == ['The user did not give ANTHROPIC_API_KEY.']
-        assert provider.envs == []
+        assert plugin_of(loaded).sandbox(WorkspaceRef(provider='fake', id='sbx-1')).env == {}
 
     @pytest.mark.parametrize('terminal', [True, False], ids=['on this machine', 'no terminal'])
     async def test_not_offered(self, checkout: Path, provider: FakeProvider, terminal: bool) -> None:
@@ -997,13 +1054,6 @@ class TestE2B:
         assert fake_e2b.create_calls[-1].envs == SANDBOX_ENV
         reopened = e2b.reopen(ref)
         assert reopened.ref == ref
-        # A login shell runs the file for every later command; a value the command sets itself wins.
-        await e2b.set_env(reopened, 'API_KEY', "it's $x")
-        made = fake_e2b.sandboxes[0]
-        assert made.files.files['/etc/profile.d/clai-env-API_KEY.sh'] == (
-            b"[ -n \"${API_KEY+set}\" ] || export API_KEY='it'\"'\"'s $x'\n"
-        )
-        assert made.files.users[-1] == 'root'
         await e2b.delete(ref)
         assert fake_e2b.sandboxes[0].killed
         # `/keys` wins over the environment, for every call.
@@ -1045,12 +1095,6 @@ class FakeBoxdAccount:
         assert self.secrets.pop(name)[1] == scope
 
     async def update_spec(self, machine_id: str, patch: dict[str, object]) -> None:
-        import boxd
-
-        if self.fake.find(machine_id).create_kwargs['spec'] is None:
-            raise boxd.ConflictError(
-                "this machine wasn't created from a spec, so it has no spec to update", code='failed_precondition'
-            )
         # boxd merges a patch into the spec, maps included.
         env = {
             **cast(dict[str, str], self.specs.get(machine_id, {}).get('env', {})),
@@ -1146,10 +1190,6 @@ class TestBoxd:
         assert account.specs == {ref.id: {'env': {'GH_TOKEN': 'bxds_stand-in'}}}
         assert backend.ref == provider.reopen(ref).ref == ref
         assert (await provider.reopen(ref).run(['printenv', 'GIT_TERMINAL_PROMPT'])).stdout == '0\n'
-        # A key the agent asks for goes into the same spec.
-        await provider.set_env(backend, 'API_KEY', 'sk-1')
-        env = cast(dict[str, str], account.specs[ref.id]['env'])
-        assert list(env) == ['GH_TOKEN', 'API_KEY'] and env['API_KEY'] == 'sk-1'
         # Deleting the machine deletes its secret, so the token ends with it.
         await provider.delete(ref)
         assert machine.status == 'destroyed'
@@ -1158,9 +1198,6 @@ class TestBoxd:
         ref, backend = await provider.create(github=None)
         assert account.secrets == {}
         assert ref.id not in account.specs
-        # boxd updates only a spec a machine was made from.
-        with pytest.raises(RuntimeError, match='made without a GitHub login'):
-            await provider.set_env(backend, 'API_KEY', 'sk-1')
         reopened = provider.reopen(ref)
         await provider.delete(ref)
         # The clients made for workspaces stay open until clai is done with them.
@@ -1473,9 +1510,8 @@ class TestDaytona:
         assert ref == backend.ref == WorkspaceRef(provider='daytona', id='sb-1')
         reopened = provider.reopen(ref)
         assert reopened.ref == ref
-        # A key the agent asks for reaches the commands run after it.
-        await provider.set_env(reopened, 'API_KEY', 'sk-1')
-        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
         await provider.close(backend)
         await provider.close(backend)  # Closing again has nothing left to close.
@@ -1632,8 +1668,8 @@ class TestModal:
         # The token went by the file API, never in a command.
         assert not any('gho_x' in ' '.join(call.argv) for call in made.exec_calls)
         reopened = provider.reopen(ref)
-        await provider.set_env(reopened, 'API_KEY', 'sk-1')
-        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
         await provider.delete(ref)
         assert made.shutting_down
@@ -1708,8 +1744,8 @@ class TestRender:
         # The token went by file transfer, never in a command.
         assert not any('gho_x' in str(command) for command in fake_render.commands)
         reopened = provider.reopen(ref)
-        await provider.set_env(reopened, 'API_KEY', 'sk-1')
-        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
         await provider.close(backend)
         await provider.close(backend)  # Closing again has nothing left to close.
@@ -1809,8 +1845,8 @@ class TestSprites:
         # The token went by the filesystem API, never in an exec URL.
         assert not any('gho_x' in socket.query_url for socket in fake_sprites.execs)
         reopened = provider.reopen(ref)
-        await provider.set_env(reopened, 'API_KEY', 'sk-1')
-        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
         await provider.close(backend)
         await provider.close(backend)  # Closing again has nothing left to close.
@@ -1957,8 +1993,8 @@ class TestOpenSandbox:
             ),
         }
         reopened = provider.reopen(ref)
-        await provider.set_env(reopened, 'API_KEY', 'sk-1')
-        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
         await provider.close(backend)
         await provider.delete(ref)
@@ -2037,8 +2073,8 @@ class TestKubernetes:
         await give_github_login(backend, GITHUB)
         assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
         reopened = provider.reopen(ref)
-        await provider.set_env(reopened, 'API_KEY', 'sk-1')
-        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
         await provider.close(backend)
         await provider.delete(ref)

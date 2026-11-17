@@ -156,14 +156,6 @@ class TestCommands:
         result = await backend.run(['sh', '-c', 'echo $A $B'], env={'B': 'call'})
         assert result.stdout == 'backend call\n'
 
-    async def test_a_variable_added_to_env_reaches_later_commands(
-        self, server: FakeOpenSandbox, working_dir: str
-    ) -> None:
-        backend = _create(server, working_dir, env={'A': '1'})
-        backend.env['B'] = '2'
-        result = await backend.run(['sh', '-c', 'echo $A $B'])
-        assert result.stdout == '1 2\n'
-
 
 class TestNetworkPolicy:
     @pytest.mark.parametrize(

@@ -15,7 +15,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential, keep_env
+from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
 
 
@@ -54,9 +54,6 @@ class ModalProvider:
         from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
         return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
-
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # Modal's own client is shared by the process, and closes with it.

@@ -263,7 +263,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder(), ho
 | `sandbox_timeout` | Seconds a new sandbox lives before Modal stops it (10-86,400). Default: `86_400` (24 hours, Modal's maximum). |
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
-| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. Add a variable to a `ModalSandboxBackend`'s `env` to give it to that backend's later commands. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
 | `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |

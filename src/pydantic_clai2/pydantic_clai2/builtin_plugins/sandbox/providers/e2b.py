@@ -8,7 +8,6 @@ E2B makes the sandbox's URLs public unless told otherwise (`allow_public_traffic
 without a GitHub login, is told otherwise: a server started in it answers only requests that carry its access token.
 """
 
-import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.util import find_spec
@@ -81,16 +80,6 @@ class E2BProvider:
         from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
         return E2BSandboxBackend(client=self._client(), ref=ref, working_dir=self.working_dir)
-
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
-
-        assert isinstance(backend, E2BSandboxBackend)
-        sandbox = await backend.get_sandbox()
-        # E2B cannot change a running sandbox's environment, but it runs every command under a login shell,
-        # which runs `/etc/profile.d`. The file is in the sandbox, so it is still there after a pause or a reopen.
-        line = f'[ -n "${{{name}+set}}" ] || export {name}={shlex.quote(value)}\n'
-        await sandbox.files.write(f'/etc/profile.d/clai-env-{name}.sh', line, user='root')  # pyright: ignore[reportUnknownMemberType]
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # `e2b.E2B` holds no open connection between requests.

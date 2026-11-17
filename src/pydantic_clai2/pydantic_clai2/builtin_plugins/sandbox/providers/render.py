@@ -19,7 +19,6 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_clai2.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
-    keep_env,
     saved_key,
 )
 from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
@@ -94,9 +93,6 @@ class RenderProvider:
         # Built here, though it reads its package's metadata: the keys may be only in `/keys`, which a backend
         # left to open its own client would not read.
         return self._backend(self._client(), ref)
-
-    async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        keep_env(backend, name, value)
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
