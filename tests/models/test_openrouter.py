@@ -2103,28 +2103,6 @@ _TOOL_FORCING_REQUEST_PARAMETERS = ModelRequestParameters(
             ['get_weather', 'final_result'],
             id='google-thinking-explicit-required',
         ),
-        # Qwen3.8 Flash returns a 400 for a forced `tool_choice` while it reasons, which it does by default.
-        pytest.param(
-            'qwen/qwen3.8-flash',
-            {'thinking': 'low'},
-            'auto',
-            ['get_weather', 'final_result'],
-            id='qwen-flash-thinking-inferred-required',
-        ),
-        pytest.param(
-            'qwen/qwen3.8-flash',
-            {},
-            'auto',
-            ['get_weather', 'final_result'],
-            id='qwen-flash-thinking-by-default-inferred-required',
-        ),
-        pytest.param(
-            'qwen/qwen3.8-flash',
-            {'thinking': False},
-            'required',
-            ['get_weather', 'final_result'],
-            id='qwen-flash-thinking-disabled',
-        ),
     ],
 )
 async def test_openrouter_forced_tool_choice_with_thinking(
@@ -2134,11 +2112,10 @@ async def test_openrouter_forced_tool_choice_with_thinking(
     expected_tool_choice: Any,
     expected_tool_names: list[str],
 ) -> None:
-    """A forced `tool_choice` Pydantic AI inferred falls back to `auto` where a route can't force while thinking.
+    """OpenRouter drops `reasoning` when a forced `tool_choice` reaches an Anthropic downstream model.
 
-    Anthropic rejects that combination with an error, but OpenRouter swallows it and returns a response with zero
-    reasoning tokens. Qwen3.8 Flash returns a 400 instead. Either way the inferred forcing is downgraded to `auto`
-    to keep thinking.
+    Anthropic itself rejects that combination with an error, but the gateway swallows it and returns a
+    response with zero reasoning tokens, so an inferred forcing is downgraded to `auto` to keep thinking.
 
     Unit test with a mocked client because our cassette matchers aren't sensitive to the request body, so
     a VCR test would keep passing against a stale recording if `tool_choice` regressed.
@@ -2166,6 +2143,75 @@ async def test_openrouter_forced_tool_choice_with_thinking(
     else:
         expected_reasoning = {'effort': 'none'}
     assert kwargs['extra_body'].get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected_request', 'expected_part_kinds'),
+    [
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            OpenRouterModelSettings(),
+            {'tool_choice': 'auto', 'reasoning': None},
+            snapshot(['thinking', 'tool-call']),
+            id='qwen-flash-thinking-by-default',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            OpenRouterModelSettings(thinking='low'),
+            {'tool_choice': 'auto', 'reasoning': {'effort': 'low', 'enabled': True}},
+            snapshot(['thinking', 'tool-call']),
+            id='qwen-flash-thinking',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-flash',
+            OpenRouterModelSettings(thinking=False),
+            {'tool_choice': 'required', 'reasoning': {'effort': 'none'}},
+            snapshot(['tool-call']),
+            id='qwen-flash-thinking-disabled',
+        ),
+        pytest.param(
+            'qwen/qwen3.8-2.4t-a95b',
+            OpenRouterModelSettings(),
+            {'tool_choice': 'auto', 'reasoning': None},
+            snapshot(['thinking', 'text', 'tool-call']),
+            id='qwen-2.4t',
+        ),
+        pytest.param(
+            'meta/muse-spark-1.3',
+            OpenRouterModelSettings(),
+            {'tool_choice': 'auto', 'reasoning': None},
+            snapshot(['thinking', 'text', 'tool-call']),
+            id='muse-spark-1.3',
+        ),
+    ],
+)
+async def test_openrouter_tool_choice_on_routes_that_reject_forcing_while_reasoning(
+    allow_model_requests: None,
+    openrouter_api_key: str,
+    request_capture: RequestCapture,
+    model_name: str,
+    settings: OpenRouterModelSettings,
+    expected_request: dict[str, Any],
+    expected_part_kinds: list[str],
+) -> None:
+    """OpenRouter accepts the `tool_choice` sent when Pydantic AI infers forcing on these routes.
+
+    They return a 400 for a forced `tool_choice` while reasoning, so the inferred forcing goes out as `auto`.
+    Qwen3.8 Flash reasons unless told not to, and with thinking disabled it accepts `'required'`.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel(model_name, provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt("What's the weather in Zurich?")],
+        model_settings=settings,
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+
+    body = request_capture.body()
+    assert {'tool_choice': body['tool_choice'], 'reasoning': body.get('reasoning')} == expected_request
+    assert [part.part_kind for part in response.parts] == expected_part_kinds
 
 
 @pytest.mark.parametrize(
