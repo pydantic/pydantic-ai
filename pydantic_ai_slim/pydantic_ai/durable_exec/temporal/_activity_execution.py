@@ -61,4 +61,6 @@ async def _await_with_single_cancel(handle: asyncio.Future[Any]) -> Any:
             handle.cancel()
             with anyio.CancelScope(shield=True):
                 await asyncio.wait([handle])
+        if not handle.cancelled():
+            handle.exception()  # mark the cancellation's ActivityError as retrieved
         raise
