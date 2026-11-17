@@ -896,10 +896,11 @@ def divide(a: int, b: int) -> float:
 result = agent.run_sync('What is 1 / 0?')
 parts = [part for message in result.all_messages() for part in message.parts]
 print([part.content for part in parts if isinstance(part, ToolReturnPart)])
-#> ['`divide` raised ZeroDivisionError: division by zero']
+#> ['`divide` raised ZeroDivisionError']
 ```
 
-- `format_error(ctx, info) -> str` replaces the text, for example to hide internals; `info` is a
+- The default text leaves out the exception's message (it can carry paths, hosts, connection strings).
+- `format_error(ctx, info) -> str` replaces the text, for example to include `info.error`; `info` is a
   `ToolErrorInfo` (`name`, `args`, `tool_call_id`, `error`) from `pydantic_ai_harness.report_tool_errors`;
   `exceptions=(TimeoutError, ...)` reports only those types (default `(Exception,)`), the rest propagate.
 - No limit of its own and the tool stays available; `UsageLimits.request_limit` stops a model that keeps

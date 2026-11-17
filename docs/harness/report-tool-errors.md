@@ -29,13 +29,13 @@ def divide(a: int, b: int) -> float:
 
 ## What the model sees
 
-The failed call gets a tool result with `outcome='failed'` that names the tool, the exception type and its message, if it has one:
+The failed call gets a tool result with `outcome='failed'` that names the tool and the exception type:
 
 ```text
-`divide` raised ZeroDivisionError: division by zero
+`divide` raised ZeroDivisionError
 ```
 
-To hide internals such as file paths or hostnames, pass `format_error`, which builds the text from the run context and a `ToolErrorInfo` carrying the tool name, its arguments, the tool call ID and the exception:
+The exception's message isn't included, since it can carry file paths, hostnames or connection strings. When your tools' messages are meant for the model, pass `format_error`, which builds the text from the run context and a `ToolErrorInfo` carrying the tool name, its arguments, the tool call ID and the exception:
 
 ```python
 from pydantic_ai import RunContext
@@ -43,11 +43,11 @@ from pydantic_ai_harness import ReportToolErrors
 from pydantic_ai_harness.report_tool_errors import ToolErrorInfo
 
 
-def hide_internals(ctx: RunContext[None], info: ToolErrorInfo) -> str:
-    return f'`{info.name}` failed with {type(info.error).__name__}.'
+def with_message(ctx: RunContext[None], info: ToolErrorInfo) -> str:
+    return f'`{info.name}` raised {type(info.error).__name__}: {info.error}'
 
 
-report = ReportToolErrors(format_error=hide_internals)
+report = ReportToolErrors(format_error=with_message)
 ```
 
 To report only some exceptions, pass `exceptions`. Any other exception ends the run as it would without the capability, so a programming error such as a `KeyError` still fails fast:
@@ -79,7 +79,7 @@ Under [Temporal](../durable_execution/temporal.md), a tool runs in an activity, 
 
 ## Composition
 
-- A [Tool Guardrails](guardrails.md) `result_guard` screens the reported text like any failed tool result, so it can redact what the exception message reveals.
+- A [Tool Guardrails](guardrails.md) `result_guard` screens the reported text like any failed tool result, so it can redact what a custom `format_error` includes.
 - `on_tool_execute_error` hooks aren't called for an exception `ReportToolErrors` reports, whatever order the capabilities are listed in, so a capability that logs or recovers in that hook no longer sees it. Narrow `exceptions` to leave those types to the hook.
 - Under [Code Mode](code-mode.md), a tool that a snippet calls raises the reported `ToolFailed` into the snippet instead of its own exception, so `except ZeroDivisionError:` in the snippet no longer catches it. Narrow `exceptions` to leave such types to the snippet.
 - Several `ReportToolErrors` on one agent: the last one listed wraps the tools most closely, so it formats the error.

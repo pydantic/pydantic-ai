@@ -77,10 +77,6 @@ def _agent(model: FunctionModel, *capabilities: AbstractCapability[None]) -> Age
         raise RunCancelled('stopped itself')
 
     @agent.tool_plain
-    def fetch() -> str:
-        raise TimeoutError
-
-    @agent.tool_plain
     def guarded() -> str:
         raise ApprovalRequired
 
@@ -115,12 +111,8 @@ class TestReportToolErrors:
         result = _agent(_scripted([_divide('c1', 0)], [_divide('c2', 2)]), ReportToolErrors()).run_sync('divide')
         assert result.output == 'done'
         assert _tool_results(result.all_messages()) == snapshot(
-            [('c1', '`divide` raised ZeroDivisionError: division by zero', 'failed'), ('c2', 0.5, 'success')]
+            [('c1', '`divide` raised ZeroDivisionError', 'failed'), ('c2', 0.5, 'success')]
         )
-
-    def test_exception_without_a_message_is_reported_by_type(self) -> None:
-        result = _agent(_scripted([ToolCallPart('fetch', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
-        assert _tool_results(result.all_messages()) == snapshot([('c1', '`fetch` raised TimeoutError', 'failed')])
 
     def test_failing_again_is_reported_again(self) -> None:
         result = _agent(
@@ -170,14 +162,12 @@ class TestReportToolErrors:
 
     def test_tool_guardrail_result_guard_screens_the_reported_text(self) -> None:
         def redact(ctx: RunContext[None], result: ToolResultInfo) -> GuardrailResult:
-            return GuardrailResult.replace(str(result.result).replace('by zero', '[redacted]'))
+            return GuardrailResult.replace(str(result.result).replace('ZeroDivisionError', '[redacted]'))
 
         result = _agent(
             _scripted([_divide('c1', 0)]), ReportToolErrors(), ToolGuardrail[None](result_guard=redact)
         ).run_sync('go')
-        assert _tool_results(result.all_messages()) == snapshot(
-            [('c1', '`divide` raised ZeroDivisionError: division [redacted]', 'failed')]
-        )
+        assert _tool_results(result.all_messages()) == snapshot([('c1', '`divide` raised [redacted]', 'failed')])
 
     def test_error_hooks_are_not_called_for_a_reported_exception(self) -> None:
         seen: list[str] = []

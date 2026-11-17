@@ -65,16 +65,15 @@ class ToolErrorInfo:
 
 
 def _describe(ctx: RunContext[Any], info: ToolErrorInfo) -> str:
-    description = f'`{info.name}` raised {type(info.error).__name__}'
-    return f'{description}: {message}' if (message := str(info.error)) else description
+    return f'`{info.name}` raised {type(info.error).__name__}'
 
 
 @dataclass
 class ReportToolErrors(AbstractCapability[AgentDepsT]):
     """Report an exception a tool raises to the model as a failed tool result, so the run continues.
 
-    The exception becomes a `ToolFailed`, as if the tool had raised one itself. The model sees the tool name, the
-    exception type and its message, and decides whether to call the tool again, try another way, or give up. There
+    The exception becomes a `ToolFailed`, as if the tool had raised one itself. The model sees the tool name and the
+    exception type, and decides whether to call the tool again, try another way, or give up. There
     is no limit of its own: `UsageLimits.request_limit` stops a model that keeps calling a failing tool. `ModelRetry`,
     `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled`, `UsageLimitExceeded` and
     `UserError` keep their usual meaning.
@@ -88,9 +87,10 @@ class ReportToolErrors(AbstractCapability[AgentDepsT]):
     """
 
     format_error: Callable[[RunContext[AgentDepsT], ToolErrorInfo], str] = _describe
-    """Build the text the model sees from the run context and the failed call, for example to hide internals.
+    """Build the text the model sees from the run context and the failed call.
 
-    The default names the tool, the exception type and its message.
+    The default names the tool and the exception type. It leaves out the exception's message, which can carry
+    file paths, hostnames or connection strings; pass a formatter to include it.
     """
 
     exceptions: tuple[type[Exception], ...] = (Exception,)
