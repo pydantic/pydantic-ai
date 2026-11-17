@@ -902,7 +902,10 @@ print([part.content for part in parts if isinstance(part, ToolReturnPart)])
 - `format_error(ctx, info) -> str` replaces the text, for example to hide internals; `info` is a
   `ToolErrorInfo` (`name`, `args`, `tool_call_id`, `error`) from `pydantic_ai_harness.report_tool_errors`;
   `exceptions=(TimeoutError, ...)` reports only those types (default `(Exception,)`), the rest propagate.
-- No limit of its own and the tool stays available; `UsageLimits` stop a model that keeps failing.
+- No limit of its own and the tool stays available; `UsageLimits.request_limit` stops a model that keeps
+  failing (`tool_calls_limit` counts only successful calls; `ToolBudgets` caps one tool).
+- Under Temporal, a failed tool activity reaches the workflow as `ActivityError` after its retry policy gives
+  up; `ReportToolErrors` leaves it alone, so the run fails as without it.
 - `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass
   through; `UsageLimitExceeded` and `UserError` still end the run, and so does a tool that exhausts its
   `retries` (`Coder` reports those instead). Output tools and argument validation aren't affected.

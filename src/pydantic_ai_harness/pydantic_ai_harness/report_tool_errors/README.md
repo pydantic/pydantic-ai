@@ -67,12 +67,16 @@ report = ReportToolErrors(exceptions=(TimeoutError, ConnectionError))
 
 `ReportToolErrors` wraps the agent's toolset and turns an exception from a tool into a [`ToolFailed`](https://pydantic.dev/docs/ai/api/pydantic-ai/exceptions/#pydantic_ai.exceptions.ToolFailed), as if the tool had raised it, so the rest of the agent treats the call like any other failed call:
 
-- The tool stays available and nothing counts the failures: the model decides whether to call it again. [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits), such as `request_limit`, stop a model that keeps calling a failing tool.
+- The tool stays available and nothing counts the failures: the model decides whether to call it again. [`UsageLimits.request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) stops a model that keeps calling a failing tool; `tool_calls_limit` counts only successful calls. To cap calls to one tool, use [Tool Budgets](../tool_budgets/).
 - `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred` and `SkipToolExecution` pass through unchanged, and so does `RunCancelled` from a sub-agent, which core already reports. `UsageLimitExceeded` and `UserError` still end the run: a spent budget or a setup bug is not something the model can work around.
 - A tool that raises `ModelRetry` more often than its `retries` allow still ends the run with `UnexpectedModelBehavior`, so a tool's retry limit keeps working. [Coder](../coder/) reports those to the model instead.
 - Every function tool is covered, including MCP tools and tools other capabilities add. Output tools and argument validation errors aren't.
 
 To get the fail-fast behavior back, leave `ReportToolErrors` out of `capabilities`.
+
+## Durable execution
+
+Under [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/), a tool runs in an activity, and an exception it raises goes to the activity's retry policy. When that gives up, the workflow gets Temporal's `ActivityError`, which names the tool's exception only by its type, so `ReportToolErrors` leaves it alone and the run fails as it would without the capability.
 
 ## Telemetry
 

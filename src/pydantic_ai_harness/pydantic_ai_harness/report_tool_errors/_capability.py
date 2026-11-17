@@ -22,7 +22,17 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 
 __all__ = ['ReportToolErrors', 'ToolErrorInfo']
 
+
+def _durable_failures() -> tuple[type[Exception], ...]:
+    try:
+        from temporalio.exceptions import ActivityError
+    except ImportError:  # pragma: lax no cover
+        return ()
+    return (ActivityError,)
+
+
 _PASS_THROUGH = (
+    *_durable_failures(),
     ModelRetry,
     ToolFailed,
     ApprovalRequired,
@@ -32,7 +42,11 @@ _PASS_THROUGH = (
     UsageLimitExceeded,
     UserError,
 )
-"""Signals a tool raises on purpose, a cancellation core already reports, and errors no retry can fix."""
+"""Signals a tool raises on purpose, a cancellation core already reports, and errors no retry can fix.
+
+A Temporal activity's failure carries the tool's exception only as a type name, after the activity's retry policy
+gave up, so it can't be matched against `exceptions` or the signals above and stays with the workflow.
+"""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -63,7 +77,7 @@ class ReportToolErrors(AbstractCapability[AgentDepsT]):
 
     The exception becomes a `ToolFailed`, as if the tool had raised one itself. The model sees the tool name, the
     exception type and its message, and decides whether to call the tool again, try another way, or give up. There
-    is no limit of its own: the run's `UsageLimits` bound a model that keeps calling a failing tool. `ModelRetry`,
+    is no limit of its own: `UsageLimits.request_limit` stops a model that keeps calling a failing tool. `ModelRetry`,
     `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled`, `UsageLimitExceeded` and
     `UserError` keep their usual meaning.
 
