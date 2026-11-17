@@ -237,6 +237,8 @@ def durable_operation(name: str, *, local: bool = False) -> Callable[[Callable[P
             as a live session cached in the worker. Temporal runs it as a
             [local activity](https://docs.temporal.io/local-activity). Other engines run it as their
             usual activity, step, or task.
+            Like `name`, `local` is compatibility data: changing it breaks replay of runs in flight.
+            The process is usually, not always, the same one across turns, so cached state can miss.
 
     Returns:
         The marked method with its parameter and return types preserved.
