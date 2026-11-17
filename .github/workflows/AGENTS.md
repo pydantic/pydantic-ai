@@ -340,9 +340,9 @@ credential included.
 
 # OpenCode falls back from OpenCode Go to the GLM Coding Plan
 
-Every CI OpenCode run starts on `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`, a Console key for the Go
-workspace: douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback, each `PR Review Checks` review and
-OpenCode threat detection. A `PR Review Checks` review starts elsewhere only when
+douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback and OpenCode threat detection start every
+OpenCode run on `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`, a Console key for the Go workspace. A
+`PR Review Checks` review starts on the same model unless
 [`PR_REVIEW_MODEL_CHAIN`](#pr_review_model_chain-replaces-the-pr-review-checks-chain) replaces its chain.
 `run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` hands a refused run down this chain:
 
@@ -471,8 +471,9 @@ An entry changes only its link's model. Each link keeps its provider's hand-over
   Plan accounts do above.
 - The config of each configured link's run declares the link's model, so OpenCode 2.2.5 runs a model its bundled
   catalog lacks, such as `hy4-flash-free`. The declaration is empty, so it leaves a model the catalog has unchanged.
-- Without a key, OpenCode 2.2.5 sends Zen the key `public`, which only Zen's free models accept. Zen's free usage is
-  limited. Zen reports a spent allowance as `FreeUsageLimitError`, which OpenCode types `provider.quota`. Zen hands a
+- Without a key, OpenCode 2.2.5 sends Zen the key `public` and runs only Zen's free models. A keyless link to a paid
+  Zen model, such as `opencode/gemini-3.1-pro`, fails with `provider.no-route` and fails the review. Zen's free usage
+  is limited. Zen reports a spent allowance as `FreeUsageLimitError`, which OpenCode types `provider.quota`. Zen hands a
   run on after `provider.quota` or `provider.rate-limit` before the run's first step, and never restarts a run.
 - A Zen run sends Zen the same content a Go run sends Go, fork pull request content included. Zen offers free models
   for a limited time. Before you add one, check its data retention on

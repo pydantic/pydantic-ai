@@ -503,8 +503,8 @@ def run_with_fallback(
         print(f'OpenCode run served by {provider.model} on {provider.plan}.')
         return result, provider
 
-    default = [OPENCODE_GO, ZAI, ZAI_BACKUP]
-    links = default
+    # A link without its key is left out, so a run never waits on a provider it cannot reach.
+    keyed: list[Provider] = []
     if configured_chain:
         try:
             configured = [
@@ -515,24 +515,25 @@ def run_with_fallback(
             ]
         except (ValidationError, KeyError):
             configured = []
-        links = [link for link in configured if _has_key(link)] or default
-        if links is default:
+        keyed = [link for link in configured if _has_key(link)]
+        if not keyed:
             # A maintainer types the value, and it could hold a key by mistake, so the warning never repeats it.
             print(
                 '::warning::The `PR_REVIEW_MODEL_CHAIN` variable is invalid or names no secret that is set, so this '
                 'run uses the default chain; see `.github/workflows/AGENTS.md` for its format.'
             )
-    # Every workflow that runs the default chain passes Go's key, so an empty one is a broken secret binding.
-    if links is default and not os.environ['OPENCODE_API_KEY']:
-        raise ValueError('OPENCODE_API_KEY is empty')
-    # A link without its key is left out, so a run never waits on a provider it cannot reach.
-    keyed = [link for link in links if _has_key(link)]
+    if not keyed:
+        # Every workflow that runs the default chain passes Go's key, so an empty one is a broken secret binding.
+        if not os.environ['OPENCODE_API_KEY']:
+            raise ValueError('OPENCODE_API_KEY is empty')
+        keyed = [link for link in (OPENCODE_GO, ZAI, ZAI_BACKUP) if _has_key(link)]
     # Run numbers count up within a workflow, so a burst of runs, and the checks of one matrix, alternate accounts.
     turn = int(os.environ['GITHUB_RUN_NUMBER']) + matrix_index
     chain: list[Provider] = []
     for _, group in itertools.groupby(keyed, key=lambda link: link.model):
         pool = list(group)
-        chain += pool[turn % len(pool) :] + pool[: turn % len(pool)]
+        start = turn % len(pool)
+        chain += pool[start:] + pool[:start]
     for provider, successor in zip(chain, chain[1:]):
         try:
             return run_on(provider)
