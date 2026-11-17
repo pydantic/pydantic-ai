@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from . import AnthropicModel, AnthropicModelSettings, _MessageCreateParams  # pyright: ignore[reportPrivateUsage]
 
 MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
+_THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
+_THREAD_UNSUPPORTED_KEY = 'thread_unsupported'
 
 # The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
 # The `skills` in `container`, whether `fallbacks` is sent, and the betas are fixed too: see `thread_fingerprint`.
@@ -177,10 +179,6 @@ def served_by_fallback_model(usage: BetaUsage | BetaMessageDeltaUsage) -> bool:
     On a stream, the final `message_delta` carries it.
     """
     return any(iteration.type == 'fallback_message' for iteration in usage.iterations or [])
-
-
-_THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
-_THREAD_UNSUPPORTED_KEY = 'thread_unsupported'
 
 
 def thread_digest(history: Hasher, response: ModelResponse, fingerprint: str) -> str:

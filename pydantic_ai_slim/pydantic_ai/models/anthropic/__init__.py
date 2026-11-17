@@ -715,22 +715,15 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Continue the conversation in an Anthropic [message thread](https://platform.claude.com/docs/en/build-with-claude/message-threads), sending only the new messages.
 
     Each request creates a thread, or continues the one the most recent response in the message history was
-    stored in. A continue request leaves out the messages before that response, and `system` and `tools`, which
-    the thread keeps. The thread state lives in the message history: a response records a fingerprint of the
-    fields a thread keeps fixed under `'thread_fingerprint'` in
-    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and a request
-    continues from it only when its own fingerprint matches, so changing the instructions, tools, betas or another
-    fixed field starts a new thread, as does a new message that needs a beta the thread was created without, like
-    the Files API's for an `UploadedFile`. So does a response from another model, whether through
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or Anthropic's server-side fallback, which the
-    thread doesn't store, or a refusal. So does an expired thread, which Anthropic reports when the continue request
-    fails, and the full conversation is then sent again. The response also records its
-    [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], covering its ID, its fingerprint, its
-    parts and the history it was created from, so a history processor that trims or redacts either starts a new
-    thread instead of continuing from the unchanged copy Anthropic holds. A request
-    using something threads don't support, like context management, is sent without a thread, with a warning. Its
-    response records `'thread_unsupported': True` beside its `'thread_fingerprint'`, so later requests with the same
-    fixed fields are sent without one straight away.
+    stored in, leaving out the messages before that response and `system` and `tools`, which the thread keeps. A
+    response records the thread's fixed fields under `'thread_fingerprint'` in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and its
+    [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] covers it and the history before it. A
+    request continues only when both still match, so changed instructions, tools, betas or other fixed fields, an
+    edited history, a refusal, or a response from another model start a new thread with the full history. A request
+    using something threads don't support is sent without one, with a warning, and its response records
+    `'thread_unsupported': True`. See [Message threads](../../models/anthropic.md#message-threads-beta) for every
+    case.
 
     The response ID comes from the message history, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass
