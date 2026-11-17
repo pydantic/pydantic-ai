@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -1079,10 +1079,14 @@ class TestSkillDirectoryPlaceholders:
         assert catalog.skills[0].render('src/app.py').endswith(f'Read {directory}/a.md.\n\nARGUMENTS: src/app.py')
 
 
+_ReadArgs = tuple[str, str] | tuple[str, str, int]
+"""A `read_skill_file` call's `skill`, `path` and, optionally, `offset`."""
+
+
 def _reader(
     results: list[str],
     load: str | None,
-    reads: list[tuple[str, str]],
+    reads: Sequence[_ReadArgs],
     before_reads: Callable[[], None] = lambda: None,
 ) -> FunctionModel:
     """Load `load`, read each `(skill, path)` in one step, then record what each read returned."""
@@ -1095,8 +1099,10 @@ def _reader(
         ):
             before_reads()
             calls = [
-                ToolCallPart('read_skill_file', {'skill': skill, 'path': path}, tool_call_id=f'read-{index}')
-                for index, (skill, path) in enumerate(reads)
+                ToolCallPart(
+                    'read_skill_file', dict(zip(('skill', 'path', 'offset'), read)), tool_call_id=f'read-{index}'
+                )
+                for index, read in enumerate(reads)
             ]
             return ModelResponse(parts=calls)
         request = messages[-1]
@@ -1108,7 +1114,7 @@ def _reader(
 
 
 async def _read(
-    skills: Skills[None], workspace: Path | None, reads: list[tuple[str, str]], *, load: str | None = 'guide'
+    skills: Skills[None], workspace: Path | None, reads: Sequence[_ReadArgs], *, load: str | None = 'guide'
 ) -> list[str]:
     results: list[str] = []
     agent: Agent[None, str] = Agent(_reader(results, load, reads), deps_type=type(None), capabilities=[skills])
@@ -1147,15 +1153,22 @@ class TestSkillFiles:
 
     async def test_a_loaded_skill_s_files_are_read(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'skills')
-        directory = tmp_path.resolve() / 'skills' / 'guide'
+
+        results = await _read(Skills('skills', read_files=True), tmp_path, [('guide', 'references/guide.md')])
+
+        assert results == ['Use the documented workflow.']
+
+    async def test_a_long_file_is_read_in_windows(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'guide', files={'big.txt': 'a' * 50_000 + 'b' * 10})
 
         results = await _read(
-            Skills('skills', read_files=True),
-            tmp_path,
-            [('guide', 'references/guide.md'), ('guide', str(directory / 'references' / 'guide.md'))],
+            Skills('skills', read_files=True), tmp_path, [('guide', 'big.txt'), ('guide', 'big.txt', 50_000)]
         )
 
-        assert results == ['Use the documented workflow.', 'Use the documented workflow.']
+        assert results == [
+            'a' * 50_000 + '\n\n[Characters 0 to 50,000 of 50,010; read on from offset=50000.]',
+            'b' * 10,
+        ]
 
     async def test_an_unloaded_skill_s_files_are_refused(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'skills')
@@ -1191,7 +1204,10 @@ class TestSkillFiles:
             [('guide', '../../secret.txt'), ('guide', 'link.txt'), ('guide', str(tmp_path / 'secret.txt'))],
         )
 
-        assert results == [IsStr(regex=r".*is outside the directory of skill 'guide'.*")] * 3
+        assert results == [
+            *[IsStr(regex=r".*is outside the directory of skill 'guide'.*")] * 2,
+            IsStr(regex=r".*Give a path relative to the directory of skill 'guide'.*"),
+        ]
 
     async def test_dot_dot_climbs_from_a_symlink_s_target(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'skills', 'guide', files={'notes.md': 'Inside.'})

@@ -6,7 +6,9 @@ import warnings
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, get_args, overload
+from typing import Annotated, Any, get_args, overload
+
+from pydantic import Field
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Toolset
@@ -30,6 +32,8 @@ from pydantic_ai_harness.skills._loader import (
 )
 
 _MAX_DESCRIPTION_LENGTH = 1024
+_MAX_READ_CHARS = 50_000
+"""The most of a skill file `read_skill_file` returns at once, as `FileSystem` caps a read."""
 
 
 @dataclass(frozen=True)
@@ -342,13 +346,16 @@ class Skills(AbstractCapability[AgentDepsT]):
         """The `read_skill_file` tool when `read_files` is set, so a durable engine registers it with the agent."""
         return self._toolset
 
-    async def _read_skill_file(self, ctx: RunContext[AgentDepsT], skill: str, path: str) -> str:
+    async def _read_skill_file(
+        self, ctx: RunContext[AgentDepsT], skill: str, path: str, offset: Annotated[int, Field(ge=0)] = 0
+    ) -> str:
         """Read a text file bundled with a skill you have loaded, such as `references/guide.md`.
 
         Args:
             ctx: The run context.
             skill: The name of the loaded skill.
             path: The file's path, relative to the skill's directory.
+            offset: The character to start at, to continue a file longer than one read returns.
         """
         try:
             entries, _ = await self._read(ctx.workspace)
@@ -359,27 +366,17 @@ class Skills(AbstractCapability[AgentDepsT]):
             raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
         if skill not in ctx.loaded_capability_ids:
             raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
-        workspace, directory = entry.workspace, entry.skill.directory
-        if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
-            raise ToolFailed(f'The workspace of skill {skill!r} cannot resolve symlinks, so its files are not read.')
-        try:
-            target = await _contained(workspace, directory, path)
-            if target is None:
-                raise ModelRetry(f'{path!r} is outside the directory of skill {skill!r}.')
-            text = await workspace.read_text(target)
-        except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
-            raise ModelRetry(f'Skill {skill!r} has no file {path!r}.') from None
-        except PermissionError:
-            raise ToolFailed(f'{path!r} in skill {skill!r} cannot be read: permission denied.') from None
-        except UnicodeDecodeError:
-            raise ModelRetry(f'{path!r} in skill {skill!r} is not a UTF-8 text file.') from None
+        text = await _read_text(entry, path)
         scanner = entry.source.scanner
         if scanner is not None and (scan := scanner.scan(text, source=f'skill:{skill}/{path}')).flagged:
             record_flagged(
                 ctx.tracer, scan, artifact='skill', action='withheld', include_content=ctx.trace_include_content
             )
             raise ModelRetry(f'{path!r} in skill {skill!r} was withheld: an artifact scan flagged it.')
-        return text
+        end = offset + _MAX_READ_CHARS
+        if end >= len(text):
+            return text[offset:]
+        return f'{text[offset:end]}\n\n[Characters {offset:,} to {end:,} of {len(text):,}; read on from offset={end}.]'
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
@@ -506,6 +503,28 @@ def _catalog_description(skill: SkillDefinition) -> str:
         return skill.description
     # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
     return f'{skill.description} {skill.when_to_use}'
+
+
+async def _read_text(entry: _Entry, path: str) -> str:
+    """The text of `path` in `entry`'s skill directory, refusing a path that leads outside it."""
+    skill, workspace, directory = entry.skill.name, entry.workspace, entry.skill.directory
+    paths = workspace.paths
+    # Rejected before anything resolves it: an absolute or drive path would replace the directory when joined.
+    if paths.isabs(path) or paths.splitdrive(path)[0]:
+        raise ModelRetry(f'Give a path relative to the directory of skill {skill!r}, not {path!r}.')
+    if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
+        raise ToolFailed(f'The workspace of skill {skill!r} cannot resolve symlinks, so its files are not read.')
+    try:
+        target = await _contained(workspace, directory, path)
+        if target is None:
+            raise ModelRetry(f'{path!r} is outside the directory of skill {skill!r}.')
+        return await workspace.read_text(target)
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+        raise ModelRetry(f'Skill {skill!r} has no file {path!r}.') from None
+    except PermissionError:
+        raise ToolFailed(f'{path!r} in skill {skill!r} cannot be read: permission denied.') from None
+    except UnicodeDecodeError:
+        raise ModelRetry(f'{path!r} in skill {skill!r} is not a UTF-8 text file.') from None
 
 
 async def _contained(workspace: Workspace, directory: str, path: str) -> str | None:

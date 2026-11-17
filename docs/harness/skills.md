@@ -315,20 +315,23 @@ from pydantic_ai_harness import Skills
 skills = Skills('.agents/skills', read_files=True)
 ```
 
-The model gets a `read_skill_file` tool that takes a skill name and a path in
-its directory, such as `references/guide.md`. It reads from the workspace the
-skill came from, including a `workspace=` backend, so it also works for
-[skills shipped with your application](#ship-skills-with-your-application).
-The tool refuses a skill the model has not loaded with `load_capability`, a
-path that leads outside the skill's directory through `..` or a symlink, and a
-file that is not UTF-8 text. It reads only skills the model can load, so not
-one with `disable-model-invocation: true`, even when a host sends its
-`render()` as a prompt; a skill the model may load that a host renders this way
-is read once the model loads it. The tool reads nothing from a
-workspace whose backend implements neither `SupportsRealpath` nor
-`SupportsCommands`, since it cannot resolve symlinks. When two `Skills` combine, only the libraries of
-one with `read_files=True` are readable. With a `scanner`, each file is
-scanned before it is returned, and a flagged file is withheld.
+The model gets a `read_skill_file` tool that takes a skill name and a path
+relative to its directory, such as `references/guide.md`. It reads from the
+workspace the skill came from, including a `workspace=` backend, so it also
+works for [skills shipped with your application](#ship-skills-with-your-application).
+A read returns at most 50,000 characters, and says which `offset` to pass to
+read on.
+
+The tool refuses a skill the model has not loaded with `load_capability`, an
+absolute path, a path that leads outside the skill's directory through `..` or
+a symlink, and a file that is not UTF-8 text. It does not read a skill with
+`disable-model-invocation: true`, even after a host sends its `render()` as a
+prompt. A host-rendered skill the model can load becomes readable once the
+model loads it. The tool reads nothing from a workspace whose backend
+implements neither `SupportsRealpath` nor `SupportsCommands`, since it cannot
+resolve symlinks. When two `Skills` combine, only the libraries of one with
+`read_files=True` are readable. With a `scanner`, each file is scanned before
+it is returned, and a flagged file is withheld.
 
 `Skills` reads the libraries itself: the model does not need `FileSystem` or
 `Shell` to load a skill, and adding either does not change which files `Skills`
