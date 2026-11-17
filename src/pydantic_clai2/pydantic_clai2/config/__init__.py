@@ -4,7 +4,16 @@ import re
 from pathlib import Path
 from typing import Annotated, Literal, get_args
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from pydantic_clai2.config.theme_names import names
 
@@ -286,12 +295,17 @@ STRING_SETTINGS = frozenset(
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 
 
-def resolve_settings(overrides: dict[str, JsonValue]) -> Settings:
-    """Reject unknown setting names and validate stored or supplied values."""
+def resolve_settings(overrides: dict[str, JsonValue], *, stored: bool = False) -> Settings:
+    """Validate values; stored layouts may name fields supported only by another build."""
     unknown = overrides.keys() - SETTING_FIELDS.keys()
     if unknown:
         raise ValueError(f'Unknown settings: {", ".join(sorted(unknown))}')
-    return Settings.model_validate({SETTING_FIELDS[key]: value for key, value in overrides.items()})
+    values = {SETTING_FIELDS[key]: value for key, value in overrides.items()}
+    if stored and 'footer_fields' in values:
+        # Project and store overrides remain raw; only the effective snapshot skips future names.
+        fields = TypeAdapter(list[str]).validate_python(values['footer_fields'], strict=True)
+        values['footer_fields'] = [field for name in fields for field in FOOTER_FIELDS if field == name]
+    return Settings.model_validate(values)
 
 
 _CODER_FACTORY = 'pydantic_ai_harness.coder:Coder'

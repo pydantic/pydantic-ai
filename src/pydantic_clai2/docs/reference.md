@@ -1670,7 +1670,8 @@ It uses the shared settings submenu in the terminal and web settings. Each field
 shows whether it is shown or hidden. Enter on a field offers **Show** or **Hide**,
 **Move earlier**, and **Move later**. Changes save immediately and persist across
 sessions. The visible **Reset layout** row restores only the shipped footer
-layout, not other display or run settings.
+layout, not other display or run settings. Moving a shown field skips hidden
+neighbours. Show a hidden field before moving it; moving does not change visibility.
 
 `display.footer_fields` is an ordered JSON list of visible field names. Omitted
 fields are hidden; `[]` hides the footer figures, not the prompt or task panel.
@@ -1705,21 +1706,23 @@ To set the list directly, keep the JSON in one quoted argument:
 /set display.footer_fields '[]'
 ```
 
-Unknown field names, duplicates, non-string entries, and values other than a JSON
-list are rejected. Missing settings use the default; older builds that do not
-know this setting ignore it and preserve its saved value. An invalid saved value
-for this known setting is an error, not a silent reset. If it prevents startup,
-repair it from your shell with `clai2 config reset display.footer_fields`, then
-restart CLAI. `/config reset display.footer_fields` also removes the saved
-override for the next startup.
+New writes reject unknown field names, duplicates, non-string entries, and values
+other than a JSON list. Saved and project layouts may include names from a newer
+build: this build skips unsupported names, preserving their raw values when
+reading or changing unrelated settings. A future-only list shows no figures.
+Explicit layout replacement or reset replaces the whole saved value. Missing
+settings use the default; older builds that do not know this setting ignore it
+and preserve its saved value. Other invalid saved values remain errors.
+`clai2 config reset display.footer_fields` removes the saved override.
 
 The optional `assistant_age` field reads `last text: 2m 3s`. Only a nonempty
 main-assistant text part start or text delta resets it. Empty text, thinking,
 tool calls and results, user messages, and descendant activity do not. It keeps
 tracking the main assistant even when the footer shows a focused subagent.
-CLAI saves the observed live text time in response metadata and restores it on
-resume, rewind, or conversation switch. Older histories without that metadata
-fall back to the last nonempty textual response's timestamp. No textual response
+While `assistant_age` is enabled, CLAI saves the observed live text time in
+response metadata and restores it on resume, rewind, or conversation switch.
+Disabling the field stops those metadata writes without erasing existing history.
+Histories without that metadata fall back to the last nonempty textual response's timestamp. No textual response
 means no age figure. It uses the existing editor refresh cycle, not another timer.
 
 By default, the terminal footer shows the selected model, activity, latest reported

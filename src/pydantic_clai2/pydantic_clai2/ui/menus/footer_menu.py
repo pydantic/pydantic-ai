@@ -56,7 +56,7 @@ class FooterSource:
     def reset(self, row: FieldRow) -> str:
         if row.key != _RESET:
             return self.apply(row, row.default)
-        self.order = [*DEFAULT_FOOTER_FIELDS, 'assistant_age']
+        self.order = [*DEFAULT_FOOTER_FIELDS, *(name for name in FOOTER_FIELDS if name not in DEFAULT_FOOTER_FIELDS)]
         return self.context.reset_setting(FOOTER_SETTING)
 
     async def configure(self, name: FooterField, dialogs: Dialogs) -> list[str]:
@@ -74,9 +74,12 @@ class FooterSource:
         if action == 'toggle':
             row = next(row for row in self.rows() if row.key == name)
             return [await to_thread.run_sync(self.apply, row, 'hidden' if visible else 'shown')]
+        if not visible:
+            return ['Show this field before moving it.']
         index = self.order.index(name)
-        target = index + (-1 if action == 'earlier' else 1)
-        if not 0 <= target < len(self.order):
+        neighbours = range(index - 1, -1, -1) if action == 'earlier' else range(index + 1, len(self.order))
+        target = next((i for i in neighbours if self.order[i] in self.context.settings.footer_fields), None)
+        if target is None:
             return []
         self.order[index], self.order[target] = self.order[target], self.order[index]
         fields = [field for field in self.order if field in self.context.settings.footer_fields]

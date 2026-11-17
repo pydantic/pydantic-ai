@@ -16,7 +16,8 @@ from pydantic import ValidationError
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -33,18 +34,20 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.cli.cli import _settings_for  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import config_command
 from pydantic_clai2.config import DEFAULT_FOOTER_FIELDS, FOOTER_FIELDS, FooterField, PluginSettings, Settings
-from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, SessionStart, TurnStart
 from pydantic_clai2.runtime.session_runtime import create_shell
-from pydantic_clai2.ui.menus.footer_menu import FOOTER_SETTING, footer_settings_menu
+from pydantic_clai2.ui.menus.footer_menu import FOOTER_SETTING, FooterSource, footer_settings_menu
 from pydantic_clai2.ui.menus.set_menu import settings_menu
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import TEXT_TIME, Status, StatusLine
@@ -118,8 +121,8 @@ async def test_layout_menu_persists_visibility_order_and_layout_only_reset(tmp_p
         ('assistant_age', 'toggle'),
         ('assistant_age', 'earlier'),
         ('model', 'toggle'),
-        ('model', 'later'),
         ('model', 'toggle'),
+        ('model', 'later'),
     ]:
         await menu.actions[name](ScriptedDialogs([Pick(value=action)]))
     assert context.settings.footer_fields[0] == 'workspace'
@@ -145,14 +148,50 @@ async def test_layout_menu_persists_visibility_order_and_layout_only_reset(tmp_p
     assert first.key in context.settings.footer_fields
 
 
-def test_invalid_saved_layout_is_recoverable_without_loading_it(tmp_path: Path) -> None:
+@pytest.mark.parametrize('fields', [['model', 'future-field', 'activity'], ['future-field']])
+def test_future_layout_fields_are_read_without_rewriting_saved_or_project_values(
+    tmp_path: Path, fields: list[str]
+) -> None:
     store = SettingsStore(tmp_path / 'settings.db')
+    raw = json.dumps(fields)
     with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, '["unknown"]'))
-    with pytest.raises(ValidationError):
-        store.load()
+        connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, raw))
+    expected = [name for name in fields if name != 'future-field']
+    assert store.load().footer_fields == expected
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
+    context.set_setting(['display.thinking', 'false'])
+    context.reset_setting('display.thinking')
+    assert SettingsStore(store.path).load().footer_fields == expected
+    assert store.overrides()[FOOTER_SETTING] == fields
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert (
+            connection.execute('SELECT value_json FROM settings WHERE key = ?', (FOOTER_SETTING,)).fetchone()[0] == raw
+        )
+    project_file = tmp_path / '.clai' / 'settings.json'
+    project_file.parent.mkdir()
+    contents = json.dumps({'footer_fields': fields, 'thinking': False, 'future_setting': {'keep': True}})
+    project_file.write_text(contents)
+    project = load_project_settings(tmp_path, store=store)
+    assert project.overrides[FOOTER_SETTING] == fields
+    settings_for = _settings_for(store, model=None, request_limit=None)
+    assert settings_for(project).footer_fields == expected
+    context.use_project(project, settings_for(project))
+    context.set_setting(['display.spinner', 'working'])
+    assert load_project_settings(tmp_path, store=store).overrides[FOOTER_SETTING] == fields
+    assert project_file.read_text() == contents
+    assert store.overrides()[FOOTER_SETTING] == fields
+    for write in (
+        lambda: store.set(FOOTER_SETTING, list(fields)),
+        lambda: context.set_setting([FOOTER_SETTING, raw]),
+        lambda: config_command(store, ['set', FOOTER_SETTING, raw]),
+    ):
+        with pytest.raises(ValidationError):
+            write()
+    context.set_setting([FOOTER_SETTING, '["activity"]'])
+    assert store.load().footer_fields == ['activity']
     config_command(store, ['reset', FOOTER_SETTING])
     assert store.load().footer_fields == list(DEFAULT_FOOTER_FIELDS)
+    assert project_file.read_text() == contents
 
 
 @pytest.mark.parametrize('visible', [False, True])
@@ -341,7 +380,8 @@ async def test_public_startup_menu_can_activate_age_without_replacing_explicit_l
         await shell.close('exit')
 
 
-async def test_child_text_never_refreshes_the_main_clock_or_borrows_it(tmp_path: Path) -> None:
+@pytest.mark.parametrize('enabled', [False, True])
+async def test_child_text_never_refreshes_the_main_clock_or_borrows_it(tmp_path: Path, enabled: bool) -> None:
     now = 100.0
     child_started, release = asyncio.Event(), asyncio.Event()
 
@@ -368,7 +408,7 @@ async def test_child_text_never_refreshes_the_main_clock_or_borrows_it(tmp_path:
         plugins=[Coder(repo_context=False)],
         usage_limits=None,
         console=Console(file=io.StringIO()),
-        settings=Settings(model=None, footer_fields=['model', 'assistant_age']),
+        settings=Settings(model=None, footer_fields=['model', 'assistant_age'] if enabled else ['model']),
         store=SettingsStore(tmp_path / 'config.db'),
         builtin_plugins=(),
         project=ProjectSettings(),
@@ -383,15 +423,147 @@ async def test_child_text_never_refreshes_the_main_clock_or_borrows_it(tmp_path:
             await asyncio.wait_for(child_started.wait(), timeout=10)
             assert shell.status.last_text_at == 100
             assert shell.status.subagent() is not None
-            assert 'last text: 50s' in shell.status.text()
+            assert ('last text: 50s' in shell.status.text()) is enabled
             release.set()
         assert shell.status.last_text_at == 200
         record = shell.tasks.records()[0]
+        history = await anyio.to_thread.run_sync(shell.tasks.history, record.id)
         assert all(
-            TEXT_TIME not in (message.metadata or {})
-            for message in shell.tasks.history(record.id)
-            if isinstance(message, ModelResponse)
+            TEXT_TIME not in (message.metadata or {}) for message in history if isinstance(message, ModelResponse)
         )
     finally:
         shell.session.delegations = None
+        await shell.close('exit')
+
+
+async def test_visible_moves_skip_hidden_neighbours_without_enabling_them(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    context = CommandContext(settings=Settings(), store=store, apply_setting=lambda key, settings: None)
+    source = FooterSource(context)
+    for name in ('workspace', 'context'):
+        await source.configure(name, ScriptedDialogs([Pick(value='toggle')]))
+    visible = set(context.settings.footer_fields)
+    assert await source.configure('context', ScriptedDialogs([Pick(value='earlier')])) == [
+        'Show this field before moving it.'
+    ]
+    await source.configure('output', ScriptedDialogs([Pick(value='earlier')]))
+    assert context.settings.footer_fields[:2] == ['output', 'model']
+    assert set(context.settings.footer_fields) == visible
+    await source.configure('output', ScriptedDialogs([Pick(value='later')]))
+    assert context.settings.footer_fields[:2] == ['model', 'output']
+    assert set(context.settings.footer_fields) == visible
+    assert store.load().footer_fields == context.settings.footer_fields
+    await source.reset_layout(ScriptedDialogs([]))
+    assert [row.key for row in source.rows()][:-1] == [
+        *DEFAULT_FOOTER_FIELDS,
+        *(name for name in FOOTER_FIELDS if name not in DEFAULT_FOOTER_FIELDS),
+    ]
+
+
+@pytest.mark.parametrize('fields', ['model', [1], ['model', 'model']])
+def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fields: object) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    raw = json.dumps(fields)
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, raw))
+    with pytest.raises(ValidationError):
+        store.load()
+    project_file = tmp_path / '.clai' / 'settings.json'
+    project_file.parent.mkdir()
+    project_file.write_text(json.dumps({'footer_fields': fields}))
+    with pytest.raises(ValueError):
+        load_project_settings(tmp_path)
+    store.reset(FOOTER_SETTING)
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.thinking', '"invalid"'))
+    with pytest.raises(ValidationError):
+        store.load()
+
+
+@pytest.mark.parametrize('initial_enabled', [False, True])
+async def test_observer_identity_and_metadata_follow_live_opt_in_across_turns_and_conversations(
+    tmp_path: Path, initial_enabled: bool
+) -> None:
+    class Metadata(AbstractCapability[None]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            response.metadata = {'unrelated': {'keep': True}, TEXT_TIME: 25}
+            return response
+
+    now = 100.0
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello '
+        yield 'world'
+
+    shell = create_shell(
+        create_stock_agent(FunctionModel(stream_function=stream)),
+        deps=None,
+        plugins=[Metadata()],
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model=None, footer_fields=['assistant_age'] if initial_enabled else []),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        load_plugins=False,
+    )
+    shell.status.clock = lambda: now
+    try:
+        bound = None
+        for enabled in (initial_enabled, True, False, True):
+            shell.context.set_setting([FOOTER_SETTING, '["assistant_age"]' if enabled else '[]'])
+            result = await shell.run_turn(TurnStart(text='hello'))
+            assert result.outcome == 'completed', result.error
+            if bound is None:
+                bound = shell.session.agent
+            assert shell.session.agent is bound
+            response = shell.session.messages[-1]
+            assert isinstance(response, ModelResponse)
+            assert response.metadata == {'unrelated': {'keep': True}, TEXT_TIME: now if enabled else 25}
+            now += 50
+        conversation = shell.session.conversation_id
+        retained = list(shell.session.messages)
+        await shell.session.clear()
+        assert shell.status.last_text_at is None
+        await shell.session.resume(conversation)
+        assert shell.status.last_text_at == now - 50
+        assert shell.session.messages == retained
+    finally:
+        await shell.close('exit')
+
+
+async def test_default_off_turn_does_not_add_text_time_to_history(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel(custom_output_text='hello')),
+        deps=None,
+        plugins=[],
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model=None),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        load_plugins=False,
+    )
+    try:
+        for _ in range(2):
+            result = await shell.run_turn(TurnStart(text='hello'))
+            assert result.outcome == 'completed', result.error
+        responses = [message for message in shell.session.messages if isinstance(message, ModelResponse)]
+        assert all(TEXT_TIME not in (response.metadata or {}) for response in responses)
+        conversation = shell.session.conversation_id
+        await shell.session.clear()
+        await shell.session.resume(conversation)
+        assert shell.status.last_text_at == responses[-1].timestamp.timestamp()
+        shell.context.set_setting([FOOTER_SETTING, '["assistant_age"]'])
+        assert 'last text:' in shell.status.text()
+        assert all(TEXT_TIME not in (response.metadata or {}) for response in responses)
+    finally:
         await shell.close('exit')

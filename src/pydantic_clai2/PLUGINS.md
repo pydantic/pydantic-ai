@@ -3624,7 +3624,9 @@ The shell owns `assistant_age`, the optional time since nonempty main-assistant
 text. Thinking, tools, user messages, and descendants do not reset it, even while
 a subagent's figures are focused. `FooterActivity` in `runtime/footer_activity.py`
 persists the locally observed live text time in `ModelResponse.metadata` under
-`clai2_last_text_at`, without changing the response timestamp or provider payload.
+`clai2_last_text_at` only while `assistant_age` is enabled, without changing the
+response timestamp or provider payload. Disabling the field stops those writes
+without erasing existing metadata.
 Resume, rewind, and conversation switches restore it from the retained textual
 response; older history without that metadata falls back to that response's
 timestamp. No textual response means no age figure. This uses the existing editor
@@ -3654,16 +3656,20 @@ reordering preserves those styles, and plugin fragments stay muted.
 Open `/set`, then select `display.footer_fields` for the shared **Main footer
 layout** submenu in the terminal and web settings. Each field offers **Show** or
 **Hide**, **Move earlier**, and **Move later**. Changes persist immediately; the
-visible **Reset layout** row restores only the footer layout. The setting is an
+visible **Reset layout** row restores only the footer layout. Moving a shown field
+skips hidden neighbours. Show hidden fields before moving them; moving does not
+change visibility. The setting is an
 ordered JSON list of visible names; omitted names are hidden and `[]` hides all
 footer figures. The default includes every built-in except `assistant_age`,
 which is opt-in. `model` includes the focused subagent label; `updates`, `live`,
 and `queued` are independent fields, not plugin fragments. Their conditional
 visibility still applies when selected.
 
-Unknown names, duplicates, non-string entries, and non-list values are rejected.
-If an invalid saved value prevents startup, run
-`clai2 config reset display.footer_fields` from your shell and restart. See the
+New writes reject unknown names, duplicates, non-string entries, and non-list
+values. Saved and project layouts skip unsupported names without rewriting raw
+values on reads or unrelated edits. A future-only list shows no figures.
+Explicit layout replacement or reset replaces the whole saved value; other invalid
+values remain errors. See the
 [status-line reference](docs/reference.md#status-line) for the default order,
 valid field names, and direct JSON examples.
 

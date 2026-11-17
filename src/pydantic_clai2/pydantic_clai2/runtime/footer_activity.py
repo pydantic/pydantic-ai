@@ -30,7 +30,8 @@ class FooterActivity(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
         if (
-            ctx.run_id != self.run_id()
+            'assistant_age' not in self.status.fields()
+            or ctx.run_id != self.run_id()
             or self.status.last_text_at is None
             or self.status.text_updates == self._text_updates
             or not any(isinstance(part, TextPart) and part.content for part in response.parts)

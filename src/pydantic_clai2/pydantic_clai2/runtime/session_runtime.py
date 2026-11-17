@@ -733,6 +733,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
     _question_status: QuestionStatus[DepsT] = field(init=False, repr=False)
+    _footer_activity: FooterActivity[DepsT] = field(init=False, repr=False)
     _measured_model: str | None = field(default=None, init=False, repr=False)
     """The model whose completed turn measured the status row's figures; `None` once the model changes."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
@@ -889,6 +890,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def __post_init__(self) -> None:
         self._question_status = QuestionStatus(self.live_session)
+        # Stable capability identity keeps the stock agent bound across turns and layout edits.
+        self._footer_activity = FooterActivity(status=self.status, run_id=lambda: self.session.summary.run_id)
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
@@ -927,7 +930,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             *self.loader.run_capabilities(),
             *self.permissions,
             self._question_status,
-            FooterActivity[DepsT](status=self.status, run_id=lambda: self.session.summary.run_id),
+            self._footer_activity,
             NON_STRICT_SCHEMAS,
         )
         if self.session.delegations is not None:
