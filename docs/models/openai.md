@@ -70,6 +70,8 @@ agent = Agent(model)
 ...
 ```
 
+For short-lived or rotating credentials, `api_key` also accepts an async callable that returns the key, which the OpenAI SDK calls before each request. [Batch processing](../batch.md#which-requests-share-a-batch) refuses such a client, and [Responses WebSockets](#responses-websockets) send its requests over HTTP.
+
 ## Custom OpenAI Client
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
@@ -298,6 +300,12 @@ moderation = (result.response.provider_details or {}).get('moderation')
 When the response includes moderation results, they are stored under the `'moderation'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], with `input` and `output` entries each carrying the flagged status, per-category flags, and category scores.
 
 With [`OpenAIChatModel`](#chat-completions-api), use [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings] instead. The results are surfaced the same way on both the non-streaming and streaming paths, except that the Chat Completions API nests each entry one level deeper, under a `results` list.
+
+### Safety identifier
+
+OpenAI uses a [safety identifier](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers) to detect end users who may be violating its usage policies. Set it with [`openai_safety_identifier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_safety_identifier] on both the Responses and Chat Completions APIs; nothing is sent when it is unset. Pass a hash of the end user's ID, such as their username or email address, so that no identifying information reaches OpenAI.
+
+OpenAI is replacing the `user` field, which [`openai_user`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_user] sends, with `safety_identifier` and `prompt_cache_key`.
 
 ## Responses API features
 
