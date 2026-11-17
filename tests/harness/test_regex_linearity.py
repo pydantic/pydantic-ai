@@ -5,8 +5,8 @@ way of splitting it, takes quadratic or exponential time on input built to provo
 on text the model or a tool produced, and it runs on the event loop.
 
 The patterns are found in the package source, so a new one is checked without being listed here: every call to a
-`re` function is read, and its pattern is worked out from the literals, f-strings, `'|'.join(...)` calls and
-names bound to them in its module or function. `re.escape(...)` of runtime text stands in as `x`: escaped text
+`re` function is read, and its pattern is worked out from the literals, f-strings, `'|'.join(...)` calls,
+`.pattern` of a compiled pattern, and names bound to them in its module or function. `re.escape(...)` of runtime text stands in as `x`: escaped text
 matches only itself, so the pattern around it is what can backtrack. Each call whose pattern only exists at
 runtime says where its pattern comes from in `RUNTIME_PATTERNS`, and the built-in tables those calls compile are
 checked through `PATTERN_TABLES`.
@@ -183,6 +183,26 @@ def _subscript(node: ast.Subscript, scopes: list[dict[str, _Binding]]) -> ast.ex
         raise _Unresolved(ast.unparse(node)) from error
 
 
+def _named(name: str, scopes: list[dict[str, _Binding]]) -> list[str | int]:
+    """Every value the name `name` can take."""
+    binding = _lookup(name, scopes)
+    if isinstance(binding, _ElementOf):
+        return [value for element in _elements(binding.sequence, scopes) for value in _fold(element, scopes)]
+    if binding is None:
+        raise _Unresolved(name)
+    return _fold(binding, scopes)
+
+
+def _compiled_pattern(node: ast.Attribute, name: str, scopes: list[dict[str, _Binding]]) -> ast.expr:
+    """The pattern `name.pattern` reads: the one `name` was compiled from."""
+    compiled = _lookup(name, scopes)
+    if not (isinstance(compiled, ast.Call) and ast.unparse(compiled.func) == 're.compile'):
+        raise _Unresolved(ast.unparse(node))
+    pattern = _argument(compiled, 0, 'pattern')
+    assert pattern is not None
+    return pattern
+
+
 def _strings(values: list[str | int]) -> list[str]:
     strings = [value for value in values if isinstance(value, str)]
     assert len(strings) == len(values), f'expected strings, got {values!r}'
@@ -215,13 +235,10 @@ def _fold(node: ast.expr, scopes: list[dict[str, _Binding]]) -> list[str | int]:
         case ast.Attribute(value=ast.Name(id='re'), attr=attribute) if isinstance(getattr(re, attribute, None), int):
             flag: int = getattr(re, attribute)
             return [flag]
+        case ast.Attribute(value=ast.Name(id=name), attr='pattern'):
+            return _fold(_compiled_pattern(node, name, scopes), scopes)
         case ast.Name(id=name):
-            binding = _lookup(name, scopes)
-            if isinstance(binding, _ElementOf):
-                return [value for element in _elements(binding.sequence, scopes) for value in _fold(element, scopes)]
-            if binding is None:
-                raise _Unresolved(name)
-            return _fold(binding, scopes)
+            return _named(name, scopes)
         case ast.Subscript():
             return _fold(_subscript(node, scopes), scopes)
         case ast.Call(func=ast.Attribute(value=ast.Name(id='re'), attr='escape')):
@@ -379,6 +396,7 @@ def f(pattern, table, names):
     re.compile(str(pattern))
     re.compile(T['missing'])
     re.compile(T['a' if pattern else 'b'])
+    re.compile(T.pattern)
 """
 
 
@@ -410,7 +428,12 @@ def f(pattern, table, names):
             [CallSite('m.py::C.f', [('\\bx', re.I | re.M), ('x', re.I | re.M)])],
             id='escaped-runtime-text',
         ),
-        pytest.param(_UNRESOLVED_SOURCE, [CallSite('m.py::f', None)] * 10, id='runtime-patterns'),
+        pytest.param(
+            "import re\n_A = re.compile(r'a(?!b)')\n_B = re.compile(rf'{_A.pattern}|c', re.I)\n",
+            [CallSite('m.py::_A', [('a(?!b)', 0)]), CallSite('m.py::_B', [('a(?!b)|c', re.IGNORECASE)])],
+            id='compiled-pattern',
+        ),
+        pytest.param(_UNRESOLVED_SOURCE, [CallSite('m.py::f', None)] * 11, id='runtime-patterns'),
     ],
 )
 def test_the_call_site_scan(source: str, sites: list[CallSite]):
