@@ -60,7 +60,7 @@ corpus to streaming-labelled issues. This covers both prior
 `[streaming-resilience-sweep]` findings and human-filed streaming issues:
 
 ```
-jq '.[] | select(any(.labels[]; .name == "streaming")) | {number, title, url}' \
+jq '.[] | select(any(.labels[]; .name == "area:streaming")) | {number, title, url}' \
   /tmp/gh-aw/agent/github-context/open-issues.json
 ```
 
