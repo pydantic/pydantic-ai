@@ -1551,29 +1551,6 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
     )
 
 
-def cohere_over_transport(replies: Sequence[dict[str, object]], sent: list[httpx.Request]) -> CohereModel:
-    """A `CohereModel` whose HTTP transport answers with `replies` in turn and appends each request to `sent`.
-
-    Assertions on `sent` read the JSON body that goes over the wire, not the SDK call that built it.
-    """
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        message = replies[len(sent) - 1]
-        return httpx.Response(
-            200,
-            json={
-                'id': f'resp-{len(sent)}',
-                'finish_reason': 'TOOL_CALL' if 'tool_calls' in message else 'COMPLETE',
-                'message': {'role': 'assistant', **message},
-                'usage': {'tokens': {'input_tokens': 10, 'output_tokens': 5}},
-            },
-        )
-
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return CohereModel('command-a-03-2025', provider=CohereProvider(api_key='test', http_client=http_client))
-
-
 @pytest.mark.vcr(additional_matchers=['body'])
 async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests: None, co_api_key: str):
     """A non-streamed `tool_plan` lands in history and goes back as `tool_plan` beside its tool call.
@@ -1752,11 +1729,26 @@ async def test_thinking_replayed_as_tool_plan_only_for_own_plan_with_tool_calls(
 ):
     """Only Cohere's own tagged plan, beside tool calls, goes back as `tool_plan`; other thinking keeps its mapping.
 
-    Not a VCR test: each case hand-builds a history to reach one mapping branch, which no recording holds.
+    Not a VCR test: each case hand-builds a history to reach one mapping branch, which no recording holds, so a mock
+    transport answers and reads the outgoing JSON.
     The history is dumped and loaded first, pinning the stored `provider_name` and `provider_details` the replay reads.
     """
     sent: list[httpx.Request] = []
-    agent = Agent(cohere_over_transport([{'content': [{'type': 'text', 'text': 'Done.'}]}], sent))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'id': 'resp-1',
+                'finish_reason': 'COMPLETE',
+                'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'Done.'}]},
+                'usage': {'tokens': {'input_tokens': 10, 'output_tokens': 5}},
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    agent = Agent(CohereModel('command-a-03-2025', provider=CohereProvider(api_key='test', http_client=http_client)))
 
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Roll a die.'),
