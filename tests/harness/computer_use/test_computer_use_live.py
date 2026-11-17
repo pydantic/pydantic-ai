@@ -537,41 +537,35 @@ async def test_gpt_computer_call_cut_off_by_the_token_limit_has_no_actions(
     assert 'actions' not in stored
 
 
+# Each step and the action it should reach the display as, run in this order in one test to keep the recording small.
+ACTION_STEPS: list[tuple[str, DisplayAction]] = [
+    ('Double-click at x=100 y=200.', Click(x=100, y=200, count=2)),
+    ('Right-click at x=100 y=200.', Click(x=100, y=200, button='right')),
+    ('Middle-click at x=100 y=200.', Click(x=100, y=200, button='middle')),
+    ('Press the mouse back button at x=100 y=200.', Click(x=100, y=200, button='back')),
+    ('Hold shift and click at x=100 y=200.', Click(x=100, y=200, modifiers=('shift',))),
+    ('Move the pointer to x=100 y=200 without clicking.', MoveMouse(x=100, y=200)),
+    ('Scroll down by 300 pixels at x=100 y=200.', Scroll(x=100, y=200, direction='down', amount=3)),
+    (
+        'Drag in a straight line from x=100 y=200 to x=300 y=200.',
+        Drag(path=(Point(x=100, y=200), Point(x=300, y=200))),
+    ),
+    ('Press ctrl+a.', PressKeys(keys=('ctrl', 'a'))),
+    ('Type "hello".', TypeText(text='hello')),
+]
+
+
 @pytest.mark.vcr
-@pytest.mark.parametrize(
-    ('task', 'expected'),
-    [
-        pytest.param('Double-click at x=100 y=200.', Click(x=100, y=200, count=2), id='double-click'),
-        pytest.param('Right-click at x=100 y=200.', Click(x=100, y=200, button='right'), id='right-click'),
-        pytest.param('Middle-click at x=100 y=200.', Click(x=100, y=200, button='middle'), id='middle-click'),
-        pytest.param('Press the mouse back button at x=100 y=200.', Click(x=100, y=200, button='back'), id='back'),
-        pytest.param(
-            'Hold shift and click at x=100 y=200.', Click(x=100, y=200, modifiers=('shift',)), id='shift-click'
-        ),
-        pytest.param('Move the pointer to x=100 y=200 without clicking.', MoveMouse(x=100, y=200), id='move'),
-        pytest.param(
-            'Scroll down by 300 pixels at x=100 y=200.',
-            Scroll(x=100, y=200, direction='down', amount=3),
-            id='scroll',
-        ),
-        pytest.param(
-            'Drag in a straight line from x=100 y=200 to x=300 y=200.',
-            Drag(path=(Point(x=100, y=200), Point(x=300, y=200))),
-            id='drag',
-        ),
-        pytest.param('Press ctrl+a.', PressKeys(keys=('ctrl', 'a')), id='keypress'),
-        pytest.param('Type "hello".', TypeText(text='hello'), id='type'),
-    ],
-)
 async def test_gpt_actions_reach_the_screen(
-    allow_model_requests: None,
-    openai_api_key: str,
-    request_capture: RequestCapture,
-    task: str,
-    expected: DisplayAction,
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
+    """Each kind of action GPT sends reaches the display as the matching `DisplayAction`."""
     provider = ScreenProvider()
     agent = Agent(_gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse()])
-    await agent.run(f'{task} Do only that, then reply "done".')
+    steps = '\n'.join(f'{number}. {task}' for number, (task, _) in enumerate(ACTION_STEPS, 1))
+    await agent.run(
+        'Take a screenshot, then do these steps in order, all in one computer call:\n'
+        f'{steps}\nDo only that, then reply "done".'
+    )
 
-    assert provider.actions == [expected]
+    assert provider.actions == [expected for _, expected in ACTION_STEPS]
