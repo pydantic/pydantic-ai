@@ -1981,7 +1981,7 @@ Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) comput
 
 Some instructions are only needed by some models, to counter something those models tend to do. An instruction function can read the model handling the request from `ctx.model`, and its [profile](models/overview.md#inspecting-a-models-profile) from `ctx.model.profile`. Instructions are resolved before every request, and again for each model the [`ModelFallback`](capabilities/model-fallback.md#instructions-for-each-model) capability moves a request on to, so the text always matches the model that receives it.
 
-A conversation can move between models: a request falls back, or a later run continues the history on another model. So the conversation keeps the instructions it started with, and the model is told what changed, write a line only some models need as follows:
+A conversation can move between models: a request falls back, or a later run continues the history on another model. To keep the instructions the conversation started with and tell the model what changed, write a line only some models need as follows:
 
 - Give it its own named block.
 - Contribute the block from the first request, empty for a model that doesn't need it.

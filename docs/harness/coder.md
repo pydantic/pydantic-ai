@@ -205,7 +205,7 @@ delegate can delegate in turn, up to three levels counting the top-level run (`S
 
 On OpenAI's GPT models, `Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task`
 unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_agent`. Without it, GPT models delegate
-work nobody asked for, and the other models measured don't. The rule goes to models whose profile sets
+work nobody asked for, and Claude, measured the same way, doesn't. The rule goes to models whose profile sets
 `delegates_unprompted`, and follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without it, the
 model is told the rule was withdrawn. A `FallbackModel` gets no rule. See
