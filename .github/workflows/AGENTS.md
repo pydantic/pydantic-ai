@@ -342,9 +342,9 @@ credential included.
 
 Every CI OpenCode run starts on `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`, a Console key for the Go
 workspace: douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback, each `PR Review Checks` review and
-OpenCode threat detection. `run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` hands a refused run down
-this chain, which [`PR_REVIEW_MODEL_CHAIN`](#pr_review_model_chain-replaces-the-pr-review-checks-chain) can replace
-for `PR Review Checks`:
+OpenCode threat detection. A `PR Review Checks` review starts elsewhere only when
+[`PR_REVIEW_MODEL_CHAIN`](#pr_review_model_chain-replaces-the-pr-review-checks-chain) replaces its chain.
+`run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` hands a refused run down this chain:
 
 1. `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`.
 2. `zai-coding-plan/glm-5.3-flash` on the first Z.AI Coding Plan account: `ZAI_API_KEY`, the primary, or
@@ -437,8 +437,8 @@ them across both accounts.
 
 `PR Review Checks` reads the repository Actions variable `PR_REVIEW_MODEL_CHAIN`. When the variable holds a valid
 chain, each review runs that chain instead of the chain above. No other caller reads the variable. When the variable
-is unset, empty or invalid, the review runs the chain above. An invalid value adds a job-log warning that never
-repeats the value.
+is unset, empty or invalid, or names no secret that is set, the review runs the chain above. An invalid value, or one
+that names no secret that is set, adds a job-log warning that never repeats the value.
 
 Edit the variable under **Settings → Secrets and variables → Actions → Variables**. The next review uses the new
 value without a pull request. A user with write access can edit it. GitHub prints the review step's environment, this
@@ -466,11 +466,11 @@ secret, open a pull request that adds its `Provider` to `CHAIN_LINKS` and its se
 
 An entry changes only its link's model. Each link keeps its provider's hand-over errors and restart rule from above:
 
-- A link whose secret is empty is left out. A chain with no link left fails the review.
+- A link whose secret is empty is left out.
 - Consecutive entries on one model rotate by the run number plus the check's place in the matrix, as the two Coding
   Plan accounts do above.
-- Each run's config declares its model, so OpenCode 2.2.5 runs a model its bundled catalog lacks, such as
-  `hy4-flash-free`. The declaration is empty, so it leaves a model the catalog has unchanged.
+- The config of each configured link's run declares the link's model, so OpenCode 2.2.5 runs a model its bundled
+  catalog lacks, such as `hy4-flash-free`. The declaration is empty, so it leaves a model the catalog has unchanged.
 - Without a key, OpenCode 2.2.5 sends Zen the key `public`, which only Zen's free models accept. Zen's free usage is
   limited. Zen reports a spent allowance as `FreeUsageLimitError`, which OpenCode types `provider.quota`. Zen hands a
   run on after `provider.quota` or `provider.rate-limit` before the run's first step, and never restarts a run.
@@ -478,14 +478,14 @@ An entry changes only its link's model. Each link keeps its provider's hand-over
   for a limited time. Before you add one, check its data retention on
   [Zen's model list](https://opencode.ai/v2/docs/console/models/).
 
-This value tries DeepSeek on Go, Hy4 Flash on Go, both Coding Plan accounts, then Hy4 Flash on Zen's free tier:
+This value runs the chain above, then falls back to Hy4 Flash on Go, then to Hy4 Flash on Zen's free tier:
 
 ```json
 [
   {"model": "opencode-go/deepseek-v4.1-flash", "secret": "OPENCODE_API_KEY"},
-  {"model": "opencode-go/hy4-flash-free", "secret": "OPENCODE_API_KEY"},
   {"model": "zai-coding-plan/glm-5.3-flash", "secret": "ZAI_API_KEY"},
   {"model": "zai-coding-plan/glm-5.3-flash", "secret": "ZAI_BACKUP_API_KEY"},
+  {"model": "opencode-go/hy4-flash-free", "secret": "OPENCODE_API_KEY"},
   {"model": "opencode/hy4-flash-free", "secret": null}
 ]
 ```

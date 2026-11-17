@@ -382,6 +382,11 @@ def _report_failure(attempt: Attempt, output: Path) -> None:
     print(f'OpenCode run on {attempt.provider.model} on {attempt.provider.plan} failed with {described}.')
 
 
+def _has_key(provider: Provider) -> bool:
+    """Whether the workflow passed `provider`'s key, or `provider` serves without one."""
+    return provider.secret_variable is None or bool(os.environ.get(provider.secret_variable))
+
+
 def run_with_fallback(
     launch: Callable[[list[str], dict[str, str], TextIO], T],
     *,
@@ -398,18 +403,19 @@ def run_with_fallback(
     """Launch OpenCode on Go, then on one Z.AI Coding Plan account, then on the other, while each refuses the run.
 
     `configured_chain`, a `PR_REVIEW_MODEL_CHAIN` value, replaces that chain with its own links, each one of
-    `CHAIN_LINKS` running its entry's model. An invalid value warns and leaves the chain as it is. A link whose secret
-    is empty is left out. A provider hands the run to the next link only when it refused the run with one of its
-    `handover_errors` before the run finished a step, or, with `restart_on_rate_limit`, rate-limited it after. The next
-    link runs it from scratch, and each link runs it at most once. The workflow's run number plus `matrix_index`, the
-    run's place in its job matrix, rotates each run of consecutive links on one model, so the Coding Plan account tried
-    first is the primary when the sum is even and the backup when it is odd. `launch` runs the command in the
-    environment it is given and writes the event stream to the stream it is given, which `output` holds after each run.
-    Each run gets a config that allows only its provider, and an environment whose only provider key is that account's.
-    A run whose process fails prints its model, OpenCode error type, status and provider code, and for a
-    `provider.go-limit` the Go usage window and its retry-after. Each run appends an `Attempt` to `attempts`, so a
-    caller can report a chain that raised. The returned result and `output` come from the run that served, so a run the
-    chain moved past shows only as its `Attempt` and its span, which count that run's own steps and tokens.
+    `CHAIN_LINKS` running its entry's model. A link whose secret is empty is left out. A value that is invalid, or
+    leaves no link, warns and leaves the chain as it is. A provider hands the run to the next link only when it refused
+    the run with one of its `handover_errors` before the run finished a step, or, with `restart_on_rate_limit`,
+    rate-limited it after. The next link runs it from scratch, and each link runs it at most once. The workflow's run
+    number plus `matrix_index`, the run's place in its job matrix, rotates each run of consecutive links on one model,
+    so the Coding Plan account tried first is the primary when the sum is even and the backup when it is odd. `launch`
+    runs the command in the environment it is given and writes the event stream to the stream it is given, which
+    `output` holds after each run. Each run gets a config that allows only its provider, and an environment whose only
+    provider key is that account's. A run whose process fails prints its model, OpenCode error type, status and provider
+    code, and for a `provider.go-limit` the Go usage window and its retry-after. Each run appends an `Attempt` to
+    `attempts`, so a caller can report a chain that raised. The returned result and `output` come from the run that
+    served, so a run the chain moved past shows only as its `Attempt` and its span, which count that run's own steps and
+    tokens.
 
     With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
     name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in
@@ -501,25 +507,26 @@ def run_with_fallback(
     links = default
     if configured_chain:
         try:
-            links = [
+            configured = [
                 replace(
                     CHAIN_LINKS[entry.model.partition('/')[0], entry.secret], model=entry.model, declares_model=True
                 )
                 for entry in _CHAIN.validate_json(configured_chain)
             ]
         except (ValidationError, KeyError):
+            configured = []
+        links = [link for link in configured if _has_key(link)] or default
+        if links is default:
             # A maintainer types the value, and it could hold a key by mistake, so the warning never repeats it.
             print(
-                '::warning::The `PR_REVIEW_MODEL_CHAIN` variable is invalid, so this run uses the default chain; '
-                'see `.github/workflows/AGENTS.md` for its format.'
+                '::warning::The `PR_REVIEW_MODEL_CHAIN` variable is invalid or names no secret that is set, so this '
+                'run uses the default chain; see `.github/workflows/AGENTS.md` for its format.'
             )
     # Every workflow that runs the default chain passes Go's key, so an empty one is a broken secret binding.
     if links is default and not os.environ['OPENCODE_API_KEY']:
         raise ValueError('OPENCODE_API_KEY is empty')
     # A link without its key is left out, so a run never waits on a provider it cannot reach.
-    keyed = [link for link in links if link.secret_variable is None or os.environ.get(link.secret_variable)]
-    if not keyed:
-        raise ValueError('No `PR_REVIEW_MODEL_CHAIN` link has its secret set')
+    keyed = [link for link in links if _has_key(link)]
     # Run numbers count up within a workflow, so a burst of runs, and the checks of one matrix, alternate accounts.
     turn = int(os.environ['GITHUB_RUN_NUMBER']) + matrix_index
     chain: list[Provider] = []

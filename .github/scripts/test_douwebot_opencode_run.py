@@ -849,29 +849,29 @@ def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
     invoked = fake_opencode(
         monkeypatch,
         (REFUSED, refusal),
+        (plan_refused, refusal),
+        (plan_refused, refusal),
         (REFUSED, refusal),
-        (plan_refused, refusal),
-        (plan_refused, refusal),
         (FINISHED, None),
     )
     assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
     assert_runs_on(invoked[0], GO_DEEPSEEK)
-    assert_runs_on(invoked[1], GO_HY4)
-    assert_runs_on(invoked[2], replace(ZAI, declares_model=True))
-    assert_runs_on(invoked[3], replace(ZAI_BACKUP, declares_model=True))
+    assert_runs_on(invoked[1], replace(ZAI, declares_model=True))
+    assert_runs_on(invoked[2], replace(ZAI_BACKUP, declares_model=True))
+    assert_runs_on(invoked[3], GO_HY4)
     assert_runs_on(invoked[4], ZEN_HY4)
     limit = 'failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
+    go_hy4 = 'opencode-go/hy4-flash-free on OpenCode Go'
     zen = 'opencode/hy4-flash-free on the OpenCode Zen free tier'
     assert capsys.readouterr().out == (
         f'{GO_LIMIT_LOG}\n'
-        'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
-        'retrying on opencode-go/hy4-flash-free on OpenCode Go.\n'
-        f'OpenCode run on opencode-go/hy4-flash-free on OpenCode Go {limit}\n'
-        f'opencode-go/hy4-flash-free refused the run before its first step; retrying on {GLM} on {ZAI.plan}.\n'
+        f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {GLM} on {ZAI.plan}.\n'
         f'OpenCode run on {GLM} on {ZAI.plan} failed with error type provider.quota, status 429.\n'
         f'{GLM} refused the run before its first step; retrying on {GLM} on {ZAI_BACKUP.plan}.\n'
         f'OpenCode run on {GLM} on {ZAI_BACKUP.plan} failed with error type provider.quota, status 429.\n'
-        f'{GLM} refused the run before its first step; retrying on {zen}.\n'
+        f'{GLM} refused the run before its first step; retrying on {go_hy4}.\n'
+        f'OpenCode run on {go_hy4} {limit}\n'
+        f'opencode-go/hy4-flash-free refused the run before its first step; retrying on {zen}.\n'
         f'OpenCode run served by {zen}.\n'
     )
 
@@ -899,19 +899,30 @@ def test_configured_chain_alternates_consecutive_links_on_one_model(
     assert_runs_on(invoked[0], replace(first, declares_model=True))
 
 
-def test_configured_chain_leaves_out_a_link_without_its_key(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A link whose secret is empty is left out, even Go's, and a chain with no link left fails before any run."""
+INVALID_CHAIN_WARNING = (
+    '::warning::The `PR_REVIEW_MODEL_CHAIN` variable is invalid or names no secret that is set, so this run uses the '
+    'default chain; see `.github/workflows/AGENTS.md` for its format.'
+)
+
+
+def test_configured_chain_leaves_out_a_link_without_its_key(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A link whose secret is empty is left out, even Go's, and a chain with no link left runs the default chain."""
     monkeypatch.setenv('OPENCODE_API_KEY', '')
     monkeypatch.delenv('ZAI_API_KEY')
     plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.quota', 'status': 429}}]
-    invoked = fake_opencode(monkeypatch, (plan_refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    invoked = fake_opencode(
+        monkeypatch, (plan_refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None), (FINISHED, None)
+    )
     assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
     assert_runs_on(invoked[0], replace(ZAI_BACKUP, declares_model=True))
     assert_runs_on(invoked[1], ZEN_HY4)
-    keyed = json.dumps([{'model': 'opencode-go/hy4-flash-free', 'secret': 'OPENCODE_API_KEY'}])
-    with pytest.raises(ValueError, match='No `PR_REVIEW_MODEL_CHAIN` link has its secret set'):
-        review_on(review_env, keyed)
-    assert len(invoked) == 2
+    assert INVALID_CHAIN_WARNING not in capsys.readouterr().out
+    monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
+    assert review_on(review_env, json.dumps([{'model': GLM, 'secret': 'ZAI_API_KEY'}])) == OPENCODE_GO
+    assert_runs_on(invoked[2], OPENCODE_GO)
+    assert capsys.readouterr().out.splitlines()[0] == INVALID_CHAIN_WARNING
 
 
 @pytest.mark.parametrize(
@@ -942,10 +953,7 @@ def test_invalid_configured_chain_runs_the_default_chain(
     assert review_on(review_env, value) == OPENCODE_GO
     assert_runs_on(invoked[0], OPENCODE_GO)
     out = capsys.readouterr().out
-    assert out.splitlines()[0] == (
-        '::warning::The `PR_REVIEW_MODEL_CHAIN` variable is invalid, so this run uses the default chain; '
-        'see `.github/workflows/AGENTS.md` for its format.'
-    )
+    assert out.splitlines()[0] == INVALID_CHAIN_WARNING
     assert value not in out
 
 
