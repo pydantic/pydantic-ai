@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 
-from ...conftest import RequestCapture, message, try_import
+from ...conftest import RequestCapture, message, retrying_client, try_import
 from ..conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, message_shape
 
 with try_import() as anthropic_imports_successful:
@@ -330,6 +330,81 @@ async def test_anthropic_code_execution_files_500_then_stale_thinking_block_stil
     assert completion_kwargs[-1]['extra_body'] == snapshot(
         {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
+
+
+@pytest.mark.parametrize(
+    'status_code,error,stale_after_drop',
+    [
+        pytest.param(
+            404,
+            {'type': 'not_found_error', 'message': 'Container not found. The provided container has expired.'},
+            False,
+            id='404',
+        ),
+        pytest.param(500, {'type': 'api_error', 'message': 'Internal server error'}, False, id='500'),
+        pytest.param(
+            500, {'type': 'api_error', 'message': 'Internal server error'}, True, id='500-then-stale-thinking'
+        ),
+    ],
+)
+async def test_anthropic_code_execution_files_retrying_transport_gave_up_on_expired_container(
+    allow_model_requests: None, status_code: int, error: dict[str, str], stale_after_drop: bool
+):
+    """An expired container a retrying transport gave up on is dropped and the request resent, as the SDK's error is.
+
+    The transport raises `httpx2.HTTPStatusError` once its attempts run out, and `anthropic` wraps it in
+    `APIConnectionError`, so the recovery reads the status and body from the transport's response. Each rejected
+    request shows up three times, once per attempt of the transport. In the last case, the transport also gives up on
+    the stale thinking block the request without the container hits, which the `drop_block` retry then absorbs.
+
+    Not a VCR test: `test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried` in
+    `tests/test_code_execution_files_vcr.py` records the 404 and the retry, and the 500 can't be recorded anymore.
+    What this adds is the transport raising for the rejection, which depends only on its status and body, so a mock
+    transport serves them.
+    """
+    sent: list[tuple[object, bool]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        thinking = body.get('thinking')
+        dropping = isinstance(thinking, dict) and 'block_binding' in thinking
+        sent.append((body.get('container'), dropping))
+        if 'container' in body:
+            return httpx2.Response(status_code, json={'type': 'error', 'error': error})
+        if stale_after_drop and not dropping:
+            return httpx2.Response(400, json=stale_thinking_block_error().body)
+        reply = completion_message(
+            [BetaTextBlock(text='Summarized.', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+        )
+        return httpx2.Response(200, json=reply.model_dump(mode='json'))
+
+    model = AnthropicModel(
+        'claude-fable-5-1', provider=AnthropicProvider(api_key='test', http_client=retrying_client(handler))
+    )
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(CodeExecutionTool(files=[UploadedFile(file_id='file_x', provider_name='anthropic')]))],
+        model_settings={'max_retries': 0, 'max_tokens': 1024},
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Use the attached file.')]),
+        ModelResponse(
+            parts=[TextPart(content='Earlier answer.')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
+
+    if stale_after_drop:
+        with pytest.warns(AnthropicStaleThinkingBlockWarning):
+            result = await agent.run('And now summarize it.', message_history=history)
+    else:
+        result = await agent.run('And now summarize it.', message_history=history)
+
+    assert result.output == 'Summarized.'
+    expected: list[tuple[object, bool]] = [('container_from_history', False)] * 3
+    expected += [(None, False)] * 3 + [(None, True)] if stale_after_drop else [(None, False)]
+    assert sent == expected
 
 
 async def test_anthropic_code_execution_files_container_fallback_surfaces_its_error(

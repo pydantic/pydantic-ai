@@ -108,6 +108,10 @@ class FunctionToolsetRejectingDurability(RecordingDurability):
     engine_spec = replace(RecordingDurability.engine_spec, unsupported_runtime_toolset_kinds=frozenset({'function'}))
 
 
+class _SubclassedMemory(Memory[object]):
+    pass
+
+
 def _ctx(
     tool_call_id: str = 'call-1',
     run_id: str = 'run-1',
@@ -511,6 +515,13 @@ class UnboundedListingStore(DelegatingStore):
         return await self.inner.list_paths(prefix, limit=10_000)
 
 
+class ChildListingDelegatingStore(DelegatingStore):
+    """A custom store without `search` that can list a scope's direct children."""
+
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        return await self.inner.list_child_paths(prefix, limit=limit)
+
+
 class ForgedListingStore(DelegatingStore):
     """A custom store whose listing returns a file name no bundled store would accept."""
 
@@ -652,6 +663,17 @@ class TestWriteMemory:
         memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
         assert memory_file is not None
         assert memory_file.content == '- likes uv\n- uses Linux\n'
+
+    async def test_edit_crlf_file_with_old_text_from_snapshot(self) -> None:
+        capability = Memory[None]()
+        toolset = MemoryToolset(capability)
+        await _seed(capability.store, 'main/MEMORY.md', '- likes pip\r\n- uses Linux\r\n- tabs\r\n')
+
+        await toolset.write_memory(_ctx('edit'), '- likes uv\n- uses macOS', old_text='- likes pip\n- uses Linux')
+
+        memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
+        assert memory_file is not None
+        assert memory_file.content == '- likes uv\r\n- uses macOS\r\n- tabs\r\n'
 
     async def test_subfile_normalization_empty_append_and_invalid_name(self) -> None:
         capability = Memory[None]()
@@ -1142,6 +1164,19 @@ class TestSearchMemory:
             }
         ]
 
+    async def test_fallback_skips_nested_scopes_of_a_child_listing_store(self) -> None:
+        store = ChildListingDelegatingStore()
+        await _seed(store.inner, 'acme/main/MEMORY.md', '- the org prefers tea')
+        for index in range(5):
+            await _seed(store.inner, f'acme/main/main/topic-{index}.md', '- nested tea')
+        await _seed(store.inner, 'acme/main/teas.md', '- green tea')
+
+        toolset = MemoryToolset(Memory[None](store=store, namespace='acme', max_search_files=2))
+        result = await toolset.search_memory(_ctx(), 'tea')
+
+        assert sorted(match['file'] for match in result['matches']) == ['MEMORY.md', 'teas.md']
+        assert (result['scanned'], result['truncated']) == (2, False)
+
     async def test_nested_backend_match_is_rejected(self) -> None:
         with pytest.raises(RuntimeError, match='nested result'):
             await MemoryToolset(Memory[None](store=NestedSearchStore())).search_memory(_ctx(), 'secret')
@@ -1274,6 +1309,23 @@ class TestInjection:
         assert len(captured[0]) <= 20
         assert 'x' * 21 not in captured[0]
         assert store.listing_limits == [5]
+
+    async def test_nested_scope_does_not_fill_the_file_listing(self) -> None:
+        store = InMemoryMemoryStore()
+        await _seed(store, 'acme/main/MEMORY.md', '- the org prefers tea')
+        # `acme/main/main/` sorts before `acme/main/teas.md` and holds more paths than the listing requests.
+        for index in range(30):
+            await _seed(store, f'acme/main/main/topic-{index:02}.md', '- nested')
+        await _seed(store, 'acme/main/teas.md', '- green tea')
+
+        result = await Agent(
+            TestModel(call_tools=[]),
+            deps_type=str,
+            capabilities=[Memory[str](store, namespace=lambda ctx: ctx.deps, guidance='', max_tokens=30)],
+        ).run('go', deps='acme')
+
+        [snapshot] = _memory_contexts(result.all_messages())
+        assert snapshot.endswith('### Other memory files\n\n- teas.md\n</memory>')
 
     async def test_huge_external_file_store_listing_stays_within_prompt_budget(self, tmp_path: Path) -> None:
         root = tmp_path / 'memory'
@@ -2727,8 +2779,11 @@ class TestTelemetryAndComposition:
         run_memory = await memory.for_run(_ctx())
         assert run_memory.get_toolset() is registered
 
+    @pytest.mark.parametrize('memory_cls', [Memory, _SubclassedMemory])
     @pytest.mark.parametrize('prefix', [None, 'org'])
-    async def test_durability_runs_registered_tools_against_run_scope(self, prefix: str | None) -> None:
+    async def test_durability_runs_registered_tools_against_run_scope(
+        self, prefix: str | None, memory_cls: type[Memory[object]]
+    ) -> None:
         stores: list[InMemoryMemoryStore] = []
         tool_prefix = f'{prefix}_' if prefix else ''
 
@@ -2747,7 +2802,7 @@ class TestTelemetryAndComposition:
                 )
             return ModelResponse(parts=[TextPart('done')])
 
-        memory = Memory[object](store_resolver=resolver, inject_memory=False)
+        memory = memory_cls(store_resolver=resolver, inject_memory=False)
         agent = Agent(
             FunctionModel(model),
             name='memory-agent',

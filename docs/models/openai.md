@@ -40,7 +40,7 @@ agent = Agent('{{ openai:medium }}')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra), so use Responses for its tool calls. Use Responses whenever you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
+GPT-6 models reject tools, output tools included, on Chat Completions while reasoning is on, so `OpenAIChatModel` raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it sends such a request, which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on as it would on the API's 400. Use Responses whenever you need reasoning and tools together. `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-terra` also take tools on Chat Completions with reasoning off: `thinking=False` sends `reasoning_effort='none'`, although [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra). `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for tool calling with them. [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_function_tools_require_reasoning_off`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_function_tools_require_reasoning_off] for these models, including through a custom `base_url`, as a proxy to OpenAI needs. Another server that serves these model names and accepts tools with reasoning turns it off with `openai_chat_function_tools_require_reasoning_off=False` in the model's [profile](overview.md#models-and-providers).
 
 Or initialise the model directly with just the model name:
 
@@ -69,6 +69,8 @@ model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider
 agent = Agent(model)
 ...
 ```
+
+For short-lived or rotating credentials, `api_key` also accepts an async callable that returns the key, which the OpenAI SDK calls before each request. [Batch processing](../batch.md#which-requests-share-a-batch) refuses such a client, and [Responses WebSockets](#responses-websockets) send its requests over HTTP.
 
 ## Custom OpenAI Client
 
@@ -298,6 +300,12 @@ moderation = (result.response.provider_details or {}).get('moderation')
 When the response includes moderation results, they are stored under the `'moderation'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], with `input` and `output` entries each carrying the flagged status, per-category flags, and category scores.
 
 With [`OpenAIChatModel`](#chat-completions-api), use [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings] instead. The results are surfaced the same way on both the non-streaming and streaming paths, except that the Chat Completions API nests each entry one level deeper, under a `results` list.
+
+### Safety identifier
+
+OpenAI uses a [safety identifier](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers) to detect end users who may be violating its usage policies. Set it with [`openai_safety_identifier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_safety_identifier] on both the Responses and Chat Completions APIs; nothing is sent when it is unset. Pass a hash of the end user's ID, such as their username or email address, so that no identifying information reaches OpenAI.
+
+OpenAI is replacing the `user` field, which [`openai_user`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_user] sends, with `safety_identifier` and `prompt_cache_key`.
 
 ## Responses API features
 
@@ -590,7 +598,7 @@ Because the request is queued server-side, the time to the first token is higher
 To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued (when streaming, the response streams until it's finished, unless the stream drops before then), and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
 
 !!! note
-    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling a run that's waiting cancels the server-side background job.
+    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired], or, with a [retrying transport](../retries.md#a-retrying-client) whose `validate_response` rejects the 404, a [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], so that a [fallback model](../retries.md#model-fallback-is-not-a-retry) moves on. Abandoning or cancelling a run that's waiting cancels the server-side background job.
 
 ## Batch API
 

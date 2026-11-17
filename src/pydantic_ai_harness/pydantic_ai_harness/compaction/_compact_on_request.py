@@ -89,10 +89,9 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
         agent = Agent(
             'openai:gpt-5.6-luna',
             capabilities=[
-                TieredCompaction(tiers=[SummarizingCompaction(max_messages=1)], target_fraction=0.8),
-                # `max_messages` is required by the strategy, but `CompactOnRequest` bypasses it.
+                TieredCompaction(tiers=[SummarizingCompaction()], target_fraction=0.8),
                 CompactOnRequest(
-                    SummarizingCompaction(max_messages=1, keep_messages=6),
+                    SummarizingCompaction(keep_messages=6),
                     min_tokens=30_000,
                     max_per_run=2,
                 ),
@@ -111,7 +110,7 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
     """Refuse requests once this many have been accepted in the run. `None` disables the check."""
 
     tokenizer: Callable[[str], int] | None = field(default=None, kw_only=True)
-    """Optional token counter for `min_tokens` and the span; defaults to the characters-per-token heuristic."""
+    """Optional token counter for `min_tokens` and the span; defaults to the built-in text estimate."""
 
     id: str | None = field(default='compact_on_request', kw_only=True)
 
