@@ -265,7 +265,8 @@ from .toolsets import (
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
 
-__all__ = (
+# Annotated because Pyright infers a tuple literal of more than 256 entries as `tuple[Unknown, ...]`.
+__all__: tuple[str, ...] = (
     '__version__',
     'BANNER_ENABLED',
     # agent
