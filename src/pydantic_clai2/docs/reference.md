@@ -2604,8 +2604,9 @@ later turns in Claude Code or Codex are not merged into it.
 #### Background names
 
 A saved session immediately gets a fallback title from its first prompt. With
-`sessions.naming` on, a single background worker can replace it with a short title, subtitle, and up to
-four topic tags. The browser refreshes names while idle without moving selection.
+`sessions.naming` on, a single background worker can replace it with a short
+title, subtitle, and up to four topic tags. The browser refreshes names while
+idle without moving selection.
 
 The worker uses up to 2,400 characters of recent user/assistant text, plus the
 previous summary once a model has generated one. Until then, the fallback title
@@ -2630,10 +2631,11 @@ the worker.
 Naming is off by default, so no model request is made without your opt-in, and
 sessions keep their fallback titles. Once on, it uses the current model unless
 `sessions.naming_model` names a smaller one. It sends conversation excerpts to
-that model's provider and incurs additional usage. It has no tools and does not inherit coding plugins. Missing credentials,
-timeouts, invalid output, or stale results leave the existing name usable and do
-not interrupt foreground work. `/usage` and the browser preview show persisted
-naming token counts separately; `/cost` remains retained foreground-history cost.
+that model's provider and incurs additional usage. It has no tools and does not
+inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
+results leave the existing name usable and do not interrupt foreground work.
+`/usage` and the browser preview show persisted naming token counts separately;
+`/cost` remains retained foreground-history cost.
 
 #### Storage and recovery limits
 
