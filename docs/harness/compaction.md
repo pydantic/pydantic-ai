@@ -697,7 +697,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 
 ## Events
 
-Every strategy attempt inside an agent run emits `CompactionStartEvent` (from the compaction event family Pydantic AI core defines and its provider-native compaction capabilities share) after its trigger fires and before it rewrites history. The event reports the strategy, message count, and estimated tokens. It uses immediate dispatch, so capability and application listeners can call `cancel()` before the strategy continues. Cancellation applies to this attempt only; a later trigger tries again. A cancelled fallback candidate is a deliberate skip and does not advance the fallback chain.
+Every strategy attempt inside an agent run emits `CompactionStartEvent` (from the compaction event family Pydantic AI core defines and its provider-native compaction capabilities share) after its trigger fires and before it rewrites history. The event reports the strategy, message count, and estimated tokens. It uses immediate dispatch, so capability and application listeners can call `cancel()` before the strategy continues. Cancellation applies to this attempt only; a later trigger tries again. A cancelled fallback candidate is a deliberate skip and does not advance the fallback chain. Inside `TieredCompaction`, a cancelled tier is skipped and escalation continues with the next tier; cancel the outer `tiered` event to hold the whole escalation.
 
 `CompactionEndEvent` follows only when the strategy actually changes history. It reports the before/after message and token counts. The event is a live coordination signal; [compaction receipts](#compaction-receipts) remain an in-history note for the model.
 

@@ -4017,7 +4017,6 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'tiered'
 
-    @pytest.mark.anyio
     async def test_span_measures_before_an_in_place_tier_edits_the_list(self, capfire: CaptureLogfire) -> None:
         class InPlace:
             async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:

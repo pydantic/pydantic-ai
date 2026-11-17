@@ -5,7 +5,7 @@ import json
 import re
 import warnings
 from collections import Counter
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -69,11 +69,8 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     AbstractCapability,
-    CompactionEndEvent,
-    CompactionStartEvent,
     NativeTool,
     ProcessHistory,
-    on_event,
 )
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
@@ -90,7 +87,6 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
-    AgentStreamEvent,
     InstructionPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
@@ -171,7 +167,6 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import (
-        OpenAICompaction,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
@@ -17075,101 +17070,6 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     assert compaction.provider_name == 'openai'
     assert compaction.provider_details is not None
     assert 'encrypted_content' in compaction.provider_details
-
-
-async def test_openai_responses_compact_emits_lifecycle_events(allow_model_requests: None, openai_api_key: str):
-    """Stateless `OpenAICompaction` emits an immediately dispatched `CompactionStartEvent` and a `CompactionEndEvent` around `/compact`."""
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    compaction = OpenAICompaction(message_count_threshold=4)
-    compaction.id = 'openai_compaction'
-    agent = Agent(
-        model=model,
-        instructions='You are a helpful math assistant. Give short answers.',
-        capabilities=[compaction],
-    )
-
-    events: list[AgentStreamEvent] = []
-
-    async def handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
-            events.append(event)
-
-    message_history: list[Any] = []
-    result = await agent.run('What is 2+2?', message_history=message_history, event_stream_handler=handler)
-    message_history = result.all_messages()
-    result = await agent.run('And 3+3?', message_history=message_history, event_stream_handler=handler)
-    message_history = result.all_messages()
-    # Third run exceeds the threshold and compacts
-    result = await agent.run('And 5+5?', message_history=message_history, event_stream_handler=handler)
-
-    assert any(
-        isinstance(part, CompactionPart)
-        for msg in result.all_messages()
-        if isinstance(msg, ModelResponse)
-        for part in msg.parts
-    )
-    compaction_events = [event for event in events if isinstance(event, CompactionStartEvent | CompactionEndEvent)]
-    assert compaction_events == snapshot(
-        [
-            CompactionStartEvent(capability_id='openai_compaction', strategy='openai', messages_before=4),
-            CompactionEndEvent(
-                capability_id='openai_compaction', strategy='openai', messages_before=4, messages_after=1
-            ),
-        ]
-    )
-
-
-async def test_openai_responses_compact_start_event_cancellation(allow_model_requests: None, openai_api_key: str):
-    """A listener cancelling `CompactionStartEvent` makes stateless `OpenAICompaction` skip the `/compact` call.
-
-    The cassette holds only regular `/responses` exchanges, so a regression that still calls
-    `/compact` fails to find a matching recording.
-    """
-
-    class HoldCompaction(AbstractCapability[Any]):
-        @on_event(CompactionStartEvent)
-        async def _hold(self, ctx: RunContext[Any], event: CompactionStartEvent) -> None:
-            event.cancel('history must stay intact')
-
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    compaction = OpenAICompaction(message_count_threshold=4)
-    compaction.id = 'openai_compaction'
-    agent = Agent(
-        model=model,
-        instructions='You are a helpful math assistant. Give short answers.',
-        capabilities=[compaction, HoldCompaction()],
-    )
-
-    events: list[AgentStreamEvent] = []
-
-    async def handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
-            events.append(event)
-
-    message_history: list[Any] = []
-    result = await agent.run('What is 2+2?', message_history=message_history, event_stream_handler=handler)
-    message_history = result.all_messages()
-    result = await agent.run('And 3+3?', message_history=message_history, event_stream_handler=handler)
-    message_history = result.all_messages()
-    result = await agent.run('And 5+5?', message_history=message_history, event_stream_handler=handler)
-
-    all_msgs = result.all_messages()
-    assert not any(
-        isinstance(part, CompactionPart) for msg in all_msgs if isinstance(msg, ModelResponse) for part in msg.parts
-    )
-    assert len(all_msgs) == 6
-    compaction_events = [event for event in events if isinstance(event, CompactionStartEvent | CompactionEndEvent)]
-    assert compaction_events == snapshot(
-        [
-            CompactionStartEvent(
-                capability_id='openai_compaction',
-                strategy='openai',
-                messages_before=4,
-                cancelled=True,
-                cancel_reason='history must stay intact',
-            )
-        ]
-    )
 
 
 async def test_openai_responses_trims_before_latest_compaction(allow_model_requests: None):

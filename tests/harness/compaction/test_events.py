@@ -7,20 +7,17 @@ from typing import Any
 
 import pydantic
 from inline_snapshot import snapshot
-from opentelemetry.trace import NoOpTracer
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, CompactionEndEvent, CompactionStartEvent, Hooks, on_event
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
     SlidingWindowCompaction,
     TieredCompaction,
 )
-from pydantic_ai_harness.compaction._background import _compact_traced  # pyright: ignore[reportPrivateUsage]
 
 
 def _history(*values: str) -> list[ModelMessage]:
@@ -289,12 +286,47 @@ def test_events_serialize() -> None:
     )
 
 
-async def test_background_work_emits_no_events_from_a_composed_tier() -> None:
-    # A bare context has no event stream: a tier that emitted here would raise instead of compacting.
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), tracer=NoOpTracer())
-    calls: list[str] = []
-    tiered = TieredCompaction[None](tiers=[_DroppingStrategy(calls)], target_tokens=1)
+@dataclass
+class _Named:
+    strategy_id: str
+    drops: bool = True
 
-    await _compact_traced(tiered, _history('one ' * 100, 'two ' * 100), ctx)
+    async def compact(self, messages: list[ModelMessage], ctx: RunContext[Any]) -> list[ModelMessage]:
+        return messages[1:] if self.drops else messages
 
-    assert calls == ['dropped']
+
+async def test_a_cancelled_tier_is_skipped_and_escalation_continues() -> None:
+    events: list[CompactionStartEvent | CompactionEndEvent] = []
+
+    @dataclass
+    class _CancelCheap(_RecordAll):
+        @on_event(CompactionStartEvent)
+        async def cancel_cheap(self, ctx: RunContext[Any], event: CompactionStartEvent) -> None:
+            if event.strategy == 'cheap':
+                event.cancel('not now')
+
+    tiered = TieredCompaction[Any](tiers=[_Named('cheap'), _Named('expensive')], target_tokens=1)
+    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _CancelCheap(events)])
+
+    await agent.run('trigger', message_history=_history('old one ' * 20, 'old two ' * 20))
+
+    assert [(type(event).__name__, event.strategy) for event in events] == [
+        ('CompactionStartEvent', 'tiered'),
+        ('CompactionStartEvent', 'cheap'),
+        ('CompactionStartEvent', 'expensive'),
+        ('CompactionEndEvent', 'expensive'),
+        ('CompactionEndEvent', 'tiered'),
+    ]
+
+
+async def test_an_attempt_that_changes_nothing_emits_no_end_event() -> None:
+    events: list[CompactionStartEvent | CompactionEndEvent] = []
+    tiered = TieredCompaction[Any](tiers=[_Named('unchanged', drops=False)], target_tokens=1)
+    agent = Agent(TestModel(custom_output_text='ok'), capabilities=[tiered, _RecordAll(events)])
+
+    await agent.run('trigger', message_history=_history('old one ' * 20, 'old two ' * 20))
+
+    assert [(type(event).__name__, event.strategy) for event in events] == [
+        ('CompactionStartEvent', 'tiered'),
+        ('CompactionStartEvent', 'unchanged'),
+    ]

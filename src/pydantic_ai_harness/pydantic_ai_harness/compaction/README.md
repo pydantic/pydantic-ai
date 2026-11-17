@@ -880,7 +880,8 @@ trigger fires and before it rewrites history. The event reports the strategy, me
 estimated tokens. It uses immediate dispatch, so capability and application listeners can call
 `cancel()` before the strategy continues. Cancellation applies to this attempt only; a later
 trigger tries again. A cancelled fallback candidate is a deliberate skip and does not advance the
-fallback chain.
+fallback chain. Inside `TieredCompaction`, a cancelled tier is skipped and escalation continues with
+the next tier; cancel the outer `tiered` event to hold the whole escalation.
 
 `CompactionEndEvent` follows only when the strategy actually changes history. It reports the
 before/after message and token counts. The event is a live coordination signal; compaction receipts
@@ -945,9 +946,9 @@ attempt rather than deferring an answer to background work.
 ## Compaction receipts
 
 Compaction is a memory wipe the model cannot veto and often cannot detect. Capabilities and
-application hooks can now veto an individual attempt with `CompactionStartEvent`; the model still
-cannot. Without a receipt, completed compaction invites *resumption drift* -- the model confabulates continuity with history it no longer has. A
-receipt makes the wipe legible: after a boundary-crossing strategy rewrites history it can
+application hooks can veto an individual attempt with `CompactionStartEvent`; the model still
+cannot. Without a receipt, completed compaction invites *resumption drift* -- the model
+confabulates continuity with history it no longer has. A receipt makes the wipe legible: after a boundary-crossing strategy rewrites history it can
 append a short, deterministic note recording how much was compacted, warning that what
 survives is secondhand, and -- when a handle provider is attached -- an identifier for persisted
 run history.
