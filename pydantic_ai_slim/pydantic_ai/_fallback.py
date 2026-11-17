@@ -238,17 +238,25 @@ class FallbackPredicates:
 
     @classmethod
     def parse(
-        cls, fallback_on: FallbackOn, *, owner: str, default: str, param: str = 'fallback_on'
+        cls,
+        fallback_on: FallbackOn,
+        *,
+        owner: str,
+        default: str,
+        param: str = 'fallback_on',
+        judges_settings: bool = False,
     ) -> FallbackPredicates:
         """Parse the `fallback_on` argument, or another argument of the same form, into exception and response handlers.
 
         `owner` and `param` name the class and argument in the error raised for an empty value, so the message
         points at whichever entry point the user actually called, and `default` is that class's default it suggests.
+        `judges_settings` is for the fallback owners, which move on from a model that would ignore a setting when
+        `UnsupportedSettingWarning` is named; elsewhere it's an exception type like any other.
         """
         predicates = cls(exception_handlers=[], response_handlers=[])
         if _is_exception_type(fallback_on):
             # Single exception type
-            predicates._add_exception_type(fallback_on)
+            predicates._add_exception_type(fallback_on, param=param, judges_settings=judges_settings)
         elif callable(fallback_on):
             # Single callable - auto-detect by type hints
             predicates._add_handler(fallback_on)
@@ -256,7 +264,7 @@ class FallbackPredicates:
             # Sequence of mixed handlers/types
             for item in fallback_on:
                 if _is_exception_type(item):
-                    predicates._add_exception_type(item)
+                    predicates._add_exception_type(item, param=param, judges_settings=judges_settings)
                 elif callable(item):
                     predicates._add_handler(item)
                 else:
@@ -272,7 +280,7 @@ class FallbackPredicates:
             )
         return predicates
 
-    def _add_exception_type(self, exception_type: type[Exception]) -> None:
+    def _add_exception_type(self, exception_type: type[Exception], *, param: str, judges_settings: bool) -> None:
         self.exception_handlers.append(_exception_types_to_handler((exception_type,)))
         # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals or
         # cut-off responses. `IncompleteToolCall` names only a cut-off tool call, not every cut-off response.
@@ -282,12 +290,14 @@ class FallbackPredicates:
             exception_type, IncompleteToolCall
         ):
             self.output_token_limit = True
+        if not judges_settings:
+            return
         if exception_type is UnsupportedSettingWarning:
             self.unsupported_setting = True
         elif issubclass(exception_type, UnsupportedSettingWarning):
             # A model raises `UnsupportedSettingWarning` itself, which a subclass's handler would never match.
             raise UserError(
-                f'`fallback_on` takes `UnsupportedSettingWarning` itself, not its subclass `{exception_type.__name__}`.'
+                f'`{param}` takes `UnsupportedSettingWarning` itself, not its subclass `{exception_type.__name__}`.'
             )
 
     def judging_settings(self) -> AbstractContextManager[None]:

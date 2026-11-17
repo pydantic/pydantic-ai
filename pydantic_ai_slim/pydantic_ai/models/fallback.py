@@ -137,7 +137,9 @@ class FallbackModel(Model):
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
         self._entered_count = 0
 
-        self._predicates = FallbackPredicates.parse(fallback_on, owner='FallbackModel', default='(ModelAPIError,)')
+        self._predicates = FallbackPredicates.parse(
+            fallback_on, owner='FallbackModel', default='(ModelAPIError,)', judges_settings=True
+        )
 
     async def __aenter__(self) -> FallbackModel:
         """Enter all sub-models so their providers can manage HTTP client lifecycle."""

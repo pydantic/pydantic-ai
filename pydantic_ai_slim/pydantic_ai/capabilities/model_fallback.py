@@ -171,7 +171,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self.models = list(models)
         self.sticky = sticky
         self._predicates = FallbackPredicates.parse(
-            fallback_on, owner='ModelFallback', default='(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)'
+            fallback_on,
+            owner='ModelFallback',
+            default='(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)',
+            judges_settings=True,
         )
         self._supplies_model = False
         self._default_model = None
