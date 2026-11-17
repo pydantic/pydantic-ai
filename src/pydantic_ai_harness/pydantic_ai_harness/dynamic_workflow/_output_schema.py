@@ -69,8 +69,14 @@ _TYPE_CHECKS: dict[_JsonType, Callable[[JsonValue], bool]] = {
 
 
 def _json_equal(a: JsonValue, b: JsonValue) -> bool:
-    """JSON equality, which unlike Python's keeps `true` and `1` apart."""
-    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+    """JSON Schema equality: unlike Python's, it keeps `true` and `1` apart, and like it, `1` and `1.0` equal."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_json_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_json_equal(value, b[key]) for key, value in a.items())
+    return a == b
 
 
 def _value_error(value: JsonValue, schema: OutputSchema) -> str | None:
