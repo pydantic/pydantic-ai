@@ -58,19 +58,40 @@ def _from_checkpoint(stored: object) -> object:
     return {'kind': 'tool_return', 'result': stored}
 
 
+def _retry_delay_seconds(strategy: object, attempt: int) -> float:
+    """The delay Absurd waits before retrying `attempt` under `strategy`, as `absurd.retry_delay_seconds` computes it."""
+    if not is_str_dict(strategy):
+        return 0.0
+    kind = strategy.get('kind', 'none')
+    if kind not in ('fixed', 'exponential'):
+        return 0.0
+    base = strategy.get('base_seconds')
+    base_seconds = float(base) if isinstance(base, int | float) else (60.0 if kind == 'fixed' else 30.0)
+    if kind == 'fixed':
+        return base_seconds
+    factor = strategy.get('factor')
+    max_seconds = strategy.get('max_seconds')
+    maximum = float(max_seconds) if isinstance(max_seconds, int | float) else 86400.0
+    try:
+        delay = base_seconds * (float(factor) if isinstance(factor, int | float) else 2.0) ** max(attempt - 1, 0)
+    except OverflowError:  # pragma: no cover - only for a huge factor and attempt
+        return maximum
+    return min(delay, maximum)
+
+
 def _retry_after_limits(task_ctx: AsyncTaskContext) -> tuple[int | None, float]:
     """How many `retry_after` waits a model step gets, the task's remaining attempts, and how long each can be.
 
-    A wait is capped at the task's `RetryStrategy` `max_seconds`, or at a minute without one.
+    A wait is capped at the delay the task's `RetryStrategy` would wait before its next attempt, or at a minute,
+    whichever is longer, so a `retry_after` never makes the retry come sooner than the strategy would.
     """
     # Absurd has no public accessor for the claimed task's attempt and retry strategy.
     task = task_ctx._task  # pyright: ignore[reportPrivateUsage]
     max_attempts = task['max_attempts']
-    strategy = task['retry_strategy']
-    max_seconds = strategy.get('max_seconds') if is_str_dict(strategy) else None
+    attempt = task['attempt']
     return (
-        max_attempts - task['attempt'] if max_attempts is not None else None,
-        float(max_seconds) if isinstance(max_seconds, int | float) else MINIMUM_RETRY_AFTER_CAP,
+        max_attempts - attempt if max_attempts is not None else None,
+        max(_retry_delay_seconds(task['retry_strategy'], attempt), MINIMUM_RETRY_AFTER_CAP),
     )
 
 

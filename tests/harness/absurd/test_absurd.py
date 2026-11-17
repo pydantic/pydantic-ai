@@ -51,6 +51,7 @@ from pydantic_ai_harness.absurd import AbsurdDurability
 from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _retry_delay_seconds,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.harness._rate_limited_model import rate_limited_once
 
@@ -845,7 +846,7 @@ class TestRetryAfter:
         ('retry_after', 'wait'),
         [
             pytest.param(30.0, 30.0, id='retry-after'),
-            # Without a `RetryStrategy` `max_seconds`, the wait is capped at a minute.
+            # Without a `RetryStrategy`, the wait is capped at a minute.
             pytest.param(120.0, 60.0, id='capped-at-a-minute'),
         ],
     )
@@ -863,17 +864,47 @@ class TestRetryAfter:
         assert stored['suspended__model.request'] == {'__pydantic_ai_harness_retry_after__': wait}
         assert counter['calls'] == 1
 
-    async def test_model_step_wait_is_capped_at_the_retry_strategy_maximum(self, absurd: AsyncAbsurd) -> None:
+    @pytest.mark.parametrize(
+        ('retry_after', 'wait'),
+        [
+            # The strategy waits five minutes, longer than a minute, so a shorter `retry_after` is waited as asked...
+            pytest.param(200.0, 200.0, id='retry-after'),
+            # ...and a longer one is capped at the strategy's own delay, never sooner than a minute.
+            pytest.param(1000.0, 300.0, id='capped-at-the-strategys-delay'),
+        ],
+    )
+    async def test_model_step_wait_is_capped_at_the_retry_strategys_delay(
+        self, absurd: AsyncAbsurd, retry_after: float, wait: float
+    ) -> None:
         counter = {'calls': 0}
-        agent = Agent(rate_limited_once(counter, 30.0), name='capped', capabilities=[AbsurdDurability()])
+        agent = Agent(rate_limited_once(counter, retry_after), name='capped', capabilities=[AbsurdDurability()])
 
-        async with running_task_context(
-            absurd, 'capped', retry_strategy={'kind': 'fixed', 'base_seconds': 1, 'max_seconds': 2}
-        ) as ctx:
+        async with running_task_context(absurd, 'capped', retry_strategy={'kind': 'fixed', 'base_seconds': 300}) as ctx:
             with pytest.raises(SuspendTask):
                 await agent.run('hi')
         stored = await checkpoints(absurd, ctx.task_id)
-        assert stored['capped__model.request'] == {'__pydantic_ai_harness_retry_after__': 2.0}
+        assert stored['capped__model.request'] == {'__pydantic_ai_harness_retry_after__': wait}
+
+    @pytest.mark.parametrize(
+        ('strategy', 'attempt', 'delay'),
+        [
+            pytest.param(None, 1, 0.0, id='no-strategy'),
+            pytest.param({'kind': 'none'}, 1, 0.0, id='none'),
+            pytest.param({'kind': 'fixed'}, 1, 60.0, id='fixed-default'),
+            pytest.param({'kind': 'fixed', 'base_seconds': 300}, 3, 300.0, id='fixed'),
+            pytest.param({'kind': 'exponential'}, 3, 120.0, id='exponential-defaults'),
+            pytest.param({'kind': 'exponential', 'base_seconds': 10, 'factor': 3}, 3, 90.0, id='exponential'),
+            pytest.param(
+                {'kind': 'exponential', 'base_seconds': 10, 'max_seconds': 25}, 3, 25.0, id='exponential-capped'
+            ),
+        ],
+    )
+    def test_retry_delay_matches_absurds(self, strategy: object, attempt: int, delay: float) -> None:
+        """The delay Absurd's `absurd.retry_delay_seconds` SQL function computes, with its defaults.
+
+        A unit test, not a VCR test: it checks a pure function against Absurd's formula, with no request involved.
+        """
+        assert _retry_delay_seconds(strategy, attempt) == delay
 
     @pytest.mark.parametrize(
         ('retry_after', 'max_attempts'),

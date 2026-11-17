@@ -136,8 +136,8 @@ These are not checkpointed and run again on replay:
   `Retry-After` header, for example) is checkpointed as a failed attempt. The task then sleeps that
   long with Absurd's durable `sleep_for` (the `{name}__model.request.retry_after` step), which
   suspends it until then without using one of its attempts, and the request runs again as the next
-  occurrence of its step. The wait is capped at the task's `RetryStrategy` `max_seconds`, or at a
-  minute without one. Each model request waits at most as many times as the task has attempts left
+  occurrence of its step. The wait is capped at the delay the task's `RetryStrategy` would wait
+  before its next attempt, or at a minute, whichever is longer. Each model request waits at most as many times as the task has attempts left
   after the current one; after that, the model error fails the run and Absurd's own retry applies.
   The suspension leaves `agent.run` as Absurd's `SuspendTask`, so an `on_model_request_error` hook
   that handles every exception has to re-raise it.

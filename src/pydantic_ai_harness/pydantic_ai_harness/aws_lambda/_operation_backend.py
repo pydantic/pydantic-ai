@@ -20,7 +20,7 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import ToolsetTool
 
-from .._retry_after import MODEL_OPERATION_IDS
+from .._retry_after import MINIMUM_RETRY_AFTER_CAP, MODEL_OPERATION_IDS
 from ._bridge import ENGINE_NAME, current_bridge
 
 TOOL_CONFIG_KEY = 'aws_lambda'
@@ -35,9 +35,6 @@ _STEP_SEMANTICS_ADAPTER = TypeAdapter(StepSemantics)
 _SERDES_ADAPTER: TypeAdapter[SerDes[object] | None] = TypeAdapter(
     SerDes[object] | None, config=ConfigDict(arbitrary_types_allowed=True)
 )
-_MINIMUM_RETRY_AFTER_CAP = 60
-"""The shortest cap on a model error's `retry_after`, in seconds, when the retry strategy's own delay is shorter."""
-
 _STEP_CONFIG_VALUE_ADAPTERS = {
     'retry_strategy': (_RETRY_STRATEGY_ADAPTER, 'a callable or None'),
     'step_semantics': (_STEP_SEMANTICS_ADAPTER, 'StepSemantics'),
@@ -130,7 +127,7 @@ def _waiting_retry_after(config: StepConfig | None) -> StepConfig:
         decision = strategy(error, attempts_made)
         if not decision.should_retry:
             return decision
-        delay = model_error_retry_after(error, maximum=max(decision.delay_seconds, _MINIMUM_RETRY_AFTER_CAP))
+        delay = model_error_retry_after(error, maximum=max(decision.delay_seconds, MINIMUM_RETRY_AFTER_CAP))
         if delay is None:
             return decision
         # Like the SDK's own strategies, wait at least a second: a `Retry-After: 0` asks for no wait.
