@@ -18,16 +18,18 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.tools import DeferredToolResults, Tool
+from pydantic_ai.tools import DeferredToolResults, Tool, ToolDenied
 from pydantic_ai_harness import (
     DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS,
     FileSystem,
+    Permissions,
     RefineOutput,
     RequireVerification,
     Shell,
     ToolOutputLimits,
 )
 from pydantic_ai_harness.require_verification import CompletionUnverifiedEvent, VerificationRequiredPart
+from pydantic_ai_harness.tool_output_limits import Band, Summarize
 from tests.harness._deferred_tools import BackgroundModel
 
 _SHELL = {'code_arg_language': 'shell', 'code_arg_name': 'command'}
@@ -439,15 +441,24 @@ class TestRequireVerification:
         assert _redirects(result.new_messages()) == []
 
     async def test_reads_the_result_before_tool_output_limits_rewrite_it(self, tmp_path: Path) -> None:
-        output = 'passed\n' * 5_000
+        # The summary drops the failure trailer, so a check read after the rewrite would pass.
+        limits = ToolOutputLimits(
+            bands=[Band(over=1_000, action=Summarize(summarize=lambda text, tool: 'All passed.'))]
+        )
+        output = 'FAILED test_app.py\n' * 100 + '[exit code: 1]'
         agent = _agent(
-            tmp_path, _write(), _run('pytest -q'), 'Done.', outputs=lambda command: output, extra=[ToolOutputLimits()]
+            tmp_path,
+            _write(),
+            _run('pytest -q'),
+            'Done.',
+            capability=RequireVerification(max_attempts=1),
+            outputs=lambda command: output,
+            extra=[limits],
         )
 
         result = await agent.run('Fix the bug')
 
-        assert result.output == 'Done.'
-        assert _redirects(result.new_messages()) == []
+        assert _attempts(result.new_messages()) == [1]
 
     async def test_attempts_are_bounded_and_the_unverified_end_is_reported(self, tmp_path: Path) -> None:
         events, hooks = _unverified()
@@ -529,6 +540,33 @@ class TestRequireVerification:
 
         assert result.output == 'Done.'
         assert _redirects(result.new_messages()) == []
+
+    async def test_a_denied_edit_before_a_pause_is_not_an_edit(self, tmp_path: Path) -> None:
+        events, hooks = _unverified()
+        agent = Agent[None, str | DeferredToolRequests](
+            _scripted(_write(), 'Left it as is.'),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Permissions('read-only'),
+                RequireVerification(),
+                hooks,
+            ],
+        )
+
+        paused = await agent.run('Fix the bug')
+        assert isinstance(paused.output, DeferredToolRequests)
+        [call] = paused.output.approvals
+        result = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: ToolDenied('No.')}),
+        )
+
+        assert result.output == 'Left it as is.'
+        assert _redirects(result.new_messages()) == []
+        assert events == []
 
     async def test_no_attempts_reports_the_unverified_end_at_once(self, tmp_path: Path) -> None:
         events, hooks = _unverified()

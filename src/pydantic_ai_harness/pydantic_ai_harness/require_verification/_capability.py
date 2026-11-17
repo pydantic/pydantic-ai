@@ -211,7 +211,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, ToolReturnPart)
+            if isinstance(part, ToolReturnPart) and part.outcome == 'success'
         }
         turn_start = max(
             (
