@@ -72,6 +72,7 @@ class FakeSandbox:
     resource: dict[str, str]
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
+    credential_proxy: dict[str, object] | None = None
     secure_access: bool = False
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
@@ -174,6 +175,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             env=body.get('env') or {},
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
+            credential_proxy=body.get('credentialProxy'),
             secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )

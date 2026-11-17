@@ -365,6 +365,23 @@ class TestStore:
         with pytest.raises(PermissionError, match='outside the store root'):
             await store.read('evil')
 
+    @pytest.mark.parametrize('link', ['file', 'directory'])
+    async def test_symlink_escape_rejected_for_write(self, tmp_path: Path, link: str):
+        outside = tmp_path / 'outside'
+        outside.mkdir()
+        root = tmp_path / 'store'
+        store = LocalFileOverflowStore(base_dir=root)
+        await store.write('run/c.0', b'inside')  # creates the root
+        if link == 'file':
+            (root / 'run' / 'evil.0').symlink_to(outside / 'planted')
+            key = 'run/evil.0'
+        else:
+            (root / 'evil').symlink_to(outside, target_is_directory=True)
+            key = 'evil/sub/c.0'
+        with pytest.raises(PermissionError, match='outside the store root'):
+            await store.write(key, b'spilled')
+        assert list(outside.iterdir()) == []
+
 
 # ---------------------------------------------------------------------------
 # Store: opt-in TTL cleanup

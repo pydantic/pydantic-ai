@@ -136,6 +136,8 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 
 `FileMemoryStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileMemoryStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileMemoryStore` listings and searches skip symlinked directories, including links that point outside the store.
 
+On its first call, each `PostgresMemoryStore` instance checks for its three tables, its `{table}_versions` sequence and the columns later releases added, and creates or adds whatever is missing under `pg_advisory_xact_lock`. Only that step needs `CREATE` on the schema and ownership of an existing table: once the schema is current, a role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and `USAGE` on the sequence is enough.
+
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
 ```bash
