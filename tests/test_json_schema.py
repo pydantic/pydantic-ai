@@ -916,7 +916,7 @@ def test_inline_defs_recursive_ref():
     transformer = _TitleUpperTransformer(deepcopy(schema))
     result = transformer.walk()
 
-    assert transformer.recursive_refs == {'Node'}
+    assert list(transformer.recursive_refs) == ['Node']
     walked_node = {
         'type': 'object',
         'title': 'NODE',
@@ -935,6 +935,24 @@ def test_inline_defs_recursive_ref():
         },
         '$ref': '#/$defs/Wrapper',
     }
+
+
+def test_inline_defs_recursive_definitions_keep_first_seen_order():
+    schema = {
+        'type': 'object',
+        'properties': {
+            'a': {'$ref': '#/$defs/A'},
+            'b': {'$ref': '#/$defs/B'},
+        },
+        '$defs': {
+            'A': {'type': 'array', 'items': {'$ref': '#/$defs/A'}},
+            'B': {'type': 'array', 'items': {'$ref': '#/$defs/B'}},
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert list(result['$defs']) == ['A', 'B', 'root']
 
 
 def test_inline_defs_recursive_ref_root_key_collides_with_a_def():

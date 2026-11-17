@@ -250,7 +250,9 @@ class JsonSchemaTransformer(ABC):
 
         self.defs: dict[str, _JsonSchemaNode] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
-        self.recursive_refs = set[str]()
+        # Keep recursive definitions in first-seen order so emitted `$defs`
+        # remain stable across processes with different hash seeds.
+        self.recursive_refs = dict[str, None]()
         self._walked_defs: dict[str, tuple[JsonSchema, int]] = {}
         self._inlined = InlinedValues('JSON schema')
 
@@ -342,7 +344,7 @@ class JsonSchemaTransformer(ABC):
                 # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
                 raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
             # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
-            self.recursive_refs.add(key)
+            self.recursive_refs.setdefault(key, None)
         elif key not in self.recursive_refs:
             # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
             # or `default`) are part of the field's own schema and must survive
