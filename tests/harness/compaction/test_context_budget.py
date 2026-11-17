@@ -1034,7 +1034,7 @@ class TestLimitWarnerFraction:
 
 class TestReportContextUsage:
     async def test_emits_without_a_callback(self, monkeypatch: pytest.MonkeyPatch):
-        """The documented shape: no `on_usage`, so the event is the only reading."""
+        """The event is the only reading."""
         _fixed_window(monkeypatch, 1_000)
         monitor: ReportContextUsage[None] = ReportContextUsage()
         ctx = _ctx()

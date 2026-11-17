@@ -6611,7 +6611,8 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
     ),
-    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
+    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field,
+    # so it goes back as tags in `content` and the request carries no field to backfill.
     AutoThinkingBackfillCase(
         id='responses_reasoning_id',
         history=[
@@ -6626,7 +6627,7 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot(
             [
-                {'tool_calls': ['get_weather'], 'rs_0123abcd': 'Paris first.'},
+                {'tool_calls': ['get_weather']},
                 {'tool_calls': ['get_weather']},
             ]
         ),
@@ -6662,8 +6663,9 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
 
     DeepSeek in thinking mode 400s on a tool-calling assistant turn after the last user message that omits
     `reasoning_content`, and a generic OpenAI-compatible provider leaves the mode at `'auto'`. The negative
-    cases pin what stays unchanged: earlier user turns, a request carrying no thinking field or two of them,
-    and a key that isn't a Chat thinking field. A mock transport stands in for a cassette because the claim is
+    cases pin what stays unchanged: earlier user turns, and a request carrying no thinking field or two of
+    them. Thinking whose id isn't a Chat thinking field goes back as tags in `content`, so those requests
+    carry no field to backfill. A mock transport stands in for a cassette because the claim is
     the request each synthetic history produces, which no provider response affects;
     `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill` is the live counterpart.
     """
@@ -6699,6 +6701,82 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
             extra = {key: value for key, value in sent.items() if key not in ('role', 'content', 'tool_calls')}
             assistant_turns.append({'tool_calls': tool_names, **extra})
     assert assistant_turns == case.assistant_turns
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+@pytest.mark.parametrize(
+    'thinking,profile,replayed',
+    [
+        pytest.param(
+            _thinking('Paris first.', id='rs_0123abcd'),
+            None,
+            snapshot([{'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}]),
+            id='summary',
+        ),
+        pytest.param(
+            ThinkingPart(content='', id='rs_0123abcd', signature='<encrypted>', provider_name='openai'),
+            None,
+            snapshot([{'role': 'assistant', 'content': 'Rain in Paris.'}]),
+            id='encrypted_only',
+        ),
+        pytest.param(
+            _thinking('Paris first.', id='rs_0123abcd'),
+            OpenAIModelProfile(openai_chat_thinking_field='reasoning_text'),
+            snapshot([{'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}]),
+            id='configured_field',
+        ),
+        pytest.param(
+            _thinking('Paris first.', id='rs_0123abcd'),
+            OpenAIModelProfile(mimics_assistant_message_formatting=True),
+            snapshot(
+                [
+                    {'role': 'user', 'content': '<assistant_thinking>\nParis first.\n</assistant_thinking>'},
+                    {'role': 'assistant', 'content': 'Rain in Paris.'},
+                ]
+            ),
+            id='user_turn',
+        ),
+    ],
+)
+async def test_auto_mode_replayed_responses_reasoning(
+    allow_model_requests: None,
+    thinking: ThinkingPart,
+    profile: OpenAIModelProfile | None,
+    replayed: list[dict[str, JsonValue]],
+):
+    """`'auto'` sends a replayed `OpenAIResponsesModel` reasoning item back as tags, never as a field named by its id.
+
+    Responses stores a reasoning item as a `ThinkingPart` whose id is the item id (`rs_...`), and both models share
+    the `'openai'` system, but Chat Completions has no such field. A profile that names its own thinking field
+    sends the item as tags too, because the id doesn't match that field, and a profile with
+    `mimics_assistant_message_formatting` sends those tags in a user turn ahead of the assistant message. The assertion
+    leaves out system messages and the two prompts. A mock transport stands in for a cassette
+    for the reason `test_auto_mode_thinking_backfill` gives.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')).model_dump(mode='json'),
+        )
+
+    history: list[ModelMessage] = [
+        _WEATHER_PROMPT,
+        ModelResponse(parts=[thinking, TextPart('Rain in Paris.')], provider_name='openai'),
+    ]
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'deepseek-v4-flash',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+            profile=profile,
+        )
+        await Agent(model).run('What about London?', message_history=history)
+
+    body = TypeAdapter(dict[str, JsonValue]).validate_json(request_bodies[0])
+    assert [msg for msg in json_objects(body['messages']) if msg['role'] != 'system'][1:-1] == replayed
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):

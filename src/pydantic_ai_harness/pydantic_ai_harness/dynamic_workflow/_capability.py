@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+from pydantic_ai import RunContext
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
@@ -13,6 +14,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.dynamic_workflow._toolset import (
     DynamicWorkflowToolset,
     WorkflowAgent,
+    WorkflowCallScheduler,
     WorkflowResourceLimits,
     index_workflow_agents,
     validate_workflow_settings,
@@ -107,6 +109,15 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     `while True` loop.
     """
 
+    call_scheduler: Callable[[RunContext[AgentDepsT]], WorkflowCallScheduler] | None = None
+    """Creates a `WorkflowCallScheduler` for each `run_workflow` call, to decide when its sub-agent calls start.
+
+    `None` starts each call as soon as the script makes it. A durable engine integration can use a
+    scheduler to hold the calls back until the script waits on them, then register them in the
+    order the script made them before starting them together. When a sub-agent runs under
+    `DBOSDurability`, the calls already run one at a time in that order, and the factory is not called.
+    """
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         # Not spec-serializable: `agents` holds live Agent objects, not YAML-expressible config.
@@ -153,6 +164,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
             inherit_model=self.inherit_model,
             sub_agent_usage_limits=self.sub_agent_usage_limits,
             resource_limits=self.resource_limits,
+            call_scheduler=self.call_scheduler,
             toolset_id=self.id,
             owning_capability=self,
         )
