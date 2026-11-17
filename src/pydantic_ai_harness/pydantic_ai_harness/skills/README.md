@@ -323,9 +323,12 @@ skill came from, including a `workspace=` backend, so it also works for
 [skills shipped with your application](#ship-skills-with-your-application).
 The tool refuses a skill the model has not loaded with `load_capability`, a
 path that leads outside the skill's directory through `..` or a symlink, and a
-file that is not UTF-8 text. It reads nothing from a workspace whose backend
-cannot resolve symlinks, one implementing neither `SupportsRealpath` nor
-commands. When two `Skills` combine, only the libraries of
+file that is not UTF-8 text. A skill with `disable-model-invocation: true` needs
+no load, since only a person can invoke it, through a host that sends
+`render()` as a prompt; a skill the model may load that a host renders this way
+is still loaded once before its files are read. The tool reads nothing from a
+workspace whose backend implements neither `SupportsRealpath` nor
+`SupportsCommands`, since it cannot resolve symlinks. When two `Skills` combine, only the libraries of
 one with `read_files=True` are readable. With a `scanner`, each file is
 scanned before it is returned, and a flagged file is withheld.
 
@@ -335,7 +338,7 @@ reads.
 
 [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills), a
 community package by [Doug Trajano](https://github.com/DougTrajano) that builds
-on `Skills` and offered skill-scoped file tools first, also runs a skill's
+on `Skills`, offered skill-scoped file tools first. It also runs a skill's
 scripts through sandboxed executors and loads skill libraries from Git and S3.
 For a library kept elsewhere, you can also sync it to a directory in the
 workspace and point `Skills` at that directory.

@@ -218,7 +218,8 @@ class Skills(AbstractCapability[AgentDepsT]):
                 a warning, as a `SkippedSkill` whose `reason` is `'flagged'`. Omit to load skills unscanned.
                 With `read_files`, it also scans each file the model reads, and withholds a flagged one.
             read_files: Give the model a `read_skill_file` tool that reads a UTF-8 text file in the
-                directory of a skill it has loaded, from the workspace the skill was read from. It
+                directory of a skill it has loaded, or of a skill with `disable-model-invocation: true`,
+                which a person invokes, from the workspace the skill was read from. It
                 works without file tools and for a `workspace=` library, and does not reach files
                 outside the skill's directory, through `..` or a symlink. A workspace whose backend
                 implements neither `SupportsRealpath` nor `SupportsCommands` cannot resolve symlinks,
@@ -363,8 +364,6 @@ class Skills(AbstractCapability[AgentDepsT]):
             skill: The name of the loaded skill.
             path: The file's path, relative to the skill's directory.
         """
-        if skill not in ctx.loaded_capability_ids:
-            raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
         try:
             entries, _ = await self._read(ctx.workspace)
         except ValueError as error:
@@ -372,6 +371,9 @@ class Skills(AbstractCapability[AgentDepsT]):
         entry = entries.get(skill)
         if entry is None or not entry.source.read_files:
             raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
+        # A skill the model may not load reaches it only when a person invokes it through the host.
+        if entry.skill.model_invocable and skill not in ctx.loaded_capability_ids:
+            raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
         workspace, directory = entry.workspace, entry.skill.directory
         if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
             raise ToolFailed(f'The workspace of skill {skill!r} cannot resolve symlinks, so its files are not read.')
@@ -419,7 +421,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         offered: list[AbstractCapability[AgentDepsT]] = [
             _Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable
         ]
-        if offered and self._toolset is not None:
+        if catalog.skills and self._toolset is not None:
             offered.append(_SkillFiles(self._toolset))
         return CombinedCapability(offered)
 

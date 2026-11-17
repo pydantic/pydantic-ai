@@ -1158,6 +1158,19 @@ class TestSkillFiles:
 
         assert results == [IsStr(regex=r".*Load the skill 'guide' with `load_capability` before reading its files.*")]
 
+    async def test_a_skill_only_a_person_invokes_needs_no_load(self, tmp_path: Path) -> None:
+        # A host renders it as a prompt; the model can't load it, so its files must be readable without.
+        _write_skill(
+            tmp_path / 'skills',
+            'manual',
+            frontmatter='description: Help.\ndisable-model-invocation: true',
+            files={'notes.md': 'Manual notes.'},
+        )
+
+        results = await _read(Skills('skills', read_files=True), tmp_path, [('manual', 'notes.md')], load=None)
+
+        assert results == ['Manual notes.']
+
     async def test_files_outside_the_skill_directory_are_refused(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'skills')
         (tmp_path / 'secret.txt').write_text('secret', encoding='utf-8')
