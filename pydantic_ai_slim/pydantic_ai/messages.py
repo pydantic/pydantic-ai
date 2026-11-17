@@ -5432,10 +5432,10 @@ class InstructionCapabilityPart(CapabilityPart, _register=False):
 class UnknownCapabilityPart(CapabilityPart, _register=False):
     """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose `kind` isn't registered in this process.
 
-    Produced when loading history from a process that had the defining module imported. It renders from its stored
-    [`rendering`][pydantic_ai.messages.CapabilityPart.rendering] facts exactly as the original part did, its typed fields
-    ride in `data`, and serialization flattens them again, so a process that does have the defining module imported
-    recovers the typed part.
+    Produced when this process loads history written by a process that imported the module defining the kind, and this
+    one hasn't. It renders from its stored [`rendering`][pydantic_ai.messages.CapabilityPart.rendering] facts exactly as
+    the original part did, its typed fields ride in `data`, and serialization flattens them again, so a process that
+    does have the defining module imported recovers the typed part.
     """
 
     content: str | StructuredContent | Sequence[UserContent]

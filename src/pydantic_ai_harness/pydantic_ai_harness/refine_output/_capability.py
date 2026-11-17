@@ -36,8 +36,8 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
     """Send the agent back to review and revise its output before the run ends.
 
     Each time the run would end with an output, a [`ReviewRoundPart`][pydantic_ai_harness.refine_output.ReviewRoundPart]
-    carrying `instructions` is added to the conversation and the model answers again, up to `rounds` times per run. The last answer is the
-    run's output.
+    carrying `instructions` is added to the conversation and the model answers again, up to `rounds` times per run. The
+    last answer is the run's output.
 
     ```python
     from pydantic_ai import Agent
