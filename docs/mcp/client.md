@@ -707,6 +707,9 @@ Pydantic AI supports sampling as both a client and server. See the [server](./se
     toolset = MCPToolset(client)
     ```
 
+    The same back-channel carries `list_changed` notifications, so on a modern session the toolset's
+    cached tools, resources and prompts aren't refreshed when the server changes them mid-session.
+
     The shortcuts work as written on FastMCP 3. Tracking the gap in
     [#8477](https://github.com/pydantic/pydantic-ai/issues/8477).
 

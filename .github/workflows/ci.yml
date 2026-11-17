@@ -1864,7 +1864,9 @@ jobs:
       # The modules are every test module that imports FastMCP or the MCP SDK, or a test server or
       # helper whose behavior depends on the generation, so a new MCP test runs here without editing
       # this job. A `conftest.py` match stands for its directory. A `pydantic-ai-harness`-only change
-      # runs only the harness modules. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
+      # runs only the harness modules. `tests/harness/test_history_append_only.py` is left out: it
+      # builds every harness capability, and under the overlay the non-MCP ones can't find their
+      # binaries and data files; each hosted MCP capability's own module runs here. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
       - name: run tests
         shell: bash
@@ -1884,6 +1886,7 @@ jobs:
           for module in "${modules[@]}"; do
             if [[ "$HARNESS_ONLY" == true && "$module" != tests/harness/* ]]; then continue; fi
             if [[ -n "$SKIP" && "$module" == "$SKIP"* ]]; then continue; fi
+            if [[ "$module" == tests/harness/test_history_append_only.py ]]; then continue; fi
             if [[ "$module" == tests/durable_exec/* ]]; then durable+=("$module"); else other+=("$module"); fi
           done
           (( ${#other[@]} )) || { echo '::error::No MCP test module matched.'; exit 1; }

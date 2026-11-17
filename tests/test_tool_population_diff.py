@@ -44,6 +44,7 @@ with try_import() as imports_successful:
     from fastmcp.server import Context, FastMCP
     from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 
+    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import MCPToolset
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -55,6 +56,8 @@ with try_import() as imports_successful:
     from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic, openai or fastmcp not installed')
+
+MCP_SDK_V2 = imports_successful() and _mcp_compat.MCP_SDK_V2
 
 
 def _deltas(messages: list[ModelMessage]) -> list[list[str]]:
@@ -170,7 +173,15 @@ def _tool_prepare_agent(model: Any) -> Agent[Any, str]:
 CAUSES: list[Any] = [
     pytest.param(_add_function_agent, id='add_function-from-tool'),
     pytest.param(_dynamic_toolset_agent, id='dynamic-toolset'),
-    pytest.param(_mcp_list_changed_agent, id='mcp-list-changed'),
+    pytest.param(
+        _mcp_list_changed_agent,
+        id='mcp-list-changed',
+        marks=pytest.mark.skipif(
+            MCP_SDK_V2,
+            reason='FastMCP 4 modern sessions have no back-channel for `list_changed` notifications: '
+            'https://github.com/pydantic/pydantic-ai/issues/8477',
+        ),
+    ),
     pytest.param(_prepare_tools_agent, id='prepare-tools'),
     pytest.param(_tool_prepare_agent, id='per-tool-prepare'),
 ]

@@ -50,7 +50,7 @@ dependencies = [
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     # Above the `[mcp]` extra's 3.3.0: browser sign-in passes `OAuth(callback_host=...)`, new in FastMCP 3.4.0.
     "fastmcp-slim[client]>=3.4.0,<5",
-    # FastMCP's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
+    # FastMCP 3's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
     # plugins) runs a uvicorn callback server with `ws="websockets-sansio"`, which imports `websockets`
     # on start. `fastmcp-slim[client]` does not declare it, so without this the sign-in fails.
     # 15 for `connect(proxy=None)`, which keeps `web.client`'s loopback WebSocket off any configured proxy.
