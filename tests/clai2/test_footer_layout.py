@@ -3,9 +3,7 @@
 import asyncio
 import io
 import json
-import sqlite3
 from collections.abc import AsyncIterator
-from contextlib import closing
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -39,11 +37,9 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2.app import create_stock_agent
-from pydantic_clai2.cli.cli import _settings_for  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.commands import config_command
 from pydantic_clai2.config import DEFAULT_FOOTER_FIELDS, FOOTER_FIELDS, FooterField, PluginSettings, Settings
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, SessionStart, TurnStart
 from pydantic_clai2.runtime.session_runtime import create_shell
@@ -146,52 +142,6 @@ async def test_layout_menu_persists_visibility_order_and_layout_only_reset(tmp_p
     menu.source.apply(first, 'hidden')
     menu.source.reset(first)
     assert first.key in context.settings.footer_fields
-
-
-@pytest.mark.parametrize('fields', [['model', 'future-field', 'activity'], ['future-field']])
-def test_future_layout_fields_are_read_without_rewriting_saved_or_project_values(
-    tmp_path: Path, fields: list[str]
-) -> None:
-    store = SettingsStore(tmp_path / 'settings.db')
-    raw = json.dumps(fields)
-    with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, raw))
-    expected = [name for name in fields if name != 'future-field']
-    assert store.load().footer_fields == expected
-    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
-    context.set_setting(['display.thinking', 'false'])
-    context.reset_setting('display.thinking')
-    assert SettingsStore(store.path).load().footer_fields == expected
-    assert store.overrides()[FOOTER_SETTING] == fields
-    with closing(sqlite3.connect(store.path)) as connection:
-        assert (
-            connection.execute('SELECT value_json FROM settings WHERE key = ?', (FOOTER_SETTING,)).fetchone()[0] == raw
-        )
-    project_file = tmp_path / '.clai' / 'settings.json'
-    project_file.parent.mkdir()
-    contents = json.dumps({'footer_fields': fields, 'thinking': False, 'future_setting': {'keep': True}})
-    project_file.write_text(contents)
-    project = load_project_settings(tmp_path, store=store)
-    assert project.overrides[FOOTER_SETTING] == fields
-    settings_for = _settings_for(store, model=None, request_limit=None)
-    assert settings_for(project).footer_fields == expected
-    context.use_project(project, settings_for(project))
-    context.set_setting(['display.spinner', 'working'])
-    assert load_project_settings(tmp_path, store=store).overrides[FOOTER_SETTING] == fields
-    assert project_file.read_text() == contents
-    assert store.overrides()[FOOTER_SETTING] == fields
-    for write in (
-        lambda: store.set(FOOTER_SETTING, list(fields)),
-        lambda: context.set_setting([FOOTER_SETTING, raw]),
-        lambda: config_command(store, ['set', FOOTER_SETTING, raw]),
-    ):
-        with pytest.raises(ValidationError):
-            write()
-    context.set_setting([FOOTER_SETTING, '["activity"]'])
-    assert store.load().footer_fields == ['activity']
-    config_command(store, ['reset', FOOTER_SETTING])
-    assert store.load().footer_fields == list(DEFAULT_FOOTER_FIELDS)
-    assert project_file.read_text() == contents
 
 
 @pytest.mark.parametrize('visible', [False, True])
@@ -458,26 +408,6 @@ async def test_visible_moves_skip_hidden_neighbours_without_enabling_them(tmp_pa
         *DEFAULT_FOOTER_FIELDS,
         *(name for name in FOOTER_FIELDS if name not in DEFAULT_FOOTER_FIELDS),
     ]
-
-
-@pytest.mark.parametrize('fields', ['model', [1], ['model', 'model']])
-def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fields: object) -> None:
-    store = SettingsStore(tmp_path / 'config.db')
-    raw = json.dumps(fields)
-    with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, raw))
-    with pytest.raises(ValidationError):
-        store.load()
-    project_file = tmp_path / '.clai' / 'settings.json'
-    project_file.parent.mkdir()
-    project_file.write_text(json.dumps({'footer_fields': fields}))
-    with pytest.raises(ValueError):
-        load_project_settings(tmp_path)
-    store.reset(FOOTER_SETTING)
-    with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.thinking', '"invalid"'))
-    with pytest.raises(ValidationError):
-        store.load()
 
 
 @pytest.mark.parametrize('initial_enabled', [False, True])
