@@ -138,6 +138,11 @@ def supports_local_workspace() -> bool:
     return sys.platform != 'win32'
 
 
+def local_workspace_provider() -> str:
+    """The `WorkspaceRef.provider` of the folder workspace CLAI gives runs on this platform."""
+    return 'local' if supports_local_workspace() else 'windows'
+
+
 def _supplies_workspace(
     plugins: Sequence[AgentCapability[DepsT]],
     *,
@@ -503,7 +508,7 @@ def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> 
     """
     response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
     ref = response.workspace_ref if response is not None else None
-    local = 'local' if supports_local_workspace() else 'windows'
+    local = local_workspace_provider()
     return ref is not None and ref.provider == local and ref != WorkspaceRef(provider=local, id=workspace)
 
 

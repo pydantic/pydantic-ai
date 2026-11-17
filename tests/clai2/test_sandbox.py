@@ -2091,3 +2091,126 @@ class TestKubernetes:
             await provider.create(github=GITHUB)
         assert fake_cluster.claims == {}
         assert all(client.closed for client in fake_cluster.clients)
+
+
+class TestCompaction:
+    """Compacting a sandboxed conversation must not move it back to this machine."""
+
+    @pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
+    @pytest.mark.parametrize('trailing', ['! command', 'cancelled turn', 'none'])
+    async def test_compact_keeps_the_sandbox(
+        self, checkout: Path, provider: FakeProvider, strategy: str, trailing: str
+    ) -> None:
+        from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
+
+        working_dirs: list[str] = []
+
+        class Probe(AbstractCapability[None]):
+            async def before_run(self, ctx: RunContext[None]) -> None:
+                working_dirs.append(await ctx.workspace.working_dir())
+
+        answers = iter(['first answer ' * 200, 'hang', 'after compaction'])
+        waiting = anyio.Event()
+
+        async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            answer = next(answers)
+            if answer == 'hang':
+                waiting.set()
+                await anyio.sleep_forever()
+            yield answer
+
+        loaded = load(checkout)
+        agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
+        session = Session(agent, deps=None, plugins=[*loaded.capabilities, Probe()], workspace=checkout)
+        loaded.host.conversation = session
+        await plugin_of(loaded).command(['fake'])
+        await session.prompt('a long question ' * 200)
+        if trailing == '! command':
+            # What `!cat log` saves: a request with no response after it.
+            await session.commit_messages(
+                [*session.messages, ModelRequest(parts=[UserPromptPart('ran cat log: ' + 'a log line\n' * 2000)])]
+            )
+            next(answers)
+        elif trailing == 'cancelled turn':
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(session.prompt, 'please read this log: ' + 'a log line\n' * 2000)
+                await waiting.wait()
+                tasks.cancel_scope.cancel()
+        else:
+            next(answers)
+        compaction = load_plugin(
+            CompactionPlugin,
+            PluginHost[None](
+                name='compaction',
+                console=Console(file=io.StringIO()),
+                settings={'strategy': strategy, 'summarization_model': 'test'},
+                conversation=session,
+            ),
+        )
+        notice = await compaction.commands.execute_async('/compact')
+        assert notice is not None and notice.startswith('Compacted'), notice
+        ref = WorkspaceRef(provider='fake', id='sbx-1')
+        # A CLAI restarted on the saved history finds the sandbox the same way.
+        restarted = plugin_of(load(checkout, Transcript(messages=session.messages))).current()
+
+        result = await session.prompt('and now?')
+        assert (history_sandbox(session.messages), restarted is not None, working_dirs[-1]) == (
+            ref,
+            True,
+            str(provider.folder(ref)),
+        )
+        assert result.response.workspace_ref == ref
+
+    @pytest.mark.parametrize('ending', ['failed', 'cancelled'])
+    async def test_a_turn_ending_unanswered_after_compacting_keeps_the_sandbox(
+        self, checkout: Path, provider: FakeProvider, ending: str
+    ) -> None:
+        from pydantic_ai_harness.compaction import SlidingWindowCompaction
+        from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+
+        working_dirs: list[str] = []
+
+        class Probe(AbstractCapability[None]):
+            async def before_run(self, ctx: RunContext[None]) -> None:
+                working_dirs.append(await ctx.workspace.working_dir())
+
+        waiting = anyio.Event()
+        answers = iter(['first answer', 'unanswered', 'third answer'])
+        sent: list[int] = []
+
+        async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            sent.append(len(messages))
+            if next(answers) == 'unanswered':
+                if ending == 'failed':
+                    raise RuntimeError('the provider is down')
+                waiting.set()
+                await anyio.sleep_forever()
+            yield 'ok'
+
+        loaded = load(checkout)
+        agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
+        # Compacts the second turn's request down to its prompt alone, before the model is called.
+        compaction = SlidingWindowCompaction[None](max_messages=4, keep_messages=1)
+        session = Session(
+            agent,
+            deps=None,
+            plugins=[*loaded.capabilities, compaction, Probe()],
+            workspace=checkout,
+            conversations=SqliteConversationStore(database=checkout.parent / 'sessions.db'),
+        )
+        loaded.host.conversation = session
+        await plugin_of(loaded).command(['fake'])
+        await session.prompt('first question')
+        if ending == 'failed':
+            with pytest.raises(RuntimeError):
+                await session.prompt('second question')
+        else:
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(session.prompt, 'second question')
+                await waiting.wait()
+                tasks.cancel_scope.cancel()
+
+        await session.prompt('third question')
+        ref = WorkspaceRef(provider='fake', id='sbx-1')
+        assert sent[1] == 1
+        assert working_dirs[-1] == str(provider.folder(ref))

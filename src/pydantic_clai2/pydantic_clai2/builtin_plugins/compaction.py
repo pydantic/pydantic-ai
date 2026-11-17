@@ -8,6 +8,7 @@ failed or over-budget summary degrades to truncation. `compact_now` drives the c
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal, Self
 
 from pydantic import (
@@ -20,9 +21,10 @@ from pydantic import (
     model_serializer,
 )
 
-from pydantic_ai import ModelMessage, ModelResponse, RunContext
+from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
+from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.compaction import (
     ContextUsageMeasuredEvent,
     FallbackCompaction,
@@ -36,6 +38,8 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
+from pydantic_clai2.runtime.imported_history import imported_context
+from pydantic_clai2.runtime.session import local_workspace_provider
 from pydantic_clai2.ui.menus.field_menu import first_error, shown
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -293,8 +297,28 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             tail = min(self.settings.protected_tokens, tokens // 2)
             chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
             after = await compact_now(chain, before, model=model, focus=focus, tracer=tracer)
+        after = _keeping_workspace(before, after)
         saved = tokens - sum(estimate_message_tokens(after))
         if saved <= 0:
             return 'Nothing to compact: compacting would not make the conversation smaller.'
         await conversation.commit_messages(after)
         return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} of {tokens:,} tokens saved.'
+
+
+def _keeping_workspace(before: Sequence[ModelMessage], after: list[ModelMessage]) -> list[ModelMessage]:
+    """`after`, still naming the workspace `before` last worked in when compacting dropped every response naming it.
+
+    A run works in the workspace its history's latest response names, so a conversation in a `/sandbox` would
+    otherwise continue on this machine. A local folder is left alone: the session works in its own anyway.
+    """
+    ref = _latest_workspace(before)
+    if ref is None or ref.provider == local_workspace_provider() or _latest_workspace(after) == ref:
+        return after
+    note = imported_context('The conversation was compacted.', source='clai', kind='compaction', at=datetime.now(UTC))
+    still = TextPart(f'Still working in {ref.provider} workspace {ref.id}.')
+    return [*after, ModelRequest(parts=[note]), ModelResponse(parts=[still], workspace_ref=ref)]
+
+
+def _latest_workspace(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    return response.workspace_ref if response is not None else None
