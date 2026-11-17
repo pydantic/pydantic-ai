@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
+    from .report_tool_errors import ReportToolErrors
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
@@ -182,6 +183,7 @@ __all__ = [
     'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
+    'ReportToolErrors',
     'RepoContext',
     'Researcher',
     'SSHWorkspace',
@@ -295,6 +297,7 @@ _LAZY_EXPORTS = {
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
+    'ReportToolErrors': 'report_tool_errors',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',

@@ -34,6 +34,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
+| Send an exception a tool raises to the model instead of ending the run | `ReportToolErrors(format_error=...)` |
 
 ## RepairToolArguments
 
@@ -865,6 +866,47 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
   rounds the budget is per round, not per task.
 - Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
+## ReportToolErrors
+
+In `on_tool_execute_error`, turns an exception a function tool raised into `ToolFailed`, so the model
+gets a failed tool result (`outcome='failed'`) and the run continues.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ReportToolErrors
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('divide', {'a': 1, 'b': 0})])
+    return ModelResponse(parts=[TextPart("Can't divide by zero.")])
+
+
+agent = Agent(FunctionModel(model), capabilities=[ReportToolErrors()])
+
+
+@agent.tool_plain
+def divide(a: int, b: int) -> float:
+    return a / b
+
+
+result = agent.run_sync('What is 1 / 0?')
+parts = [part for message in result.all_messages() for part in message.parts]
+print([part.content for part in parts if isinstance(part, ToolReturnPart)])
+#> ['`divide` raised ZeroDivisionError: division by zero']
+```
+
+- `format_error(call, error) -> str` replaces the text, for example to hide internals.
+- No limit of its own and the tool stays available; `UsageLimits` stop a model that keeps failing.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution` keep their
+  meaning, and a tool that exhausts its `retries` still raises `UnexpectedModelBehavior` (`Coder`
+  reports those instead). Output tools and argument validation aren't affected.
+- Hooks run from the last capability listed to the first; with several `ReportToolErrors`, the last
+  listed formats the error. Emits no spans; core's tool span records the failure.
+
 ## RefineOutput
 
 When a run would end with an output, adds a system prompt telling the model to review its last answer
@@ -912,4 +954,5 @@ print(agent.run_sync('Explain the change').output)
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
+- https://pydantic.dev/docs/ai/harness/report-tool-errors/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

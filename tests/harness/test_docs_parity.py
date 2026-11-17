@@ -201,6 +201,7 @@ _CAPABILITY_PAGE_META = {
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
+    'report-tool-errors.md': ('report_tool_errors', 'Report Tool Errors'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
@@ -518,6 +519,7 @@ _PROBLEM_TO_SKILL_ROUTE = (
     ('spend ceiling', 'spend limits'),
     ('without making progress', 'loop detection'),
     ('malformed JSON', 'repair malformed tool arguments'),
+    ('the whole run ends', 'report tool exceptions to the model'),
 )
 
 

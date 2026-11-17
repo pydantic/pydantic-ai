@@ -1,0 +1,121 @@
+"""Tests for `ReportToolErrors`, driven through `Agent(..., capabilities=[ReportToolErrors()])`."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import pytest
+from inline_snapshot import snapshot
+
+from pydantic_ai import Agent, DeferredToolRequests, ModelRetry
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness import ReportToolErrors
+
+
+def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
+    """A model that sends `responses` in order, then answers `'done'`."""
+    steps = iter(responses)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=list(next(steps, [TextPart('done')])))
+
+    return FunctionModel(model)
+
+
+def _divide(tool_call_id: str, b: int) -> ToolCallPart:
+    return ToolCallPart('divide', {'a': 1, 'b': b}, tool_call_id=tool_call_id)
+
+
+def _agent(model: FunctionModel, *capabilities: AbstractCapability[None]) -> Agent[None, str | DeferredToolRequests]:
+    agent = Agent(model, deps_type=type(None), capabilities=list(capabilities), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def divide(a: int, b: int) -> float:
+        return a / b
+
+    @agent.tool_plain(retries=1)
+    def flaky() -> str:
+        raise ModelRetry('try again')
+
+    @agent.tool_plain
+    def refuse() -> str:
+        raise ToolFailed('not today')
+
+    @agent.tool_plain
+    def guarded() -> str:
+        raise ApprovalRequired
+
+    return agent
+
+
+def _tool_results(messages: list[ModelMessage]) -> list[tuple[str, object, str]]:
+    return [
+        (part.tool_call_id, part.content, part.outcome)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+
+class TestReportToolErrors:
+    def test_without_capability_the_exception_ends_the_run(self) -> None:
+        agent = _agent(_scripted([_divide('c1', 0)]))
+        with pytest.raises(ZeroDivisionError):
+            agent.run_sync('divide')
+
+    def test_exception_is_reported_and_the_run_continues(self) -> None:
+        result = _agent(_scripted([_divide('c1', 0)], [_divide('c2', 2)]), ReportToolErrors()).run_sync('divide')
+        assert result.output == 'done'
+        assert _tool_results(result.all_messages()) == snapshot(
+            [('c1', '`divide` raised ZeroDivisionError: division by zero', 'failed'), ('c2', 0.5, 'success')]
+        )
+
+    def test_failing_again_is_reported_again(self) -> None:
+        result = _agent(
+            _scripted([_divide('c1', 0)], [_divide('c2', 0)], [_divide('c3', 0)]), ReportToolErrors()
+        ).run_sync('divide')
+        assert [outcome for _, _, outcome in _tool_results(result.all_messages())] == ['failed', 'failed', 'failed']
+
+    def test_format_error_replaces_the_text(self) -> None:
+        def hide_internals(call: ToolCallPart, error: Exception) -> str:
+            return f'{call.tool_name} failed ({type(error).__name__})'
+
+        result = _agent(_scripted([_divide('c1', 0)]), ReportToolErrors(format_error=hide_internals)).run_sync('go')
+        assert _tool_results(result.all_messages()) == snapshot([('c1', 'divide failed (ZeroDivisionError)', 'failed')])
+
+    def test_the_last_listed_instance_formats_the_error(self) -> None:
+        first = ReportToolErrors[None](format_error=lambda call, error: 'first')
+        last = ReportToolErrors[None](format_error=lambda call, error: 'last')
+        result = _agent(_scripted([_divide('c1', 0)]), first, last).run_sync('go')
+        assert _tool_results(result.all_messages()) == snapshot([('c1', 'last', 'failed')])
+
+    def test_model_retry_still_asks_for_a_retry(self) -> None:
+        result = _agent(_scripted([ToolCallPart('flaky', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
+        assert _tool_results(result.all_messages()) == snapshot([('c1', 'try again', 'retried')])
+
+    def test_running_out_of_retries_still_ends_the_run(self) -> None:
+        calls = [[ToolCallPart('flaky', {}, tool_call_id=f'c{i}')] for i in range(3)]
+        agent = _agent(_scripted(*calls), ReportToolErrors())
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'flaky' exceeded max retries count of 1"):
+            agent.run_sync('go')
+
+    def test_tool_failed_keeps_its_message(self) -> None:
+        result = _agent(_scripted([ToolCallPart('refuse', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
+        assert _tool_results(result.all_messages()) == snapshot([('c1', 'not today', 'failed')])
+
+    def test_approval_required_still_defers(self) -> None:
+        result = _agent(_scripted([ToolCallPart('guarded', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_call_id for call in result.output.approvals] == ['c1']
