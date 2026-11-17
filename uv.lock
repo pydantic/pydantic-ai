@@ -7,7 +7,9 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
+]
+supported-markers = [
+    "python_full_version >= '3.11.5'",
 ]
 conflicts = [[
     { package = "pydantic-ai", group = "dev" },
@@ -94,7 +96,7 @@ constraints = [
     { name = "ray", specifier = ">=2.55.0" },
     { name = "sentence-transformers", specifier = ">=5.6.0" },
     { name = "setuptools", specifier = ">=83.0.0" },
-    { name = "soupsieve", specifier = ">=2.9.0" },
+    { name = "soupsieve", specifier = ">=4.0.0" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "torch", specifier = ">=2.13.0" },
     { name = "transformers", specifier = ">=5.5.0" },
@@ -584,15 +586,6 @@ wheels = [
 ]
 
 [[package]]
-name = "async-timeout"
-version = "5.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a5/ae/136395dfbfe00dfc94da3f3e136d0b13f394cba8f4841120e34226265780/async_timeout-5.0.1.tar.gz", hash = "sha256:d9321a7a3d5a6a5e187e824d2fa0793ce379a202935782d555d6e9d2735677d3", size = 9274, upload-time = "2024-11-06T16:41:39.6Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/ba/e2081de779ca30d473f21f5b30e0e737c438205440784c7dfc81efc2b029/async_timeout-5.0.1-py3-none-any.whl", hash = "sha256:39e3809566ff85354557ec2398b55e096c8364bacac9405a7a1fa429e77fe76c", size = 6233, upload-time = "2024-11-06T16:41:37.9Z" },
-]
-
-[[package]]
 name = "asyncpg"
 version = "0.32.0"
 source = { registry = "https://pypi.org/simple" }
@@ -747,7 +740,6 @@ version = "18.1.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8d/f4/f22114d30d3435e38c6af2b4870f37b864403dca6ae7af747a289ce0a18e/av-18.1.0.tar.gz", hash = "sha256:47bfc286e1bc9de7ab4681fc2b575cd2460a66919d31ffe1bd5aa54fae531a28", size = 4451061, upload-time = "2026-08-12T22:28:18.761Z" }
 wheels = [
@@ -866,8 +858,7 @@ name = "beautifulsoup4"
 version = "4.14.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "soupsieve", version = "2.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11.5'" },
-    { name = "soupsieve", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11.5'" },
+    { name = "soupsieve" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c3/b0/1c6a16426d389813b48d95e26898aff79abbde42ad353958ad95cc8c9b21/beautifulsoup4-4.14.3.tar.gz", hash = "sha256:6292b1c5186d356bba669ef9f7f051757099565ad9ada5dd630bd9de5fa7fb86", size = 627737, upload-time = "2025-11-30T15:08:26.084Z" }
@@ -2006,11 +1997,11 @@ dependencies = [
     { name = "filelock" },
     { name = "fsspec", version = "2026.6.0", source = { registry = "https://pypi.org/simple" }, extra = ["http"] },
     { name = "httpx" },
-    { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.14.*'" },
+    { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.14.*' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "huggingface-hub", version = "1.16.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version != '3.14.*'" },
     { name = "multiprocess" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version != '3.14.*'" },
-    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.14.*'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.14.*' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "packaging" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -2296,7 +2287,8 @@ name = "docker"
 version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", version = "311", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15' and sys_platform == 'win32'" },
+    { name = "pywin32", version = "312", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15' and sys_platform == 'win32'" },
     { name = "requests" },
     { name = "urllib3" },
 ]
@@ -2615,7 +2607,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 dependencies = [
     { name = "platformdirs", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
@@ -2674,7 +2665,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 dependencies = [
     { name = "mcp-types", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
@@ -2885,11 +2875,11 @@ name = "fsspec"
 version = "2026.6.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
+    "python_full_version >= '3.15'",
     "python_full_version == '3.14.*'",
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/10/a1/ae4e3e5003468d6391d2c77b6fa1cd73bd5d13511d81c642d7b28ac90ed4/fsspec-2026.6.0.tar.gz", hash = "sha256:f5bac145310fe30e16e1471bd6840b2d990d609e872251d7e674241822abf01a", size = 313646, upload-time = "2026-06-16T01:57:28.105Z" }
 wheels = [
@@ -3045,8 +3035,8 @@ name = "gradio-client"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fsspec", version = "2026.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
-    { name = "fsspec", version = "2026.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
+    { name = "fsspec", version = "2026.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15' or extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra != 'group-11-pydantic-ai-dev'" },
+    { name = "fsspec", version = "2026.9.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "httpx" },
     { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "huggingface-hub", version = "1.16.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
@@ -3274,7 +3264,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 dependencies = [
     { name = "h2" },
@@ -3376,7 +3365,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/53/92/ec9ad04d0b5728dca387a45af7bc98fbb0d73b2118759f5f6038b61a57e8/hf_xet-1.4.3.tar.gz", hash = "sha256:8ddedb73c8c08928c793df2f3401ec26f95be7f7e516a7bee2fbb546f6676113", size = 670477, upload-time = "2026-03-31T22:40:07.874Z" }
 wheels = [
@@ -3528,8 +3516,8 @@ resolution-markers = [
 ]
 dependencies = [
     { name = "filelock" },
-    { name = "fsspec", version = "2026.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
-    { name = "fsspec", version = "2026.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
+    { name = "fsspec", version = "2026.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15' or extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra != 'group-11-pydantic-ai-dev'" },
+    { name = "fsspec", version = "2026.9.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "hf-xet", version = "1.2.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
     { name = "httpx" },
     { name = "packaging" },
@@ -3552,7 +3540,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 dependencies = [
     { name = "filelock" },
@@ -4812,7 +4799,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 dependencies = [
     { name = "anyio", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
@@ -4823,7 +4809,8 @@ dependencies = [
     { name = "pydantic-settings", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
     { name = "pyjwt", extra = ["crypto"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
     { name = "python-multipart", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "pywin32", marker = "(sys_platform == 'win32' and extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "pywin32", version = "311", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.15' and sys_platform == 'win32' and extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "pywin32", version = "312", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and sys_platform == 'win32' and extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "sse-starlette", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
     { name = "starlette", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
     { name = "typing-extensions", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev' or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
@@ -4852,7 +4839,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 dependencies = [
     { name = "anyio", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
@@ -4863,7 +4849,8 @@ dependencies = [
     { name = "pydantic", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "pyjwt", extra = ["crypto"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "python-multipart", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "pywin32", marker = "(sys_platform == 'win32' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "pywin32", version = "311", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.15' and sys_platform == 'win32' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (python_full_version < '3.15' and sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "pywin32", version = "312", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and sys_platform == 'win32' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (python_full_version >= '3.15' and sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "sse-starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
     { name = "typing-extensions", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
@@ -5425,7 +5412,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/21/7d2a95e4bba9dc13d043ee156a356c0a8f0c6309dff6b21b4d71a073b8a8/numpy-2.2.6.tar.gz", hash = "sha256:e29554e2bef54a90aa5cc07da6ce955accb83f21ab5de01a62c8478897b264fd", size = 20276440, upload-time = "2025-05-17T22:38:04.611Z" }
 wheels = [
@@ -6699,8 +6685,8 @@ dependencies = [
     { name = "docker" },
     { name = "exceptiongroup" },
     { name = "fastapi" },
-    { name = "fsspec", version = "2026.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
-    { name = "fsspec", version = "2026.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
+    { name = "fsspec", version = "2026.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15' or extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra != 'group-11-pydantic-ai-dev'" },
+    { name = "fsspec", version = "2026.9.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "graphviz" },
     { name = "griffe" },
     { name = "httpcore" },
@@ -7075,7 +7061,6 @@ version = "1.30"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dd/7f/9998706bc516bdd664ccf929a1da6c6e5ee06e48f723ce45aae7cf3ff36e/puremagic-1.30.tar.gz", hash = "sha256:f9ff7ac157d54e9cf3bff1addfd97233548e75e685282d84ae11e7ffee1614c9", size = 314785, upload-time = "2025-07-04T18:48:36.061Z" }
 wheels = [
@@ -8879,6 +8864,12 @@ wheels = [
 name = "pywin32"
 version = "311"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version == '3.14.*'",
+    "python_full_version == '3.13.*'",
+    "python_full_version == '3.12.*'",
+    "python_full_version >= '3.11.5' and python_full_version < '3.12'",
+]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7c/af/449a6a91e5d6db51420875c54f6aff7c97a86a3b13a0b4f1a5c13b988de3/pywin32-311-cp311-cp311-win32.whl", hash = "sha256:184eb5e436dea364dcd3d2316d577d625c0351bf237c4e9a5fabbcfa5a58b151", size = 8697031, upload-time = "2025-07-14T20:13:13.266Z" },
     { url = "https://files.pythonhosted.org/packages/51/8f/9bb81dd5bb77d22243d33c8397f09377056d5c687aa6d4042bea7fbf8364/pywin32-311-cp311-cp311-win_amd64.whl", hash = "sha256:3ce80b34b22b17ccbd937a6e78e7225d80c52f5ab9940fe0506a1a16f3dab503", size = 9508308, upload-time = "2025-07-14T20:13:15.147Z" },
@@ -8892,6 +8883,31 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c9/31/097f2e132c4f16d99a22bfb777e0fd88bd8e1c634304e102f313af69ace5/pywin32-311-cp314-cp314-win32.whl", hash = "sha256:b7a2c10b93f8986666d0c803ee19b5990885872a7de910fc460f9b0c2fbf92ee", size = 8840714, upload-time = "2025-07-14T20:13:32.449Z" },
     { url = "https://files.pythonhosted.org/packages/90/4b/07c77d8ba0e01349358082713400435347df8426208171ce297da32c313d/pywin32-311-cp314-cp314-win_amd64.whl", hash = "sha256:3aca44c046bd2ed8c90de9cb8427f581c479e594e99b5c0bb19b29c10fd6cb87", size = 9656800, upload-time = "2025-07-14T20:13:34.312Z" },
     { url = "https://files.pythonhosted.org/packages/c0/d2/21af5c535501a7233e734b8af901574572da66fcc254cb35d0609c9080dd/pywin32-311-cp314-cp314-win_arm64.whl", hash = "sha256:a508e2d9025764a8270f93111a970e1d0fbfc33f4153b388bb649b7eec4f9b42", size = 8932540, upload-time = "2025-07-14T20:13:36.379Z" },
+]
+
+[[package]]
+name = "pywin32"
+version = "312"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15'",
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl", hash = "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c", size = 6362659, upload-time = "2026-06-04T07:49:21.349Z" },
+    { url = "https://files.pythonhosted.org/packages/35/c4/dcd2d62b5944b6d5db53413a5899016ccd57ffcb7278f3f81655d25d2027/pywin32-312-cp311-cp311-win_amd64.whl", hash = "sha256:d11417d84412f859b722fad0841b3614459ed0047f7542d8362e77884f6b6e8a", size = 6928825, upload-time = "2026-06-04T07:49:23.934Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/56/3cbb433fe4501cdba2eb9040f56a4e1a8243faa4186b25295564d1a7a79d/pywin32-312-cp311-cp311-win_arm64.whl", hash = "sha256:b2200a054ca6d6625c4842fc56a4976a4b47f96b73dbe5538c3f813a80359f47", size = 6721875, upload-time = "2026-06-04T07:49:26.416Z" },
+    { url = "https://files.pythonhosted.org/packages/83/ff/32aa7d2ed0ab12b323aaa64f9b75e6ad4f8fd09f9ccfc28c79414d46838d/pywin32-312-cp312-cp312-win32.whl", hash = "sha256:dab4f65ac9c4e48400a2a0530c46c3c579cd5905ecd11b80692373915269208b", size = 6371877, upload-time = "2026-06-04T07:49:28.836Z" },
+    { url = "https://files.pythonhosted.org/packages/03/d9/77040d3b43df3f3be32ea289433d660d2727f5ba327bc73be835127d9d60/pywin32-312-cp312-cp312-win_amd64.whl", hash = "sha256:b457f6d628a47e8a7346ce22acb7e1a46a4a78b52e1d17e1af56871bd19a93bc", size = 6914841, upload-time = "2026-06-04T07:49:31.85Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/cc/7b1ec671775756020a0ee7f4feeaf3c568f0ab86bd3900088cf986937a92/pywin32-312-cp312-cp312-win_arm64.whl", hash = "sha256:6017c58e12f6809fbb0555b75df144c2922a9ffd18e4b9b5afa863b6c1a9d950", size = 6727901, upload-time = "2026-06-04T07:49:34.244Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/41/12fbfd7f36ed2146d8bc9de96c2741296bf0d490b98508496cff322e274c/pywin32-312-cp313-cp313-win32.whl", hash = "sha256:7a27df850933d16a8eabfbaeb73d52b273e2da667f80d70b01a89d1f6828d02c", size = 6370184, upload-time = "2026-06-04T07:49:36.253Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/db/36a78e3403099d31d9746d13fdcde5accc43c1155f375a34d15983a479a7/pywin32-312-cp313-cp313-win_amd64.whl", hash = "sha256:c53e878d15a1c44788082bfe712a905433473aa38f86375b7cf8b45e3acbaaf9", size = 6914298, upload-time = "2026-06-04T07:49:38.876Z" },
+    { url = "https://files.pythonhosted.org/packages/84/37/c1697194092b76de9ed47ca124323f02c57ffc8a45c06f88a3d5acaf01eb/pywin32-312-cp313-cp313-win_arm64.whl", hash = "sha256:59aba5d5940842075343a5ddc6b11f1cdf0d1567fe745290359dfbcc7c2eb831", size = 6727640, upload-time = "2026-06-04T07:49:41.083Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/2b/1f3cded5822fd49c02f40544cbb5f58c7cfd6b1694869fd476cb6170ee97/pywin32-312-cp314-cp314-win32.whl", hash = "sha256:a77a90fbb6881238d2ca9c6fd797b25817f3768fe78d214a90137ff055a75f5b", size = 6468928, upload-time = "2026-06-04T07:49:43.188Z" },
+    { url = "https://files.pythonhosted.org/packages/21/82/3bf86d2e2808902013132e1ce905a7da0da53790f3836c64bf44d55e24f3/pywin32-312-cp314-cp314-win_amd64.whl", hash = "sha256:a4dd3a848290ef724347b19f301045831d8e802fa4464f491b98b1e0a081432e", size = 7024157, upload-time = "2026-06-04T07:49:45.34Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/0e/73f6d6800b4f27655abd9e9f6aaeaefcddb2b946e4674efa2bab184a7f7b/pywin32-312-cp314-cp314-win_arm64.whl", hash = "sha256:9fce94568364e0155e6dfb781ac5d95903be8baf28670632beab1b523f300daa", size = 6839598, upload-time = "2026-06-04T07:49:47.613Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/61/caa39686032d2ebdd04ff0ab5cbe163126c0066d98e00c9018646e42393b/pywin32-312-cp315-cp315-win32.whl", hash = "sha256:5c1fbe4a937a73ae9297384a3da38518cbc694c68ad8a809b2e19acd350f03ed", size = 6471159, upload-time = "2026-06-04T07:49:50.035Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/cd/7e1de64a4a6f69c04214169657ccab0d93a670ea50e35eb8f489d7378249/pywin32-312-cp315-cp315-win_amd64.whl", hash = "sha256:c2f03a0f73f804a13c2735b99392b0cd426bb4f2c4d0178e5ac966a0f21618d5", size = 7025293, upload-time = "2026-06-04T07:49:54.857Z" },
+    { url = "https://files.pythonhosted.org/packages/23/ed/4532e9388e65fa16b46776ef47ad631a64eda1631884488af707666350ed/pywin32-312-cp315-cp315-win_arm64.whl", hash = "sha256:a8597d28f267b39074aef51fa593530082b39cbe5a074226096857b1fed2dfb9", size = 6840337, upload-time = "2026-06-04T07:49:57.531Z" },
 ]
 
 [[package]]
@@ -9035,9 +9051,6 @@ wheels = [
 name = "redis"
 version = "8.1.0"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "async-timeout", marker = "python_full_version < '3.11.3'" },
-]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/66/9d/c5731f6e3608663d4d3656fd8d3aecee8b509c3082818f5a13eae925baea/redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb", size = 560618, upload-time = "2026-07-30T08:50:58.497Z" },
@@ -9819,27 +9832,8 @@ wheels = [
 
 [[package]]
 name = "soupsieve"
-version = "2.10"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11.5'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/71/c3/1b817965ac12dc002d7c9cd7dfffdd7d4fbf9b45763ef2ffe7b86ee94670/soupsieve-2.10.tar.gz", hash = "sha256:49e9380d7d2905463583bafe285e818c7366a9ed7b3aee221c1ac79c905d8bc0", size = 124337, upload-time = "2026-09-24T02:36:35.048Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/87/5ed59e1d0290564e2027ed066c52b059892c4637741337fc0967183c8d4d/soupsieve-2.10-py3-none-any.whl", hash = "sha256:8596eb8967d744174820280fa62b4542a2e955bfaccca73ed8a13c6eb8e9b502", size = 38019, upload-time = "2026-09-24T02:36:33.709Z" },
-]
-
-[[package]]
-name = "soupsieve"
 version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.15'",
-    "python_full_version == '3.14.*'",
-    "python_full_version == '3.13.*'",
-    "python_full_version == '3.12.*'",
-    "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/01/7c/a64eedae0b7776cb9602d2da9cb8f8caae8e1b4c1da5e8e87bf1e68121ec/soupsieve-4.0.1.tar.gz", hash = "sha256:7621e3c5f6b371ed2c5eabaac5de300ac3d66d05e6d7f34783e31b63c4f90c75", size = 153302, upload-time = "2026-11-04T16:36:27.749Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/5c/4f68370847b561a389dd9a2d7eb3d19fd8cbb8acbae543a0c6b8d0d9700b/soupsieve-4.0.1-py3-none-any.whl", hash = "sha256:2e68cf7dd5a0f29d81f9d485275ccf294e6475f615e211895d91cb81f8614f04", size = 50688, upload-time = "2026-11-04T16:36:26.158Z" },
@@ -10403,7 +10397,6 @@ resolution-markers = [
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*'",
     "python_full_version >= '3.11.5' and python_full_version < '3.12'",
-    "python_full_version < '3.11.5'",
 ]
 dependencies = [
     { name = "annotated-doc" },
