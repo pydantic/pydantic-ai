@@ -95,8 +95,9 @@ class Skills(AbstractCapability[AgentDepsT]):
     the skill: the model sees its name, description and `when_to_use`, and loads its Markdown body, with the
     skill's directory in the run's workspace, with `load_capability`. Bundled files are not executed,
     and are read only with `read_files=True`. Descriptions longer than the Agent Skills limit are
-    preserved and emit a warning. A skill found twice, through a symlink or as a byte-identical `SKILL.md`, counts once. A skill
-    whose frontmatter has `disable-model-invocation: true` is left out of the model's catalog.
+    preserved and emit a warning. A skill found twice, through a symlink or as a byte-identical
+    `SKILL.md`, counts once. A skill whose frontmatter has `disable-model-invocation: true` is left
+    out of the model's catalog.
 
     `load` reads the same skills outside a run, for a host that lets a person invoke a skill
     itself; render one with `SkillDefinition.render`.
