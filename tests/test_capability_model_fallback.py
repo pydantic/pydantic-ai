@@ -15,6 +15,7 @@ import asyncio
 import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -3482,3 +3483,51 @@ async def test_a_resumed_continuation_that_falls_back_gets_its_own_settings_and_
     result = await agent.run(message_history=history)
     assert result.output == 'fresh'
     assert sent == snapshot([('pinned', 'Recorded.', 0.5), ('next', 'Recorded.', 0.9)])
+
+
+@pytest.mark.parametrize('case', ['after_a_tool_return', 'copied_messages'])
+async def test_a_model_without_instructions_is_not_sent_the_step_models_recorded_ones(case: str):
+    """A model the instructions resolve to nothing for is sent none, not the ones a request in its messages records.
+
+    Instruction parts left unset would make the model fall back to the instructions recorded on the request it's sent,
+    which are the step model's after a tool return, or on a copy a `before_model_request` hook made of the messages.
+    """
+    sent: list[tuple[str, str | None]] = []
+
+    def respond(name: str, *, fail_on_step: int | None) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step = sum(isinstance(message, ModelRequest) for message in messages)
+            sent.append((name, info.instructions))
+            if fail_on_step is not None and step >= fail_on_step:
+                raise ModelAPIError(model_name=name, message='down')
+            if case == 'after_a_tool_return' and step == 1:
+                return ModelResponse(parts=[ToolCallPart('noop')])
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(fn, model_name=name)
+
+    @dataclass
+    class CopyMessages(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [deepcopy(message) for message in request_context.messages]
+            return request_context
+
+    def instructions(ctx: RunContext[Any]) -> str | None:
+        return 'Be brief.' if ctx.model.model_name == 'primary' else None
+
+    agent = _with_noop(
+        Agent(
+            respond('primary', fail_on_step=2 if case == 'after_a_tool_return' else 1),
+            instructions=instructions,
+            capabilities=[
+                *([CopyMessages()] if case == 'copied_messages' else []),
+                ModelFallback(respond('backup', fail_on_step=None)),
+            ],
+        )
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert sent[-1] == ('backup', None)
+    assert _recorded_instructions(result.all_messages())[-1] is None
