@@ -58,7 +58,7 @@ from urllib.parse import urlparse
 import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError
 from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
 from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, wait_random_exponential

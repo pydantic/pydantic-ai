@@ -79,10 +79,10 @@ with try_import() as mcp_installed:
     from fastmcp import Client, FastMCP
     from fastmcp.client.transports import StreamableHttpTransport
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import MCPToolset
 
-MCP_SDK_V2 = mcp_installed() and is_mcp_sdk_v2()
+MCP_SDK_V2 = mcp_installed() and _mcp_compat.MCP_SDK_V2
 
 pytestmark = [
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
