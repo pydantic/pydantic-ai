@@ -1058,6 +1058,7 @@ class FakePostgresDatabase:
     transactions: int = 0
     generation: int = 0
     versions_initialized: bool = False
+    schema_current: bool = False
 
 
 class FakeTransaction:
@@ -1113,6 +1114,8 @@ class FakePostgresConnection:
             for path, file in self._database.files.items():
                 self._database.generation += 1
                 self._database.files[path] = replace(file, version=self._database.generation)
+        elif query.startswith('CREATE TABLE IF NOT EXISTS agent_memory_metadata'):
+            self._database.schema_current = True
         return 'OK'
 
     async def fetchval(self, query: str, *args: object) -> object:
@@ -1123,10 +1126,12 @@ class FakePostgresConnection:
         if query.startswith('SELECT pg_advisory_xact_lock'):
             return None
         if query.startswith('SELECT to_regclass'):
-            return not any(
-                statement.startswith('CREATE TABLE IF NOT EXISTS agent_memory (')
-                for statement in self._database.statements
-            )
+            if query == 'SELECT to_regclass($1) IS NULL':
+                return not any(
+                    statement.startswith('CREATE TABLE IF NOT EXISTS agent_memory (')
+                    for statement in self._database.statements
+                )
+            return self._database.schema_current
         if query.startswith('INSERT INTO agent_memory_metadata'):
             if self._database.versions_initialized:
                 return None
@@ -1313,6 +1318,20 @@ async def test_postgres_store_concurrent_schema_initialization() -> None:
     assert len([query for query in pool.database.statements if query.startswith('CREATE TABLE')]) == 3
 
 
+async def test_postgres_store_on_a_current_schema_issues_no_ddl() -> None:
+    """A role without `CREATE` on the schema or ownership of the tables can use tables that exist."""
+    pool = FakePostgresPool()
+    await PostgresMemoryStore(pool).read('missing.md', max_chars=1_000)
+    pool.database.statements.clear()
+
+    await PostgresMemoryStore(pool).write('main.md', 'content', expected_version=None)
+
+    assert not any(
+        query.startswith(('CREATE', 'ALTER', 'SELECT pg_advisory', 'INSERT INTO agent_memory_metadata'))
+        for query in pool.database.statements
+    )
+
+
 async def test_postgres_store_missing_receipt_and_delete_contract() -> None:
     store = PostgresMemoryStore(FakePostgresPool())
     operation = MemoryOperation(id='delete-missing', fingerprint='delete:missing.md')
@@ -1356,6 +1375,17 @@ async def test_postgres_store_version_does_not_repeat_after_delete_and_recreate(
         await store.write('main.md', 'stale', expected_version=first.version)
 
 
+async def test_postgres_store_does_not_index_a_table_from_an_earlier_release() -> None:
+    pool = FakePostgresPool()
+    # The table exists but predates the `write_metadata` column, so the schema is not current.
+    pool.database.statements.append('CREATE TABLE IF NOT EXISTS agent_memory (path TEXT PRIMARY KEY)')
+
+    await PostgresMemoryStore(pool).write('main.md', 'content', expected_version=None)
+
+    assert not [query for query in pool.database.statements if query.startswith('CREATE INDEX')]
+    assert 'ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS write_metadata JSONB' in pool.database.statements
+
+
 async def test_postgres_concurrent_store_initialization_cannot_regress_versions() -> None:
     pool = FakePostgresPool()
     stores = [PostgresMemoryStore(pool), PostgresMemoryStore(pool)]
@@ -1375,7 +1405,8 @@ async def test_postgres_concurrent_store_initialization_cannot_regress_versions(
 
     assert len(set(versions)) == 2
     assert not any('setval' in statement for statement in pool.database.statements)
-    assert pool.database.statements[0].startswith('SELECT pg_advisory_xact_lock')
+    ddl = [statement for statement in pool.database.statements if not statement.startswith('SELECT to_regclass')]
+    assert ddl[0].startswith('SELECT pg_advisory_xact_lock')
 
 
 @pytest.mark.parametrize(
