@@ -268,7 +268,7 @@ from .toolsets import (
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
 
-__all__ = (
+__all__: tuple[str, ...] = (
     '__version__',
     'BANNER_ENABLED',
     # agent
