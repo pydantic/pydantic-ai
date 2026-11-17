@@ -353,6 +353,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
         await asyncio.wait({_ready_waiter, _wrap.task}, return_when=asyncio.FIRST_COMPLETED)
+        # Inside the `try`: on Python 3.11, draining even a finished `_ready_waiter` yields to the event loop, so a
+        # cancellation can land here after `_do_run` has parked on `_run_done.wait()`, and needs the same cleanup.
+        await _utils.cancel_and_drain(_ready_waiter)
     except BaseException as exc:
         # Unblock `_do_run` before draining, mirroring the streaming handoff: if
         # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
@@ -366,8 +369,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
         _run_done.set()
         await _utils.cancel_and_drain(_ready_waiter, _wrap.task)
         raise
-    else:
-        await _utils.cancel_and_drain(_ready_waiter)
 
     # Propagate context vars set by wrap_run/before_run to the caller's task.
     context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
