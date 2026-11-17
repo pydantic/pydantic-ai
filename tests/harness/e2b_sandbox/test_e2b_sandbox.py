@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
 from .._tool_calls import call_tools
 from .fake_e2b import FakeE2B
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def test_env_is_not_shown_in_repr() -> None:
@@ -130,10 +133,12 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
     assert sorted(definitions['spec_params_E2BSandbox']['properties']) == [
         'allow_internet_access',
+        'authority',
         'defer_loading',
         'description',
         'env',
         'id',
+        'path_authority',
         'sandbox_timeout',
         'template',
         'working_dir',
@@ -477,6 +482,7 @@ async def test_agent_history_attaches_same_workspace(fake_e2b: FakeE2B) -> None:
     assert fake_e2b.connect_calls == [('sbx-1', 3_600)]
 
 
+@posix_only
 async def test_coder_works_in_the_sandbox(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     # Host mode: the fake sandbox runs commands and file calls under `tmp_path`, so the model's
     # shell and file tools are observable end to end.
