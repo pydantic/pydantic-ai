@@ -1,0 +1,326 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-latest
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: You are Sam, a phone support agent for Acme Telecom. Answer in one
+            short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.098
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.098
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: <system>The caller has been verified as the account holder, Jamie.
+            Address them by name.</system>
+        role: user
+      turnComplete: false
+- kind: message
+  direction: sent
+  at: 0.098
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Hi, can you tell me whose account this is?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 1.118
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - text: '**Confirming Account Holder**
+
+
+            I''ve verified the caller as "Jamie" and will use that name as instructed.
+            My focus is on providing a concise response. I''m ready to answer in a
+            single sentence: "This account belongs to Jamie."
+
+
+
+            '
+          thought: true
+- kind: message
+  direction: received
+  at: 1.299
+  data:
+    serverContent:
+      outputTranscription:
+        text: This account
+- kind: message
+  direction: received
+  at: 1.496
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' belongs'
+- kind: message
+  direction: received
+  at: 1.597
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7f7h/tf+zv7D/rn+r/6m/p/+k/6K/oP+ev5w/mz+Y/5Y
+- kind: message
+  direction: received
+  at: 1.617
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: uf8M/2X+3P04/V78wvsD+1X6v/nR+Fb41vdr9/b2oPZP
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: cAml/mX+l/3M/90LHeyhBfkKlPIz/gIQIPFK/cwRg+kr
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' to Jamie.'
+- kind: message
+  direction: received
+  at: 1.618
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 0P/c//j/xP/g//f/0v/K//v/6v/S/+T/7//3/+T/8//3
+- kind: message
+  direction: received
+  at: 1.619
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: SgWS2YMEhRBFAcf6N/NW+ekSSgYY5379NgjG+3IEUPcw
+- kind: message
+  direction: received
+  at: 1.62
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: FPjX+JH4k/kw+8r81/5fAKYDXQatCJUJMwxRDDEL+ArO
+- kind: message
+  direction: received
+  at: 1.621
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ov+z/5r/b/+D/4D/d/9m/07/XP9f/1H/W/9Z/1r/bv9d
+- kind: message
+  direction: received
+  at: 1.622
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: uPw9/mP+sfjM//ULcwOu+hr/L/lC+scFZwF/+kIGLwPR
+- kind: message
+  direction: received
+  at: 1.658
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: D+AK2trXOtVUzWzRheAJ5pLny+VK4Ijgjerj8J/0TPqI
+- kind: message
+  direction: received
+  at: 1.659
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gPmV9n30GPFN7FnnyORz43XifuM75MDgB97V3SPdl949
+- kind: message
+  direction: received
+  at: 1.661
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: n9UX1jHXotkX3tjid+ee7L/xCvfq+8QA9QTQBz4KFQ1U
+- kind: message
+  direction: received
+  at: 1.662
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ThGvDhkMQAlPBv0C5P/v/IT5PPZP8yjweO366k/o7+X3
+- kind: message
+  direction: received
+  at: 1.711
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: XwsADPgLZgv1C00OiQ+8D+sQYg8WD5sQWRJlFG0VzxTW
+- kind: message
+  direction: received
+  at: 1.712
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: l/sx/Zb+6f4YAIsAKQGvAtQD3QSPBkkHugbDB1kItAiR
+- kind: message
+  direction: received
+  at: 1.713
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: dQHXAKEAHQFGAIj/Jf+g/Tf9JvxZ+5P7Xfom+W34ffdt
+- kind: message
+  direction: received
+  at: 1.714
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Ifl/+Uz5tPkx+hD6d/rV+gj7Qfva+z786Pxq/cz9Tf3v
+- kind: message
+  direction: received
+  at: 1.714
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: FQA1ACwAHQAQAPH/8//6//H/BwAwADkAJQAtADMAVAB6
+- kind: message
+  direction: received
+  at: 1.764
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BAABAAIAAAAEAP//AAD+/wIAAwD5//r/AQD//wAAAQAB
+- kind: message
+  direction: received
+  at: 1.764
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7v/w/+//8P/w//H/8P/1//D/9f/1//D/7//y//P/8//2
+- kind: message
+  direction: received
+  at: 1.765
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5//n/+X/5//o/+b/5v/m/+b/5f/d/+L/5f/j/+X/4f/k
+- kind: message
+  direction: received
+  at: 1.766
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9f/0//P/9v/1//X/9//2//b/7//u//X/9P/y//L/9f/y
+- kind: message
+  direction: received
+  at: 1.767
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: m/+g/6v/o/+s/6z/rP+0/6r/tP/E/9T/zv/P/9f/0v/Z
+- kind: message
+  direction: received
+  at: 1.787
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 3.344
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 425
+      responseTokenCount: 46
+      totalTokenCount: 471
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 425
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 46
+      thoughtsTokenCount: 73

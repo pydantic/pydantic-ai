@@ -193,6 +193,7 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
         'properties': {'kept': {'type': 'string'}},
         'additionalProperties': {'type': 'integer'},
         'patternProperties': {'^x': {'type': 'boolean'}},
+        'propertyNames': {'type': 'string', 'pattern': '^[a-z]+$'},
     }
     visited_types: list[str] = []
 
@@ -207,6 +208,26 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
 
     assert transformed == snapshot({'type': 'object', 'properties': {'kept': {'type': 'string'}}})
     assert visited_types == ['string', 'object']
+
+
+def test_openapi_schema_transformer_prunes_contains_before_traversal():
+    """`Schema` has no `contains`, so a recursive one is dropped instead of refused.
+
+    A recording can't check this: cassettes match on method and URI, not the request body.
+    """
+    schema: JsonSchema = {
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {'children': {'type': 'array', 'contains': {'$ref': '#/$defs/Node'}}},
+            }
+        },
+        '$ref': '#/$defs/Node',
+    }
+
+    assert GoogleOpenAPISchemaTransformer(schema).walk() == snapshot(
+        {'type': 'object', 'properties': {'children': {'type': 'array'}}}
+    )
 
 
 # =============================================================================
@@ -252,7 +273,7 @@ def test_model_profile_thinking_defaults():
         assert profile.get('google_supports_thinking_level') is True, f'{name} should support thinking_level'
 
     # Gemini 2.5: supports thinking, but uses budget (thinking_level=False)
-    for name in ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-image'):
+    for name in ('gemini-2.5-flash', 'gemini-2.5-pro'):
         profile = google_model_profile(name)
         assert profile is not None, f'{name} should have a profile'
         assert profile.get('supports_thinking') is True, f'{name} should support thinking'
@@ -266,6 +287,8 @@ def test_model_profile_thinking_defaults():
         'gemini-1.5-pro',
         'gemini-pro',
         'gemma-3-27b-it',
+        # The Gemini API and Vertex both reject a thinking config for this 2.5 image model.
+        'gemini-2.5-flash-image',
     ):
         profile = google_model_profile(name)
         assert profile is not None, f'{name} should have a profile'
@@ -297,6 +320,8 @@ def test_model_profile_image_model():
         ('gemini-3-pro-preview', False),
         ('gemini-3.1-pro-preview', False),
         ('gemini-4-argon', False),
+        ('gemini-4-carbon', False),
+        ('gemini-4-hydrogen', False),
         # `gemini-3.1-flash-lite-image` does accept `MINIMAL` — its levels are `minimal, high`.
         ('gemini-3.1-flash-lite-image', True),
         ('gemini-3-flash-preview', True),
@@ -323,7 +348,11 @@ def test_model_profile_minimal_thinking_level_matches_model_prefix():
         ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
         ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
-        # Models supporting the full scale carry no level set.
+        ('gemini-4-carbon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
+        ('gemma-4-31b-it', frozenset(('MINIMAL', 'HIGH'))),
+        ('gemma-4-26b-a4b-it', frozenset(('MINIMAL', 'HIGH'))),
+        # Models supporting the default levels carry no level set.
         ('gemini-3-flash-preview', None),
         # Budget-based models carry no level set.
         ('gemini-2.5-flash', None),
@@ -333,3 +362,25 @@ def test_model_profile_thinking_levels(model_name: str, expected: frozenset[str]
     profile = google_model_profile(model_name)
     assert profile is not None
     assert profile.get('google_thinking_levels') == expected
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supports_thinking'),
+    [
+        ('gemma-4-31b-it', True),
+        ('gemma-4-26b-a4b-it', True),
+        ('gemma4:31b', True),
+        ('gemma-3-27b-it', False),
+        ('gemma3:27b', False),
+        # MedGemma is built on Gemma 3; its `4b` size must not read as Gemma 4.
+        ('medgemma-4b-it', False),
+    ],
+)
+def test_gemma_thinking_support(model_name: str, supports_thinking: bool):
+    """Gemma 4 thinks with levels and stays off `VALIDATED` tool calling; earlier Gemma doesn't think."""
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') is supports_thinking
+    assert profile.get('google_supports_thinking_level') is supports_thinking
+    assert profile.get('thinking_always_enabled') is False
+    assert profile.get('google_supports_strict_tool_definition') is False

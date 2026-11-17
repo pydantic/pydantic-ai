@@ -1,0 +1,51 @@
+name: Set up douwebot fallback tools
+description: Restore or install the pinned OpenCode CLI, ripgrep, and Python dependencies.
+inputs:
+  save-cache:
+    description: Save a cache on a push event after installing tools.
+    default: 'false'
+outputs:
+  cache-hit:
+    description: Whether the exact tool cache was restored.
+    value: ${{ steps.restore.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Select tool cache key
+      id: key
+      shell: bash
+      run: |
+        echo "image=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
+        echo "python=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" >> "$GITHUB_OUTPUT"
+
+    - name: Restore fallback tools
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/douwebot-tools
+        key: douwebot-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.key.outputs.image }}-${{ steps.key.outputs.python }}-${{ hashFiles('.github/actions/setup-douwebot-tools/action.yml') }}
+
+    - name: Install fallback tools on cache miss
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        tools="$RUNNER_TEMP/douwebot-tools"
+        mkdir -p "$tools/bin"
+        # OpenCode 2.2.5 downloads this ripgrep build, with this sha256, when `rg` is not on PATH.
+        rg_release=ripgrep-15.1.0-x86_64-unknown-linux-musl
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/$rg_release.tar.gz" \
+          "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/$rg_release.tar.gz"
+        echo "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599  $RUNNER_TEMP/$rg_release.tar.gz" | sha256sum --check --strict
+        tar -xzf "$RUNNER_TEMP/$rg_release.tar.gz" -C "$tools/bin" --strip-components=1 "$rg_release/rg"
+        npm install --prefix "$tools/opencode" @opencode/cli@2.2.5
+        python3 -m pip install --quiet --target "$tools/python" 'pydantic==2.13.4'
+
+    # A pull_request_target run can restore the default-branch cache but cannot populate it.
+    # Save only on push, before a reviewer processes any PR content.
+    - name: Save fallback tools
+      if: inputs.save-cache == 'true' && github.event_name == 'push' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/douwebot-tools
+        key: ${{ steps.restore.outputs.cache-primary-key }}

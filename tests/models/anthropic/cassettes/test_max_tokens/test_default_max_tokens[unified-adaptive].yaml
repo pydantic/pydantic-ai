@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
@@ -25,7 +25,7 @@ interactions:
           content:
           - text: What is 17 * 23? Answer with just the number.
             type: text
-        model: claude-sonnet-4-6
+        model: claude-sonnet-5-5
         output_config:
           effort: high
         stream: true
@@ -42,10 +42,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-bdaba89043eae3ae17fd860e09acad0a-14ba7af30e628f62-01
+      - 00-dd6cd6b487b257b2114879a749a55140-cc773b4ac84fd3d7-01
       transfer-encoding:
       - chunked
       vary:
@@ -54,54 +56,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfWk4K8yzYMogUDjtfe2W","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":22,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPEnuGhFJTEJ1Z9C8je6","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":25,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}          }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"17"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" * 23 = "}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"17"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" * 20 + "}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"17 * 3 ="}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 340 + 51 "}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"= 391"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EqECCpIBCBIYAipAwT5MSk7YPcegqcWEpdv3oNhFHUYOuc3oJZz4QeU7Pd9DJiuuDiaxWxL1vyQYwmZlSpwq4IBQO5kjwlyfP6mYzTIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB3v3r1QYSDAp9romevg7x0v7f7RoM65kFxCctjViB/bo3IjBKDfKtvcRJDUdWX59yDHBtc3Kzff+dTLRie/TuMf9vWpxT2NLtlaK5r7kr9JubCtsqPNzYMCpiquagTV5AdRlaty7DsClk8Oac+YuhCxdVSfGUdMSYXH3C5iGXEpxmDufG02qobyHXjGj1ekAaChgB"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"391"}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0  }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"391"}  }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1  }
+        data: {"type":"content_block_stop","index":0   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":22,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":52,"output_tokens_details":{"thinking_tokens":46}}}
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":25,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}          }
 
         event: message_stop
-        data: {"type":"message_stop"              }
+        data: {"type":"message_stop"      }
 
-  recorded_at: 2026-09-28T23:57:18.748045+00:00
+  recorded_at: 2026-10-25T16:03:56.268478+00:00

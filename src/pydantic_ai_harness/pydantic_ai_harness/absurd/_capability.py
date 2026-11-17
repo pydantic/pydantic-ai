@@ -104,4 +104,4 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         agent = self.agent
         assert agent is not None
         with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
-            return await handler()
+            return await super().wrap_run(ctx, handler=handler)

@@ -25,7 +25,7 @@ try:
     main()
 finally:
     assert 'pydantic_ai' not in sys.modules
-    assert 'pydantic_clai2._app' not in sys.modules
+    assert 'pydantic_clai2.app' not in sys.modules
     assert 'pydantic_clai2.cli.headless' not in sys.modules
 """
     result = subprocess.run(
@@ -73,6 +73,10 @@ async def read(self, *args, **kwargs):
     assert {item.text for item in completions} == {'openai-codex', 'github-copilot'}
     warmed = ('openai', 'anthropic', *warm_imports.FIRST_USE_MODULES)
     for name in (*warmed, 'pydantic_clai2.cli.headless'):
+        assert name not in sys.modules, name
+    # The MCP client stack takes most of a second; the `mcp` and `observability` plugins load without it.
+    assert 'pydantic_clai2.mcp' in sys.modules and 'pydantic_clai2.builtin_plugins.logfire' in sys.modules
+    for name in ('fastmcp', 'mcp', 'pydantic_ai.mcp'):
         assert name not in sys.modules, name
     assert requested == [warm_imports.FIRST_USE_MODULES]
     print('PROMPT_READY')

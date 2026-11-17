@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.pydantic_ai_docs._toolset import PydanticAIDocsToolset, PydanticAIDocsTopic
 
@@ -22,7 +24,7 @@ _DOCS_PATH_ENV = 'PYDANTIC_AI_HARNESS_DOCS_PATH'
 
 _INSTRUCTIONS = (
     'You have a `read_pyai_docs` tool that returns Pydantic AI documentation on demand. '
-    'Topics: capabilities, hooks, tools, tools-advanced, toolsets, agent. Read the relevant '
+    f'Topics: {", ".join(topic.value for topic in PydanticAIDocsTopic)}. Read the relevant '
     'topic before authoring or modifying a Pydantic AI capability, hook, tool, or toolset, '
     'rather than relying on memory.'
 )
@@ -35,14 +37,14 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     Exposes a single `read_pyai_docs(topic)` tool. Docs are located and returned
     when asked for -- never bundled into context. Each call resolves the topic
     from a configured local checkout first, then falls back to fetching the page
-    from `pydantic/pydantic-ai:main`, so it works in any environment.
+    from GitHub at the installed `pydantic_ai` release's tag, which needs network access.
 
     The local checkout path comes from `local_docs_path`, or the
     `PYDANTIC_AI_HARNESS_DOCS_PATH` env var when that is unset; with neither set
     every call goes straight to the remote source. The checkout is read through
     the run's workspace, and a run with a local path but no workspace fails at its
     start. The capability never runs git -- keep
-    the local checkout current yourself; the remote path always reads `main`.
+    the local checkout current yourself.
 
     ```python
     from pathlib import Path
@@ -66,10 +68,28 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     cache: bool = True
     """If `True`, each returned doc is memoized for one agent run."""
 
+    _: KW_ONLY
+    remote_ref: str | None = None
+    """Git ref of `pydantic/pydantic-ai` the remote fallback reads, such as `'main'`. When `None`, the
+    installed `pydantic_ai` release's tag, so the docs match the installed APIs; a dev build reads `main`."""
+
+    id: str | None = 'pydantic_ai_docs'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    An agent has one `read_pyai_docs` tool, so two `PydanticAIDocs` sharing this `id` are one docs source
+    stated twice when they agree, and an error when they differ. To keep two, give each its own `id` and
+    wrap them in `PrefixTools`, since their tool names are the same.
+    """
+
     _cache: dict[PydanticAIDocsTopic, str] = field(
         default_factory=dict[PydanticAIDocsTopic, str], init=False, repr=False, compare=False
     )
     """In-memory doc cache shared with toolsets created during one run."""
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one docs source stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> PydanticAIDocs[AgentDepsT]:
         """Return a fresh per-run cache so workspace-local content cannot cross runs."""
@@ -102,6 +122,7 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
         return PydanticAIDocsToolset[AgentDepsT](
             local_docs_path=self._resolved_local_path(),
             cache=self._cache if self.cache else None,
+            remote_ref=self.remote_ref,
         )
 
     @classmethod

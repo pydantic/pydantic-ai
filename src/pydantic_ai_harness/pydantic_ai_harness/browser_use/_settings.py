@@ -38,9 +38,7 @@ class BrowserAgentSettings:
 
     Pass an instance as `BrowserUse.agent_settings`. The defaults are a
     snapshot of browser-use's own (the pinned minimum version), so an empty
-    instance behaves exactly like not passing one; a test asserts that mirror
-    field by field, so an upgrade that moves a default is caught rather than
-    silently changing behaviour. The `*_llm` fields accept the same inputs as
+    instance behaves exactly like not passing one. The `*_llm` fields accept the same inputs as
     the capability's `llm` field: a browser-use chat model, a Pydantic AI model,
     or a model name string.
     """

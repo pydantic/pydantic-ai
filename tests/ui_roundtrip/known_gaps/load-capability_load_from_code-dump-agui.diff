@@ -1,0 +1,42 @@
+--- expected
++++ actual
+@@ -28,3 +28 @@
+-   {
+-    "unstated_loads": true
+-   },
++   {},
+@@ -38,14 +35,0 @@
+-    },
+-    {
+-     "kind": "capability-load-delta",
+-     "loaded": [
+-      "refunds"
+-     ],
+-     "tool_call_id": "open-1"
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "refund_status"
+-     ],
+-     "tool_call_id": "open-1"
+@@ -186,3 +170 @@
+-   {
+-    "unstated_loads": true
+-   },
++   {},
+@@ -196,14 +177,0 @@
+-    },
+-    {
+-     "kind": "capability-load-delta",
+-     "loaded": [
+-      "refunds"
+-     ],
+-     "tool_call_id": "open-7"
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "refund_status"
+-     ],
+-     "tool_call_id": "open-7"

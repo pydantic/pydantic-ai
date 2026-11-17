@@ -52,7 +52,7 @@ Meta also serves the Chat Completions API, which you can use with [`OpenAIChatMo
 
 ## Reasoning
 
-Muse models always reason: Meta rejects `reasoning_effort='none'`, so `thinking=False` is ignored. Efforts from `'minimal'` to `'max'` are supported through the unified `thinking` setting or `openai_reasoning_effort`. Meta only streams reasoning summaries when you request them:
+Muse models always reason: Meta rejects `reasoning_effort='none'`, so `thinking=False` sends the lowest effort, `'minimal'`. Efforts from `'minimal'` to `'max'` are supported through `openai_reasoning_effort`. The unified `thinking` setting covers the same range, except that `'max'` is sent as `'xhigh'`. Meta only streams reasoning summaries when you request them:
 
 ```python
 from pydantic_ai import Agent

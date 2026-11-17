@@ -26,7 +26,7 @@ _SHIMS = [
     ('media', 'media', 'S3MediaStore', 'S3MediaStore'),
     ('planning', 'planning', 'Planning', 'Planning'),
     ('step_persistence', 'step_persistence', 'StepPersistence', 'StepPersistence'),
-    ('subagents', 'subagents', 'SubAgents', 'SubAgents'),
+    ('subagents', 'sub_agents', 'SubAgents', 'SubAgents'),
 ]
 
 

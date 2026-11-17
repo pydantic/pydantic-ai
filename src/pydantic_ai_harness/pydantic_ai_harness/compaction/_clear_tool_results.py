@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
@@ -15,9 +15,11 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_token_count,
     exceeds,
+    is_cleared_return,
     iter_tool_pairs,
     rebuild_with_cleared,
     record_compaction_reclaim,
+    require_trigger,
     resolve_token_trigger,
     validate_token_trigger,
 )
@@ -56,7 +58,16 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     """
 
     max_messages: int | None = None
-    """Trigger clearing when message count exceeds this value. `None` disables."""
+    """Trigger clearing when the messages since the last cleared tool result exceed this value. `None` disables.
+
+    Clearing blanks content but removes no messages, so a plain message count would stay above
+    the threshold and clear one more result on every request, rewriting history (and busting the
+    prompt cache) each step. Counting from the last cleared result instead makes clearing happen
+    in batches, and the requests between two clears extend the cached prefix. Before the first clear
+    the count is the whole history. The kept pairs count toward it: right after a clear about
+    `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more, so
+    the next clear comes after about `(max_messages - 2 * keep_pairs) / 2` tool steps. At or below
+    `2 * keep_pairs` it clears on every request."""
 
     max_tokens: int | None = None
     """Trigger clearing when estimated token count exceeds this value. `None` disables."""
@@ -103,12 +114,11 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When `None`, uses a ~4 characters-per-token heuristic.
+    When `None`, uses the built-in text estimate, which counts dense text such as non-ASCII
+    scripts, base64 and compact JSON higher than prose.
     """
 
     def __post_init__(self) -> None:
-        if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
-            raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
@@ -145,6 +155,10 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
                 return messages
         return cleared
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject a registration without a trigger."""
+        require_trigger('ClearToolResults', self.max_messages, self.max_tokens, self.max_fraction)
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -156,9 +170,9 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         token_trigger = resolve_token_trigger(
             self.max_tokens, self.max_fraction, request_ctx.model, self.fallback_context_window, self.context_window
         )
-        if not exceeds(
+        if not self._exceeds_max_messages(messages) and not exceeds(
             messages,
-            self.max_messages,
+            None,
             token_trigger,
             self.tokenizer,
             model_request_parameters=request_context.model_request_parameters,
@@ -178,3 +192,15 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             estimate_token_count(compacted, self.tokenizer),
         )
         return replace(request_context, messages=compacted)
+
+    def _exceeds_max_messages(self, messages: list[ModelMessage]) -> bool:
+        if self.max_messages is None:
+            return False
+        for since_last_clear, message in enumerate(reversed(messages)):
+            if isinstance(message, ModelRequest) and any(
+                isinstance(part, ToolReturnPart) and is_cleared_return(part, self.placeholder) for part in message.parts
+            ):
+                break
+        else:
+            since_last_clear = len(messages)
+        return since_last_clear > self.max_messages

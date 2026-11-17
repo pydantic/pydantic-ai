@@ -44,13 +44,13 @@ interactions:
     - reasoning.encrypted_content
 - kind: message
   direction: received
-  at: 0.179
+  at: 0.2
   data:
     type: response.created
     response:
-      id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+      id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
       object: response
-      created_at: 1791929645
+      created_at: 1792161858
       status: in_progress
       access_programs: null
       background: false
@@ -130,13 +130,13 @@ interactions:
     sequence_number: 0
 - kind: message
   direction: received
-  at: 0.262
+  at: 0.231
   data:
     type: response.in_progress
     response:
-      id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+      id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
       object: response
-      created_at: 1791929645
+      created_at: 1792161858
       status: in_progress
       access_programs: null
       background: false
@@ -216,104 +216,104 @@ interactions:
     sequence_number: 1
 - kind: message
   direction: received
-  at: 1.066
+  at: 2.969
   data:
     type: response.output_item.added
     item:
-      id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
+      id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
       type: function_call
       status: in_progress
       arguments: ''
-      call_id: call_liadu9FU0aOQw8AYqxZxAJWE
+      call_id: call_4DslskBQaHKAQfBn0955XDeN
       name: get_weather
     output_index: 0
     sequence_number: 2
 - kind: message
   direction: received
-  at: 1.073
+  at: 2.997
   data:
     type: response.function_call_arguments.delta
     delta: '{"'
-    item_id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
-    obfuscation: 5BVfC7H5uAqKEn
+    item_id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
+    obfuscation: pr6iFSbdSKY42u
     output_index: 0
     sequence_number: 3
 - kind: message
   direction: received
-  at: 1.073
+  at: 3.005
   data:
     type: response.function_call_arguments.delta
     delta: city
-    item_id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
-    obfuscation: w3mclwqLrQlS
+    item_id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
+    obfuscation: WGH08WzQIrLT
     output_index: 0
     sequence_number: 4
 - kind: message
   direction: received
-  at: 1.081
+  at: 3.017
   data:
     type: response.function_call_arguments.delta
     delta: '":"'
-    item_id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
-    obfuscation: 4yArEzd8MxvPX
+    item_id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
+    obfuscation: Wh1jBUon4Rq25
     output_index: 0
     sequence_number: 5
 - kind: message
   direction: received
-  at: 1.081
+  at: 3.025
   data:
     type: response.function_call_arguments.delta
     delta: Paris
-    item_id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
-    obfuscation: XYL2Q9dLJQu
+    item_id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
+    obfuscation: 6fYw5hE95E4
     output_index: 0
     sequence_number: 6
 - kind: message
   direction: received
-  at: 1.088
+  at: 3.052
   data:
     type: response.function_call_arguments.delta
     delta: '"}'
-    item_id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
-    obfuscation: b2jFqMKTvndfZj
+    item_id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
+    obfuscation: Sh41jECMM3gNLE
     output_index: 0
     sequence_number: 7
 - kind: message
   direction: received
-  at: 1.213
+  at: 3.107
   data:
     type: response.function_call_arguments.done
     arguments: '{"city":"Paris"}'
-    item_id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
+    item_id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
     output_index: 0
     sequence_number: 8
 - kind: message
   direction: received
-  at: 1.219
+  at: 3.107
   data:
     type: response.output_item.done
     item:
-      id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
+      id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
       type: function_call
       status: completed
       arguments: '{"city":"Paris"}'
-      call_id: call_liadu9FU0aOQw8AYqxZxAJWE
+      call_id: call_4DslskBQaHKAQfBn0955XDeN
       name: get_weather
     output_index: 0
     sequence_number: 9
 - kind: message
   direction: received
-  at: 1.244
+  at: 3.154
   data:
     type: response.completed
     response:
-      id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+      id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
       object: response
-      created_at: 1791929645
+      created_at: 1792161858
       status: completed
       access_programs: null
       background: false
-      completed_at: 1791929646
+      completed_at: 1792161861
       error: null
       frequency_penalty: 0.0
       incomplete_details: null
@@ -323,11 +323,11 @@ interactions:
       model: gpt-6-astra
       moderation: null
       output:
-      - id: fc_0d824b1ac521482b016acead2dec3087d285a3755ab1d7202c
+      - id: fc_0a5264ca68ac88e9016ad23844e1b087d2a8ec48a4b1a46387
         type: function_call
         status: completed
         arguments: '{"city":"Paris"}'
-        call_id: call_liadu9FU0aOQw8AYqxZxAJWE
+        call_id: call_4DslskBQaHKAQfBn0955XDeN
         name: get_weather
       parallel_tool_calls: true
       presence_penalty: 0.0
@@ -403,13 +403,13 @@ interactions:
     sequence_number: 10
 - kind: message
   direction: sent
-  at: 1.249
+  at: 3.167
   data:
     type: response.create
     model: gpt-6-astra
     input:
     - type: function_call_output
-      call_id: call_liadu9FU0aOQw8AYqxZxAJWE
+      call_id: call_4DslskBQaHKAQfBn0955XDeN
       output: '18'
     tools:
     - name: get_weather
@@ -425,7 +425,7 @@ interactions:
       description: Get the current temperature in Celsius for a city.
       strict: true
     tool_choice: auto
-    previous_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+    previous_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
     reasoning:
       effort: low
       context: all_turns
@@ -446,16 +446,16 @@ interactions:
     include:
     - reasoning.encrypted_content
     prompt_cache_options:
-      comparison_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+      comparison_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
 - kind: message
   direction: received
-  at: 1.384
+  at: 3.606
   data:
     type: response.created
     response:
-      id: resp_0d824b1ac521482b016acead2e350c87d2a93b6bfe574e3b80
+      id: resp_0a5264ca68ac88e9016ad238456cf087d2b78412fac356b57f
       object: response
-      created_at: 1791929646
+      created_at: 1792161861
       status: in_progress
       access_programs: null
       background: false
@@ -471,10 +471,10 @@ interactions:
       output: []
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+      previous_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
       prompt_cache_key: null
       prompt_cache_options:
-        comparison_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+        comparison_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
         mode: implicit
         ttl: 30m
       prompt_cache_retention: 24h
@@ -539,13 +539,13 @@ interactions:
     sequence_number: 0
 - kind: message
   direction: received
-  at: 1.409
+  at: 3.649
   data:
     type: response.in_progress
     response:
-      id: resp_0d824b1ac521482b016acead2e350c87d2a93b6bfe574e3b80
+      id: resp_0a5264ca68ac88e9016ad238456cf087d2b78412fac356b57f
       object: response
-      created_at: 1791929646
+      created_at: 1792161861
       status: in_progress
       access_programs: null
       background: false
@@ -561,12 +561,12 @@ interactions:
       output: []
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+      previous_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
       prompt_cache_diagnostics:
         type: unavailable
       prompt_cache_key: null
       prompt_cache_options:
-        comparison_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+        comparison_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
         mode: implicit
         ttl: 30m
       prompt_cache_retention: 24h
@@ -631,11 +631,11 @@ interactions:
     sequence_number: 1
 - kind: message
   direction: received
-  at: 2.574
+  at: 4.806
   data:
     type: response.output_item.added
     item:
-      id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+      id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
       type: message
       status: in_progress
       content: []
@@ -645,11 +645,11 @@ interactions:
     sequence_number: 2
 - kind: message
   direction: received
-  at: 2.574
+  at: 4.806
   data:
     type: response.content_part.added
     content_index: 0
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     output_index: 0
     part:
       type: output_text
@@ -659,82 +659,82 @@ interactions:
     sequence_number: 3
 - kind: message
   direction: received
-  at: 2.581
+  at: 4.812
   data:
     type: response.output_text.delta
     content_index: 0
     delta: '{"'
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     logprobs: []
-    obfuscation: 8K3F5esooL4RGf
+    obfuscation: xUpVYRSpJz9R1Z
     output_index: 0
     sequence_number: 4
 - kind: message
   direction: received
-  at: 2.586
+  at: 4.818
   data:
     type: response.output_text.delta
     content_index: 0
     delta: temperature
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     logprobs: []
-    obfuscation: TMJWU
+    obfuscation: UTie6
     output_index: 0
     sequence_number: 5
 - kind: message
   direction: received
-  at: 2.59
+  at: 4.821
   data:
     type: response.output_text.delta
     content_index: 0
     delta: '":'
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     logprobs: []
-    obfuscation: YBUwDdZV7NsyAc
+    obfuscation: C4rPd6KqEnqS7p
     output_index: 0
     sequence_number: 6
 - kind: message
   direction: received
-  at: 2.599
+  at: 4.825
   data:
     type: response.output_text.delta
     content_index: 0
     delta: '18'
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     logprobs: []
-    obfuscation: LlZ1RaeBJq1BAK
+    obfuscation: 0EHd9Dbve0CXE3
     output_index: 0
     sequence_number: 7
 - kind: message
   direction: received
-  at: 2.599
+  at: 4.829
   data:
     type: response.output_text.delta
     content_index: 0
     delta: '}'
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     logprobs: []
-    obfuscation: Vebh86jV1iGQURy
+    obfuscation: 46xl2t2MUbcTTan
     output_index: 0
     sequence_number: 8
 - kind: message
   direction: received
-  at: 2.647
+  at: 4.893
   data:
     type: response.output_text.done
     content_index: 0
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     logprobs: []
     output_index: 0
     sequence_number: 9
     text: '{"temperature":18}'
 - kind: message
   direction: received
-  at: 2.647
+  at: 4.893
   data:
     type: response.content_part.done
     content_index: 0
-    item_id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+    item_id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
     output_index: 0
     part:
       type: output_text
@@ -744,11 +744,11 @@ interactions:
     sequence_number: 10
 - kind: message
   direction: received
-  at: 2.651
+  at: 4.893
   data:
     type: response.output_item.done
     item:
-      id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+      id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
       type: message
       status: completed
       content:
@@ -762,17 +762,17 @@ interactions:
     sequence_number: 11
 - kind: message
   direction: received
-  at: 2.652
+  at: 4.896
   data:
     type: response.completed
     response:
-      id: resp_0d824b1ac521482b016acead2e350c87d2a93b6bfe574e3b80
+      id: resp_0a5264ca68ac88e9016ad238456cf087d2b78412fac356b57f
       object: response
-      created_at: 1791929646
+      created_at: 1792161861
       status: completed
       access_programs: null
       background: false
-      completed_at: 1791929647
+      completed_at: 1792161862
       error: null
       frequency_penalty: 0.0
       incomplete_details: null
@@ -782,7 +782,7 @@ interactions:
       model: gpt-6-astra
       moderation: null
       output:
-      - id: msg_0d824b1ac521482b016acead2f6e8c87d28500408d6256c37c
+      - id: msg_0a5264ca68ac88e9016ad23846b7ac87d2abc71e8dc3722416
         type: message
         status: completed
         content:
@@ -794,12 +794,12 @@ interactions:
         role: assistant
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+      previous_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
       prompt_cache_diagnostics:
         type: cache_hit
       prompt_cache_key: null
       prompt_cache_options:
-        comparison_response_id: resp_0d824b1ac521482b016acead2cf7a487d2bc965281841b54ee
+        comparison_response_id: resp_0a5264ca68ac88e9016ad2384206f887d2a0244bb3a57f33b2
         mode: implicit
         ttl: 30m
       prompt_cache_retention: 24h

@@ -12,6 +12,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
     from pydantic_ai.profiles.mistral import mistral_model_profile
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -23,8 +24,6 @@ pytestmark = [
 @pytest.mark.parametrize(
     'model_name',
     [
-        'mistral-large-4',
-        'mistral-large-4-0',
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',
@@ -40,11 +39,21 @@ def test_adjustable_reasoning_models(model_name: str):
     profile = MistralProvider.model_profile(model_name)
     assert profile.get('supports_thinking') is True
     assert profile.get('thinking_always_enabled') is False
+    assert 'mistral_reasoning_efforts' not in profile
+
+
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+def test_large_4_models(model_name: str):
+    """Large 4 accepts `'low'`/`'medium'`/`'high'` and rejects `'none'`, so it can't turn reasoning off."""
+    profile = MistralProvider.model_profile(model_name)
+    assert profile.get('supports_thinking') is True
+    assert profile.get('thinking_always_enabled') is True
+    assert profile.get('mistral_reasoning_efforts') == frozenset({'low', 'medium', 'high'})
 
 
 def test_adjustable_reasoning_not_on_shared_profile():
     """The shared profile must NOT advertise thinking for adjustable ids (see module docstring)."""
-    assert mistral_model_profile('mistral-small-latest') is None
+    assert not mistral_model_profile('mistral-small-latest').get('supports_thinking')
     assert MistralProvider.model_profile('mistral-small-latest').get('supports_thinking') is True
 
 
@@ -59,7 +68,6 @@ def test_adjustable_reasoning_not_on_shared_profile():
 def test_magistral_models(model_name: str):
     """Magistral models have thinking always enabled."""
     profile = mistral_model_profile(model_name)
-    assert profile is not None
     assert profile.get('supports_thinking') is True
     assert profile.get('thinking_always_enabled') is True
 
@@ -83,9 +91,9 @@ _NON_REASONING_MODELS = [
 
 @pytest.mark.parametrize('model_name', _NON_REASONING_MODELS)
 def test_non_thinking_models(model_name: str):
-    """Models without adjustable reasoning get no profile, so `thinking` is stripped upstream."""
+    """Models without adjustable reasoning don't advertise thinking, so `thinking` is stripped upstream."""
     profile = mistral_model_profile(model_name)
-    assert profile is None
+    assert not profile.get('supports_thinking')
 
 
 @pytest.mark.parametrize('model_name', _NON_REASONING_MODELS)
@@ -93,3 +101,20 @@ def test_non_thinking_models_native_provider(model_name: str):
     """The native provider must not advertise thinking for these ids either; catches allowlist widening."""
     profile = MistralProvider.model_profile(model_name)
     assert not profile.get('supports_thinking')
+
+
+@pytest.mark.parametrize(
+    'model_name', ['mistral-small-latest', 'magistral-medium-latest', 'devstral-latest', 'voxtral-small-latest']
+)
+def test_tool_call_id_length(model_name: str):
+    """Every Mistral model gets the 9-alphanumeric tool call ID constraint, on the shared profile and the native provider."""
+    assert mistral_model_profile(model_name).get('tool_call_id_length') == 9
+    assert MistralProvider.model_profile(model_name).get('tool_call_id_length') == 9
+
+
+def test_zai_glm_5_3_inlines_defs_for_tool_schemas():
+    """GLM-5.3 nested tool schemas must not use `$defs` references."""
+    assert mistral_model_profile('zai-glm-5-3').get('json_schema_transformer') == InlineDefsJsonSchemaTransformer
+    assert (
+        MistralProvider.model_profile('zai-glm-5-3').get('json_schema_transformer') == InlineDefsJsonSchemaTransformer
+    )

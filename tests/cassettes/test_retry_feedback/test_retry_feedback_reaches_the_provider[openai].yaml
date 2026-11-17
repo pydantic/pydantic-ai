@@ -1,0 +1,160 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "135"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: o3-mini
+        stream: false
+        messages:
+        - role: user
+          content: How many continents are there? Answer with just the number.
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1365"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EbDXSRLZes0u3LSZAkS90DnQzeo4t
+        object: chat.completion
+        created: 1792538886
+        model: o3-mini-2025-01-31
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "7"
+            refusal: null
+            annotations: []
+          finish_reason: stop
+        usage:
+          prompt_tokens: 18
+          completion_tokens: 142
+          total_tokens: 160
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 128
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_b4c97ff98e
+  recorded_at: 2026-10-20T23:28:07.994819+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "413"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: o3-mini
+        stream: false
+        messages:
+        - role: user
+          content: How many continents are there? Answer with just the number.
+        - role: assistant
+          content: "7"
+        - role: user
+          content: |-
+            Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+            <retry_feedback>
+            answer with the number spelled out as a word, nothing else
+            </retry_feedback>
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "875"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EbDXUSw2VDVsx7IWWGwhiX8xN05C5
+        object: chat.completion
+        created: 1792538888
+        model: o3-mini-2025-01-31
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: seven
+            refusal: null
+            annotations: []
+          finish_reason: stop
+        usage:
+          prompt_tokens: 68
+          completion_tokens: 81
+          total_tokens: 149
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 64
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_b4c97ff98e
+  recorded_at: 2026-10-20T23:28:09.186091+00:00

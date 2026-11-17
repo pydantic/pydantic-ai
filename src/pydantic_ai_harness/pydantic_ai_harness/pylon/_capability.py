@@ -21,14 +21,14 @@ Re-check with an unauthenticated `POST https://mcp.usepylon.com` (401 with a `re
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._mcp import credential, hosted_toolset, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -62,15 +62,24 @@ class Pylon(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """Stable capability and toolset ID, so `defer_loading=True` needs none.
 
-    One `Pylon` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
+    One `Pylon` is one connection to one account. Two sharing this `id` are
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
 
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Pylon access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    tool_prefix: str | None = 'pylon'
+    """Prepended with `_` to the server's tool names, as in `pylon_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
+
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Pylon access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `PYLON_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Pylon tools.
     """
@@ -85,7 +94,7 @@ class Pylon(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and self.auth is not None:
+        if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
     @classmethod
@@ -95,25 +104,12 @@ class Pylon(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Pylon MCP tools."""
-        id = self.id or _ID
-        if self.client is not None:
-            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
-            )
-        elif callable(self.auth):
-            toolset = DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
-        else:
-            toolset = self._connect(self.auth)
+        toolset = hosted_toolset(
+            self.client, self.auth, self._connect, id=self.id or _ID, include_instructions=self.include_instructions
+        )
         if self.read_only:
-            return read_only_toolset(toolset)
-        return toolset
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
+            toolset = read_only_toolset(toolset)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(

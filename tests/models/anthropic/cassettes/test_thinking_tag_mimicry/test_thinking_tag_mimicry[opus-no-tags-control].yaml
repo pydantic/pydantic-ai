@@ -1,0 +1,128 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2576'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: if it takes 5 machines 5 minutes to make 5 widgets, how long for 100 machines to make 100 widgets?
+          type: text
+        role: user
+      - content:
+        - text: 5 minutes. Each machine makes one widget every 5 minutes, so 100 machines make 100 widgets in that same 5
+            minutes -- the rate per machine never changed.
+          type: text
+        role: assistant
+      - content:
+        - text: a bat and a ball cost $1.10 together. the bat costs $1.00 more than the ball. how much is the ball?
+          type: text
+        role: user
+      - content:
+        - text: $0.05. If the ball were $0.10 the bat would be $1.10 and the total $1.20 -- too much. At $0.05 the bat is
+            $1.05 and the total is exactly $1.10.
+          type: text
+        role: assistant
+      - content:
+        - text: i have a 7-litre jug and a 3-litre jug. how do i measure exactly 5 litres?
+          type: text
+        role: user
+      - content:
+        - text: Fill the 7 → pour into the 3 (4 left) → empty the 3 → pour the 4 across (1 left) → empty the 3 → move the
+            1 into the 3 → refill the 7 → top up the 3 (takes only 2). You now have exactly 5 litres in the 7-litre jug.
+          type: text
+        role: assistant
+      - content:
+        - text: a lily pad doubles every day and covers the lake on day 48. what day is it half covered?
+          type: text
+        role: user
+      - content:
+        - text: Day 47. It doubles daily, so the day before it covers the whole lake it covers exactly half -- halving once,
+            not halving the timeline.
+          type: text
+        role: assistant
+      - content:
+        - text: three friends pay $30 for a room, the clerk refunds $5, the bellhop keeps $2. where is the missing dollar?
+          type: text
+        role: user
+      - content:
+        - text: Nothing is missing -- the question adds the wrong columns. The $27 they paid already includes the bellhop's
+            $2. The right accounting is $25 (hotel) + $2 (bellhop) + $3 (refunded) = $30.
+          type: text
+        role: assistant
+      - content:
+        - text: a train leaves at 60mph and another at 40mph toward each other 200 miles apart. when do they meet?
+          type: text
+        role: user
+      - content:
+        - text: 2 hours. They close the gap at 60 + 40 = 100 mph, and 200 / 100 = 2.
+          type: text
+        role: assistant
+      - content:
+        - text: 'ok here is one more: a snail is at the bottom of a 30-foot well. each day it climbs 3 feet and each night
+            it slides back 2. how many days until it gets out? explain your reasoning.'
+          type: text
+        role: user
+      model: claude-opus-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '827'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d45896142571881452644ee07ebe21d5-85dec68341d6de47-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          **28 days.**
+
+          **Reasoning:** Each full day-night cycle the snail nets only 1 foot (3 up, 2 back). But on the final day, once it reaches the top during the climb, it's out -- no sliding back that night.
+
+          After 27 days the snail has netted 27 feet. On day 28 it climbs 3 more feet, reaching 30 feet and escaping before night falls.
+        type: text
+      id: msg_011CdeTV3u1JapAsjzVBBg8B
+      model: claude-opus-4-5-20251101
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 585
+        output_tokens: 106
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

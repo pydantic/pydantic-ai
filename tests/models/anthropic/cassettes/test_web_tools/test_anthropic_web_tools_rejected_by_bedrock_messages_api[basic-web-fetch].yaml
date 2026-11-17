@@ -1,0 +1,59 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "310"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content: Look up https://example.com and give me its title.
+        model: anthropic.claude-opus-5-5
+        tools:
+        - name: web_fetch
+          type: web_fetch_20250910
+          max_uses: null
+          allowed_domains: null
+          blocked_domains: null
+          citations: null
+          max_content_tokens: null
+  response:
+    status: 400
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-length:
+      - "212"
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        type: error
+        request_id: req_hmolaxfddtgpk67v65gazzqlnlogxkuq7laq2hwb7l2unhmxkvaq
+        error:
+          type: invalid_request_error
+          message: tool type 'web_fetch_20250910' is not supported for this model
+  recorded_at: 2026-10-27T00:59:35.704719+00:00

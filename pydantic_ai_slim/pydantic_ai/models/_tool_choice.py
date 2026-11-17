@@ -1,7 +1,7 @@
 import warnings
 from typing import Literal, assert_never
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRequestRejectedError, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
@@ -61,8 +61,10 @@ def resolve_tool_choice(  # noqa: C901
         # Named for the `ToolVisibility` literal it filters on rather than the looser "hidden":
         # only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
         # `tools` collection and a `'via_history'` definition travels on the tool-addition channel,
-        # and OpenAI honors `tool_choice` forcing for both, so neither is withheld here — though
-        # prose elsewhere would call all three "hidden from the model".
+        # so neither is withheld here — though prose elsewhere would call all three "hidden from the
+        # model". Making a chosen name acceptable to the provider is the adapter's job: one whose
+        # provider rejects a `tool_choice` naming a tool-addition definition redeclares it, as
+        # `OpenAIResponsesModel._build_responses_request_params` does.
         withheld_tool_names = {
             tool.name
             for tool in model_request_parameters.function_tools
@@ -209,13 +211,16 @@ def support_tool_forcing(
     unavailable_reason: str | None,
     *,
     disables_thinking: bool = False,
+    api_rejects: bool = False,
 ) -> bool:
     """Whether to send a forced tool choice, given why it can't be sent (if it can't).
 
     A forced choice Pydantic AI resolved itself (such as an output tool's) falls back to an unforced one;
-    an explicit forcing `tool_choice` raises a `UserError` with the reason instead. Where forcing would stop
-    the request from thinking (`disables_thinking`), a resolved forced choice falls back too, while an explicit
-    one is still sent.
+    an explicit forcing `tool_choice` raises a `UserError` with the reason instead. Where the API would reject
+    that request with an error (`api_rejects`), it raises a `ModelRequestRejectedError`, the category of that
+    error, so `FallbackModel` falls back on it as it would on the API's. Where forcing would stop the request
+    from thinking (`disables_thinking`), a resolved forced choice falls back too, while an explicit one is still
+    sent.
     """
     explicit_choice = (model_settings or {}).get('tool_choice')
     # `ToolOrOutput` and `[]` only resolve to a forced choice when the output type rules out direct output, so like
@@ -223,8 +228,9 @@ def support_tool_forcing(
     explicit_forcing = explicit_choice == 'required' or (isinstance(explicit_choice, list) and bool(explicit_choice))
     if unavailable_reason is not None:
         if explicit_forcing:
-            raise UserError(
-                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {unavailable_reason}'
-            )
+            message = f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {unavailable_reason}'
+            if api_rejects:
+                raise ModelRequestRejectedError(model_name, message)
+            raise UserError(message)
         return False
     return explicit_forcing or not disables_thinking

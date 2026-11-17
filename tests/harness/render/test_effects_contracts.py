@@ -254,6 +254,26 @@ async def test_capability_owned_tool_transfers_its_capability_events_and_usage()
     assert context.task_names.count('owned-effects__function_toolset__owned-effects.call_tool') == 1
 
 
+async def test_counter_only_child_usage_is_applied_to_the_parent() -> None:
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        TestModel(call_tools=['mark_unmeasured']),
+        name='counter-only-effects',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool
+    async def mark_unmeasured(ctx: RunContext[None]) -> str:
+        ctx.usage.incr(RunUsage(unmeasured_requests=1))
+        return 'marked'
+
+    usage = RunUsage()
+    assert isinstance(await run_agent_in_task(agent, runtime, JsonRecordingTaskContext(), usage=usage), str)
+
+    assert usage.unmeasured_requests == 1
+
+
 async def test_concurrent_child_effects_are_additive_and_ordered_per_child() -> None:
     seen: list[ChildEffectEvent] = []
     usage = RunUsage()
@@ -298,7 +318,7 @@ async def _retry_then_finish_stream(
 ) -> AsyncIterator[DeltaToolCalls | str]:
     del info
     parts = [part for message in messages for part in message.parts]
-    if any(isinstance(part, ToolReturnPart) for part in parts):
+    if any(isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in parts):
         yield 'done'
     else:
         yield {0: DeltaToolCall(name='retrying', json_args='{}', tool_call_id='retrying')}
