@@ -747,8 +747,8 @@ feedback that answers no tool call is shown as the model saw it. Content that lo
 own tags or a framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), in
 any case or spacing, is escaped, so a tool return stays inside its own message and can't end the
 transcript early. Each tool return and retry feedback is rendered whole by default: a fact that only a
-tool result carries reaches the summary only if the summarizer sees it, and the summarized messages were
-already part of a request the run's model accepted. Set `tool_return_max_chars` to cap each one, after
+tool result carries reaches the summary only if the summarizer sees it, and with `model=None` the summarized messages were
+already part of a request that model accepted. Set `tool_return_max_chars` to cap each one, after
 that escaping, at that many characters using the same explicit truncation marker as kept user turns, when
 `model` is a summarizer with a smaller context window than the run's model.
 Content a harness capability added on the user channel and tagged with an `origin` in its
