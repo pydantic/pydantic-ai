@@ -317,8 +317,8 @@ from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, Sum
 fallback = FallbackCompaction(
     max_fraction=0.85,
     fallback_chain=[
-        SummarizingCompaction(max_messages=1, keep_tokens=20_000),
-        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+        SummarizingCompaction(keep_tokens=20_000),
+        SlidingWindowCompaction(keep_tokens=20_000),
     ]
 )
 ```
@@ -333,7 +333,7 @@ compacted history, emitting the standard `compact_messages` span when history ch
 With neither trigger configured, the request hook does nothing. Direct `compact()` and
 `compact_now()` calls run the chain regardless of its threshold, so it remains usable
 inside other composing strategies and for manual compaction. Each child's own trigger
-is bypassed when the chain calls its `compact()` method.
+is bypassed when the chain calls its `compact()` method, so a child needs none.
 
 ### Background compaction (experimental)
 
@@ -347,8 +347,8 @@ compaction = FallbackCompaction(
     max_fraction=0.85,
     background_start=0.85,
     fallback_chain=[
-        SummarizingCompaction(max_messages=1, keep_tokens=20_000),
-        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+        SummarizingCompaction(keep_tokens=20_000),
+        SlidingWindowCompaction(keep_tokens=20_000),
     ],
 )
 ```
@@ -403,10 +403,10 @@ agent = Agent(
     'openai:gpt-5.6-luna',
     capabilities=[
         # Automatic size-based compaction stays as is.
-        TieredCompaction(tiers=[SummarizingCompaction(max_messages=1)], target_fraction=0.8),
+        TieredCompaction(tiers=[SummarizingCompaction()], target_fraction=0.8),
         CompactOnRequest(
-            # The strategy's own trigger is required but bypassed: `compact` is called directly.
-            SummarizingCompaction(max_messages=1, keep_messages=6),
+            # `compact` is called directly, so the strategy needs no trigger of its own.
+            SummarizingCompaction(keep_messages=6),
             min_tokens=30_000,  # refuse requests that would save little
             max_per_run=2,
         ),
@@ -480,7 +480,7 @@ from pydantic_ai_harness import ClampOversizedMessages, ClearToolResults, Tiered
 TieredCompaction(
     tiers=[
         ClampOversizedMessages(max_part_tokens=50_000),
-        ClearToolResults(max_tokens=1, keep_pairs=3),
+        ClearToolResults(keep_pairs=3),
     ],
     target_tokens=120_000,
 )
@@ -499,7 +499,7 @@ agent = Agent(
     capabilities=[
         RelevanceCompaction(
             'system-one:nimble',
-            summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5', max_messages=1),
+            summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5'),
             max_fraction=0.8,
         )
     ],
@@ -523,7 +523,7 @@ Steps are chosen by rank against a token budget, never by comparing a probabilit
 2. The rest are reduced in order of `still_matters`. With a `summarizer`, they are written into one summary placed after the head of the history, up to `summary_input_tokens` (default 30,000) of steps per compaction. Without one, each of their tool results is cut to its first `truncated_result_chars` (default 300) characters plus a note that the tool can be called again, while that still fits the target.
 3. Whatever is left is dropped, except a step holding a user prompt: without a summarizer it is cut, and with one it is summarized while it fits `summary_input_tokens` and kept verbatim otherwise.
 
-The `summarizer` is a `SummarizingCompaction` used for its model, prompts and settings; its trigger and `keep_*` fields are never consulted, so any trigger such as `max_messages=1` works. With the summarizer's `incremental=True` (the default) the earlier summary is updated; with `incremental=False` it is summarized again along with the steps. `receipts=True` adds a [receipt](#compaction-receipts) when steps were summarized or dropped.
+The `summarizer` is a `SummarizingCompaction` used for its model, prompts and settings; its trigger and `keep_*` fields are never consulted, so it needs no trigger. With the summarizer's `incremental=True` (the default) the earlier summary is updated; with `incremental=False` it is summarized again along with the steps. `receipts=True` adds a [receipt](#compaction-receipts) when steps were summarized or dropped.
 
 Judge requests run concurrently, up to `judge_concurrency` (default 8) at once. Every judgement is remembered on the instance under the task and the step's content, so a later compaction with the same task judges only the new steps. All the judge requests of one compaction count as one request against a `UsageLimits` request limit, checked before any of them is sent. Their tokens are added to the run's usage and checked against its token and cost limits once they return, like the summary request's. On a laptop running Ollama, one judge request for a step of a few thousand tokens took 5 to 10 seconds, so the first compaction of a long history can take minutes there; later ones judge only the new steps.
 
@@ -536,7 +536,7 @@ compaction = FallbackCompaction(
     max_fraction=0.8,
     fallback_chain=[
         RelevanceCompaction('system-one:nimble', max_fraction=0.8),
-        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+        SlidingWindowCompaction(keep_tokens=20_000),
     ],
 )
 ```
@@ -597,8 +597,8 @@ agent = Agent(
         TieredCompaction(
             tiers=[
                 DeduplicateFileReads(file_key=my_file_key),
-                ClearToolResults(max_tokens=1, keep_pairs=3),
-                SummarizingCompaction(max_messages=1, keep_messages=20),  # model inherits the run's
+                ClearToolResults(keep_pairs=3),
+                SummarizingCompaction(keep_messages=20),  # model inherits the run's
             ],
             target_tokens=120_000,
         )
@@ -607,8 +607,8 @@ agent = Agent(
 ```
 
 A tier inside `TieredCompaction` is driven directly by the orchestrator, which re-measures after each
-and stops once under `target_tokens` -- so a tier's own `max_*` trigger is irrelevant there (set it to
-anything valid). Any object with `async def compact(messages, ctx) -> list[ModelMessage]`
+and stops once under `target_tokens` -- so a tier needs no `max_*` trigger of its own. Registered directly on
+an agent without a trigger, `ClearToolResults`, `SlidingWindowCompaction` and `SummarizingCompaction` raise `UserError`. Any object with `async def compact(messages, ctx) -> list[ModelMessage]`
 (`CompactionStrategy`) can be a tier, so you can plug in your own.
 
 Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds the
@@ -621,6 +621,8 @@ on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets
 `compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier changes the
 history, no span is emitted; the warning still reports the estimate and target. Pass
 `preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
+
+On its own trigger, `TieredCompaction` skips a tier that raises one of its `skip_on` exceptions (by default `ModelAPIError`, `FallbackExceptionGroup` and `UnexpectedModelBehavior`, such as a summarizer whose provider is down or that exhausted its retries; unlike `FallbackCompaction`'s `fallback_on`, this includes `UnexpectedModelBehavior`, because the next tier can still shrink the history without that model) and moves on to the next tier. The skipped tier's receipts are discarded, a warning is logged, and a `compact_messages` span records the tier as `compaction.strategy`, with `compaction.skipped='tier_failed'` and `error.type`. Other exceptions, such as programming errors and `UsageLimitExceeded`, propagate, as does every exception on a direct `compact()` call, so a `FallbackCompaction` around it still falls back. Pass `skip_on=()` to propagate every tier failure.
 
 ## Cache tradeoff (read before using `ClearToolResults`)
 
@@ -816,7 +818,8 @@ to keep span cardinality low. Attributes:
 | `compaction.tokens_after` | int | Estimated token count after compaction |
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
-| `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `compaction.skipped` | str | `tier_failed` when a `TieredCompaction` tier raised and was skipped, or `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
+| `error.type` | str | With `compaction.skipped='tier_failed'`: the exception's fully qualified class name |
 | `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
 | `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
 | `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |

@@ -1,4 +1,4 @@
-"""Live PostgreSQL tests for `PostgresStepStore`, `PostgresMediaStore`, `PostgresMemoryStore` and `PostgresSpendStore`.
+"""Live PostgreSQL tests for the harness `Postgres*Store` classes.
 
 The stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
 there is no in-process Postgres to run them against. The unit suites under
@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -71,6 +73,7 @@ from pydantic_ai_harness.media import (
     parse_media_uri,
 )
 from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
+from pydantic_ai_harness.planning import PlanItem, PostgresPlanStore
 from pydantic_ai_harness.spend_limits import PostgresSpendStore, SpendEntry, Spent
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -114,6 +117,33 @@ _AWKWARD_METADATA = {
 # A quote, a backslash and a parameter placeholder: each would change the meaning
 # of a statement that was assembled by string formatting.
 _HOSTILE_TEXT = 'it\'s a "run" \\ $1; DROP TABLE runs; --'
+
+
+@asynccontextmanager
+async def _writer_pool(
+    pool: PostgresPool, prefix: str, *tables: str, sequence: str | None = None
+) -> AsyncGenerator[PostgresPool, None]:
+    """Yield a pool for a role with no `CREATE` on the schema, granted only reads and writes on `tables`."""
+    role, password = f'{prefix}_writer', uuid4().hex
+    async with pool.acquire() as connection:
+        await connection.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
+        await connection.execute(f'GRANT USAGE ON SCHEMA public TO {role}')
+        await connection.execute(f'REVOKE CREATE ON SCHEMA public FROM {role}')
+        await connection.execute(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {", ".join(tables)} TO {role}')
+        if sequence is not None:
+            await connection.execute(f'GRANT USAGE ON SEQUENCE {sequence} TO {role}')
+    try:
+        writer_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            postgres_url(), user=role, password=password, min_size=1, max_size=1
+        )
+        try:
+            yield as_store_pool(writer_pool)
+        finally:
+            await writer_pool.close()
+    finally:
+        async with pool.acquire() as connection:
+            await connection.execute(f'DROP OWNED BY {role}')
+            await connection.execute(f'DROP ROLE {role}')
 
 
 def _user_messages(text: str = 'a') -> list[ModelMessage]:
@@ -655,29 +685,55 @@ async def test_spend_a_role_without_create_uses_existing_tables() -> None:
     """Postgres checks `CREATE` on the schema before `IF NOT EXISTS`, so the store skips DDL when the tables exist."""
     async with live_tables() as (pool, prefix):
         await PostgresSpendStore(pool, table=prefix).add_many([SpendEntry(key='k', requests=1)])
-        role, password = f'{prefix}_writer', uuid4().hex
-        async with pool.acquire() as connection:
-            await connection.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
-            await connection.execute(f'GRANT USAGE ON SCHEMA public TO {role}')
-            await connection.execute(f'REVOKE CREATE ON SCHEMA public FROM {role}')
-            await connection.execute(
-                f'GRANT SELECT, INSERT, UPDATE, DELETE ON {prefix}_counters, {prefix}_dedup TO {role}'
-            )
-        try:
-            writer_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
-                postgres_url(), user=role, password=password, min_size=1, max_size=1
-            )
-            try:
-                store = PostgresSpendStore(as_store_pool(writer_pool), table=prefix)
-                assert await store.add_many([SpendEntry(key='k', requests=1, token='resp-1')]) == {
-                    'k': Spent(requests=2)
-                }
-            finally:
-                await writer_pool.close()
-        finally:
-            async with pool.acquire() as connection:
-                await connection.execute(f'DROP OWNED BY {role}')
-                await connection.execute(f'DROP ROLE {role}')
+        async with _writer_pool(pool, prefix, f'{prefix}_counters', f'{prefix}_dedup') as writer_pool:
+            store = PostgresSpendStore(writer_pool, table=prefix)
+            assert await store.add_many([SpendEntry(key='k', requests=1, token='resp-1')]) == {'k': Spent(requests=2)}
+
+
+async def test_media_a_role_without_create_uses_an_existing_table() -> None:
+    """A role granted only reads and writes on the table can store and read media."""
+    async with live_tables() as (pool, prefix):
+        await PostgresMediaStore(pool, table=prefix).put(b'by the owner')
+        async with _writer_pool(pool, prefix, prefix) as writer_pool:
+            store = PostgresMediaStore(writer_pool, table=prefix)
+            uri = await store.put(b'by the writer')
+            assert await store.get(uri) == b'by the writer'
+
+
+async def test_memory_a_role_without_create_uses_existing_tables() -> None:
+    """The upgrade's `ALTER TABLE` needs ownership too, so it is skipped with the rest once the schema is current."""
+    async with live_tables() as (pool, prefix):
+        owner_store = PostgresMemoryStore(pool, table=prefix)
+        created = await owner_store.write('notes.md', 'one', expected_version=None)
+        tables = (prefix, f'{prefix}_operations', f'{prefix}_metadata')
+        async with _writer_pool(pool, prefix, *tables, sequence=f'{prefix}_versions') as writer_pool:
+            store = PostgresMemoryStore(writer_pool, table=prefix)
+            operation = MemoryOperation(id='op-1', fingerprint='write')
+            await store.write('notes.md', 'two', expected_version=created.version, operation=operation)
+            file = await store.read('notes.md', max_chars=100)
+            assert file is not None and file.content == 'two'
+
+
+async def test_planning_a_role_without_create_uses_an_existing_table() -> None:
+    """A role granted only reads and writes on the table can add and list steps."""
+    async with live_tables() as (pool, prefix):
+        await PostgresPlanStore(pool, table=prefix).add_item(PlanItem(content='by the owner'))
+        async with _writer_pool(pool, prefix, prefix) as writer_pool:
+            store = PostgresPlanStore(writer_pool, table=prefix)
+            await store.add_item(PlanItem(content='by the writer'))
+            assert [item.content for item in await store.get_items()] == ['by the owner', 'by the writer']
+
+
+async def test_step_persistence_a_role_without_create_uses_existing_tables() -> None:
+    """A role granted only reads and writes on the tables can register runs and save snapshots."""
+    async with live_tables() as (pool, prefix):
+        await PostgresStepStore(pool, table=prefix, media_store=None).register_run(RunRecord(run_id='by-owner'))
+        suffixes = ('runs', 'events', 'snapshots', 'messages', 'snapshot_keys', 'tool_effects')
+        async with _writer_pool(pool, prefix, *(f'{prefix}_{suffix}' for suffix in suffixes)) as writer_pool:
+            store = PostgresStepStore(writer_pool, table=prefix, media_store=None)
+            await store.register_run(RunRecord(run_id='by-writer'))
+            await store.save_snapshot(ContinuableSnapshot(run_id='by-writer', step_index=0, messages=_user_messages()))
+            assert {run.run_id for run in await store.list_runs()} == {'by-owner', 'by-writer'}
 
 
 async def test_spend_a_counter_overflow_rolls_back_every_window_and_the_marker() -> None:

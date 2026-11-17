@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -26,7 +27,10 @@ from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
 from .fake_boxd import FakeBoxd, wait_until_gone
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
+pytestmark = [
+    pytest.mark.anyio(backends=['asyncio']),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
+]
 
 _MODULE = 'pydantic_ai_harness.boxd_sandbox._backend'
 _NAME = re.compile(r'pydantic-ai-[0-9a-f]{32}')

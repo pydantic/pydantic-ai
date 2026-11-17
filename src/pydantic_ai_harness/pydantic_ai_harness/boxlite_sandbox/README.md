@@ -271,6 +271,8 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the box's own (`/` on Alpine). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the box, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. Kept out of the capability's `repr`. |
+| `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Platforms
 
