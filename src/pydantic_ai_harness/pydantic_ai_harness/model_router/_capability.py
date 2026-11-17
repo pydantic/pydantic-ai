@@ -92,6 +92,7 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
     _router_agent: Agent[None, _Route] = field(init=False, repr=False, compare=False)
     _run_ctx: RunContext[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     _cached_choice: str | None = field(default=None, init=False, repr=False, compare=False)
+    _router_error: UserError | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate the routing menu and build the internal router agent."""
@@ -186,7 +187,8 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
                     # A request the router can never make, such as files sent to a decision model,
                     # is a configuration problem, so it surfaces rather than routing to `default`.
                     _record(span, attributes, None, 'error')
-                    raise UserError(user_error)
+                    # In process the original error is kept; across a durable boundary only its message is.
+                    raise self._router_error or UserError(user_error)
                 if span.is_recording():
                     span.set_status(Status(StatusCode.ERROR, 'Router request failed; used the default choice.'))
             picked, fallback_reason = self._accept(candidate, probability)
@@ -225,7 +227,10 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
                 capabilities=_instrumentation(ctx),
             )
         except Exception as error:
-            return None, None, type(error).__name__, str(error) if isinstance(error, UserError) else None
+            if not isinstance(error, UserError):
+                return None, None, type(error).__name__, None
+            self._router_error = error
+            return None, None, type(error).__name__, str(error)
         choice = result.output.choice
         return choice, _pick_probability(result.response.provider_details, choice), None, None
 

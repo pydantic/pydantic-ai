@@ -459,14 +459,20 @@ class TestModelRouter:
             'pydantic_ai.exceptions.UserError'
         ]
 
-    async def test_a_user_error_propagates_without_instrumentation(self) -> None:
+    async def test_a_user_error_propagates_unchanged_without_instrumentation(self) -> None:
+        class FilesNotSupported(UserError):
+            pass
+
+        raised = FilesNotSupported('Files are not supported by this model.')
+
         def reject(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            raise UserError('Files are not supported by this model.')
+            raise raised
 
         agent = Agent(name='parent', capabilities=[_router(FunctionModel(reject))])
 
-        with pytest.raises(UserError, match='Files are not supported'):
+        with pytest.raises(FilesNotSupported) as exc_info:
             await agent.run('Choose')
+        assert exc_info.value is raised
 
     async def test_routing_is_a_durable_operation(self) -> None:
         capable = _answer_model('capable')
