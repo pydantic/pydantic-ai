@@ -223,6 +223,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'bedrock_supports_tool_caching': False,
     'bedrock_supported_media_kinds_in_tool_returns': frozenset({'image'}),
     'bedrock_thinking_variant': None,
+    'bedrock_supports_stop_sequences': True,
 }
 
 
@@ -1590,6 +1591,7 @@ def test_bedrock_openai():
         {
             'json_schema_transformer': _GptOssInlineDefsJsonSchemaTransformer,
             'supports_thinking': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'openai',
             'thinking_always_enabled': True,
             'default_framing_announcement': 'always',
@@ -1608,6 +1610,7 @@ def test_bedrock_qwen_qwq():
             'supported_native_tools': frozenset(),
             'bedrock_supports_leading_assistant_message': True,
             'supports_thinking': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'qwen',
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
@@ -1626,6 +1629,7 @@ def test_bedrock_zai_glm():
             'zai_supports_reasoning_effort': False,
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_supports_leading_assistant_message': True,
             'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
             'supports_json_schema_output': True,
@@ -1649,6 +1653,7 @@ def test_bedrock_zai_glm_5_3():
             'supported_native_tools': frozenset(),
             'json_schema_transformer': _BedrockGlm53JsonSchemaTransformer,
             'bedrock_supports_tool_choice': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_supports_leading_assistant_message': True,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
@@ -1670,6 +1675,7 @@ def test_bedrock_minimax():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(),
+            'bedrock_supports_stop_sequences': False,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
             'supports_video_input': False,
@@ -1679,6 +1685,7 @@ def test_bedrock_minimax():
     assert _normalize(BedrockProvider.model_profile('minimax.minimax-m3.5')) == snapshot(
         {
             'supported_native_tools': frozenset(),
+            'bedrock_supports_stop_sequences': False,
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
             'supports_video_input': False,
@@ -1694,6 +1701,7 @@ def test_bedrock_deepseek_v3_2():
         {
             'supports_thinking': True,
             'bedrock_thinking_variant': 'deepseek',
+            'bedrock_supports_stop_sequences': False,
             'supported_native_tools': frozenset(),
             'supports_video_input': False,
         }
@@ -1710,6 +1718,7 @@ def test_bedrock_moonshotai_kimi():
             'supports_thinking': True,
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_supports_leading_assistant_message': True,
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'supports_json_schema_output': True,
@@ -1763,6 +1772,7 @@ def test_bedrock_xai_grok(region: str):
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
+                'bedrock_supports_stop_sequences': False,
                 'supports_video_input': False,
             },
             '4.7': {
@@ -1780,6 +1790,7 @@ def test_bedrock_xai_grok(region: str):
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
+                'bedrock_supports_stop_sequences': False,
                 'supports_video_input': False,
             },
         }

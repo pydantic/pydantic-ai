@@ -569,7 +569,9 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Mistral
-    * Bedrock
+    * Bedrock (not OpenAI, xAI, Qwen, Google, Z.AI, Moonshot AI, MiniMax or NVIDIA models, DeepSeek V3.2, Writer
+      Palmyra Vision, or Mistral's Devstral, Magistral, Ministral 3, Mistral Large 3 and Voxtral, which Converse
+      rejects it for)
     * MCP Sampling
     * xAI (Grok 4.20 non-reasoning models only)
     * HuggingFace

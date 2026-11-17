@@ -1116,6 +1116,11 @@ class BedrockConverseModel(Model[BaseClient]):
         prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
         if prepared_settings:
             prepared_settings = self._drop_rejected_sampling_settings(prepared_settings, model_request_parameters)
+        if prepared_settings and 'stop_sequences' in self._unsupported_settings():
+            # `super().prepare_request()` has already warned that it's ignored.
+            without_stop_sequences: ModelSettings = {**prepared_settings}
+            without_stop_sequences.pop('stop_sequences', None)
+            prepared_settings = without_stop_sequences or None
         # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not self._has_provider_cache_settings(prepared_settings or {}):
             prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
@@ -1165,6 +1170,11 @@ class BedrockConverseModel(Model[BaseClient]):
                 'Bedrock does not support thinking and output tools at the same time. '
                 f'Use `output_type={suggested_output_type}(...)` instead.'
             )
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('bedrock_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
