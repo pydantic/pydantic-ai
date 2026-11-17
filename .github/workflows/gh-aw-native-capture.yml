@@ -7,6 +7,8 @@ on:
       - '.github/workflows/gh-aw-native-capture.yml'
       - '.github/scripts/gh_aw_native_capture/**'
       - '.github/scripts/gh_aw_native_capture.py'
+      - '.github/workflows/shared/engine-zai.md'
+      - '.github/aw/imports/pydantic/pydantic-ai/**'
       - 'src/pydantic_ai_harness/gh-aw/**'
       - 'tests/harness/gh_aw/**'
 

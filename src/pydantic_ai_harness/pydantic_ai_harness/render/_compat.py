@@ -1,9 +1,9 @@
 """Pydantic AI contracts used at Render's process boundary.
 
 The operation parameters, results and the reconstructed `RunContext` come from the public
-`pydantic_ai.durable_exec` builder surface. Private context attributes and the effective
-tracer lookup remain here. `test_local_runtime_live.py` checks context, usage, events and
-tracing in separate Render processes.
+`pydantic_ai.durable_exec` builder surface. Private context attributes, the effective
+tracer lookup and the `durable` tool field reader remain here. `test_local_runtime_live.py`
+checks context, usage, events and tracing in separate Render processes.
 
 Public backend contract: https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/
 """
@@ -45,6 +45,7 @@ from pydantic_ai.durable_exec import (
     capability_operation_result_type,
     revalidate_function_call,
 )
+from pydantic_ai.durable_exec._toolset import opts_out_of_durable_unit
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -73,7 +74,7 @@ __all__ = (
     'ModelCompactMessagesParams',
     'ModelRequestContextProjection',
     'ModelRequestParams',
-    'RenderJsonTransport',
+    'RenderJSONTransport',
     'RenderRunContext',
     'RenderRunContextCodec',
     'ToolsetCallToolParams',
@@ -92,18 +93,17 @@ __all__ = (
     'model_settings_from_json',
     'model_settings_to_json',
     'normalize_json_value',
+    'opts_out_of_durable_unit',
     'operation_run_context',
     'prepare_function_call_params',
-    'resolve_function_tool_for_definition',
     'resolve_mcp_tool_for_definition',
     'to_json_object',
 )
 
 JSONScalar: TypeAlias = None | bool | int | float | str
 JSONValue: TypeAlias = JSONScalar | list['JSONValue'] | dict[str, 'JSONValue']
-# Object values remain `object` statically because Python 3.10 cannot declare a
-# named recursive alias that Pydantic 2.12 can rebuild reliably on Python 3.14.
-# `to_json_object` performs the real recursive JSON validation at runtime.
+# Object values stay `object` statically; `to_json_object` performs the recursive JSON
+# validation at runtime.
 JSONObject: TypeAlias = dict[str, object]
 
 T = TypeVar('T')
@@ -119,9 +119,10 @@ _JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, obj
 _OPEN_OBJECT_ADAPTER: TypeAdapter[dict[object, object]] = TypeAdapter(dict[object, object])
 _LIST_ADAPTER: TypeAdapter[list[object]] = TypeAdapter(list[object])
 _TUPLE_ADAPTER: TypeAdapter[tuple[object, ...]] = TypeAdapter(tuple[object, ...])
+_ANY_OBJECT_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
 
-class RenderJsonTransport(ParameterTransport[ParamsT, JSONObject], ABC):
+class RenderJSONTransport(ParameterTransport[ParamsT, JSONObject], ABC):
     """Nominal base for every parameter transport this integration installs.
 
     The framework's transport contract is generic over its wire type. Every
@@ -229,9 +230,9 @@ def load_operation_params(
     Reject an incompatible transport rather than asserting its wire type.
     """
     transport = operation.parameter_transport
-    if not isinstance(transport, RenderJsonTransport):  # pragma: no cover - installed by this adapter
+    if not isinstance(transport, RenderJSONTransport):  # pragma: no cover - installed by this adapter
         raise TypeError(f'{type(transport).__name__} does not accept the Render JSON-object wire.')
-    json_transport: RenderJsonTransport[ParamsT] = transport
+    json_transport: RenderJSONTransport[ParamsT] = transport
     return json_transport.load(payload, runtime=runtime)
 
 
@@ -286,7 +287,7 @@ def load_json_object(payload: JSONObject) -> dict[str, Any]:
     if not isinstance(value, dict):  # pragma: no cover - Pydantic validates the declared mapping
         raise TypeError(f'Expected dict, got {type(value).__name__}.')
     # Pydantic validates this exact open mapping type before the adapter narrows it.
-    return TypeAdapter(dict[str, Any]).validate_python(value)
+    return _ANY_OBJECT_ADAPTER.validate_python(value)
 
 
 def model_settings_to_json(value: ModelSettings | None) -> JSONObject | None:
@@ -314,17 +315,6 @@ def function_tool_original_name(tool: object) -> str | None:
     if isinstance(tool, FunctionToolsetTool):
         return tool.original_name
     return None
-
-
-def resolve_function_tool_for_definition(
-    toolset: FunctionToolset[ToolDepsT],
-    tool_def: ToolDefinition,
-    *,
-    ctx: RunContext[ToolDepsT],
-    original_name: str | None = None,
-) -> ToolsetTool[ToolDepsT]:
-    """Rebuild a function tool from its definition through the public toolset API."""
-    return toolset.tool_for_tool_def(tool_def, ctx=ctx, original_name=original_name)
 
 
 def resolve_mcp_tool_for_definition(

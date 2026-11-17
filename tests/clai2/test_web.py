@@ -2214,6 +2214,8 @@ def test_sessions_continue_in_their_own_directories(
     )
     follow_workspaces(web_)
     shell = web_.shell
+    # Approved for that folder, so moving there applies them; `test_project_settings_approval.py` covers the rest.
+    shell.context.store.approve_project_settings(other, {'run.instructions': 'Work in other.', 'model': 'test'})
     here = saved_in(web_, launch.resolve(), 'Here')
     there = saved_in(web_, other.resolve(), 'There')
     lost = saved_in(web_, gone, 'Lost')

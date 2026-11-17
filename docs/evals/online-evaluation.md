@@ -1080,7 +1080,9 @@ What the evaluators see depends on whether the engine serializes the operation's
 The operation starts the evaluators in the background and completes without waiting for them, as evaluation without durable execution does. If the worker stops before the evaluators finish, their results are lost: the engine has already recorded the operation, so it doesn't run it again.
 
 !!! note "Prefect flow retries"
-    Prefect identifies a recorded task by its arguments, and the run's duration measured in flow code differs on a flow retry, so a retry evaluates the run again. [#11575](https://github.com/pydantic/pydantic-ai/issues/11575) tracks letting the operation choose what identifies it.
+    The once-per-run guarantee doesn't hold across Prefect flow retries. Prefect identifies a recorded task by its arguments, and the operation's arguments include values measured in flow code: the run's duration always differs on a retry, and so do span-derived metrics when instrumentation is on. A flow retry therefore runs the operation again and evaluates the run a second time, emitting its results and OTel events again.
+
+    To avoid counting a run twice, deduplicate in your [sink](#sinks) on `payload.context.name`, the agent run's `run_id`, which stays the same across flow retries unless you pass a different `run_id` on each attempt. Temporal and DBOS match a recorded operation by its position in the workflow history rather than by its arguments, so they aren't affected.
 
 ## API Reference
 

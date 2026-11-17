@@ -119,7 +119,8 @@ def text_response(text: str) -> Any:
 async def test_fallback_to_another_endpoint_drops_server_state(allow_model_requests: None, route: str):
     """A fallback attempt at another endpoint with the same `provider_name` gets none of the first endpoint's IDs."""
     producer, _ = mock_endpoint_model(GATEWAY_URL, text_response('first'))
-    history: list[ModelMessage] = (await Agent(producer).run('q')).all_messages()
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_send_reasoning_ids=True)
+    history: list[ModelMessage] = (await Agent(producer).run('q', model_settings=settings)).all_messages()
 
     unavailable = APIStatusError(
         'unavailable',
@@ -133,7 +134,6 @@ async def test_fallback_to_another_endpoint_drops_server_state(allow_model_reque
         if route == 'fallback-model'
         else Agent(primary, capabilities=[ModelFallback(fallback)])
     )
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_send_reasoning_ids=True)
     result = await agent.run('again', message_history=history, model_settings=settings)
 
     assert result.output == 'second'

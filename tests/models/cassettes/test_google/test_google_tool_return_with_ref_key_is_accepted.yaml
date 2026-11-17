@@ -1,0 +1,171 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "430"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Call get_layout and tell me the title in one word.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Return the dashboard layout.
+            name: get_layout
+            parameters_json_schema:
+              additionalProperties: false
+              properties: {}
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=788
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: get_layout
+                args: {}
+              thoughtSignature: >-
+                CvoBAWkUfRPkD1EnzRwBVcrXqn+NewYNxxkgSJ2e599dQPsSHP3N2j+1HO8mv2GXMHAmQexU+nPyJFNLe/RbAYSc3E63Ukwx99B64Y2/Wn+pF/AFjNd0okbTXdEtr14Sl7wdrHUfjFckGX6QydvpKzkrv+7J5kSqO8xbQpGG4WVKK5pUkI64Hzn0ZYBS9TBwzzFcXttjsm9XdMjDOKyKzmID2L4Na+JvEW4s4SqUVj9lWzkjbPCy+PSV5+i8TsnJ7w8JW//FTZ5O6RgRyKuwUWmMHRHQRxYrrvo/k3an1F9fYKxfegdyGTdaD9q6k7ScmWv23EP+2Sxb+1aRyw==
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 40
+          candidatesTokenCount: 10
+          totalTokenCount: 100
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 40
+          thoughtsTokenCount: 50
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash
+        responseId: EoDqavGfO7iq6dkPxJbfqQI
+  recorded_at: 2026-11-04T00:45:07.692133+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1137"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Call get_layout and tell me the title in one word.
+          role: user
+        - parts:
+          - functionCall:
+              id: pyd_ai_43a9b1d7b7084d5987c828b111cafb5d
+              args: {}
+              name: get_layout
+            thoughtSignature: >-
+              CvoBAWkUfRPkD1EnzRwBVcrXqn-NewYNxxkgSJ2e599dQPsSHP3N2j-1HO8mv2GXMHAmQexU-nPyJFNLe_RbAYSc3E63Ukwx99B64Y2_Wn-pF_AFjNd0okbTXdEtr14Sl7wdrHUfjFckGX6QydvpKzkrv-7J5kSqO8xbQpGG4WVKK5pUkI64Hzn0ZYBS9TBwzzFcXttjsm9XdMjDOKyKzmID2L4Na-JvEW4s4SqUVj9lWzkjbPCy-PSV5-i8TsnJ7w8JW__FTZ5O6RgRyKuwUWmMHRHQRxYrrvo_k3an1F9fYKxfegdyGTdaD9q6k7ScmWv23EP-2Sxb-1aRyw==
+          role: model
+        - parts:
+          - functionResponse:
+              id: pyd_ai_43a9b1d7b7084d5987c828b111cafb5d
+              name: get_layout
+              response:
+                output: "{\"layout\":[{\"$ref\":\"#/defs/panel\"}],\"title\":\"x\"}"
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Return the dashboard layout.
+            name: get_layout
+            parameters_json_schema:
+              additionalProperties: false
+              properties: {}
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=699
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: x
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 83
+          candidatesTokenCount: 1
+          totalTokenCount: 84
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 83
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash
+        responseId: E4Dqaq6wMJWxqtsP39blsQo
+  recorded_at: 2026-11-04T00:45:08.423986+00:00

@@ -11,7 +11,22 @@ Watch a live agent run with a second model, and steer it back on course mid-run.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![TrajectoryJudge starts an evaluation from the after_model_request hook every 20 model requests. The most recent window of the transcript goes to a judge model, which runs alongside the agent instead of blocking it. The judge returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered on the next model request as a framework note plus the message in a judge_feedback element.](../img/harness/trajectory-judge.svg)
+```mermaid
+flowchart TB
+    accTitle: Trajectory Judge: a second model reviews the run while it runs
+    accDescr: Every 20 model requests, TrajectoryJudge(every=20) runs in the after_model_request hook and sends a recent window of the transcript to a judge model, which runs alongside the agent. The judge model returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered to the model on the next request.
+    model(["model"])
+    judge["TrajectoryJudge(every=20)<br/>after_model_request hook"]:::capability
+    reviewer(["judge model<br/>runs alongside<br/>the agent"])
+    steer["Steer(message=...)<br/>enqueued"]:::capability
+    good["AllGood<br/>nothing happens"]
+    model -->|"every 20 model requests"| judge
+    judge -.->|"recent window<br/>of the transcript"| reviewer
+    reviewer --> steer
+    reviewer --> good
+    steer -->|"delivered on<br/>the next request"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -19,16 +34,16 @@ Over a long run, an agent can lose track of its instructions, build on unsupport
 
 ## The solution
 
-`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. The evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
+`TrajectoryJudge` reviews the run's recent trajectory with a second model on a cadence: every `every` model requests, the most recent `window` tokens of the conversation (user messages, assistant messages, tool calls, and tool results, rendered as a transcript) go to the judge model for evaluation. Outside durable execution, the evaluation runs concurrently with the agent, so the run is never blocked waiting on a judge.
 
 The judge delivers exactly one verdict per evaluation, as its output type:
 
 - `AllGood` -- the run is on track; nothing happens.
-- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation ([`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], `'asap'` priority) and delivered on the next model request, attributed to the judge. It arrives as a system prompt note from the framework plus the judge's message as user-channel data in a `<judge_feedback>` element, tied together by a random `ref` (see [How steering is framed](#how-steering-is-framed)).
+- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation ([`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], `'asap'` priority) and delivered on the next model request, attributed to the judge. It arrives as a `JudgeSteeringPart`, a note in the application's voice, plus a `JudgeFeedbackPart` with the judge's message as user-channel data in a `<judge_feedback>` element, tied together by a random `ref` (see [How steering is framed](#how-steering-is-framed)).
 
-    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To observe steering, use `on_verdict` (see [Observability](#observability)): it receives each `Steer(message=...)` as it is enqueued. Later evaluations recognize earlier steering by metadata the judge attaches to it, which survives merged requests and continued conversations, and show it to the judge as steering, so it can tell whether the agent followed it. Two limits apply. The metadata doesn't survive a round trip through the UI adapters ([identifying system prompts](../message-history.md#identifying-system-prompts)), so in history that comes back from a frontend the judge sees the message as an ordinary `user:` line. And on a model without inline system prompts, the judge reads the request as prepared for that model, where the framework note has become `<system>` user text with no metadata, so the note shows in the judge's transcript as a `user:` line; the message itself is still shown as steering.
+    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To observe steering, use `on_verdict` (see [Observability](#observability)): it receives each `Steer(message=...)` as it is enqueued. Later evaluations recognize earlier steering in the run's stored history by its type, `JudgeFeedbackPart`, which survives merged requests and continued conversations, and show it to the judge as steering, so it can tell whether the agent followed it. The UI adapters leave capability parts out, so history that comes back from a frontend has no steering for the judge to see.
 
-Steering is the judge's output, not a tool it calls, so each evaluation ends in exactly one verdict. `TrajectoryJudge` is exported from `pydantic_ai_harness`; the verdict types `AllGood` and `Steer` are imported from `pydantic_ai_harness.trajectory_judge`.
+Steering is the judge's output, not a tool it calls, so each evaluation ends in exactly one verdict.
 
 ```python
 from pydantic_ai import Agent
@@ -51,7 +66,7 @@ print(result.output)
 
 ## How steering is framed
 
-The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
+The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. It goes out as the judge wrote it, with a note saying the trajectory judge wrote it, not the user or the application. Text in it that looks like a `judge_feedback` tag or a framing tag Pydantic AI writes (`<system>`, `<pyai:tool_result>` and the rest), opening or closing, gets a further note naming the judge as its author, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
 
 The note names its element by a random `ref`, made once when the steer is built and stored with it, so later requests resend both parts unchanged. A `<judge_feedback>` element forged earlier in the run, for example in a tool result, has no ref or a different one, and the note disowns any element whose ref no trajectory judge's note names. Only the first element with a named ref counts, so a later copy by content that saw the ref is disowned too. Naming the element by ref rather than by position works whatever order a provider sends the two parts in (Anthropic sends a request's user content before its system entry).
 
@@ -67,6 +82,12 @@ The user-channel message:
 <judge_feedback judge="hallucination-check" ref="9c2e41b07fd3a568">
 ...
 </judge_feedback>
+```
+
+The note naming its author, in the application's voice:
+
+```text
+The accompanying <judge_feedback judge="hallucination-check" ref="9c2e41b07fd3a568"> was written by the trajectory judge, not by the user or the application.
 ```
 
 ## Cadence and window
@@ -105,7 +126,7 @@ agent = Agent(
 
 ## Advanced: bring your own judge agent
 
-For anything beyond a model and a review focus (model settings, toolsets, fallback models, custom instructions), pass a full `Agent`. Every evaluation runs it with `output_type=[AllGood, Steer]`, so the verdict contract is enforced at the run boundary whatever output type the agent was configured with, and an existing agent can be reused as-is only when it is dependency-free; judge dependencies are not passed to evaluations. The judge agent must not have output validators, which are incompatible with a per-run `output_type`.
+For anything beyond a model and a review focus (model settings, toolsets, fallback models, custom instructions), pass a full `Agent`. Every evaluation runs it with `output_type=[AllGood, Steer]`, so the verdict contract is enforced at the run boundary whatever output type the agent was configured with, and an existing agent can be reused as-is only when it is dependency-free; judge dependencies are not passed to evaluations. The judge agent must not have output validators, which are incompatible with a per-run `output_type`. `AllGood` and `Steer` are imported from `pydantic_ai_harness.trajectory_judge`.
 
 ```python
 from pydantic_ai import Agent
@@ -133,8 +154,21 @@ agent = Agent(
 ## Cost and failure semantics
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
-- An evaluation failure is raised on the run at the next cadence tick or at run end. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
-- A judged run inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
+- Outside durable execution, an evaluation failure is raised on the run at the next cadence tick or at run end; inside a workflow or flow it is raised from the request that launched it. To have a judge degrade instead, pass an `agent` that falls back to another model (for example with the [`ModelFallback`](../capabilities/model-fallback.md) capability).
+
+## Durable execution
+
+Inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect), a judge with an `id` checkpoints each evaluation as the durable operation `<agent>__capability__<id>.evaluate`. The evaluation is awaited before the run continues, so a replay reuses the recorded verdict and delivers the same steering at the same point, and the judge is billed once. Give each judge its own `id`:
+
+```python
+from pydantic_ai_harness import TrajectoryJudge
+
+judge = TrajectoryJudge(model='{{ anthropic:small }}', id='evidence-judge', every=10)
+```
+
+A judge without an `id` is rejected with `UserError` before the first model request inside a workflow or flow. Outside one, nothing changes and `id` stays optional.
+
+`on_verdict` is not part of the durable operation, so a replay calls it again with the recorded verdict. Make the callback idempotent if it writes to an external system.
 
 ## Observability
 
@@ -152,7 +186,7 @@ TrajectoryJudge(
 
 ## Composition
 
-- [System Reminders](system-reminders.md) is the rule-based sibling: cadence or condition-triggered reminders with no extra model call. Reach for it first; a trajectory judge earns its cost when the condition requires actually understanding the trajectory.
+- [System Reminders](system-reminders.md) is the rule-based sibling: cadence or condition-triggered reminders with no extra model call. Reach for it first; a trajectory judge earns its cost when the condition requires actually understanding the trajectory. Its `LLMReminder` also has a second model read the run, but adds a nudge on every firing rather than only when the run drifts: see [`LLMReminder` or `TrajectoryJudge`](system-reminders.md#llmreminder-or-trajectoryjudge).
 - [Guardrails](guardrails.md) remain the enforcement boundary for inputs, tool calls, and outputs. A judge observes and steers; it does not block or rewrite anything.
 
 ## Not spec-serializable

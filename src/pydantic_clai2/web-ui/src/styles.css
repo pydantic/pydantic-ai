@@ -445,7 +445,7 @@ pre {
   font-weight: 600;
 }
 
-/* A branch or project, and a short ID when titles repeat: muted, so the title still leads. */
+/* A branch or project, an imported session's agent, and a short ID when titles repeat: muted, so the title still leads. */
 .session-chip {
   flex: none;
   max-width: 40%;
@@ -1594,6 +1594,21 @@ pre {
   padding: 6px 8px 8px 10px;
 }
 
+/* The session composer's bar wraps when it is narrow, as beside a side panel, so its actions move to a second line
+   instead of overflowing the composer. */
+.composer-bar.wraps {
+  flex-wrap: wrap;
+}
+
+/* The turn meter or hint and the send buttons, kept on one line and to the right. */
+.composer-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .hint {
   margin-left: auto;
   color: var(--faint);
@@ -1636,6 +1651,7 @@ pre {
 
 .send {
   display: grid;
+  flex: none;
   place-items: center;
   width: 32px;
   height: 32px;
@@ -2118,10 +2134,10 @@ pre {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin-left: auto;
   color: var(--muted);
   font: 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .meter-time {
@@ -3422,6 +3438,30 @@ textarea.setting-input {
 
 .dialog-option-row .dialog-option-description {
   overflow-wrap: anywhere;
+}
+
+/* A project's chevron, or the room for one, so every project's name starts in one column. */
+.dialog-option-fold {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 9px -8px 0 6px;
+  align-self: flex-start;
+}
+
+/* A project's worktrees, beneath it and indented past its folder icon. */
+.dialog-option-row.nested {
+  padding-left: 42px;
+}
+
+.dialog-option-row.nested .dialog-option {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.dialog-option-count {
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
 /* A Git checkout's New worktree…, beside its option, so the option's text never runs under it; it shows while the

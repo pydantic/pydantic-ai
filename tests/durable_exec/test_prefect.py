@@ -35,6 +35,8 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryContent,
+    CancellationToken,
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
@@ -112,7 +114,15 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import LoadCapabilityReturnPart
+from pydantic_ai.messages import (
+    CapabilitySource,
+    DataCapabilityPart,
+    InstructionCapabilityPart,
+    LoadCapabilityReturnPart,
+    OperatorSource,
+    OperatorText,
+    ToolResultSource,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -151,7 +161,9 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
     from prefect import flow, task
+    from prefect.cache_policies import INPUTS
     from prefect.context import FlowRunContext, TaskRunContext
+    from prefect.utilities.hashing import hash_objects
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -164,6 +176,7 @@ try:
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import (
         PrefectAgentInputs,
+        _cacheable_value,  # pyright: ignore[reportPrivateUsage]
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
@@ -208,6 +221,7 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
 
 
 def test_durability_codecs() -> None:
@@ -516,6 +530,13 @@ async def test_prefect_agent_rejects_a_workspace_inside_a_flow(tmp_path: Path) -
         await run_agent()
 
 
+async def test_prefect_agent_rejects_cancellation_token() -> None:
+    """A same-process `cancellation_token` can't cross the Prefect durable boundary, so the deprecated
+    wrapper rejects it up front."""
+    with pytest.raises(UserError, match='`cancellation_token` cannot be used with Prefect durable execution'):
+        await simple_prefect_agent.run('Hello', cancellation_token=CancellationToken())
+
+
 def test_prefect_agent_construction_warns_deprecated() -> None:
     """The `PrefectAgent` deprecation fires at runtime; the module-level filters only suppress it."""
     with pytest.warns(PydanticAIDeprecationWarning, match='`PrefectAgent` is deprecated'):
@@ -707,7 +728,8 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
             children=[
                 BasicSpan(
-                    content='Found propagated trace context. See https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing.'
+                    # logfire < 5.5 says 'trace context'
+                    content=IsStr(regex=r'Found propagated (trace )?context\. See .+')
                 ),
                 BasicSpan(
                     content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
@@ -724,13 +746,13 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -768,7 +790,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"ci","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
@@ -786,16 +808,16 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"ty\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -867,7 +889,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name":"final_result","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","event_kind":"final_result"}'
@@ -993,7 +1015,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -1639,35 +1661,35 @@ RUNTIME_TOOLSET_REJECTION_CASES = [
         id='multiple-named',
         toolsets=(FunctionToolset(id='search-tools'), FunctionToolset(id='billing-tools')),
         expected=snapshot(
-            "FunctionToolset 'search-tools', FunctionToolset 'billing-tools' cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "FunctionToolset 'search-tools', FunctionToolset 'billing-tools' cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous',
         toolsets=(FunctionToolset(),),
         expected=snapshot(
-            "FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous-mcp',
         toolsets=(MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "MCPToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            'MCPToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous-custom-mcp',
         toolsets=(CustomLabelMCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "custom MCP toolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            'custom MCP toolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='mixed-custom-and-anonymous',
         toolsets=(CustomLabelFunctionToolset(id='named'), FunctionToolset()),
         expected=snapshot(
-            "custom function toolset 'named', FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'prefect': False} to be allowed at runtime."
+            "custom function toolset 'named', FunctionToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
         ),
     ),
 ]
@@ -2205,6 +2227,50 @@ def test_cache_policy_excludes_timestamps_on_parts_outside_messages_module():
     assert key_for(time1) == key_for(time2)
 
 
+def test_cache_policy_excludes_a_capability_parts_per_record_fields():
+    """A capability part's `record_id`, `timestamp` and a run's synthetic `capability_id` never reach the model.
+
+    Its content and an `id` the application chose still fork the key. Unit test because key stability across separately
+    constructed inputs can't be observed through a recorded run.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(content: str = 'Page text.', capability_id: str = '<reporter:abc123>') -> str | None:
+        part = _CachedPagePart(
+            content=content, source=CapabilitySource(capability_id, authority='none'), capability_id=capability_id
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[part])]}, flow_parameters={}
+        )
+
+    assert key_for() == key_for() == key_for(capability_id='<reporter:def456>')
+    assert key_for() != key_for(content='Other text.')
+    assert key_for(capability_id='reporter') != key_for(capability_id='budget')
+
+
+def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
+    """A run's synthetic `capability_id` on a part's source doesn't fork the key, even when the part's own id is set.
+
+    An id the application chose on the source still does.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(source_capability_id: str) -> str | None:
+        part = _CachedPagePart(
+            content='Page text.',
+            source=CapabilitySource(source_capability_id, authority='none'),
+            capability_id='reporter',
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[part])]}, flow_parameters={}
+        )
+
+    assert key_for('<fetcher:abc123>') == key_for('<fetcher:def456>')
+    assert key_for('fetcher') != key_for('crawler')
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -2215,6 +2281,186 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
 
     assert key_for('pyd_ai_first') == key_for('pyd_ai_second')
     assert key_for('model-first') != key_for('model-second')
+
+
+def test_cache_policy_hashes_non_utf8_bytes_by_value():
+    """Bytes that aren't valid UTF-8 hash by value, not by which objects the payload shares.
+
+    Prefect's JSON encoder can't serialize them, and on the `cloudpickle` fallback a payload that
+    repeats one bytes object hashes differently from one holding two equal copies.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    data = b'\xff\xfe'
+    assert key_for([data, data]) == key_for([data, bytes(bytearray(data))])
+    assert key_for(data) != key_for(b'\xff\xfd')
+    assert key_for(data) != key_for(bytearray(data))
+    assert key_for(b'abc') != key_for('abc')
+    assert key_for(data) != key_for(data.decode('latin-1'))
+    assert key_for({1, 2}) != key_for([1, 2])
+    # UTF-8 bytes already hash by value on the JSON path, so their keys are what Prefect computes.
+    assert key_for(b'abc') == INPUTS.compute_key(task_ctx=mock_task_ctx, inputs={'value': b'abc'}, flow_parameters={})
+
+
+@pytest.mark.parametrize('binary', [b'\xff\xfe', bytearray(b'\xff\xfe')], ids=['bytes', 'bytearray'])
+@pytest.mark.parametrize('position', ['input', 'deps', 'validation_context'])
+def test_cache_policy_distinguishes_binary_from_descriptor(binary: bytes | bytearray, position: str):
+    """A caller's dict must not replay a binary input's task, even after repeated projection."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        payload = {'items': ([value],)}
+        if position == 'input':
+            inputs = payload
+        else:
+            ctx = RunContext(
+                deps=payload if position == 'deps' else None,
+                validation_context=payload if position == 'validation_context' else None,
+                model=TestModel(),
+                usage=RunUsage(),
+            )
+            inputs = {'args': (ctx,)}
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs=inputs, flow_parameters={})
+
+    # Copy the descriptor to an ordinary dict, as a caller could supply in the same cache scope.
+    descriptor = dict(_cacheable_value(binary))
+    binary_key, dict_key = key_for(binary), key_for(descriptor)
+    assert binary_key is not None
+    assert dict_key is not None
+    assert binary_key != dict_key
+    for value, expected in [(binary, binary_key), (descriptor, dict_key)]:
+        for _ in range(3):
+            value = _cacheable_value(value)
+            assert key_for(value) == expected
+
+
+def test_cacheable_value_hashes_non_utf8_bytes_by_value():
+    """`_cacheable_value` projects bytes like the task keys do, and leaves a model on the `cloudpickle` fallback."""
+
+    def digest_of(value: Any) -> str | None:
+        return hash_objects(_cacheable_value(value))
+
+    data = b'\xff\xfe'
+    assert digest_of([data, data]) == digest_of([data, bytes(bytearray(data))])
+    assert digest_of(data) != digest_of(data.decode('latin-1'))
+
+    class Upload(BaseModel):
+        data: bytes
+
+    # Prefect can't JSON-encode this field either, so the model stays on the fallback and still forks the key.
+    upload = Upload(data=data)
+    assert _cacheable_value(upload) is upload
+    assert digest_of(upload) is not None
+    assert digest_of(upload) != digest_of(Upload(data=b'\xff\xfd'))
+
+    class Uploads(BaseModel):
+        lock: Any
+        first: bytes | list[bytes]
+        second: bytes | list[bytes]
+
+    # A lock can't be hashed, so this model is expanded field by field and its bytes need projecting too.
+    lock = threading.Lock()
+    assert digest_of(Uploads(lock=lock, first=data, second=data)) == digest_of(
+        Uploads(lock=lock, first=data, second=bytes(bytearray(data)))
+    )
+    assert digest_of(Uploads(lock=lock, first=[data], second=[data])) == digest_of(
+        Uploads(lock=lock, first=[data], second=[bytes(bytearray(data))])
+    )
+
+
+def test_cache_policy_escapes_reserved_keys_once():
+    """Escaping a caller's descriptor must not collide with another caller's already-prefixed key."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    class Deps(BaseModel):
+        payload: Any
+        lock: Any
+
+    @dataclass
+    class ReservedField:
+        __pydantic_ai_binary__: Any
+
+    descriptor = dict(_cacheable_value(b'\xff\xfe'))
+    prefix, payload = next(iter(descriptor.items()))
+    values = [b'\xff\xfe', descriptor, {prefix * 2: payload}, {prefix * 3: payload}]
+    assert len({key_for(value) for value in values}) == len(values)
+    assert key_for(ReservedField(payload)) == key_for(descriptor)
+    for value in values:
+        deps = Deps(payload=value, lock=threading.Lock())
+        projected = _cacheable_value(deps)
+        assert key_for(projected) == key_for(_cacheable_value(projected))
+        assert key_for(projected) == key_for(_cacheable_value(deps))
+
+    # Unrelated dictionary inputs retain their existing keys, including non-string keys.
+    for value in [{'text': 'hello', 'data': b'abc'}, {1: 'hello'}]:
+        assert key_for(value) == INPUTS.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+
+async def test_prefect_task_cache_does_not_replay_binary_for_dict():
+    """Exercise Prefect's result store, including the repeat projection used by context inputs."""
+    executed: list[str] = []
+
+    @task(cache_policy=DEFAULT_PYDANTIC_AI_CACHE_POLICY, persist_result=True)
+    async def identify(ctx: RunContext[Any]) -> str:
+        result = 'binary' if isinstance(ctx.deps, bytes) else 'dictionary'
+        executed.append(result)
+        return result
+
+    @flow
+    async def compare() -> list[str]:
+        binary = b'\xff\xfe'
+        descriptor = dict(_cacheable_value(binary))
+        results: list[str] = []
+        for value in [binary, descriptor, binary, descriptor]:
+            ctx = RunContext(deps=value, model=TestModel(), usage=RunUsage())
+            results.append(await identify(ctx))
+        return results
+
+    assert await compare() == ['binary', 'dictionary', 'binary', 'dictionary']
+    assert executed == ['binary', 'dictionary']
+
+
+@pytest.mark.parametrize('content', ['hello', b'hello'])
+@pytest.mark.parametrize('nested', [False, True])
+def test_cacheable_value_preserves_dataclasses_in_expanded_models(content: str | bytes, nested: bool):
+    """Pin the shared projection's pre-upgrade hash without relying on Prefect's result store."""
+
+    @dataclass
+    class Settings:
+        content: str | bytes
+
+    class Deps(BaseModel):
+        settings: Any
+        lock: Any
+
+    settings = Settings(content)
+    value = {'items': ([settings],)} if nested else settings
+    projected = _cacheable_value(Deps(settings=value, lock=threading.Lock()))
+    # Before binary normalization, expansion retained serializable dataclasses as objects.
+    assert hash_objects(projected) == hash_objects({'settings': value, 'lock': '<non-serializable>'})
+
+
+def test_cacheable_value_preserves_message_timestamps_in_expanded_models():
+    """Messages exposed by model expansion retain the same timestamp-sensitive hash as before."""
+
+    class Deps(BaseModel):
+        message: ModelRequest
+        lock: Any
+
+    def digest_of(timestamp: datetime) -> str | None:
+        message = ModelRequest(parts=[UserPromptPart('hello', timestamp=timestamp)])
+        return hash_objects(_cacheable_value(Deps(message=message, lock=threading.Lock())))
+
+    assert digest_of(datetime(2026, 1, 1, tzinfo=UTC)) != digest_of(datetime(2026, 1, 2, tzinfo=UTC))
 
 
 async def test_cache_policy_hashes_tools_by_value_not_object_identity():
@@ -2700,6 +2946,69 @@ async def test_durability_repeated_run_hits_cache_preserves_provenance():
     assert result2.all_messages()[0].run_id != response2.run_id
 
 
+@dataclass(kw_only=True)
+class _CachedNotePart(InstructionCapabilityPart, namespace='test_prefect', name='note'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _CachedPagePart(DataCapabilityPart, namespace='test_prefect', name='page', tag='page'):
+    pass
+
+
+@dataclass
+class _EnqueuesCapabilityParts(AbstractCapability[object]):
+    """Sends an instruction part and a data part with each request, as a capability reporting on its work."""
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(
+            _CachedNotePart(content=OperatorText('Be brief.'), source=OperatorSource()),
+            _CachedPagePart(content='Page text.', source=ToolResultSource(tool_name='fetch')),
+        )
+        return request_context
+
+
+async def test_durability_repeated_run_with_capability_parts_hits_cache():
+    """A capability part gets a fresh `record_id`, `timestamp` and, from an unnamed capability, `capability_id` each run.
+
+    None of them reaches the model, so a retried flow that sends the same parts must read the cached response
+    rather than call the model again.
+    """
+    call_count = 0
+
+    def counting_model(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    agent = Agent(
+        FunctionModel(counting_model),
+        name='capability_part_cache_test_agent',
+        capabilities=[
+            _EnqueuesCapabilityParts(),
+            PrefectDurability(model_task_config=TaskConfig(cache_policy=PrefectAgentInputs())),
+        ],
+    )
+
+    @flow
+    async def run_agent(prompt: str) -> AgentRunResult[str]:
+        return await agent.run(prompt)
+
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    first = await run_agent(prompt)
+    second = await run_agent(prompt)
+    parts = [
+        [part for message in result.all_messages() for part in message.parts if isinstance(part, _CachedPagePart)]
+        for result in (first, second)
+    ]
+    # The parts differ between the runs only in what never reaches the model.
+    [[first_part], [second_part]] = parts
+    assert first_part.record_id != second_part.record_id
+    assert call_count == 1
+
+
 async def test_durability_cache_identity_distinguishes_model_inputs_and_tool_arguments() -> None:
     """Native operation dispatch gives Prefect every logical input that forks task behavior."""
     model_inputs: list[str] = []
@@ -2790,6 +3099,55 @@ async def test_flow_retry_replays_tool_result() -> None:
     assert model_runs == 2
 
 
+async def test_flow_retry_replays_model_request_with_binary_history() -> None:
+    """A flow retry replays a model request whose history holds non-UTF-8 binary content.
+
+    Prefect's JSON encoder can't serialize bytes that aren't valid UTF-8, so a history holding an
+    image used to push `hash_objects` onto its `cloudpickle` fallback. The follow-up run's history
+    includes the first run's replayed (deserialized) response, which shares objects differently
+    than the live one did, so the key changed and the follow-up request was submitted again.
+    """
+    model_inputs: list[str] = []
+    tool_runs = 0
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        part = messages[-1].parts[-1]
+        if isinstance(part, UserPromptPart):
+            model_inputs.append(part.content if isinstance(part.content, str) else str(part.content[0]))
+            if part.content == 'use tool':
+                return ModelResponse(parts=[ToolCallPart('side_effect')])
+        else:
+            model_inputs.append(part.part_kind)
+        return ModelResponse(parts=[TextPart('answer')])
+
+    agent = Agent(FunctionModel(model_fn), name='binary_history_agent', capabilities=[PrefectDurability[object]()])
+
+    @agent.tool_plain
+    def side_effect() -> str:
+        nonlocal tool_runs
+        tool_runs += 1
+        return 'done'
+
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run(['look', BinaryContent(data=b'\xff\xfe', media_type='image/png')])
+        follow_up = await agent.run('follow up', message_history=result.all_messages())
+        tool_run = await agent.run('use tool', message_history=follow_up.all_messages())
+        # Fail after every run, so the retry has each model request's and tool's result to replay.
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return tool_run.output
+
+    assert await flaky() == 'answer'
+    assert attempts == 2
+    assert model_inputs == ['look', 'follow up', 'use tool', 'tool-return']
+    assert tool_runs == 1
+
+
 async def test_flow_retry_keeps_run_deadline() -> None:
     """The run's start time is a cached task, so a flow retry counts `timeout=` from the first attempt."""
     agent = Agent(TestModel(), name='retry_deadline_agent', capabilities=[PrefectDurability[object]()])
@@ -2814,7 +3172,7 @@ async def test_flow_retry_keeps_run_deadline() -> None:
 
 
 async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
-    """A model selector sees the run's flow-derived IDs and deadline on every step, and again on a flow retry."""
+    """A model selector sees the run's cached default IDs and deadline on every step, and again on a flow retry."""
     selections: list[tuple[int, str | None, str | None, datetime | None]] = []
 
     def select(ctx: ModelSelectionContext[object]) -> Model:
@@ -2845,8 +3203,8 @@ async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
         return result.output
 
     await flaky()
-    [(flow_run_id, run_id, conversation_id)] = set(attempts)
-    assert run_id == f'{flow_run_id}:0'
+    [(_, run_id, conversation_id)] = set(attempts)
+    assert uuid.UUID(run_id).version == 4
     deadline = selections[0][3]
     assert deadline is not None
     assert selections == [(step, run_id, conversation_id, deadline) for _ in attempts for step in (1, 2)]
@@ -4386,6 +4744,22 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
     )
 
 
+async def test_prefect_durability_structured_output_after_preamble_text_in_flow() -> None:
+    """Text streamed before a tool call isn't the final result when the output type is structured.
+
+    The flow replays the task's stream against the parameters the task's model prepared, in which `'auto'` has
+    resolved to tool output, so the text isn't output, as in a plain run. The handler passed to `run()` sees the
+    replayed events; one set on the capability runs in the task and would see the live stream.
+    """
+    agents = preamble_text_agents(PrefectDurability)
+
+    @flow
+    async def structured_output_after_preamble_text_flow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
+
+    assert await structured_output_after_preamble_text_flow() == await plain_run_and_stream()
+
+
 async def test_prefect_durability_event_stream_handler() -> None:
     events_in_boundary: list[tuple[AgentStreamEvent, bool]] = []
 
@@ -4427,6 +4801,13 @@ async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None
         async for _ in stream:
             with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
                 ctx.enqueue('later')
+            # Changing a queued message would be lost on replay in the same way.
+            with pytest.raises(UserError, match=r'`ctx\.dequeue\(\)` is not supported inside a durable task'):
+                ctx.dequeue('some-enqueue-id')
+            with pytest.raises(
+                UserError, match=r'`ctx\.set_enqueue_priority\(\)` is not supported inside a durable task'
+            ):
+                ctx.set_enqueue_priority('some-enqueue-id', 'asap')
             # The ambient current context is guarded too, so reading it instead of the argument
             # doesn't bypass the guard.
             ambient = get_current_run_context()

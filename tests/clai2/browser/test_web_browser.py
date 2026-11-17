@@ -411,6 +411,56 @@ async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) ->
     await expect(heading).to_have_attribute('title', '/x/scratch')
 
 
+async def test_imported_session_shows_its_source(page: Page, web_ui: WebUI) -> None:
+    """A session imported from Claude Code or Codex says which beside its title; CLAI's own say nothing."""
+
+    def entry(session_id: str, title: str, source: str | None) -> dict[str, object]:
+        return {
+            'id': session_id,
+            'title': title,
+            'workspace': '/x/scratch',
+            'updated_at': '2026-01-01T00:00:00Z',
+            'created_at': '2026-01-01T00:00:00Z',
+            'state': 'ready',
+            'owner_pid': None,
+            'messages': 2,
+            'model': None,
+            'current': False,
+            'archived': False,
+            'openable': True,
+            'source': source,
+        }
+
+    worktree = {
+        'root': '/x/scratch',
+        'label': 'main',
+        'current': True,
+        'missing': False,
+        'sessions': [entry('a', 'Imported work', 'Claude Code'), entry('b', 'Own work', None)],
+    }
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(
+            json=[
+                {
+                    'key': '/x/scratch/.git',
+                    'folder': '/x/scratch',
+                    'name': 'scratch',
+                    'current': True,
+                    'worktrees': [worktree],
+                }
+            ]
+        )
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    imported = page.locator('.sidebar .session').filter(has_text='Imported work')
+    await expect(imported.locator('.session-chip')).to_have_text('Claude Code')
+    own = page.locator('.sidebar .session').filter(has_text='Own work')
+    await expect(own).to_be_visible()
+    await expect(own.locator('.session-chip')).to_have_count(0)
+
+
 async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
     """Sessions of removed worktrees wait, closed, in one group after the live ones; a branch archives at once."""
 
@@ -902,8 +952,12 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
-async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
-    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+async def test_a_refused_update_shows_no_saved_badge(
+    page: Page, web_ui: WebUI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings > About refuses Update… while CLAI cannot restart; its row must not claim it saved anything."""
+    # The launch session installs for every page, so its refusal is the one About shows.
+    monkeypatch.setattr(web_ui.fleet.launch, 'restart_refusal', lambda: 'CLAI cannot restart now.')
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
@@ -917,7 +971,7 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
     badge = await page.wait_for_function(
         """() => {
-          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          if (!document.querySelector('.toast.error')?.textContent?.includes('CLAI cannot restart now.')) return null
           const row = [...document.querySelectorAll('.setting')]
             .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
           return row.querySelector('.setting-state')?.textContent ?? 'none'
@@ -1051,7 +1105,8 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     # A mention typed before more text replaces only itself, the caret stays after it, and the list stays closed.
     await composer.fill('see  and more')
     await composer.evaluate('area => area.setSelectionRange(4, 4)')
-    await page.keyboard.type('@REA')
+    # Entered at once: typed key by key, the list for `@RE` could show first, and Tab waits for the newer one.
+    await page.keyboard.insert_text('@REA')
     await expect(names.first).to_have_text('README.md')
     await composer.press('Tab')
     await expect(composer).to_have_value('see @README.md and more')
@@ -1540,12 +1595,16 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await page.goto(f'{web_ui.url}/?token={TOKEN}')
         sidebar = page.locator('.sidebar')
         dialog = page.get_by_role('dialog', name='New session')
-        new_worktree = dialog.get_by_role('listbox').get_by_role('button', name='New worktree of repo · main…')
+        new_worktree = dialog.get_by_role('listbox').get_by_role('button', name='New worktree of repo…')
+        # The project's row, not one of its worktrees' rows, which are named `repo · BRANCH`.
+        project = dialog.get_by_role('option', name=re.compile(r'^repo(?! ·)\b'))
         await sidebar.get_by_role('button', name='New session').click()
-        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
-        await dialog.get_by_role('option', name='repo · main').hover()
+        await expect(project).to_be_visible()
+        # A project of one checkout has nothing to unfold.
+        await expect(dialog.get_by_role('button', name='Show the worktrees of repo')).to_have_count(0)
+        await project.hover()
         await new_worktree.click()
-        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_label('Branch of the new worktree of repo').fill('feature-x')
         await dialog.get_by_label('Base').fill('main')
         # A session that fails to start leaves the worktree made, and trying again starts one in it.
         # Esc while the request runs keeps the form, as the disabled Back button does.
@@ -1567,25 +1626,57 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await expect(dialog).to_have_count(0)
         await expect(page.locator(f'.workspace[title="{root}"]')).to_be_visible()
         assert git('-C', str(root), 'branch', '--show-current') == 'feature-x'
-        # The next dialog lists it, offers no worktree of a folder outside Git, and refuses the same branch inline.
+        # The next dialog lists the project once, folded, and its chevron or → unfolds its worktrees, ← folds them.
         runtimes['feature-x'].sessions.relocate = stay
         await page.reload()
         await sidebar.get_by_role('button', name='New session').click()
-        await expect(dialog.get_by_role('option', name='repo · feature-x')).to_be_visible()
+        await expect(project).to_be_visible()
+        feature = dialog.get_by_role('option', name='repo · feature-x')
+        await expect(feature).to_have_count(0)
+        await dialog.get_by_role('button', name='Show the worktrees of repo').click()
+        await expect(feature).to_be_visible()
+        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
+        await dialog.get_by_role('listbox').focus()
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        # On a worktree, ← goes up to its project; on the project, it folds them, and the cursor stays put.
+        await page.keyboard.press('ArrowDown')
+        await expect(project).to_have_attribute('aria-selected', 'false')
+        await page.keyboard.press('ArrowLeft')
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        await expect(feature).to_be_visible()
+        await page.keyboard.press('ArrowLeft')
+        await expect(feature).to_have_count(0)
+        await page.keyboard.press('ArrowRight')
+        await expect(feature).to_be_visible()
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        await expect(project).to_have_accessible_name('repo, 2 worktrees shown, current')
+        # On an unfolded project, → steps into its first worktree: the current one, listed first.
+        await page.keyboard.press('ArrowRight')
+        await expect(feature).to_have_attribute('aria-selected', 'true')
+        await expect(feature).to_have_accessible_name('repo · feature-x, current')
+        await page.keyboard.press('ArrowLeft')
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        # It offers no worktree of a folder outside Git, and refuses the same branch inline.
         alpha = dialog.locator('.dialog-option-row').filter(has=page.get_by_role('option', name='alpha'))
         await alpha.hover()
         await expect(alpha.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
-        await dialog.get_by_role('option', name='repo · main').hover()
+        await project.hover()
         await new_worktree.click()
         # Esc goes back to the list, and Esc there closes the dialog.
         await page.keyboard.press('Escape')
         await expect(dialog.get_by_label('Another directory')).to_be_visible()
         await new_worktree.click()
-        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_label('Branch of the new worktree of repo').fill('feature-x')
         await dialog.get_by_role('button', name='Create and start').click()
         await expect(dialog.get_by_role('alert')).to_have_text(
             'Cannot create worktree: branch feature-x already exists. Pick another name.'
         )
+        # A typed path lists its repository with the worktrees unfolded.
+        await dialog.get_by_role('button', name='Back').click()
+        await dialog.get_by_label('Another directory').fill(str(repo))
+        await expect(feature).to_be_visible()
+        await dialog.get_by_role('button', name='Hide the worktrees of repo').click()
+        await expect(feature).to_have_count(0)
     finally:
         for name in ('repo', 'feature-x'):
             if name in runtimes:
@@ -1624,6 +1715,14 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
             data={'title': f'Browser {name.title()}'},
         )
         assert renamed.ok, await renamed.text()
+    # A worktree of `north` with the newest session of that repository, which the sidebar lists before `north` itself.
+    side = (tmp_path / 'north' / '.worktrees' / 'side').resolve()
+    git('-C', str(tmp_path / 'north'), 'worktree', 'add', '-b', 'side', str(side))
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(side)}
+    )
+    assert opened.ok, await opened.text()
+    web_ui.fleet.portal.call(web_ui.fleet.runtimes['side'].session.commit_messages, list[ModelMessage]())
     # The page starts on the last session opened: one in a folder outside Git, so the list's cursor starts on a row
     # without New worktree….
     (tmp_path / 'plain').mkdir()
@@ -1638,13 +1737,15 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
         await page.goto(f'{web_ui.url}/?token={TOKEN}')
         dialog = page.get_by_role('dialog', name='New session')
         await page.locator('.sidebar').get_by_role('button', name='New session').click()
-        rows = {name: dialog.get_by_role('option', name=f'{name} · main') for name in names}
+        rows = {name: dialog.get_by_role('option', name=name) for name in names}
         tops: dict[str, float] = {}
         for name, row in rows.items():
             await expect(row).to_be_visible()
             box = await row.bounding_box()
             assert box is not None
             tops[name] = box['y']
+        # A project other than the current one starts in its main checkout.
+        await expect(rows['north']).to_have_attribute('title', str((tmp_path / 'north').resolve()))
         # The pointer goes straight down from the upper row, across the lower one, to the dialog's buttons.
         chosen, crossed = sorted(names, key=tops.__getitem__)
         await rows[chosen].hover()
@@ -1655,9 +1756,9 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
         await expect(rows[crossed]).not_to_have_attribute('aria-selected', 'true')
         below = dialog.locator('.dialog-actions')
         await expect(below.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
-        await dialog.get_by_role('button', name=f'New worktree of {chosen} · main…').click(timeout=2_000)
-        await expect(dialog.get_by_label(f'Branch of the new worktree of {chosen} · main')).to_be_visible()
-        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_have_count(0)
+        await dialog.get_by_role('button', name=f'New worktree of {chosen}…').click(timeout=2_000)
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {chosen}')).to_be_visible()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed}')).to_have_count(0)
         # From the keyboard, the button below makes a worktree of the row the arrow keys select.
         await page.keyboard.press('Escape')
         await dialog.get_by_role('listbox').focus()
@@ -1666,8 +1767,8 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
                 break
             await page.keyboard.press('ArrowDown')
         await expect(rows[crossed]).to_have_attribute('aria-selected', 'true')
-        await below.get_by_role('button', name=f'New worktree of {crossed} · main…').click()
-        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_be_visible()
+        await below.get_by_role('button', name=f'New worktree of {crossed}…').click()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed}')).to_be_visible()
     finally:
         for name in ('plain', *names):
             runtimes[name].sessions.relocate = None

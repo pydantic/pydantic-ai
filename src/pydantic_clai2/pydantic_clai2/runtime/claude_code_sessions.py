@@ -1,9 +1,10 @@
 """Claude Code sessions: `projects/<project>/<session-id>.jsonl` under `CLAUDE_CONFIG_DIR` or `~/.claude`.
 
 Each line is an entry linked to its parent by `parentUuid`. Rewinding starts a new branch from an
-earlier entry, and compaction starts a new chain at its summary, so the conversation to continue is
+earlier entry, and compaction starts a new chain at its boundary, so the conversation to continue is
 the chain behind the last message, not every line in the file. Parallel tool calls fork that chain:
-each result hangs off its own call, and only the last result continues it.
+each result hangs off its own call, and only the last result continues it. A boundary also names the
+latest messages from before it that Claude Code kept, and sent after the summary.
 
 Besides the user's and the model's messages, the chain holds what Claude Code's harness added to the
 conversation: `attachment` entries with the text it `rendered` for the model (files, reminders, and
@@ -37,7 +38,7 @@ from pydantic_ai.messages import (
     UserContent,
 )
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.sub_agents import DelegationTask
 from pydantic_clai2.runtime.imported_history import (
     HEAD_LINES,
     Header,
@@ -46,6 +47,7 @@ from pydantic_clai2.runtime.imported_history import (
     final_answer,
     framed,
     imported_context,
+    imported_summary,
     number,
     obj,
     objects,
@@ -261,7 +263,10 @@ def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, ma
         message = obj(entry.get('message'))
         at = timestamp(entry.get('timestamp'))
         kind = entry.get('type')
-        if kind == 'user' and (entry.get('isMeta') or entry.get('isCompactSummary')):
+        if kind == 'user' and entry.get('isCompactSummary'):
+            if summary := _prompt_text(message.get('content')):
+                history.request(imported_summary(summary, source=SOURCE, at=at), at=at)
+        elif kind == 'user' and entry.get('isMeta'):
             _meta(history, entry, agents, reports, at=at)
         elif kind == 'user':
             _user(history, message.get('content'), at=at)
@@ -274,10 +279,35 @@ def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, ma
 
 
 def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
-    """The entries behind the last message, with the results of its parallel tool calls, in file order.
+    """The entries behind the last message and the results of its parallel tool calls, as Claude Code sent them.
 
     In a main transcript the last message is the last one off a sidechain; a sub-agent's is all sidechain.
     """
+    chain = _chain(entries, main=main)
+    kept = chain | _parallel_results(entries, chain)
+    return _as_sent([entry for entry in entries if text(entry.get('uuid')) in kept])
+
+
+def _as_sent(entries: list[JsonObject]) -> list[JsonObject]:
+    """`entries` in file order, but for a compaction: its summary first, then the messages it preserved.
+
+    The preserved messages are logged before the boundary, and what Claude Code attached after compacting,
+    such as restored files, between the boundary and the summary; it sent both after the summary.
+    """
+    boundary = next((i for i, entry in enumerate(entries) if entry.get('subtype') == 'compact_boundary'), None)
+    if boundary is None:
+        return entries
+    after = range(boundary + 1, len(entries))
+    anchor = text(obj(obj(entries[boundary].get('compactMetadata')).get('preservedSegment')).get('anchorUuid'))
+    # Without an anchor, the boundary's summary is the first one after it.
+    summary = [i for i in after if text(entries[i].get('uuid')) == anchor] or [
+        i for i in after if entries[i].get('isCompactSummary')
+    ][:1]
+    return [*(entries[i] for i in summary), *entries[:boundary], *(entries[i] for i in after if i not in summary)]
+
+
+def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
+    """The IDs of the entries behind the last message."""
     by_id = {text(entry.get('uuid')): entry for entry in entries}
     node = next(
         (
@@ -289,11 +319,36 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
         None,
     )
     chain: set[str] = set()
+    first: JsonObject = {}
     while node is not None:
+        first = node
         chain.add(text(node.get('uuid')))
         # Popping each entry as it is visited also ends a malformed, cyclic chain.
         by_id.pop(text(node.get('uuid')), None)
         node = by_id.pop(text(node.get('parentUuid')), None)
+    return chain | _preserved(by_id, first)
+
+
+def _preserved(by_id: dict[str, JsonObject], boundary: JsonObject) -> set[str]:
+    """The IDs of the messages a compaction `boundary` kept from before it, its tail back to its head.
+
+    Empty when the head is not behind the tail, so the history compaction replaced is never imported.
+    """
+    segment = obj(obj(boundary.get('compactMetadata')).get('preservedSegment'))
+    head = text(segment.get('headUuid'))
+    preserved: set[str] = set()
+    # Without a head nothing was preserved; a line without a `uuid` must not stand in for it.
+    node = by_id.get(text(segment.get('tailUuid'))) if head else None
+    while node is not None and (uuid := text(node.get('uuid'))) not in preserved:
+        preserved.add(uuid)
+        if uuid == head:
+            return preserved
+        node = by_id.get(text(node.get('parentUuid')))
+    return set()
+
+
+def _parallel_results(entries: list[JsonObject], chain: set[str]) -> set[str]:
+    """The IDs of the results off `chain` that answer its parallel tool calls, the first answer to each call winning."""
     on_chain = [entry for entry in entries if text(entry.get('uuid')) in chain]
     calls = {
         text(block.get('id'))
@@ -303,14 +358,18 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
         if block.get('type') == 'tool_use'
     }
     answered = {call_id for entry in on_chain for call_id in _result_ids(entry)}
-    kept = set(chain)
+    kept: set[str] = set()
     for entry in entries:
         ids = _result_ids(entry)
-        if text(entry.get('uuid')) not in chain and text(entry.get('parentUuid')) in chain and ids:
-            if ids <= calls - answered:
-                kept.add(text(entry.get('uuid')))
-                answered |= ids
-    return [entry for entry in entries if text(entry.get('uuid')) in kept]
+        if (
+            text(entry.get('uuid')) not in chain
+            and text(entry.get('parentUuid')) in chain
+            and ids
+            and ids <= calls - answered
+        ):
+            kept.add(text(entry.get('uuid')))
+            answered |= ids
+    return kept
 
 
 def _result_ids(entry: JsonObject) -> set[str]:
@@ -351,19 +410,23 @@ def _user(history: HistoryBuilder, content: object, *, at: datetime) -> None:
     prompt: list[UserContent] = []
     for block in objects(content):
         if block.get('type') == 'tool_result':
-            items = _contents(block.get('content'))
-            result: ToolReturnContent = (
-                '\n'.join(item for item in items if isinstance(item, str))
-                if all(isinstance(item, str) for item in items)
-                else items
-            )
-            outcome = 'failed' if block.get('is_error') else 'success'
-            history.result(text(block.get('tool_use_id')), result, at=at, outcome=outcome)
+            _tool_result(history, block, at=at)
         elif (item := _content(block)) is not None:
             prompt.append(item)
     if isinstance(content, str):
         prompt = [content]
     history.prompt(prompt[0] if len(prompt) == 1 and isinstance(prompt[0], str) else prompt, at=at)
+
+
+def _tool_result(history: HistoryBuilder, block: JsonObject, *, at: datetime) -> None:
+    items = _contents(block.get('content'))
+    result: ToolReturnContent = (
+        '\n'.join(item for item in items if isinstance(item, str))
+        if all(isinstance(item, str) for item in items)
+        else items
+    )
+    outcome = 'failed' if block.get('is_error') else 'success'
+    history.result(text(block.get('tool_use_id')), result, at=at, outcome=outcome)
 
 
 def _meta(
@@ -387,8 +450,7 @@ def _meta(
             replace(task, output=report.strip(), generation=generation).report(), timestamp=at
         )
     elif body or files:
-        kind = 'compact_summary' if entry.get('isCompactSummary') else 'meta'
-        part = imported_context(body, source=SOURCE, kind=kind, files=files, at=at)
+        part = imported_context(body, source=SOURCE, kind='meta', files=files, at=at)
     else:
         return
     history.request(part, at=at)

@@ -88,6 +88,9 @@ class SessionChannel:
         self._status_sent = 0.0
         self._usage: RunUsage | None = None
         """The running turn's usage, as its run context reports it; `None` between turns."""
+        self._run_messages: list[ModelMessage] | None = None
+        """The running turn's history, the run's own list rather than a copy, so it holds tool results added after the
+        last event; `None` between turns."""
         self._queue_sent: list[QueuedItem] = []
         """The queued input browsers were last sent, so only a change sends it again."""
         self._steered = 0
@@ -102,6 +105,13 @@ class SessionChannel:
 
     def publish(self, message: SessionMessage) -> None:
         self.service.hub.publish_session(message, session=self.id)
+
+    @property
+    def messages(self) -> list[ModelMessage]:
+        """The held conversation's messages, with what the running turn has added so far."""
+        if self.running and self._run_messages is not None:
+            return list(self._run_messages)
+        return self.session.conversation.messages
 
     def _task_history(self, task_id: str) -> list[ModelMessage]:
         tasks = self.session.tasks
@@ -191,17 +201,16 @@ class SessionChannel:
 
     # What happens in the session, from the plugin's moments and capability.
 
-    def observe(self, event: AgentStreamEvent, *, usage: RunUsage, by_user: bool = False) -> None:
+    def observe(
+        self, event: AgentStreamEvent, *, usage: RunUsage, messages: list[ModelMessage], by_user: bool = False
+    ) -> None:
         """Send `event` to watchers; `by_user` marks a `/monty` cell's run, which is not a turn and has no usage to show."""
         if not by_user:
             self._usage = usage
+            self._run_messages = messages
         if isinstance(event, EnqueuedMessagesEvent):
             # Steering, from here or the terminal, shows once the run's model receives it.
-            for part in delivered_steering(event):
-                self._steered += 1
-                # The run's history may not hold these images yet; a snapshot keeps them, as the prompt's.
-                self._prompt_images += user_images(part)
-                self._show(ItemAdded(item=user_item(part, id=f'steer{self._steered}', image_ids=self._image_ids)))
+            self._show_steering(event)
         for message in self._translator.translate(event):
             if by_user:
                 # Only the cell itself: the scripted model's closing text is not the user's.
@@ -213,6 +222,13 @@ class SessionChannel:
         if time.monotonic() - self._status_sent >= STATUS_INTERVAL:
             self.publish_status()
 
+    def _show_steering(self, event: EnqueuedMessagesEvent) -> None:
+        for part in delivered_steering(event):
+            self._steered += 1
+            # The run's history may not hold these images yet; a snapshot keeps them, as the prompt's.
+            self._prompt_images += user_images(part)
+            self._show(ItemAdded(item=user_item(part, id=f'steer{self._steered}', image_ids=self._image_ids)))
+
     def _show(self, message: ItemMessage) -> None:
         self._turn.apply(message)
         self.publish(message)
@@ -221,6 +237,7 @@ class SessionChannel:
         """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
         self.running = True
         self._usage = None
+        self._run_messages = None
         self._turn.clear()
         item = None
         if prompt is not None:
@@ -235,6 +252,7 @@ class SessionChannel:
     ) -> None:
         self.running = False
         self._usage = None
+        self._run_messages = None
         self._turn.clear()
         self.publish(
             TurnEnded(
@@ -297,7 +315,7 @@ class SessionChannel:
         return None
 
     def steer(self, text: str) -> bool:
-        """Send a prompt to the running turn now, as Alt+Enter at the prompt does; `False` when nothing takes it.
+        """Send a prompt to the running turn now, as steering at the prompt does; `False` when nothing takes it.
 
         A `/command`, or any input while no turn runs, never steers: send it instead, as the prompt then does.
         """
@@ -323,8 +341,10 @@ class SessionChannel:
         self.session.remove_queued(input_id)
         return True
 
-    async def rewind(self, run_id: str, text: str) -> None:
+    async def rewind(self, run_id: str, text: str | None) -> None:
         """Drop the turn `run_id` started and every later one, then send `text` with that prompt's images in its place.
+
+        `None` sends the prompt again as it was saved, as Retry does.
 
         As the terminal's rewind, files and tool side effects are not undone.
         """
@@ -342,7 +362,7 @@ class SessionChannel:
         )
         if point is None:
             raise LookupError('That prompt can no longer be edited: it left the conversation or predates a compaction.')
-        text = _entered(text, images=point.images)
+        text = _entered(point.text if text is None else text, images=point.images)
         if is_command_input(expand_bare_command(text)):
             raise ValueError('Send a prompt in its place, not a /command.')
         await conversation.commit_messages(messages[: point.message_index])

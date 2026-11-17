@@ -8,6 +8,7 @@ import shlex
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
 from importlib import metadata
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
@@ -16,6 +17,7 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, Mock
 
+import anyio
 import httpx
 import pytest
 from packaging.requirements import Requirement
@@ -293,7 +295,8 @@ def _updates(
             await output(line)
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
-            text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
+            overrides = Path(command[command.index('--overrides') + 1])
+            text = await anyio.to_thread.run_sync(partial(overrides.read_text, encoding='utf-8'))
             assert 'pydantic-ai-harness[coder,skills] @ ' in text
             assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
         return (codes or [0]).pop(0)
@@ -312,6 +315,7 @@ def _updates(
         windows=False,
         hand_off=lambda script: pytest.fail('only Windows hands the install off'),
         locate=locate,
+        others=AsyncMock(return_value=[]),
     )
     return updates, ran
 
@@ -489,6 +493,77 @@ async def test_failed_install_removes_the_overrides_file() -> None:
     with pytest.raises(OSError):
         await updates.command([])
     assert not seen[0].exists()
+
+
+async def test_command_refuses_while_other_processes_run_from_the_install(tmp_path: Path) -> None:
+    """Replacing the `uv tool` environment breaks other `clai2` processes running from it (#13398)."""
+    import fcntl
+
+    uv = tmp_path / 'uv'
+    uv.write_text(f'#!/bin/sh\n[ "$*" = "tool dir" ] && echo {tmp_path}\n')
+    uv.chmod(0o755)
+    environment = tmp_path / 'pydantic-clai2'
+    environment.mkdir()
+    (environment / 'uv-receipt.toml').write_text('')
+    held = await anyio.to_thread.run_sync(self_update.hold_environment, environment)
+    assert held is not None, 'this process holds its own file, which never refuses its own update'
+    running = environment / self_update.RUNNING
+    (running / '1.lock').mkdir()  # Unreadable as a file, like one another check removed meanwhile.
+    (running / '4242-0a1b2c3d.lock').write_text('')  # Left by a process that crashed: nobody holds it.
+
+    def updates() -> tuple[Updates, list[Sequence[str]]]:
+        updates, ran = _updates(['main'], uv=str(uv))
+        updates.others = self_update.sibling_processes
+        updates.locate = AsyncMock(return_value=None)
+        return updates, ran
+
+    # The last is a process in another PID namespace, such as a container, with this process's PID.
+    names = ['4343-0-a.lock', '4545-0-b.lock', f'{os.getpid()}-1-c.lock']
+    with (
+        (running / names[0]).open('wb') as one,
+        (running / names[1]).open('wb') as two,
+        (running / names[2]).open('wb') as three,
+    ):
+        for sibling in (one, two, three):
+            fcntl.flock(sibling, fcntl.LOCK_EX)
+        refused, ran = updates()
+        pids = ', '.join(sorted(['4343', '4545', str(os.getpid())]))
+        assert await refused.command([]) == (
+            'Not updating to 9e08a34ee: other clai2 processes run from the install it would replace, '
+            f'and would break (PID {pids}). Quit them, then update again.'
+        )
+        assert ran == [], 'nothing is installed under a running sibling'
+        assert (refused.failed, refused.restart_required) == (True, False)
+        assert not (running / '4242-0a1b2c3d.lock').exists(), 'the check removes files nobody holds'
+    # Once the siblings have exited, the kernel has released their locks and the install goes ahead.
+    updated, ran = updates()
+    assert await updated.command([]) == 'Updated CLAI to 9e08a34ee (main). Exiting; start clai2 again to use it.'
+    assert len(ran) == 1
+    assert sorted(path.name for path in running.iterdir()) == ['1.lock', Path(held.name).with_suffix('.lock').name]
+    held.close()
+    # uv cannot say where its tools live: nothing to check.
+    uv.write_text('#!/bin/sh\nexit 2\n')
+    assert await self_update.sibling_processes(str(uv)) == []
+
+
+def test_hold_environment_only_in_a_writable_uv_tool_environment(tmp_path: Path) -> None:
+    assert self_update.hold_environment(tmp_path) is None, 'not a `uv tool` environment'
+    (tmp_path / 'uv-receipt.toml').write_text('')
+    (tmp_path / self_update.RUNNING).write_text('')
+    assert self_update.hold_environment(tmp_path) is None, 'its folder cannot be made'
+
+
+def test_hold_environment_without_a_lock_leaves_nothing_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Where the file system cannot lock, such as some network mounts, CLAI still starts."""
+    import fcntl
+
+    def no_lock(file: object, operation: int) -> None:
+        raise OSError('no locks available')
+
+    monkeypatch.setattr(fcntl, 'flock', no_lock)
+    (tmp_path / 'uv-receipt.toml').write_text('')
+    assert self_update.hold_environment(tmp_path) is None
+    assert list((tmp_path / self_update.RUNNING).iterdir()) == []
 
 
 def test_find_uv_skips_relative_path_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1021,6 +1096,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
         assert ran == []
 
 
+@pytest.mark.parametrize('update', ['--update', 'update'])
 @pytest.mark.parametrize(
     ('code', 'exit_code', 'printed'),
     [
@@ -1029,6 +1105,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
     ],
 )
 def test_update_flag_installs_and_exits_without_restarting(
+    update: str,
     code: int,
     exit_code: int,
     printed: str,
@@ -1036,7 +1113,10 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch."""
+    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch.
+
+    `clai2 update` is the same command, and takes `--database` after it.
+    """
     context, _ = make_context(tmp_path)
     context.set_setting(['updates.channel', 'main'])
     ran: list[list[Sequence[str]]] = []
@@ -1049,15 +1129,17 @@ def test_update_flag_installs_and_exits_without_restarting(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(self_update, 'Updates', build)
-
+    held = Mock(return_value=None)
+    monkeypatch.setattr(self_update, 'hold_environment', held)
     monkeypatch.setattr(app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(context.store.path)])
+    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(context.store.path)])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == exit_code
     assert capsys.readouterr().out == f'{printed}\n'
     [installs] = ran
     assert len(installs) == 1
+    held.assert_called_once_with()  # So a `/update` elsewhere waits for this process too.
 
 
 def test_update_flag_refuses_windows_before_scheduling_an_install(
@@ -1114,12 +1196,18 @@ def test_update_flag_reports_a_failed_check(
         (['--fork-session'], '`fork_session` (`--fork-session`) requires `resume` (`--resume`)'),
     ],
 )
+@pytest.mark.parametrize('update', ['--update', 'update'])
 def test_update_flag_rejects_session_options_before_installing(
-    argv: list[str], error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    update: str,
+    argv: list[str],
+    error: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     install = AsyncMock(return_value=0)
     monkeypatch.setattr(cli_module, '_update', install)
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db'), *argv])
+    monkeypatch.setattr('sys.argv', ['clai2', update, '--database', str(tmp_path / 'c.db'), *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
@@ -1140,13 +1228,40 @@ def test_update_flag_rejects_session_options_before_installing(
         ['--worktree'],
         ['config'],
         ['plugins'],
+        ['sessions'],
     ],
 )
+@pytest.mark.parametrize('update', ['--update', 'update'])
 def test_update_flag_rejects_other_modes(
-    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    update: str, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr('sys.argv', ['clai2', '--update', *argv])
+    monkeypatch.setattr('sys.argv', ['clai2', update, *argv])
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 2
-    assert '--update cannot be combined with config, plugins, --prompt, --web, --resume' in capsys.readouterr().err
+    assert (
+        '--update cannot be combined with config, plugins, sessions, --prompt, --web, --resume'
+        in capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize('argv', [['-m', 'test', 'update'], ['update', 'update', '-m', 'test']])
+def test_update_command_rejects_options_given_before_it(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Options before `update`, and after a repeated `update`, are checked as they are with `--update`."""
+    monkeypatch.setattr('sys.argv', ['clai2', *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 2
+    assert '--update cannot be combined' in capsys.readouterr().err
+
+
+def test_help_lists_update(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr('sys.argv', ['clai2', '--help'])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 0
+    text = capsys.readouterr().out
+    assert '{config,plugins,sessions,update}' in text
+    assert '--update' in text

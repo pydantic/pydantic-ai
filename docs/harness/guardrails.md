@@ -9,11 +9,32 @@ Guardrails run a callable you supply at three points of a run: the user prompt b
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Guardrails run your guard functions at the edges of a run. InputGuardrail checks the prompt in wrap_model_request before the model sees it. ToolGuardrail checks tool arguments in before_tool_execute and tool results in after_tool_execute. OutputGuardrail checks the final output in after_output_process before the caller gets it. A table shows what allow, block, replace, retry and approve do at each point.](../img/harness/guardrails.svg)
+```mermaid
+flowchart TB
+    accTitle: Guardrails: check the prompt, the tool calls and the output
+    accDescr: The user prompt passes InputGuardrail(guard=...) in wrap_model_request before the model. A tool call from the model passes ToolGuardrail(guard=...) in before_tool_execute before your tool, and the result passes ToolGuardrail(result_guard=...) in after_tool_execute before the model. The final output passes OutputGuardrail(guard=...) in after_output_process before the caller.
+    prompt["user prompt"]
+    input["InputGuardrail(guard=...)<br/>wrap_model_request"]:::capability
+    model(["model"])
+    toolguard["ToolGuardrail(guard=...)<br/>before_tool_execute"]:::capability
+    tool["your tool"]
+    resultguard["ToolGuardrail(result_guard=...)<br/>after_tool_execute"]:::capability
+    output["OutputGuardrail(guard=...)<br/>after_output_process"]:::capability
+    caller["caller"]
+    prompt --> input
+    input --> model
+    model -->|"tool call"| toolguard
+    toolguard --> tool
+    tool -->|"result"| resultguard
+    resultguard --> model
+    model -->|"final output"| output
+    output --> caller
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## How it works
 
-Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -- each wrap a `guard` callable you supply. The guard inspects a value and returns one of five outcomes. For the run's two edges:
+Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -- each wrap a `guard` callable you supply. The guard inspects a value and returns one of five outcomes. A fourth, `StreamGuardrail`, screens each streamed part before the caller sees it (see [Streaming](#streaming)). For the run's two edges:
 
 | Outcome | `InputGuardrail` | `OutputGuardrail` |
 |---|---|---|
@@ -27,7 +48,7 @@ Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -
 
 ## Usage
 
-`pydantic_ai_harness` exports the three capabilities, `GuardrailResult`, the `InputGuardrailFunc` and `OutputGuardrailFunc` aliases, and the `GuardrailError`, `InputBlocked`, and `OutputBlocked` exceptions. `ToolCallInfo`, `ToolResultInfo`, `ToolBlocked`, the tool guard aliases, and `detectors` import from `pydantic_ai_harness.guardrails`:
+`pydantic_ai_harness` exports the four capabilities (`StreamGuardrail` is covered under [Streaming](#streaming)), `GuardrailResult`, the `InputGuardrailFunc`, `OutputGuardrailFunc` and `StreamGuardrailFunc` aliases, and the `GuardrailError`, `InputBlocked`, and `OutputBlocked` exceptions. `ToolCallInfo`, `ToolResultInfo`, `ToolBlocked`, `StreamGuardrailPart`, the tool guard aliases, and `detectors` import from `pydantic_ai_harness.guardrails`:
 
 ```python
 from pydantic_ai import Agent
@@ -57,7 +78,7 @@ A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple c
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
-`InputGuardrail` checks the run's prompt. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, and skips the background-task reports `SubAgents` delivers there, which it recognizes by their metadata. History passed in `message_history` is trusted as the caller's own, metadata included. Load history from an untrusted client with a [UI adapter](../ui/overview.md), which never puts client metadata on message content. [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] is a safe path too: it resets `TextContent.metadata` on user prompts.
+`InputGuardrail` checks the run's user prompt, not arbitrary peer data. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, skipping host-provenance peer messages, which it recognizes by their metadata, and the background results `SubAgents` and `BackgroundTools` deliver there, which are capability parts, not user prompts. This is prompt identification, not a general peer-data injection filter; do not treat peer messages as screened user input. Input guardrails screen the user's input only: a tool's or a sub-agent's output reaches the model as data with no authority, framed with a note saying who wrote it, so it isn't screened as a prompt. An earlier version delivered a `BackgroundTools` result as user text, so `InputGuardrail` screened it; an application that relied on that screens the result in the tool itself instead. A `SubAgents` report or question an earlier version delivered as user text is recognized by its metadata and skipped too. History passed in `message_history` is trusted as the caller's own, metadata included. Load history from an untrusted client with a [UI adapter](../ui/overview.md), which never puts client metadata on message content. [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] is a safe path too: it resets `TextContent.metadata` on user prompts.
 
 ## Several guards at once
 
@@ -305,7 +326,7 @@ InputGuardrail(guard=slow_async_classifier, parallel=True)
 
 Parallel mode trades tokens for latency: sequential mode never calls the model when the guard blocks, but parallel mode has already started the model call -- if the guard trips only after the model has responded, those tokens were spent. For fast local checks (regex, keyword lookup) sequential is the better default. `replace` is not available under `parallel=True`.
 
-Normal tool dispatch starts after the model request, which the guard holds until it decides. That includes a request that raises before the guard decides, such as a `ModelRetry` from an `after_model_request` hook or a model error raised before the response streams: the exception waits for the verdict, and a block takes its place. In a streamed run, a block that lands after the whole response has streamed, as after a `ModelRetry` from `after_model_request`, is raised as `SkipModelRequest` (see [Streaming](#streaming)). [`CodeMode`](code-mode.md#eager-execution) with `eager=True` or `speculate` starts nested tool calls while the model is still streaming, so each of those calls waits for the verdict before it runs: a blocked prompt runs none of them, and an allowed one releases them as soon as the guard decides.
+Normal tool dispatch starts after the model request, which the guard holds until it decides. That includes a request that raises before the guard decides, such as a `ModelRetry` from an `after_model_request` hook or a model error raised before the response streams: the exception waits for the verdict, and a block takes its place. In a streamed run, a block that lands after the whole response has streamed, as after a `ModelRetry` from `after_model_request`, is raised as `SkipModelRequest` (see [Streaming](#streaming)). [`CodeMode`](code-mode.md#eager-execution) with `eager=True` or `speculate` starts nested tool calls while the model is still streaming, so each of those calls waits for the verdict before it runs: a blocked prompt runs none of them, and an allowed one releases them as soon as the guard decides. [`DetectLoops`](detect-loops.md#loops-within-a-response) likewise waits for the verdict before it acts on a loop it finds while the response streams, so a blocked prompt isn't retried.
 
 ## Hard-fail path
 
@@ -326,7 +347,7 @@ def strict_guard(prompt: str) -> bool:
     return True
 ```
 
-Any exception raised by the guard propagates as-is -- use `InputBlocked` / `OutputBlocked` / `ToolBlocked` from this module, or your own exception types. `ToolBlocked` carries the `tool_name` and an optional `reason`.
+Any exception raised by the guard propagates as-is -- use `InputBlocked` / `OutputBlocked` / `ToolBlocked` from this module, or your own exception types. `ToolBlocked` carries the `tool_name` and an optional `reason`. Under Temporal an exception type of your own fails the guard's activity instead; see [Durable execution](#durable-execution).
 
 ## Tool calls
 
@@ -336,7 +357,7 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 import re
 from pathlib import Path
 
-import httpx
+import httpx2
 from pydantic_ai import Agent
 from pydantic_ai_harness import GuardrailResult, ToolGuardrail
 from pydantic_ai_harness.guardrails import ToolCallInfo, ToolResultInfo
@@ -379,7 +400,7 @@ def write_file(path: str, content: str) -> str:
 
 @agent.tool_plain
 def fetch_page(url: str) -> str:
-    return httpx.get(url).text
+    return httpx2.get(url).text
 ```
 
 The outcomes map onto Pydantic AI control flow:
@@ -518,11 +539,41 @@ A `ToolGuardrail` is a control over tools this run executes. For the ones it doe
 
 ## Streaming
 
-`OutputGuardrail` inspects the final output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed. `GuardrailResult.retry()` is not supported under `run_stream()` and surfaces there as `UnexpectedModelBehavior`. `InputGuardrail` works the same in streamed and non-streamed runs, with one caveat for `parallel=True`: the model streams while the guard runs, so chunks sent before the guard blocks still reach the caller, before the block message replaces them. If the guard blocks only after the whole response has streamed, the run raises `SkipModelRequest` instead.
+`OutputGuardrail` inspects the final output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed, or `StreamGuardrail` (below) to screen each streamed part. `GuardrailResult.retry()` is not supported under `run_stream()` and surfaces there as `UnexpectedModelBehavior`. `InputGuardrail` works the same in streamed and non-streamed runs, with one caveat for `parallel=True`: the model streams while the guard runs, so chunks sent before the guard blocks still reach the caller, before the block message replaces them. If the guard blocks only after the whole response has streamed, the run raises `SkipModelRequest` instead.
+
+### Screening streamed parts
+
+`StreamGuardrail` holds back each text, thinking and tool-call part of the run's event stream until the part is complete, then passes the whole `TextPart`, `ThinkingPart` or `ToolCallPart` to its `guard`. `allow` releases the part's events as they arrived, `block` raises `OutputBlocked` before any of them reach the caller, and `replace` releases one start and one end event carrying the replacement part, which must be of the same type. `retry` and `approve` raise `UserError`, as does `replace` for a tool call, whose original arguments the run would still execute: rewrite those with `ToolGuardrail`. Events that arrive while a part is held wait with it, so the caller sees them in their original order.
+
+```python
+from dataclasses import replace
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import TextPart
+from pydantic_ai_harness import GuardrailResult, StreamGuardrail
+from pydantic_ai_harness.guardrails import StreamGuardrailPart
+
+
+def no_ssn(part: StreamGuardrailPart) -> GuardrailResult:
+    if isinstance(part, TextPart) and 'SSN' in part.content:
+        return GuardrailResult.replace(replace(part, content='[redacted]'))
+    return GuardrailResult.allow()
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[StreamGuardrail(guard=no_ssn)])
+```
+
+A text or thinking part is complete at its end event, so its first chunk is delayed by the part's generation time plus the guard's latency. A tool call is complete only when the model response ends, as a provider can still stream its arguments after another part started. It is then released as one start and one end event carrying the screened part, since argument deltas can overwrite earlier keys. A delta for a part already released is dropped, as the guard never saw it. The guard screens the event stream: `run_stream_events()`, the `event_stream_handler` argument to a run, `node.stream()` under `iter()`, and the UI adapters built on them. A `ProcessEventStream` capability and an `on_event` hook see each event before the guard, so they are not screened. `run_stream()` is not screened. It reads the event stream only until the final result, and its `stream_text()`, `stream_output()` and `stream_response()` then read the accumulated response, which never carries a replacement and can hold the start of a part before the guard has decided on it. A `block` still ends the run with `OutputBlocked`. Adding `StreamGuardrail` also makes `run()` and `run_sync()` stream every model request, so the guard runs, and a `block` raises, even when nothing reads the events, and a model that cannot stream fails with `UserError`. A replacement changes only what the event stream carries, not the message history or the run's output: add `OutputGuardrail` and `ToolGuardrail` for those. Under durable execution the model request streams its events to the durability's own event stream handler before any capability wraps them, so `StreamGuardrail` raises `UserError` there instead of letting them through unscreened. It also raises `UserError` in a realtime session, whose event stream lasts the whole session, so a held tool call would hold back every later event.
+
+## Durable execution
+
+Inside a durable workflow or flow (Temporal, DBOS, Prefect) each guard chain is a durable operation, checkpointed as `<agent>__capability__<id>.guard` (and `.result_guard` for a `ToolGuardrail` result guard). A replay reuses the recorded verdict instead of calling the guard again, so a classifier is paid for once and cannot decide differently on recovery. The guarded value and the verdict cross the engine's serializer, so keep them serializable. On an engine that transports JSON, such as Temporal, a structured output or tool result (including a `ToolReturn`) reaches the guard as plain JSON data, so serialize it with `pydantic_core.to_json(value)` rather than a model method; a replacement of the same type as the value it replaces is rebuilt as that type. Under Temporal the guard's `RunContext` also carries only its serialized fields, without `messages` or `prompt`. `InputBlocked`, `OutputBlocked`, `ToolBlocked`, `ApprovalRequired` and `ModelRetry` raised by a guard reach the run on every engine, but under Temporal an exception of any other type fails the activity, which is retried under its retry policy (unbounded by default).
+
+A durable operation is addressed by the capability's `id`, so a guardrail on a durable-capable agent needs an explicit one, distinct per guardrail: `InputGuardrail(guard=no_secrets, id='input-guard')`. Without one, Pydantic AI refuses to bind the agent and names the fix. Outside durable execution nothing changes and `id` stays optional.
 
 ## Tracing
 
-`replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in [Logfire](https://pydantic.dev/logfire) traces (`guardrail redacted input`, `guardrail blocked output`, and so on) with `guardrail.*` attributes. Content attributes -- the replacement value for a redaction and the refusal `message` for a block -- are attached only when `RunContext.trace_include_content` is enabled, since these can quote the content the guard exists to keep out of traces. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace. `retry` records no guardrail span: the retry request it causes appears in the trace as a normal model request.
+`replace` and `block` are recorded as spans on the active OpenTelemetry tracer, so a redaction or refusal shows up in [Logfire](https://pydantic.dev/logfire) traces (`guardrail redacted input`, `guardrail blocked output`, `guardrail redacted stream`, and so on) with `guardrail.*` attributes. Content attributes -- the replacement value for a redaction and the refusal `message` for a block -- are attached only when `RunContext.trace_include_content` is enabled, since these can quote the content the guard exists to keep out of traces. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace. `retry` records no guardrail span: the retry request it causes appears in the trace as a normal model request.
 
 Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `guardrail deferred tool args`, which always carries `guardrail.tool_call_id` so the span can be correlated with the `DeferredToolRequests` the application answers, and carries `guardrail.arguments` under the same `trace_include_content` rule as the other content attributes. A deferred call never executes, so there is no `execute_tool` span recording what was asked for.
 
@@ -548,6 +599,11 @@ InputGuardrailFunc = (
 OutputGuardrailFunc = (
     Callable[[object], bool | GuardrailResult | Awaitable[bool | GuardrailResult]]
     | Callable[[RunContext[AgentDepsT], object], bool | GuardrailResult | Awaitable[bool | GuardrailResult]]
+)
+StreamGuardrailPart = TextPart | ThinkingPart | ToolCallPart
+StreamGuardrailFunc = (
+    Callable[[StreamGuardrailPart], bool | GuardrailResult | Awaitable[bool | GuardrailResult]]
+    | Callable[[RunContext[AgentDepsT], StreamGuardrailPart], bool | GuardrailResult | Awaitable[bool | GuardrailResult]]
 )
 ToolGuardrailFunc = (
     Callable[[ToolCallInfo], bool | GuardrailResult | Awaitable[bool | GuardrailResult]]
@@ -579,6 +635,11 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
 
 
 @dataclass
+class StreamGuardrail(AbstractCapability[AgentDepsT]):
+    guard: StreamGuardrailFunc[AgentDepsT] | Sequence[StreamGuardrailFunc[AgentDepsT]]
+
+
+@dataclass
 class ToolGuardrail(AbstractCapability[AgentDepsT]):
     guard: ToolGuardrailFunc[AgentDepsT] | None = None
     result_guard: ToolResultGuardrailFunc[AgentDepsT] | None = None
@@ -598,6 +659,6 @@ class ToolResultInfo(ToolCallInfo):
     result: object
 ```
 
-The guard callable takes the inspected value (the prompt for `InputGuardrail`, the output for `OutputGuardrail`, a `ToolCallInfo` or `ToolResultInfo` for `ToolGuardrail`), optionally preceded by a `RunContext`. `InputGuardrailFunc`, `OutputGuardrailFunc`, `ToolGuardrailFunc`, and `ToolResultGuardrailFunc` are the exported signature aliases; `GuardrailError` is the base for `InputBlocked`, `OutputBlocked`, and `ToolBlocked`.
+The guard callable takes the inspected value (the prompt for `InputGuardrail`, the output for `OutputGuardrail`, each completed streamed part for `StreamGuardrail`, a `ToolCallInfo` or `ToolResultInfo` for `ToolGuardrail`), optionally preceded by a `RunContext`. `InputGuardrailFunc`, `OutputGuardrailFunc`, `StreamGuardrailFunc`, `ToolGuardrailFunc`, and `ToolResultGuardrailFunc` are the exported signature aliases; `GuardrailError` is the base for `InputBlocked`, `OutputBlocked`, and `ToolBlocked`.
 
 Source: [`pydantic_ai_harness/guardrails/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/).

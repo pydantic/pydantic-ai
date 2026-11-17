@@ -15,13 +15,15 @@ To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web
 the address, opens it, and logs the session it started with to the terminal until Ctrl-C, which
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
-there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, a new worktree of a listed checkout's repository (**New worktree…** on its row, or
-**New worktree of …** for the row the arrow keys select: a branch name,
-generated if empty, and a base, `HEAD` if empty; it goes in `.worktrees/` as `--worktree` puts it),
-or any directory by its absolute path, which it completes as you type, listing each repository's
-worktrees. The header shows where the session works.
+there; CLAI's own working directory never changes. **New session** asks where the session runs.
+It lists one row per project from the sidebar, the current one first, and a project's row starts
+in the checkout you are in, else the project's main one. A project's chevron, or →, shows its
+worktrees, including any other worktree Git lists for its repository; ← hides them.
+**New worktree…** on a row, or **New worktree of …** for the row the arrow keys select, checks out
+a new worktree of that row's repository: a branch name, generated if empty, and a base, `HEAD` if
+empty; it goes in `.worktrees/` as `--worktree` puts it. You can also type any directory's
+absolute path, which it completes as you type, listing each repository with its worktrees shown.
+The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
 turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser
@@ -97,16 +99,18 @@ changed, with the number of files it changed so far on the button. Pick a scope:
 outside Git too, and show each file once, as one diff from before the first change to what is on
 disk now. A file the session wrote whole counts as created, unless the last commit has it with
 content the session did not write, which it is then compared with. In Git, they also list files
-changed otherwise since the scope began, such as by a shell command, without a diff, as
-**Uncommitted** has it. These scopes read the
-conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
+changed otherwise since the scope began, such as by a shell command, without a diff; a file a
+command deleted shows only in **Uncommitted**. These scopes read the
+conversation, so after `/compact` they start from the compacted summary; while a turn runs,
+**Last turn** is the running one. **Uncommitted** is
 `git diff HEAD` in the session's directory, with untracked files that are not ignored listed as
 added, as `git status` and the git chip count them, and **Branch
 vs base** compares the files, uncommitted changes included, with where the branch left its base:
 `origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
 removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
-panel asks again when a turn ends, and **Refresh** asks at once. It shares one column with Monty
-and the plugin side panels, so opening one closes the others.
+panel, the button's count, and the git chip ask again as a running turn's tool calls finish, at
+most once a second, and when it ends; **Refresh** asks at once, during a turn too. It shares one
+column with Monty and the plugin side panels, so opening one closes the others.
 
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
@@ -372,9 +376,10 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
   carry no `session`; every `snapshot` lists the open dialogs.
 - `live` lists the live sessions, sent on connect and whenever one opens, closes, switches
   conversation, or changes state:
-  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "title": "…" | null, "workspace": "/abs/path"}]}`.
+  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "busy": true | false, "title": "…" | null, "workspace": "/abs/path"}]}`.
   `queued` means input waits while that session's turn runs; `asking` means a question its turn
-  asked waits for the user.
+  asked waits for the user. `busy` is `LiveSession.busy`, true past the turn while its `TurnEnd`
+  hooks run: the page offers Edit and Retry only once it is false.
 - The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
   watches. The server answers with a `snapshot` for each newly watched live session; the default session
   a connection got on connect counts as watched already, so naming it sends no second one. An ID that is not
@@ -395,12 +400,13 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 |---|---|
 | `GET /api/sessions/{id}/state` | its `snapshot` |
 | `GET /api/sessions/{id}/images/{image_id}` | an image of a prompt in its transcript, by an ID its `user` item lists in `images` (the SHA-256 of the bytes); 404 for one it does not hold |
-| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default; `diffs=false` leaves the diffs out, for a count (the session scopes then leave the line counts at 0 too) |
+| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default, with the running turn's calls so far; `diffs=false` leaves the diffs out, for a count (the session scopes then leave the line counts at 0 too) |
 | `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |
 | `PUT /api/sessions/{id}/queue/{input_id}` | rewrite a queued input in place, body `{"text": "…"}`; 404 once it ran or was removed |
 | `DELETE /api/sessions/{id}/queue/{input_id}` | remove a queued input; 404 once it ran or was removed |
+| `POST /api/sessions/{id}/rewind/{run_id}` | Edit or Retry: drop the turn that `run_id` (a `user` item's `run_id`) started and every later one, then send body `{"text": "…"}` with that prompt's images in its place, or the prompt as saved for `{"text": null}` (`text` is required); answers 204, 400 for a `/command` or `!` line, 404 once that prompt can no longer be rewound to, 409 while the session is busy |
 | `POST /api/sessions/{id}/queue/{input_id}/steer` | send a queued prompt to the running turn, taking it out of the queue; answers `{"steered": false}` and leaves it queued when nothing takes it |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
 | `GET /api/sessions/{id}/files?q=…` | the composer's `@` picker: the 50 files and folders in the session's folder that best match `q` (Git's tracked and unignored files in a checkout), each a completion of `@q` |
@@ -427,7 +433,7 @@ choosing a model in session B's `/model` menu switches B alone, and B's `/effort
 CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
 (`/api/plugins/…`) and dialogs belong to the page.
 
-The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/interrupt`,
+The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/rewind/…`, `/api/interrupt`,
 `/api/complete`, `/api/files`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
