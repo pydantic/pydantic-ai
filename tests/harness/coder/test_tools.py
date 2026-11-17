@@ -314,7 +314,7 @@ class TestCoder:
     @pytest.mark.parametrize('autonomy', ['low', 'medium', 'high', 'max'])
     def test_max_expands_the_misread_check_for_parent_and_delegate(self, autonomy: Autonomy) -> None:
         """A delegate follows its parent's autonomy for the misread check, as it does for cleanup."""
-        for text in coder_instructions(autonomy=autonomy, delegate_tool=None):
+        for text in coder_instructions(autonomy=autonomy):
             if autonomy == 'max':
                 assert _MISREAD_MAX_TEXT in text
                 assert _MISREAD_TEXT not in text
