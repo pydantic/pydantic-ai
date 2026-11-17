@@ -6,7 +6,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic_ai import exceptions
-from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates, SpecModelError, spec_list
+from pydantic_ai._fallback import (
+    FallbackChain,
+    FallbackOn,
+    FallbackPredicates,
+    SpecModelError,
+    spec_exception_types,
+    spec_list,
+)
 from pydantic_ai._unsupported_settings import raise_warnings as raise_unsupported_setting_warnings
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
@@ -400,20 +407,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if len(model_names) != len(given_models):
             invalid = [model for model in given_models if not isinstance(model, str)]
             raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
-        given_errors = spec_list(fallback_on, owner='ModelFallback', param='fallback_on')
-        error_types = [
-            _SPEC_FALLBACK_ERRORS[name]
-            for name in given_errors
-            if isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS
-        ]
-        if len(error_types) != len(given_errors):
-            unknown = [name for name in given_errors if not (isinstance(name, str) and name in _SPEC_FALLBACK_ERRORS)]
-            raise UserError(
-                '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
-                '`ContentFilterError`, `OutputTokenLimitExceeded` and `UnsupportedSettingWarning`, '
-                f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
-            )
-        return cls(*model_names, fallback_on=tuple(error_types), sticky=sticky)
+        error_types = spec_exception_types(
+            fallback_on, _SPEC_FALLBACK_ERRORS, owner='ModelFallback', param='fallback_on'
+        )
+        return cls(*model_names, fallback_on=error_types, sticky=sticky)
 
 
 class _JudgingSettingsModel(WrapperModel):

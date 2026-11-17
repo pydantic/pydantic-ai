@@ -17,10 +17,10 @@ have in common lives here, so a fix lands once and the two can never disagree:
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, assert_never, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, TypeVar, assert_never, cast, get_args
 
 from opentelemetry.trace import Span, Tracer
 
@@ -138,6 +138,8 @@ SpecModelError = Literal[
 Every public `ModelAPIError` class, `ContentFilterError` and `OutputTokenLimitExceeded`.
 """
 
+_ExceptionT = TypeVar('_ExceptionT', bound=Exception)
+
 _SPEC_MODEL_ERRORS: dict[str, type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded]] = {
     name: getattr(_exceptions, name) for name in get_args(SpecModelError)
 }
@@ -159,18 +161,26 @@ def spec_error_types(
     value: object, *, owner: str, param: str
 ) -> tuple[type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded], ...]:
     """The `ModelAPIError` classes, `ContentFilterError` or `OutputTokenLimitExceeded` a spec argument names."""
+    return spec_exception_types(value, _SPEC_MODEL_ERRORS, owner=owner, param=param)
+
+
+def spec_exception_types(
+    value: object, known: Mapping[str, type[_ExceptionT]], *, owner: str, param: str
+) -> tuple[type[_ExceptionT], ...]:
+    """The classes in `known` a spec argument names, rejecting any other name.
+
+    The error message names `ModelAPIError` classes as a group and every other known class by name.
+    """
     # Spec arguments reach here unvalidated: the annotations are what the published spec schema
     # advertises, not something that rejects other values on the way in.
     given = spec_list(value, owner=owner, param=param)
-    error_types = tuple(
-        _SPEC_MODEL_ERRORS[name] for name in given if isinstance(name, str) and name in _SPEC_MODEL_ERRORS
-    )
+    error_types = tuple(known[name] for name in given if isinstance(name, str) and name in known)
     if len(error_types) != len(given):
-        unknown = [name for name in given if not (isinstance(name, str) and name in _SPEC_MODEL_ERRORS)]
+        unknown = [name for name in given if not (isinstance(name, str) and name in known)]
+        others = [f'`{name}`' for name, cls in known.items() if not issubclass(cls, ModelAPIError)]
+        takes = ', '.join(['names of `ModelAPIError` classes', *others[:-1]]) + f' and {others[-1]}'
         raise UserError(
-            f'`{owner}` `{param}` in an agent spec takes names of `ModelAPIError` classes, `ContentFilterError` and '
-            '`OutputTokenLimitExceeded`, '
-            f'got {unknown!r}. Valid names: {", ".join(_SPEC_MODEL_ERRORS)}.'
+            f'`{owner}` `{param}` in an agent spec takes {takes}, got {unknown!r}. Valid names: {", ".join(known)}.'
         )
     return error_types
 
