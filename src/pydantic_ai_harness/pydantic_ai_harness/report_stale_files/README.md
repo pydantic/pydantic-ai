@@ -59,7 +59,7 @@ agent = Agent(
 
 | Option | Default | What it does |
 |---|---|---|
-| `max_tracked_files` | `100` | How many files to check before each request. Past it, the least recently read or written file is dropped. |
+| `max_tracked_files` | `100` | How many files to record per conversation. Past it, the least recently read or written file is dropped. |
 | `max_reported_files` | `20` | How many paths one notice names. The rest are counted (`- and 3 more`). |
 | `max_checked_bytes` | `8 << 20` (8 MiB) | How many bytes of recorded files to read before one request, most recently read or written first. A file that doesn't fit in what is left is not checked on that request. |
 

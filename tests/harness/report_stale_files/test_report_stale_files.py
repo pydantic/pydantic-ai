@@ -374,7 +374,7 @@ These files you read were deleted from the workspace:
         result = await agent.run('go')
         assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `b.txt`']
 
-    async def test_notice_names_at_most_max_reported_files_and_only_plain_paths(self, tmp_path: Path) -> None:
+    async def test_notice_names_at_most_max_reported_files(self, tmp_path: Path) -> None:
         names = ('my notes.txt', 'a.txt', 'b.txt')
         for name in names:
             (tmp_path / name).write_text('one\n')

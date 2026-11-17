@@ -90,7 +90,7 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
     """
 
     max_tracked_files: int = 100
-    """How many files to check before each request; past it, the least recently read or written is dropped."""
+    """How many files to record per conversation; past it, the least recently read or written is dropped."""
 
     max_reported_files: int = 20
     """How many paths one notice names; the rest are counted."""
