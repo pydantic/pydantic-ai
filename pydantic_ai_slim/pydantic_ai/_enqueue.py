@@ -179,8 +179,9 @@ def stamp_capability_parts(
     `SystemPromptPart` below `'operator'`, and a `UserPromptPart` below `'user'`. Enqueued content never gains
     authority on its way to the model.
 
-    A `ModelResponse`, or a request with `instructions`, from a capability below `'operator'` raises `UserError`. Requests and parts are copied, never
-    changed in place: a capability can enqueue a request it took from the run's history, which must stay as it was.
+    A `ModelResponse`, or a request with `instructions`, from a capability below `'operator'` raises `UserError`.
+    Requests and parts are copied, never changed in place: a capability can enqueue a request it took from the run's
+    history, which must stay as it was.
     """
     return [
         _request_within_ceiling(message, capability_id, ceiling)
@@ -220,12 +221,12 @@ def _response_within_ceiling(message: ModelResponse, capability_id: str, ceiling
 def within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
     """`part` as a capability below operator authority may send it, or `UserError` if it can't send it at all.
 
-    An allowlist, so a part type added later is refused until it's decided how it reads below the application's voice:
-    a capability part is lowered when it's stamped, a system prompt becomes an instruction at `ceiling`, user text at
+    An allowlist, so a part type added later is refused until it's decided how it reads below the application's voice: a
+    capability part is lowered when it's stamped, a system prompt becomes an instruction at `ceiling`, user text at
     `'none'` becomes data, retry feedback becomes the capability's own text (user text at `'user'`, data at `'none'`),
-    and a plain tool return is tool output whatever its sender. Anything else is refused, such as the framework's records of the run's own state, which the
-    model reads in the application's voice, a summary standing in for earlier history, a typed tool return the
-    framework acts on, and speech below `'user'`.
+    and a plain tool return is tool output whatever its sender. Anything else is refused, such as the framework's
+    records of the run's own state, which the model reads in the application's voice, a summary standing in for earlier
+    history, a typed tool return the framework acts on, and speech below `'user'`.
     """
     if ceiling == 'operator':
         return part

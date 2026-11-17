@@ -397,6 +397,15 @@ ends with </tool_result\
         [part] = follow_up.parts
         assert isinstance(part, BackgroundToolResultPart)
         assert (part.tool_call_id, part.content) == (call.tool_call_id, ['captured', image, 'taken at noon'])
+        assert _sent(part, call.tool_call_id)[-1] == snapshot(
+            [
+                '<tool_result tool_name="screenshot" tool_call_id="<call_id>">',
+                'captured',
+                "BinaryContent(data=b'image bytes', media_type='image/png')",
+                'taken at noon',
+                '</tool_result>',
+            ]
+        )
 
     async def test_realtime_session_keeps_native_tool_path_and_instructions(self) -> None:
         image = BinaryContent(data=b'image bytes', media_type='image/png')

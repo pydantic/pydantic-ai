@@ -108,6 +108,10 @@ class FunctionToolsetRejectingDurability(RecordingDurability):
     engine_spec = replace(RecordingDurability.engine_spec, unsupported_runtime_toolset_kinds=frozenset({'function'}))
 
 
+class _SubclassedMemory(Memory[object]):
+    pass
+
+
 def _ctx(
     tool_call_id: str = 'call-1',
     run_id: str = 'run-1',
@@ -652,6 +656,17 @@ class TestWriteMemory:
         memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
         assert memory_file is not None
         assert memory_file.content == '- likes uv\n- uses Linux\n'
+
+    async def test_edit_crlf_file_with_old_text_from_snapshot(self) -> None:
+        capability = Memory[None]()
+        toolset = MemoryToolset(capability)
+        await toolset.write_memory(_ctx('seed'), '- likes pip\r\n- uses Linux\r\n- tabs')
+
+        await toolset.write_memory(_ctx('edit'), '- likes uv\n- uses macOS', old_text='- likes pip\n- uses Linux')
+
+        memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
+        assert memory_file is not None
+        assert memory_file.content == '- likes uv\r\n- uses macOS\r\n- tabs\n'
 
     async def test_subfile_normalization_empty_append_and_invalid_name(self) -> None:
         capability = Memory[None]()
@@ -2727,8 +2742,11 @@ class TestTelemetryAndComposition:
         run_memory = await memory.for_run(_ctx())
         assert run_memory.get_toolset() is registered
 
+    @pytest.mark.parametrize('memory_cls', [Memory, _SubclassedMemory])
     @pytest.mark.parametrize('prefix', [None, 'org'])
-    async def test_durability_runs_registered_tools_against_run_scope(self, prefix: str | None) -> None:
+    async def test_durability_runs_registered_tools_against_run_scope(
+        self, prefix: str | None, memory_cls: type[Memory[object]]
+    ) -> None:
         stores: list[InMemoryMemoryStore] = []
         tool_prefix = f'{prefix}_' if prefix else ''
 
@@ -2747,7 +2765,7 @@ class TestTelemetryAndComposition:
                 )
             return ModelResponse(parts=[TextPart('done')])
 
-        memory = Memory[object](store_resolver=resolver, inject_memory=False)
+        memory = memory_cls(store_resolver=resolver, inject_memory=False)
         agent = Agent(
             FunctionModel(model),
             name='memory-agent',

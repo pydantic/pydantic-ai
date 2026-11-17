@@ -16,7 +16,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -57,6 +57,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from pydantic_ai_harness._monty_exec import (
+    DispatchFn,
     MontyExecutor,
     MontyRunState,
     PrintCapture,
@@ -224,6 +225,72 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
     'properties': {'task': {'type': 'string'}},
     'required': ['task'],
 }
+
+
+@dataclass(frozen=True)
+class WorkflowCall:
+    """One sub-agent call a workflow script made, handed to a `WorkflowCallScheduler`."""
+
+    agent_name: str
+    """The sandbox function name the script called."""
+
+    start: Callable[[], Awaitable[object]]
+    """Runs the sub-agent and returns its output."""
+
+
+class WorkflowCallScheduler(Protocol):
+    """Decides when the sub-agent calls of one workflow script start.
+
+    `DynamicWorkflow(call_scheduler=...)` creates one for each `run_workflow` call.
+    """
+
+    async def run(self, call: WorkflowCall) -> object:
+        """Run one sub-agent call by awaiting `call.start()`, and return its output."""
+        ...
+
+    async def flush(self) -> None:
+        """Called each time the script waits on its calls, once every call it made before the wait has reached `run`.
+
+        A call the script is waiting on only completes once `run` awaits its `call.start()`, so a
+        scheduler that holds calls back must release them here. A durable engine that batches the
+        calls, like `AWSLambdaDurability`, takes its batch right after this returns, so under one a
+        released call has to await `call.start()` without suspending first, or it misses the batch
+        and the script waits on it indefinitely.
+        """
+        ...
+
+
+def _apply_scheduler(
+    scheduler: WorkflowCallScheduler, dispatch: DispatchFn, flush: Callable[[], Awaitable[None]] | None
+) -> tuple[DispatchFn, Callable[[], Awaitable[None]]]:
+    """Route each dispatch through `scheduler`, and run its `flush` before the engine's own."""
+
+    async def scheduled(agent_name: str, kwargs: dict[str, Any]) -> object:
+        dispatch_errors: list[Exception] = []
+
+        async def start() -> object:
+            try:
+                return await dispatch(agent_name, kwargs)
+            except Exception as exc:
+                dispatch_errors.append(exc)
+                raise
+
+        try:
+            return await scheduler.run(WorkflowCall(agent_name, start))
+        except Exception as exc:
+            if exc in dispatch_errors:
+                raise
+            # Like a sub-agent failure, a scheduler's own error reaches the script without host details.
+            raise RuntimeError(f'call scheduler raised {type(exc).__name__}') from exc
+
+    async def flush_scheduler() -> None:
+        # Let a call dispatched in the last loop iteration reach `scheduler.run`.
+        await asyncio.sleep(0)
+        await scheduler.flush()
+        if flush is not None:
+            await flush()
+
+    return scheduled, flush_scheduler
 
 
 def _lambda_bridge() -> StepBridge | None:
@@ -667,6 +734,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Sandbox limits guarding the orchestration script's own memory (not sub-agents).
     See `DynamicWorkflow.resource_limits` for the `None`/`'unlimited'`/partial-dict semantics."""
 
+    call_scheduler: Callable[[RunContext[AgentDepsT]], WorkflowCallScheduler] | None = None
+    """Creates the scheduler that decides when each script's sub-agent calls start.
+    See `DynamicWorkflow.call_scheduler`."""
+
     toolset_id: str | None = None
     """Stable toolset id; defaults to the tool name."""
 
@@ -935,6 +1006,24 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         names = list(self._by_name)
         return {known: self._by_name[known] for known in names[: names.index(name) + 1]}
 
+    def _schedule(
+        self,
+        ctx: RunContext[AgentDepsT],
+        dispatch: DispatchFn,
+        branches: _LambdaBranches | None,
+        *,
+        sequential: bool,
+    ) -> tuple[DispatchFn, Callable[[], Awaitable[None]] | None]:
+        """The executor's `dispatch` and `flush`, routed through `call_scheduler` when one is set."""
+        # Exclusive: under `global_sequential`, calls start only after `flush`, one at a time in
+        # dispatch order, so neither the Lambda batch nor a scheduler applies.
+        if sequential:
+            return dispatch, None
+        flush = branches.flush if branches is not None else None
+        if self.call_scheduler is None:
+            return dispatch, flush
+        return _apply_scheduler(self.call_scheduler(ctx), dispatch, flush)
+
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
@@ -957,6 +1046,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         bridge = _lambda_bridge()
         branches = _LambdaBranches(bridge, self.tool_name) if bridge is not None else None
         sequential = any(_runs_under_dbos(w.agent) for w in self._by_name.values())
+        scheduled_dispatch, flush = self._schedule(ctx, dispatch, branches, sequential=sequential)
         limits = _resolve_resource_limits(self.resource_limits)
         capture = PrintCapture()
         type_check_stubs = self._build_type_check_stubs()
@@ -970,10 +1060,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # which does not interleave with `call_tool`), so it is a stable name registry for
             # the whole script.
             completed = await MontyExecutor(
-                dispatch=dispatch,
+                dispatch=scheduled_dispatch,
                 valid_names=self._by_name,
-                # Exclusive: under `global_sequential`, calls start only after `flush`.
-                flush=branches.flush if branches is not None and not sequential else None,
+                flush=flush,
                 global_sequential=sequential,
                 portal=monty.portal,
                 max_sleep_seconds=limits.get('max_feed_duration_secs'),
