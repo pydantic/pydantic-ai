@@ -128,7 +128,6 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     Only tool names are checked, so custom tools that reach the sandbox under other names do not count.
 
     Set it to `False` for agents that reach the sandbox only from their own tools or hooks.
-    This flag and its warning go away in the stable harness release.
     """
 
     _warned_no_tools: bool = field(default=False, init=False, repr=False, compare=False)

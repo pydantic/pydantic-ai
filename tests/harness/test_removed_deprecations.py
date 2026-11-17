@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Callable
 
 import pytest
+
+from pydantic_ai_harness.compaction import ReportContextUsage
+from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness.shell import Shell
 
 
 @pytest.mark.parametrize(
@@ -81,3 +87,17 @@ def test_renamed_aliases_are_gone(module: str, name: str) -> None:
 def test_renamed_acp_aliases_are_gone(name: str) -> None:
     pytest.importorskip('acp')
     assert not hasattr(importlib.import_module('pydantic_ai_harness.experimental.acp'), name)
+
+
+@pytest.mark.parametrize(
+    'construct',
+    [
+        pytest.param(lambda: Shell('.'), id='Shell'),  # pyright: ignore[reportCallIssue]
+        pytest.param(lambda: FileSystem('.', ['*.py']), id='FileSystem'),  # pyright: ignore[reportCallIssue]
+        pytest.param(lambda: RepoContext('./repo'), id='RepoContext'),  # pyright: ignore[reportCallIssue]
+        pytest.param(lambda: ReportContextUsage(None, 200_000), id='ReportContextUsage'),  # pyright: ignore[reportCallIssue]
+    ],
+)
+def test_a_removed_positional_argument_cannot_shift_onto_the_next_field(construct: Callable[[], object]) -> None:
+    with pytest.raises(TypeError, match='positional argument'):
+        construct()

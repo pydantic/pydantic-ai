@@ -10,7 +10,6 @@ and source edge cases are exercised through the public
 from __future__ import annotations
 
 import re
-import warnings
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -833,33 +832,18 @@ class TestSearchScope:
         )
         assert 'ZEBRA' not in detached_returned
 
-    def test_unset_scope_is_conversation_without_a_warning(self) -> None:
+    def test_scope_defaults_to_conversation(self) -> None:
         source = SnapshotHistorySource(InMemoryStepStore())
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            capability = ConversationSearch(source)
-            toolset = ConversationSearchToolset[None](
-                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
-            )
-        assert capability.scope == capability.effective_scope == 'conversation'
+        toolset = ConversationSearchToolset[None](
+            source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75
+        )
+        assert ConversationSearch(source).scope == 'conversation'
         assert 'conversation' in (toolset.tools['search_conversation_history'].description or '')
 
     async def test_a_scope_other_than_all_is_conversation_scoped(self) -> None:
         """A `None` forwarded from optional configuration fails closed rather than searching every run."""
         rendered = await _search(_StubSource({'r1': [_user('SECRET')]}), 'SECRET', scope=None)  # pyright: ignore[reportArgumentType]
         assert 'SECRET' not in rendered
-
-    def test_explicit_scope_never_warns(self) -> None:
-        source = SnapshotHistorySource(InMemoryStepStore())
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')  # any warning at all fails this test
-            assert ConversationSearch(source, scope='conversation').effective_scope == 'conversation'
-            assert ConversationSearch(source, scope='all').effective_scope == 'all'
-            assert ConversationSearch(source, scope=None).effective_scope == 'conversation'  # pyright: ignore[reportArgumentType]
-            ConversationSearch(source, scope='conversation').get_toolset()
-            ConversationSearchToolset[None](
-                source, tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
-            )
 
     async def test_explicit_all_scope_still_searches_store_wide(self) -> None:
         """The opt-out has to actually restore the old behavior, not just silence the warning."""

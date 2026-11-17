@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -82,6 +82,10 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
         )
         ```
     """
+
+    # Keyword-only since the positional `on_usage` was removed, so an old positional call fails instead of
+    # dropping its window override.
+    _: KW_ONLY
 
     context_window: int | None = None
     """Window override in tokens. `None` resolves it from the request's model."""

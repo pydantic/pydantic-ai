@@ -135,11 +135,6 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
         """Two under one `id` are one search stated twice; two that disagree raise rather than merge."""
         return one_per_id(capabilities)
 
-    @property
-    def effective_scope(self) -> SearchScope:
-        """The scope applied: anything but `'all'` searches only the calling run's conversation."""
-        return 'all' if self.scope == 'all' else 'conversation'
-
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the `search_conversation_history` tool over the source."""
         toolset = self._build_toolset(_OperationToolset[AgentDepsT])

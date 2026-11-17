@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -112,6 +112,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     ```
     """
 
+    # Keyword-only since the positional `workspace_dir` was removed, so an old positional call fails instead of
+    # landing its working directory on `home_dir`.
+    _: KW_ONLY
+
     home_dir: str | Path | None = None
     """The shallowest workspace directory to stop the walk-up at, inclusive, as a workspace path.
 
@@ -127,7 +131,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     autoload_instructions: bool = True
     """Strategy 1: load instruction files into the system prompt."""
 
-    autoload_symlink_roots: Sequence[str | Path] = field(default=(), kw_only=True)
+    autoload_symlink_roots: Sequence[str | Path] = ()
     """Authorize external autoload targets beneath these workspace paths, empty by default.
 
     Roots and targets are resolved through the workspace. Requires a backend implementing
