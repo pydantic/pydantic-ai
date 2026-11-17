@@ -140,6 +140,15 @@ def truncated_output_message(max_tokens: int | None) -> str:
     )
 
 
+def incomplete_tool_call_message(max_tokens: int | None) -> str:
+    """The `IncompleteToolCall` message for a tool call whose arguments the token limit cut off."""
+    return (
+        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+
+
 def build_retried_tool_return(
     error: ValidationError | ModelRetry,
     *,
