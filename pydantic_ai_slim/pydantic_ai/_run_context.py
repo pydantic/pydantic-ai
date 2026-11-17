@@ -1022,11 +1022,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
         [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] that has no `capability_id` yet with the capability's
         run id, and warns on a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or user text that looks
         like a framework frame, which a capability part should say instead. Nothing it enqueues gets more authority than
-        the capability's [`authority`][pydantic_ai.capabilities.AbstractCapability] ceiling: a part whose source has more
-        is stored with the capability as its source, a `SystemPromptPart` below `'operator'` becomes an instruction part
-        lowered to the ceiling, user content, a `UserPromptPart` or retry feedback at `'none'` becomes data framed as the
-        capability's, and retry feedback at `'user'` becomes plain user text. Below `'operator'`, a request part with no such treatment, such as a framework state record, a
-        `CompactionPart` or a typed tool return, raises `UserError`, as does a `SpeechPart` at `'none'`.
+        the capability's [`authority`][pydantic_ai.capabilities.AbstractCapability] ceiling: a part whose source has
+        more is stored with the capability as its source, a `SystemPromptPart` below `'operator'` becomes an instruction
+        part lowered to the ceiling, user content, a `UserPromptPart` or retry feedback at `'none'` becomes data framed
+        as the capability's, and retry feedback at `'user'` becomes plain user text. Below `'operator'`, a request part
+        with no such treatment, such as a framework state record, a `CompactionPart` or a typed tool return, raises
+        `UserError`, as does a `SpeechPart` at `'none'`.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
