@@ -1,4 +1,4 @@
-"""In-memory WebSocket transport for the simulated OpenAI-protocol and GPT-Live servers.
+"""In-memory WebSocket transport for the simulated OpenAI-protocol, GPT-Live, and ElevenLabs servers.
 
 The real connection classes dial `websockets.connect`, which `Network.patch` replaces with a factory
 handing out `FakeWebSocket`s wired to a simulated server. Frames the server emits are queued *in
@@ -38,7 +38,7 @@ socket dying while the frame is on the wire looks like to the client: it can't t
 arrived. Either way the connection is dropped, as a real socket error would.
 """
 
-_HANDSHAKE_FRAME_TYPES = frozenset({'session.update', 'session.start'})
+_HANDSHAKE_FRAME_TYPES = frozenset({'session.update', 'session.start', 'conversation_initiation_client_data'})
 
 
 class WireServer(Protocol):

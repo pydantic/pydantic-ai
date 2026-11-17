@@ -224,9 +224,9 @@ async def test_prompt_frame_stays_visible_during_tools(
     done = anyio.Event()
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             nonlocal frame
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
             frame = [''] * (height - len(rows)) + [Text.from_ansi(row).plain for row in rows]
             for text, event in (
                 ('ready', painted),

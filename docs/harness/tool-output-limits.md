@@ -15,15 +15,30 @@ the reduction is not recomputed per request.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Tool Output Limits: reduce large tool results once, when they arrive
+    accDescr: The model calls your tool, and in after_tool_execute the result goes to ToolOutputLimits, whose default band is Spill at 10,000 characters. It writes the full payload to the WorkspaceOverflowStore under .pydantic-ai-harness/tool-output/ and gives the model a marker, a handle and a preview. The model passes the handle to read_tool_result, which reads the store and returns a slice.
+    model(["model"])
+    tool["your tool"]
+    limits["ToolOutputLimits()<br/>default band: Spill at<br/>10,000 characters"]:::capability
+    store[("WorkspaceOverflowStore<br/>.pydantic-ai-harness/<br/>tool-output/")]:::external
+    reader["read_tool_result"]:::capability
+    model -->|"tool call"| tool
+    tool -->|"after_tool_execute"| limits
+    limits -->|"full payload"| store
+    limits -->|"marker, handle, preview"| model
+    model <-->|"handle, a slice"| reader
+    reader <-->|"reads"| store
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## The problem
 
 A tool can return a payload large enough to dominate the context window: a big file read, a
 verbose log, a large JSON document. Because tool returns persist in history, an oversized one
 is re-sent on every later model request, paying its token cost for the rest of the run.
-
-This is the overflow-to-file follow-up the [compaction](compaction.md) capability names as out
-of scope: it moves large tool outputs *out* of the window at production time, rather than
-compressing or dropping context already inside it.
 
 ## The three modes
 
@@ -34,8 +49,7 @@ compressing or dropping context already inside it.
 | `Summarize` | one LLM call | yes | A size-gated summary (inherits the run's model by default) |
 
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
-the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool (the Claude
-Code pattern, the core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design).
+the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool.
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking.
@@ -57,8 +71,11 @@ agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), ToolOu
 ```
 
 The capability registers a single `read_tool_result` tool so the model can page back into any
-spilled payload. Its own returns are exempt from reduction. A file tool can also read workspace spills,
-but its results are subject to the configured reduction bands.
+spilled payload. Its own returns are exempt from reduction. With `FileSystem` on the agent,
+`read_file` takes its place for spills in the run's workspace, and its reads of spills are exempt
+too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability`
+and `search_tools` returns are never reduced either: core reads them back from history to know which
+[on-demand capabilities](../capabilities/on-demand.md) are loaded and which tools are revealed.
 
 ## Bands: combine the modes
 
@@ -89,11 +106,14 @@ agent = Agent(
 ```
 
 The default band, when you pass no `bands`, is `Spill(then=Truncate())` at a 10,000-character
-threshold: lossless when a store accepts the write, a bounded truncation otherwise -- zero LLM
-cost and no silent drop.
+threshold: lossless when a store accepts the write, otherwise truncated to `max_chars`. Neither
+calls a model.
 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.
+
+When an agent gets two `ToolOutputLimits` with the same `id`, their `bands` merge into one list
+that is still matched largest threshold first. At a threshold both state, the later band wins.
 
 ### Fallbacks with `then`
 
@@ -218,27 +238,34 @@ a native notice describes the stored result, not the shorter preview. A positive
 `Spill.preview_chars` value controls the preview's content budget; its header and omission
 marker add to that length.
 
-## Both `return_value` and `content` are reduced
+## Return-value and content handling
 
 A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
 separate, model-visible part which also persists in history. This capability measures and
-reduces both with the same band logic (they spill to distinct handles). Text `content` is
-reduced in place; non-text `content` (multimodal parts) that overflows is left unreduced with
-a `warnings.warn`, since it cannot be safely truncated.
+reduces both with the same bands, and they spill to distinct handles.
+
+A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
+for an image or PDF, reaches the model with its files as they are. A lone data item beside them is
+measured as itself, and several as one JSON list. When a band
+applies, the reduced text replaces that data, ahead of the files. Text `content` is reduced the
+same way whatever the return value holds. Non-text `content` that overflows is left unreduced
+with a `warnings.warn`.
 
 ### `ToolReturn.metadata` is preserved
 
 Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`) live in
 `ToolReturn.metadata` alongside whatever the tool put there. A pre-existing mapping is copied
 in with stringified keys; a pre-existing non-mapping value (a string, a dataclass, anything
-that is not a `Mapping`) is kept under `original_metadata` rather than dropped. Either way the
-caller's own metadata survives a spill and is readable from `metadata` on the resulting
-`ToolReturnPart` after `Agent.run`.
+that is not a `Mapping`) is kept under `original_metadata` rather than dropped. A list or tuple,
+the shape the AG-UI and Vercel AI adapters read UI events and chunks from, stays a list with the
+spill keys appended as one dict item, and a single event or chunk becomes such a list, so those
+events still reach the UI. Either way the caller's own metadata survives a spill and is readable
+from `metadata` on the resulting `ToolReturnPart` after `Agent.run`.
 
 ## Size unit
 
 Thresholds are measured in characters by default. Set `over_tokens=True` to measure in
-estimated tokens (the same ~4-chars-per-token heuristic as [compaction](compaction.md)); pass a
+estimated tokens (the same [text estimate](compaction.md#triggers) as compaction); pass a
 `tokenizer` callable for accuracy. `Truncate.max_chars` is always characters -- truncation is a
 character operation regardless of the threshold unit. The cap includes the truncation marker
 and applies separately to each reduced text value. If the budget cannot fit both retained
@@ -271,21 +298,27 @@ a size band that compact JSON would not. Strings and binary returns are never se
 returns below the smallest band pass through untouched, and a serializer that raises or
 returns non-text warns and falls back to compact JSON rather than losing the tool output.
 
+`bytes` inside a structured return render as the text they decode to. When one of them is not
+UTF-8 (a file read in binary mode, raw command output), every `bytes` value in the rendered
+JSON is base64-encoded instead, which is how Pydantic AI encodes `bytes` in the tool returns it
+sends to the model. `json_lines` makes that switch per record.
+
 ## Spill store
 
-The default `WorkspaceStore` writes each spill as a file in the run's workspace, under
+The default `WorkspaceOverflowStore` writes each spill as a file in the run's workspace, under
 `.pydantic-ai-harness/tool-output/` in the working directory, which is git-ignored. With a
 sandbox the files live in the sandbox. The handle is the file's absolute path, so a file tool
-such as `FileSystem`'s `read_file` can open it too. `read_tool_result` only opens handles
-inside the store's directory.
+such as `FileSystem`'s `read_file` can open it too, and replaces `read_tool_result` when it is
+on the agent ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
+`read_tool_result` only opens handles inside the store's directory.
 
 To keep spills in a different workspace than the run's, pass a backend:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, WorkspaceOverflowStore
 
-spills_elsewhere = ToolOutputLimits(store=WorkspaceStore(workspace=LocalWorkspaceBackend('/var/spills')))
+spills_elsewhere = ToolOutputLimits(store=WorkspaceOverflowStore(workspace=LocalWorkspaceBackend('/var/spills')))
 ```
 
 `workspace=` takes a backend, not the `LocalWorkspace` capability. Under a durable engine such
@@ -293,22 +326,52 @@ as Temporal it is written in-process, not through the workflow.
 
 Spilled files are kept for the life of the workspace; they are not pruned by this capability.
 
+### Reading spills with `FileSystem`
+
+When spills are files in the run's workspace (the default `WorkspaceOverflowStore()`, without a
+`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
+`FileSystem`'s `read_file`. The tool is marked with
+[`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind]
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
+spill marker then names that tool as it is called in the run, with the spill's path:
+
+```text
+[Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
+```
+
+A `read_file` call whose path is under `.pydantic-ai-harness/tool-output/` is exempt from
+reduction, as `read_tool_result` is, so reading a spill back does not spill it again; `read_file`
+bounds its own output. Other `read_file` calls are reduced as usual. `read_tool_result` is
+recognized by its kind, `READ_TOOL_RESULT_KIND`, not its name, so a prefixed reader is exempt too.
+
+`WorkspaceOverflowStore(workspace=...)`, `LocalFileOverflowStore` and other `OverflowStore`s keep spills where
+`FileSystem` cannot see them, so with those `read_tool_result` stays.
+
+Two gaps to know about:
+
+- `read_file` has no equivalent of `read_tool_result`'s `from_end`. Filtering by `pattern` maps to
+  `FileSystem`'s `search_files` (or `grep`).
+- The decision is made from the store, not from `FileSystem`'s access rules. A `FileSystem`
+  whose `denied_patterns` cover `.pydantic-ai-harness/`, or whose `allowed_patterns` leave it
+  out, still replaces `read_tool_result` but cannot open the spills. Pass a store with a
+  `workspace=` of its own, or `LocalFileOverflowStore()`, to keep `read_tool_result` in that setup.
+
 A read-only workspace cannot take spills: the spill warns and falls back to its `then` action (a
 bounded truncation by default). When a band can spill and the run has no workspace for the store
-to write to, the run fails at its start. For runs without a workspace, use `LocalFileStore`, which
+to write to, the run fails at its start. For runs without a workspace, use `LocalFileOverflowStore`, which
 writes to the host's temp directory:
 
 ```python
 from datetime import timedelta
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.tool_output_limits import LocalFileStore, ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore, ToolOutputLimits
 
-store = LocalFileStore(cleanup_after=timedelta(hours=6))  # default: None = keep forever
+store = LocalFileOverflowStore(cleanup_after=timedelta(hours=6))  # default: None = keep forever
 agent = Agent('{{ anthropic:large }}', capabilities=[ToolOutputLimits(store=store)])
 ```
 
-### `LocalFileStore` security model
+### `LocalFileOverflowStore` security model
 
 The local store root is stable so a later agent or run by the same user can read a spill. Its
 security does not come from per-instance isolation:
@@ -319,8 +382,9 @@ security does not come from per-instance isolation:
   foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
   Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
   ownership check.
-- `read` resolves the target and rejects any path that escapes the root. Handle segments are
-  sanitized so a crafted handle cannot traverse out.
+- `read` and `write` resolve the target, following symlinks, and reject any path that escapes
+  the root. `write` checks before it creates a directory, and a refused write runs the band's
+  `then` fallback. Handle segments are sanitized so a crafted handle cannot traverse out.
 
 Set `cleanup_after` to delete spills older than that age.
 
@@ -348,20 +412,26 @@ instance to `Summarize(model=...)` to override, or a `summarize` callable to byp
 built-in prompt entirely. The `summary_prompt` template on the capability must contain both
 `{tool_name}` and `{output}` placeholders.
 
-With a durable-execution capability attached, built-in model summarization is a journaled
-capability operation. `ToolOutputLimits` carries the stable default `id='tool_output_limits'`, so
-durable recovery works without configuration.
+With a durable-execution capability attached, spill writes and built-in model summarization are
+journaled capability operations: a replay reuses the recorded handle, fallback, or summary instead
+of writing or summarizing again. `ToolOutputLimits` carries the stable default
+`id='tool_output_limits'`, so durable recovery works without configuration.
 
-Two details matter when choosing a band under durability. The text being summarized is part of the
-journaled operation input, so prefer `Spill` over built-in `Summarize` for outputs near the
-engine's payload limit. And a custom `summarize` callable runs directly rather than as a durable
-operation -- arbitrary callables cannot be reconstructed on the worker side -- so it may be called
-again on replay.
+Three details matter when choosing a band and store under durability. The output being spilled or
+summarized is part of the journaled operation input, so on an engine that runs operations on a
+worker, such as Temporal, it counts against the engine's payload limit, as the tool's own result
+already does. A write that succeeds just before a worker crash, before the engine records it, runs
+again on recovery, so a custom `OverflowStore` should treat a repeated `write` of the same key as an
+overwrite. And a custom `summarize` callable runs directly rather than as a durable operation --
+arbitrary callables cannot be reconstructed on the worker side -- so it may be called again on
+replay.
 
 ## Edge cases
 
-- Binary returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
+- Raw `bytes` returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
   on binary fall through to `then`.
+- A return value holding files (`BinaryContent`, a file URL, or an `UploadedFile`, alone or in a list) keeps every
+  file as it is; only the items beside them are measured and reduced.
 - Structured / nested returns spill (or summarize) by preference -- truncating JSON produces
   invalid JSON. `Spill` includes a one-line shape sketch of the top level.
 - `ModelRetry` and tool errors never reach this hook (they are raised, not returned), so the

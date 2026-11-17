@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "Adds `BatchModelRequests` to the agent-spec capability registry; every existing entry is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10672"
+}

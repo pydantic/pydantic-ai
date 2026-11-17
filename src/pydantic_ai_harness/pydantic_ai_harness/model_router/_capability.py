@@ -10,6 +10,7 @@ from typing import Annotated, Literal, TypeGuard, Union
 from opentelemetry.metrics import NoOpMeterProvider
 from opentelemetry.trace import NoOpTracerProvider, Status, StatusCode
 from pydantic import BaseModel, Field, create_model
+from typing_extensions import TypeForm
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import (
@@ -128,7 +129,7 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
         options = tuple(
             Annotated[Literal[name], Field(description=choice.description)] for name, choice in self.choices.items()
         )
-        choice_type = Union[options]  # noqa: UP007
+        choice_type: TypeForm[str] = Union[options]  # noqa: UP007  # pyright: ignore[reportAssignmentType,reportInvalidTypeArguments,reportInvalidTypeForm,reportUnknownVariableType]
         return create_model('ModelRoute', __base__=_Route, choice=(choice_type, ...))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelRouter[AgentDepsT]:

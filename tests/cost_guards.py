@@ -8,11 +8,13 @@ towards. The plugin:
 - when `PYTEST_TEST_BUDGET_SECONDS` is set, fails a test whose setup and call together take longer than that
   unless it is marked `@pytest.mark.slow(reason=...)`;
 - reports how long collection took, in the terminal summary and in `$GITHUB_STEP_SUMMARY` when that is set;
-- when `PYTEST_COLLECT_BUDGET_SECONDS` is set, fails the session when a test module takes longer than that to collect.
+- when `PYTEST_COLLECT_BUDGET_SECONDS` is set, imports the dependencies many test modules share before collection,
+  and fails the session when a test module takes longer than that to collect.
 """
 
 from __future__ import annotations as _annotations
 
+import importlib.util
 import multiprocessing.util
 import os
 import re
@@ -477,10 +479,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 # Collection runs once per `pytest-xdist` worker, so its cost multiplies with the worker count; it mostly comes from
 # test modules importing heavy optional dependencies. The summary names the slowest modules to collect, so a module
 # that starts importing something expensive shows up in the next CI run, and `PYTEST_COLLECT_BUDGET_SECONDS` fails the
-# session over one that takes longer than that. The first module in a run to import a dependency that many modules
-# share is charged for it, so the budget sits above the cost of the shared ones.
+# session over one that takes longer than that. Whichever module first imports a dependency that many modules share
+# would be charged for it, so with the budget set these are imported before collection, and the budget judges each
+# module on its own imports.
 
 _SLOWEST_MODULES_SHOWN = 10
+SHARED_DEPENDENCIES = ('anthropic', 'openai', 'hypothesis')
 
 
 @pytest.hookimpl(wrapper=True)
@@ -510,10 +514,15 @@ def _over_collection_budget(config: pytest.Config) -> dict[str, float]:
 @pytest.hookimpl(wrapper=True)
 def pytest_collection(session: pytest.Session) -> Generator[None, object, object]:
     start = time.perf_counter()
+    config = session.config
+    # The `pytest-xdist` controller collects nothing; its workers each run this hook themselves.
+    if config.stash[_COLLECT_BUDGET_KEY] and not config.pluginmanager.has_plugin('dsession'):
+        for name in SHARED_DEPENDENCIES:
+            if importlib.util.find_spec(name) is not None:
+                importlib.import_module(name)
     try:
         return (yield)
     finally:
-        config = session.config
         if hasattr(config, 'workerinput'):
             workeroutput: dict[str, Any] = getattr(config, 'workeroutput')  # set by `pytest-xdist` on workers
             workeroutput['collection_seconds'] = time.perf_counter() - start

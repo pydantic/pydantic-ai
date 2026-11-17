@@ -92,6 +92,43 @@ def test_oauth_credentials_are_scrubbed():
     )
 
 
+def test_elevenlabs_credentials_and_owner_identity_are_scrubbed():
+    request = before_record_request(
+        _request(body=None, **{'xi-api-key': 'elevenlabs-key', 'Content-Type': 'application/json'})
+    )
+    signed_url = before_record_response(
+        _response(
+            body=b'{"signed_url":"wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_1&conversation_signature=secret"}',
+            **{'Content-Type': 'application/json'},
+        )
+    )
+    agent = before_record_response(
+        _response(
+            body=json.dumps(
+                {
+                    'agent_id': 'agent_1',
+                    'access_info': {'creator_name': 'Jane Doe', 'creator_email': 'jane@example.com', 'role': 'admin'},
+                    'collaborators': [{'creator_name': 'John Doe'}, 'viewer'],
+                }
+            ).encode(),
+            **{'Content-Type': 'application/json'},
+        )
+    )
+    assert (request.headers, json.loads(signed_url.body or b''), json.loads(agent.body or b'')) == snapshot(
+        (
+            {'content-type': ['application/json']},
+            {
+                'signed_url': 'wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_1&conversation_signature=scrubbed'
+            },
+            {
+                'agent_id': 'agent_1',
+                'access_info': {'creator_name': 'scrubbed', 'creator_email': 'scrubbed', 'role': 'admin'},
+                'collaborators': [{'creator_name': 'scrubbed'}, 'viewer'],
+            },
+        )
+    )
+
+
 @pytest.mark.parametrize('content_type', ['application/json', 'text/event-stream', None])
 def test_safety_identifier_is_scrubbed(content_type: str | None):
     body = '{"safety_identifier":"synthetic-user-id","output":[]}'
@@ -176,6 +213,14 @@ def test_normalize_uri_erases_region_project_and_account():
         'https://aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/google/models/gemini:generateContent'
     )
     assert normalize_uri('https://api.openai.com/v1/responses') == 'https://api.openai.com/v1/responses'
+
+
+def test_normalize_uri_drops_anthropic_beta_query():
+    assert normalize_uri('https://api.anthropic.com/v1/messages?beta=true') == 'https://api.anthropic.com/v1/messages'
+    assert normalize_uri('https://api.anthropic.com/v1/files?beta=true&limit=20') == (
+        'https://api.anthropic.com/v1/files?limit=20'
+    )
+    assert normalize_uri('https://api.anthropic.com/v1/files?limit=20') == 'https://api.anthropic.com/v1/files?limit=20'
 
 
 def test_scrub_xml_credentials_redacts_sts_tokens():

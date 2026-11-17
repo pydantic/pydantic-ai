@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "harness 0.x: adds the 'flagged' value to `SkipReason` for skills an opt-in `Skills(scanner=...)` leaves out; it only appears with a scanner configured, and existing values are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11470"
+}

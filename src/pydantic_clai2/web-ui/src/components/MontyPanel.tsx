@@ -1,9 +1,10 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { memo, useContext, useLayoutEffect, useRef, useState } from 'react'
+import { SessionContext } from '../api'
 import { cell } from '../code'
 import { highlight } from '../markdown'
 import type { Item, StatusInfo, SubCall } from '../protocol'
 import type { Entry } from '../state'
+import { JumpToLatest, useStickToBottom } from '../stickToBottom'
 import { codeCalls, codeResult } from './ToolCard'
 import { CloseIcon, TerminalIcon } from './icons'
 
@@ -104,6 +105,7 @@ const CellView = memo(function CellView({ item, number, turn, restart }: Cell) {
 function CellInput({ disabled, reason, onError }: { disabled: boolean; reason: string; onError: (message: string) => void }) {
   const [code, setCode] = useState('')
   const area = useRef<HTMLTextAreaElement>(null)
+  const session = useContext(SessionContext)
   useLayoutEffect(() => {
     const element = area.current
     if (!element) return
@@ -115,7 +117,7 @@ function CellInput({ disabled, reason, onError }: { disabled: boolean; reason: s
     if (!text || disabled) return
     setCode('')
     try {
-      await api.send(`/monty ${text}`)
+      await session.send(`/monty ${text}`)
     } catch (error) {
       setCode(text)
       onError(error instanceof Error ? error.message : String(error))
@@ -159,12 +161,10 @@ export function MontyPanel({
   onError: (message: string) => void
 }) {
   const found = cells(entries)
-  const scroller = useRef<HTMLDivElement>(null)
-  const last = found[found.length - 1]?.item
-  useLayoutEffect(() => {
-    const element = scroller.current
-    if (element) element.scrollTop = element.scrollHeight
-  }, [last])
+  const { scroller, behind, jump } = useStickToBottom<HTMLDivElement>(
+    found[found.length - 1]?.item,
+    entries.findLast((entry) => entry.kind === 'user'),
+  )
   const codeMode = status?.code_mode || status?.speculation
   return (
     <aside className="monty" aria-label="Monty, the run_code sandbox">
@@ -188,6 +188,7 @@ export function MontyPanel({
         ) : (
           found.map((entry) => <CellView key={entry.item.id} {...entry} />)
         )}
+        <JumpToLatest shown={behind} onJump={jump} />
       </div>
       <CellInput
         disabled={!codeMode || running}

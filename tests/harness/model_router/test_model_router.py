@@ -61,6 +61,10 @@ def _answer_model(answer: str) -> FunctionModel:
     return FunctionModel(respond)
 
 
+def _uvx_not_found(_command: str) -> None:
+    return None
+
+
 def _router(
     router_model: FunctionModel,
     *,
@@ -133,6 +137,7 @@ class TestModelRouter:
                         parts=[ToolCallPart(tool_name='lookup', args={}, tool_call_id='call-1')],
                         usage=IsInstance(RequestUsage),
                         model_name=IsStr(),
+                        model_id='function:function:main:',
                         timestamp=IsDatetime(),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
@@ -476,6 +481,7 @@ class TestModelRouter:
         for name in ('PYTEST_VERSION', 'CI', 'PYDANTIC_AI_NO_BANNER'):
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv('AI_AGENT', 'test')
+        monkeypatch.setattr(_display.shutil, 'which', _uvx_not_found)
 
         await Agent(name='parent', capabilities=[_router(_router_model('fast'))]).run('Choose')
 

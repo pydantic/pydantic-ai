@@ -15,7 +15,7 @@ import pytest
 from rich.console import Console
 
 from pydantic_clai2.cli.shell_passthrough import run_shell_command
-from pydantic_clai2.cli.shell_terminal import Terminal, TerminalText, attached_terminal
+from pydantic_clai2.cli.shell_terminal import PtyRun, Terminal, TerminalText, attached_terminal
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 
@@ -104,7 +104,7 @@ async def test_output_is_captured_from_a_terminal(terminal: tuple[int, int], mon
         "printf '\\033[31mred\\033[0m\\r\\nline\\n'; printf to-stderr >&2"
     )
     console = io.StringIO()
-    context = await run_shell_command(command, console=Console(file=console), interrupts=Interrupts())
+    context = await run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd())
     stdout = 'tty\ncontrolling\npager=cat\nred\nline\n'
     assert context == _captured(command, 'Exit code 0', stdout, 'to-stderr')
     # stderr comes through a pipe of its own, not the terminal, so it is shown as it arrives: anywhere in stdout.
@@ -117,7 +117,9 @@ async def test_output_is_captured_from_a_terminal(terminal: tuple[int, int], mon
 async def test_keys_reach_the_command(user: int) -> None:
     command = "printf 'name? '; IFS= read -r name; printf 'hi %s\\n' \"$name\""
     console = io.StringIO()
-    task = asyncio.create_task(run_shell_command(command, console=Console(file=console), interrupts=Interrupts()))
+    task = asyncio.create_task(
+        run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd())
+    )
     await _console_shows(console, 'prompt\nname? ')
     os.write(user, b'bob\r')
     context = await task
@@ -135,7 +137,9 @@ async def test_ctrl_c_interrupts_the_command(
     interrupts = Interrupts()
     console = io.StringIO()
     task = asyncio.create_task(
-        run_shell_command(': > ready; exec sleep 30', console=Console(file=console), interrupts=interrupts)
+        run_shell_command(
+            ': > ready; exec sleep 30', console=Console(file=console), interrupts=interrupts, cwd=Path.cwd()
+        )
     )
     with anyio.fail_after(5):
         while not (tmp_path / 'ready').exists() or termios.tcgetattr(clai)[3] & termios.ICANON:
@@ -158,7 +162,9 @@ async def test_full_screen_program_gets_the_terminal(user: int) -> None:
     console = io.StringIO()
     screen = bytearray()
     with _recorded_hold(events):
-        task = asyncio.create_task(run_shell_command(command, console=Console(file=console), interrupts=Interrupts()))
+        task = asyncio.create_task(
+            run_shell_command(command, console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd())
+        )
         await _screen_shows(user, b'\x1b[?1049hFULLREADY', screen)
         assert events == ['hold leave_screen=True']
         os.write(user, b'typed\x03\n')  # Ctrl-C is the program's own key now.
@@ -185,7 +191,10 @@ async def test_cancelling_a_full_screen_program_restores_the_terminal(
     with _recorded_hold(events):
         task = asyncio.create_task(
             run_shell_command(
-                "printf '\\033[?1049h'; exec sleep 30", console=Console(file=io.StringIO()), interrupts=Interrupts()
+                "printf '\\033[?1049h'; exec sleep 30",
+                console=Console(file=io.StringIO()),
+                interrupts=Interrupts(),
+                cwd=Path.cwd(),
             )
         )
         await _screen_shows(user, b'\x1b[?1049h', screen)
@@ -195,10 +204,12 @@ async def test_cancelling_a_full_screen_program_restores_the_terminal(
     assert events == ['hold leave_screen=True', 'release']
 
 
-async def test_resizing_reaches_the_command(user: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
+async def test_resizing_reaches_the_command(user: int, tmp_path: Path) -> None:
+    """The command runs in the session's directory and sees the terminal's size change."""
     command = "trap 'stty size > resized; exit 0' WINCH; stty size > started; : > ready; while :; do sleep 0.05; done"
-    task = asyncio.create_task(run_shell_command(command, console=Console(file=io.StringIO()), interrupts=Interrupts()))
+    task = asyncio.create_task(
+        run_shell_command(command, console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=tmp_path)
+    )
     with anyio.fail_after(5):
         while not (tmp_path / 'ready').exists():
             await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
@@ -212,18 +223,46 @@ async def test_resizing_reaches_the_command(user: int, tmp_path: Path, monkeypat
     assert (tmp_path / 'resized').read_text() == '40 120\n'
 
 
+async def test_a_resize_while_the_command_starts_reaches_it(
+    user: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resize after the pseudo-terminal is made but before CLAI listens for resizes still reaches the command."""
+    started = asyncio.Event()
+    start = PtyRun.start
+
+    def resize_then_start(self: PtyRun) -> None:
+        # Nothing listens for the terminal's size yet, so no notification can carry this change.
+        _set_size(user, 40, 120)
+        start(self)
+        started.set()
+
+    monkeypatch.setattr(PtyRun, 'start', resize_then_start)
+    command = 'while [ ! -f go ]; do sleep 0.01; done; stty size > seen'
+    task = asyncio.create_task(
+        run_shell_command(command, console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=tmp_path)
+    )
+    reached = asyncio.create_task(started.wait())
+    await asyncio.wait({reached, task}, return_when=asyncio.FIRST_COMPLETED)
+    assert started.is_set(), task
+    (tmp_path / 'go').touch()
+    assert '\nExit code 0\n' in await task
+    assert (tmp_path / 'seen').read_text() == '40 120\n'
+
+
 async def test_background_job_cannot_hold_the_command_open(user: int) -> None:
     """A job left running keeps the pseudo-terminal open; CLAI stops waiting for its output shortly after."""
     with anyio.fail_after(1.5):
         context = await run_shell_command(
-            'sleep 2 & echo started', console=Console(file=io.StringIO()), interrupts=Interrupts()
+            'sleep 2 & echo started', console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=Path.cwd()
         )
     assert context.endswith('stdout:\nstarted\n\n\nstderr:\n')
 
 
 async def test_spawn_failure_releases_the_pseudo_terminal(user: int) -> None:
     console = io.StringIO()
-    context = await run_shell_command('echo a\x00b', console=Console(file=console), interrupts=Interrupts())
+    context = await run_shell_command(
+        'echo a\x00b', console=Console(file=console), interrupts=Interrupts(), cwd=Path.cwd()
+    )
     assert '\nShell error: embedded null byte\n' in context
 
 

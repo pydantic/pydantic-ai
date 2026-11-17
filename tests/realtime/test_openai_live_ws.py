@@ -13,7 +13,7 @@ import fractions
 import importlib
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -29,10 +29,12 @@ from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartStartEvent,
     SpeechPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,7 +43,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSession, RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
@@ -171,10 +173,18 @@ async def test_audio_in_delegated_tool_round(
         assert response.provider_details is not None
         repriced = calc_price(response.usage, response.provider_details['delegated_model'], provider_id='openai')
         assert response.usage.cost == repriced.total_price
+    # Live goes on speaking after the backend asked for the tool, and after its result went back (" now." comes
+    # after the backend's terminal): that is the reply that called it, ahead of the result, not the answer. The call
+    # lands mid-sentence, so the speech is one part, ahead of it, rather than cut in two at it.
+    assert [
+        part.transcript if isinstance(part, SpeechPart) else type(part).__name__ for part in tool_call_response.parts
+    ] == snapshot(['Okay, checking the forecast now.', 'ToolCallPart'])
     # And Live speaks the backend's answer, which is the point of delegating.
     answer = spoken_reply.parts[0]
     assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'
-    assert 'fourteen' in (answer.transcript or '').lower() or '14' in (answer.transcript or '')
+    assert answer.transcript == snapshot(
+        ' It\u2019s looking like about 14 degrees Celsius with some light rain. You might want a jacket.'
+    )
 
 
 async def test_thinking_sets_the_backends_reasoning_effort(
@@ -221,62 +231,148 @@ async def test_thinking_sets_the_backends_reasoning_effort(
     assert session.usage.details == {'reasoning_tokens': 0}
 
 
-async def test_text_reaches_the_model_as_context(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+async def test_typed_question_runs_the_agents_tool(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
-    """`send(text)` steers a Live session even though Live has no user-message event.
+    """`send(text)` is a user turn: the backend is run on it, calls the agent's tool, and Live speaks the answer.
 
-    Text is injected as speakable context, and lands on the session's audio timeline, so it only
-    takes effect while audio is flowing — hence the silence on both sides of it. Nobody speaks here:
-    the reply is entirely the result of the injected text.
+    Live has no user-message event, so the text goes to the backend as the user's message, with `response.create`
+    to run it, and the wait for its reply ends once Live has spoken the answer, not at what it says while the
+    backend works.
     """
     provider, cassette = openai_live_ws_cassette
-    # Relaying injected context takes the model a beat longer than answering, and a turn boundary
-    # inferred from silence will cut in if it is too eager — the tradeoff the setting exists for.
     model = OpenAILiveModel(
-        'gpt-live-1', provider=provider, settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=2500)
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
     )
-    agent = Agent(_BACKEND, instructions='Relay what you are told, in one short sentence.')
+    agent = Agent(
+        _BACKEND, instructions='Always use the `get_weather` tool for weather questions. Answer in one sentence.'
+    )
 
-    async def silence(frames: int) -> None:
-        for _ in range(frames):
-            await session.send_audio(b'\x00' * 4800)
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        """Look up the current weather for a city."""
+        return f'It is foggy and 12 degrees Celsius in {city}.'
 
     async with agent.realtime(model).session() as session:
-        await silence(20)
-        await session.send('Tell the user their package arrives on Friday.')
-        # Enough for the relayed sentence, which needs no delegated round-trip first.
-        await silence(120)
+        await session.send('What is the weather in London?')
         with anyio.fail_after(60):
-            async for event in session:  # pragma: no branch
-                if isinstance(event, RealtimeTurnCompleteEvent):
-                    break
+            await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
+        messages = session.all_messages()
 
-    spoken = ' '.join(
-        part.transcript or ''
-        for message in session.all_messages()
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, SpeechPart)
+    assert [
+        [
+            f'{part.part_kind}: {part.content}'
+            if isinstance(part, UserPromptPart)
+            else f'{part.part_kind}: {part.tool_name} {part.args}'
+            if isinstance(part, ToolCallPart)
+            else f'{part.part_kind}: {part.content}'
+            if isinstance(part, ToolReturnPart)
+            else f'{part.part_kind}: {part.transcript}'
+            if isinstance(part, SpeechPart)
+            else part.part_kind
+            for part in message.parts
+        ]
+        for message in messages
+    ] == snapshot(
+        [
+            ['user-prompt: What is the weather in London?'],
+            ['speech:  Let me check the current weather in London.', 'tool-call: get_weather {"city":"London"}'],
+            ['tool-return: It is foggy and 12 degrees Celsius in London.'],
+            ['speech:  It\u2019s foggy and 12 degrees Celsius.'],
+        ]
     )
-    assert 'Friday' in spoken
-    # Closing asked Live to end the session, and the seconds it billed came back with `session.closed`.
+    # Closing asked Live to end the session, which it confirmed.
     assert [
         interaction.data['type']
         for interaction in cassette.interactions
         if isinstance(interaction, CassetteMessage) and interaction.data.get('type', '').startswith('session.clos')
     ] == ['session.close', 'session.closed']
-    assert session.usage.audio_seconds > 0
 
 
-async def test_a_text_only_session_streams_its_own_silence(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+async def test_instruction_change_updates_the_backend(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
-    """With `openai_live_idle_audio`, text reaches the model with no microphone at all.
+    """A changed agent instruction goes to the backend, whose instructions are the agent's, with `session.update`.
 
-    Live's timeline only advances while audio arrives. The connection streams silence in the
-    microphone's place, so the text lands and the model speaks, just as it does with the silence the
-    test above streams by hand.
+    The backend answers typed text, so the second question is answered with the changed instruction.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    code_word = {'value': 'BLUE'}
+    agent = Agent(_BACKEND, instructions='Answer in one short sentence.')
+
+    @agent.instructions(name='code_word')
+    def current_code_word() -> str:
+        return f'The code word is {code_word["value"]}. Tell the user when they ask for it.'
+
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the code word?')
+        # Changed while the first reply is under way: the session re-resolves the instructions once it's over.
+        code_word['value'] = 'ORANGE'
+        with anyio.fail_after(60):
+            await session.wait_for_reply()
+        await session.send('What is the code word now?')
+        with anyio.fail_after(60):
+            await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
+        messages = session.all_messages()
+
+    updates = [
+        interaction.data['session']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage) and interaction.data.get('type') == 'session.update'
+    ]
+    assert updates == snapshot(
+        [
+            {
+                'delegation': {
+                    'type': 'responses',
+                    'responses': {
+                        'instructions': """\
+Answer in one short sentence.
+
+<pyai:context id="agent:code_word">
+The code word is BLUE. Tell the user when they ask for it.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+<pyai:context id="agent:code_word">
+The code word is ORANGE. Tell the user when they ask for it.
+</pyai:context>\
+"""
+                    },
+                }
+            }
+        ]
+    )
+    speech = [
+        part.transcript
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+    assert speech[-1] is not None and 'orange' in speech[-1].lower()
+
+
+async def test_typed_small_talk_is_answered_in_one_reply(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
+) -> None:
+    """Text that needs no tool runs the backend too, and Live speaks its answer as the one reply to the text.
+
+    With `openai_live_idle_audio`, there is no microphone at all: the connection streams silence in its place, which
+    Live's timeline needs to advance for the model to speak.
     """
     provider, _ = openai_live_ws_cassette
     model = OpenAILiveModel(
@@ -284,23 +380,28 @@ async def test_a_text_only_session_streams_its_own_silence(
         provider=provider,
         settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
     )
-    agent = Agent(_BACKEND, instructions='Relay what you are told, in one short sentence.')
+    agent = Agent(_BACKEND, instructions='Keep replies short.')
 
     async with agent.realtime(model).session() as session:
-        await session.send('Tell the user their package arrives on Friday.')
+        await session.send("Thanks, that's all I needed. Have a nice day!")
         with anyio.fail_after(60):
-            async for event in session:  # pragma: no branch
-                if isinstance(event, RealtimeTurnCompleteEvent):
-                    break
+            await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)
+        messages = session.all_messages()
 
-    spoken = ' '.join(
-        part.transcript or ''
-        for message in session.all_messages()
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, SpeechPart)
+    assert [
+        [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+        if isinstance(message, ModelRequest)
+        else [part.transcript for part in message.parts if isinstance(part, SpeechPart)]
+        for message in messages
+    ] == snapshot(
+        [
+            ["Thanks, that's all I needed. Have a nice day!"],
+            [" Oh, okay, let me just, check on that. You're welcome! Have a great day!"],
+        ]
     )
-    assert 'Friday' in spoken
 
 
 async def test_history_seeding(
@@ -449,6 +550,57 @@ async def test_the_backend_searches_the_web(
         'What number did you just give me? Answer with digits only.', message_history=messages
     )
     assert '936' in follow_up.output
+
+
+async def test_the_backend_summarizes_its_reasoning(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """`reasoning_summary` reaches the backend, which accepts it and summarizes its reasoning.
+
+    The reasoning recorded ahead of each search then reads as the summary, as on a direct Responses run
+    that requests one.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_delegation={'reasoning_summary': 'auto'}, openai_live_turn_silence_ms=1000
+        ),
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    # The summary is requested next to the backend's other settings.
+    assert _session_starts(cassette)[0]['delegation']['responses']['reasoning'] == snapshot({'summary': 'auto'})
+    # Only reasoning the backend did summarize carries text: here, the reasoning before the first search.
+    # Curly apostrophes are straightened, since pre-commit would rewrite them in the snapshot below.
+    thinking = [part.content.replace('\u2019', "'") for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking == snapshot(
+        [
+            """\
+**Searching for Amsterdam population**
+
+I need to check Wikipedia specifically for the current population of Amsterdam. There's a bit of ambiguity about whether I'm looking for the city or the municipality, which makes it a little tricky. I'm thinking the population is likely around 933,680 as of January 2025, but I need to confirm that by searching. Let's go ahead and get that information to be sure!\
+""",
+            '',
+            '',
+            '',
+        ]
+    )
 
 
 async def test_an_image_a_tool_returns_reaches_the_backend(
@@ -652,6 +804,89 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
 
 
 @pytest.mark.vcr
+async def test_webrtc_sideband_reattaches_after_a_drop(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """With a `reconnect` policy, a dropped sideband re-attaches to the call's session, which carried on without it.
+
+    The sideband drops while the backend waits on a tool. The session is the same one, so the tool's result
+    still goes out, on the new sideband, and the backend answers with it. Live sends the re-attached sideband
+    the last few seconds of events again, which are skipped: the history is the one a call without a drop records.
+    """
+    provider, cassette = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    agent = Agent(_BACKEND, instructions='You answer weather questions. Use the `lookup_forecast` tool.')
+    dropped = anyio.Event()
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up tomorrow's forecast for a city."""
+        await dropped.wait()
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    realtime = agent.realtime(model)
+    pcm = assets_path.joinpath('weather_question_24khz.pcm').read_bytes()
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(pcm) as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    events: list[Any] = []
+    async with browser() as (offer, connect, speak):
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+
+        async with realtime.session(provider_session=answer.session) as session:
+            speak()
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch
+                    events.append(event)
+                    if isinstance(event, FunctionToolCallEvent):
+                        await cassette.disconnect()
+                    elif isinstance(event, RealtimeSessionReconnectEvent):
+                        dropped.set()
+                    elif isinstance(event, RealtimeTurnCompleteEvent) and any(
+                        isinstance(e, FunctionToolResultEvent) for e in events
+                    ):
+                        break
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    messages = session.all_messages()
+    parts = [part for message in messages for part in message.parts]
+
+    def spoken(speaker: str) -> str:
+        transcripts = (
+            part.transcript or '' for part in parts if isinstance(part, SpeechPart) and part.speaker == speaker
+        )
+        return ' '.join(' '.join(transcripts).split())
+
+    # Every word once: what Live sent again after the re-attach was skipped. (The user is still speaking when the
+    # model starts to answer here, so how many turns their words fall into depends on timing.)
+    assert spoken('user') == snapshot('What will the weather be in Amsterdam tomorrow Please look it up')
+    # The call asked for before the drop was answered after it, once.
+    assert [part.tool_name for part in parts if isinstance(part, ToolCallPart)] == ['lookup_forecast']
+    assert [part.outcome for part in parts if isinstance(part, ToolReturnPart)] == ['success']
+    answer = messages[-1]
+    assert isinstance(answer, ModelResponse)
+    assert spoken('assistant').count("I'll look it up.") == 1
+    last = answer.parts[-1]
+    assert isinstance(last, SpeechPart) and '14' in (last.transcript or '')
+
+
+@pytest.mark.vcr
 async def test_webrtc_call_continues_the_bound_history(
     openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
     assets_path: Path,
@@ -691,8 +926,11 @@ async def test_webrtc_call_continues_the_bound_history(
                     if isinstance(event, RealtimeTurnCompleteEvent):
                         break
 
-    # The sideband seeded nothing: Live replayed the history the offer started the session with.
-    assert [i for i in cassette.interactions if isinstance(i, CassetteMessage) and i.direction == 'sent'] == []
+    # The sideband seeded nothing: Live replayed the history the offer started the session with. All it sent
+    # is the empty update that reports the session, however late the sideband attaches.
+    assert [i.data for i in cassette.interactions if isinstance(i, CassetteMessage) and i.direction == 'sent'] == [
+        {'type': 'session.update', 'session': {}}
+    ]
     messages = session.all_messages()
     assert messages[:2] == history
     spoken = ' '.join(
@@ -725,6 +963,45 @@ async def test_webrtc_hang_up_ends_the_call(
 
     # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
     await realtime.hang_up(answer.session)
+
+
+@pytest.mark.vcr
+async def test_webrtc_browser_hang_up_ends_the_session(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    realtime_recording: bool,
+) -> None:
+    """A browser that hangs up ends the server's sideband session as any hangup does, without an error.
+
+    Live reports the browser's lost connection as `session.closed` with `connection_lost`, about half a minute
+    later, then drops the sideband without a closing handshake.
+    """
+    provider, _ = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    realtime = Agent(_BACKEND, instructions='Answer in a few words.').realtime(model)
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(b'') as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    async with AsyncExitStack() as browser_call:
+        offer, connect, _ = await browser_call.enter_async_context(browser())
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+        async with realtime.session(provider_session=answer.session) as session:
+            if realtime_recording:  # pragma: no cover
+                await anyio.sleep(2)
+            # The browser hangs up.
+            await browser_call.aclose()
+            with anyio.fail_after(90):
+                # The browser said nothing, so the call ends without an event, and above all without an error.
+                events = [event async for event in session]
+
+    assert session.closed
+    assert events == []
 
 
 _FAVORITE_COLOR = [
@@ -816,3 +1093,186 @@ async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
     assert replacement['input'] == first['input']
     assert replacement['delegation'] == first['delegation']
     assert 'turquoise' in answer.lower()
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_sent_mid_reply_is_answered_by_that_reply(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Live speaks to text sent mid-reply in that same reply, not in one of its own.
+
+    Live opens a delegation for the text (`session.delegation.created`, under the `response.create`'s id), and the
+    reply under way goes on to answer it: that reply settles the text's reply obligation, so the wait for it ends
+    with that reply instead of waiting for another that never comes.
+    """
+    provider, _ = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    agent = Agent(_BACKEND, instructions='Keep replies short.')
+
+    messages: list[ModelMessage] = []
+    speaking = anyio.Event()
+
+    async def watch(session: RealtimeSession) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
+                speaking.set()
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('Tell me a three-sentence story about a cat.')
+        with anyio.fail_after(60):
+            await speaking.wait()
+            await session.send('Actually, what is 2 plus 2?')
+            await session.wait_for_reply()
+        messages = session.all_messages()
+        tasks.cancel_scope.cancel()
+
+    assert [
+        [part.transcript for part in message.parts if isinstance(part, SpeechPart)]
+        if isinstance(message, ModelResponse)
+        else [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+        for message in messages
+        if isinstance(message, (ModelRequest, ModelResponse))
+    ] == snapshot(
+        [
+            ['Tell me a three-sentence story about a cat.'],
+            [
+                ' Sure, I can give you a three sentence cat story. Milo the cat found a tiny golden key beneath the moonlit porch. It opened a secret garden filled with singing flowers. By dawn, Milo was home again, with one silver petal tucked behind his ear. 2 plus 2 is 4.'
+            ],
+            ['Actually, what is 2 plus 2?'],
+        ]
+    )
+
+
+def _delegation_timeline(cassette: RealtimeCassette) -> list[str]:
+    """What the recording says about the delegations, in order: who asked, which results went out, and when each
+    delegation opened, called a tool and had a backend response complete."""
+    delegations: dict[str, int] = {}
+    timeline: list[str] = []
+    for data in (interaction.data for interaction in cassette.interactions if isinstance(interaction, CassetteMessage)):
+        if data['type'] == 'session.input_transcript.delta' and 'Paris' in data['delta']:
+            timeline.append('user asks about Paris')
+        elif data['type'] == 'response.item.create' and data['item']['type'] == 'function_call_output':
+            timeline.append(f'result sent: {data["item"]["output"]}')
+        elif data['type'] == 'session.delegation.created':
+            delegations[data['delegation']['id']] = len(delegations) + 1
+            timeline.append(f'delegation {len(delegations)} opens')
+        elif data['type'] == 'response.event' and data['event']['type'] in (
+            'response.completed',
+            'response.output_item.done',
+        ):
+            item = data['event'].get('item', {})
+            if data['event']['type'] == 'response.completed':
+                timeline.append(f'delegation {delegations[data["delegation_id"]]} backend response completes')
+            elif item['type'] == 'function_call':
+                timeline.append(
+                    f'delegation {delegations[data["delegation_id"]]} calls {item["name"]}({item["arguments"]})'
+                )
+    return timeline
+
+
+async def test_a_question_asked_while_a_tool_runs_is_delegated_once_the_round_settles(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """Live works on one delegation at a time: a question asked while a tool round waits is delegated once it settles.
+
+    The user asks about Paris while the Amsterdam forecast's result is still out. Live opens the Paris delegation only
+    once the Amsterdam one has its result and settles, so the Paris delegation can't settle first and end the wait for
+    the round's answer: the wait ends with the reply that speaks both.
+
+    The session runs at 16 kHz, the rate both recorded questions are in.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=_FAST_TURN,
+        profile={'audio_input_sample_rate': 16000, 'audio_output_sample_rate': 16000},
+    )
+    agent = Agent(_BACKEND, instructions='You answer weather questions. Use the `lookup_forecast` tool.')
+    asked = anyio.Event()
+    release = anyio.Event()
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up the weather forecast for a city."""
+        if 'amsterdam' in city.lower():
+            asked.set()
+            await release.wait()
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    frame_bytes = 3200  # 100 ms at 16 kHz
+
+    def frames(pcm: bytes) -> list[bytes]:
+        return [pcm[start : start + frame_bytes] for start in range(0, len(pcm), frame_bytes)]
+
+    silence = b'\x00' * frame_bytes
+    first = frames(assets_path.joinpath('weather_question_16khz.pcm').read_bytes())
+    second = frames(assets_path.joinpath('weather_in_paris_16khz.pcm').read_bytes())
+    microphone = [*first, *[silence] * 80, *second, *[silence] * 250]
+    # The Amsterdam result goes out 4 s after the Paris question. Released at a microphone frame, it goes out at the
+    # same point in the recording on replay.
+    released_after = len(first) + 80 + len(second) + 40
+
+    async def speak(session: RealtimeSession) -> None:
+        for index, frame in enumerate(microphone):
+            await cassette.before_audio_send()
+            await session.send_audio(frame)
+            if index == released_after:
+                release.set()
+            if realtime_recording:  # pragma: no branch
+                await anyio.sleep(0.1)  # pragma: no cover
+
+    messages: list[ModelMessage] = []
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(speak, session)
+        with anyio.fail_after(60):
+            await asked.wait()
+            await session.wait_for_reply()
+        messages = session.all_messages()
+
+    # The Paris delegation opens only once the Amsterdam one, its result in, has settled.
+    assert _delegation_timeline(cassette) == snapshot(
+        [
+            'delegation 1 opens',
+            'delegation 1 calls lookup_forecast({"city":"Amsterdam"})',
+            'delegation 1 backend response completes',
+            'user asks about Paris',
+            'result sent: Amsterdam: 14 degrees Celsius, light rain.',
+            'delegation 1 backend response completes',
+            'delegation 2 opens',
+            'delegation 2 calls lookup_forecast({"city":"Paris"})',
+            'result sent: Paris: 14 degrees Celsius, light rain.',
+            'delegation 2 backend response completes',
+            'delegation 2 backend response completes',
+        ]
+    )
+    assert [
+        [
+            f'{part.part_kind}: {part.tool_name} {part.args}'
+            if isinstance(part, ToolCallPart)
+            else f'{part.part_kind}: {part.content}'
+            if isinstance(part, ToolReturnPart)
+            else f'{part.part_kind}: {part.transcript}'
+            if isinstance(part, SpeechPart)
+            else part.part_kind
+            for part in message.parts
+        ]
+        for message in messages
+    ] == snapshot(
+        [
+            ['speech: What will the weather be in Amsterdam tomorrow? Please look it up'],
+            ['speech:  Mhm, sure. Checking.', 'tool-call: lookup_forecast {"city":"Amsterdam"}'],
+            ['tool-return: Amsterdam: 14 degrees Celsius, light rain.'],
+            ["speech: What's the weather like in Paris right now"],
+            ["speech:  Okay, I've got Amsterdam. Checking Paris now.", 'tool-call: lookup_forecast {"city":"Paris"}'],
+            ['tool-return: Paris: 14 degrees Celsius, light rain.'],
+            [
+                'speech:  Amsterdam tomorrow is about fourteen degrees with light rain. Paris right now is fourteen degrees with light rain.'
+            ],
+        ]
+    )

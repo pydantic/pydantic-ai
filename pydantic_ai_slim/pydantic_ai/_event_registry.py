@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import sys
 import warnings
 from collections.abc import Callable, Mapping
 from typing import Any, Generic, TypeVar, overload
@@ -225,25 +224,7 @@ def inject_tag_field(cls: type, tag_field: str, tag_value: str) -> None:
     `__annotate__` function instead of materializing `__annotations__`, preserving PEP 649 deferred
     evaluation for payload fields that reference names defined later in the module.
     """
-    if sys.version_info >= (3, 14):
-        import annotationlib
-
-        original_annotate = annotationlib.get_annotate_from_class_namespace(cls.__dict__)
-        if original_annotate is not None:
-
-            def annotate(format: int, /) -> dict[str, Any]:
-                return {
-                    tag_field: str,
-                    **annotationlib.call_annotate_function(original_annotate, annotationlib.Format(format), owner=cls),
-                }
-
-            cls.__annotate__ = annotate  # pyright: ignore[reportAttributeAccessIssue]
-        else:
-            # No lazy annotate function: the class body had no annotations, or stored them eagerly
-            # (e.g. under `from __future__ import annotations`); merge with whatever it has.
-            cls.__annotations__ = {tag_field: str, **cls.__dict__.get('__annotations__', {})}
-    else:
-        cls.__annotations__ = {tag_field: 'str', **cls.__annotations__}
+    _utils.prepend_class_annotations(cls, {tag_field: str})
     setattr(cls, tag_field, dataclasses.field(default=tag_value, kw_only=True))
 
 

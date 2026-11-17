@@ -10,7 +10,6 @@ from pathlib import Path
 from sqlite3 import Error as SQLiteError
 from typing import TYPE_CHECKING, Generic
 
-import anyio
 from anyio import to_thread
 
 from pydantic_clai2.plugins import DepsT
@@ -26,12 +25,12 @@ _CHILD = 'open:'
 """Prefixes a subdirectory's name in the browser's option values, so no name collides with another option."""
 
 
-def _prose(text: str) -> str:
+def prose(text: str) -> str:
     """Sentences in short lines: the terminal cuts long ones off beside an 80-column list; the web UI joins them."""
     return '\n\n'.join(textwrap.fill(paragraph, width=36) for paragraph in text.split('\n\n'))
 
 
-_ADD_HELP = _prose(
+_ADD_HELP = prose(
     'Load sub-agent definitions (*.md and *.toml), not files for code search.\n\n'
     'Add a directory path, browse local directories, or add a folder name such as agents or global. '
     'Names search .agents, .claude and .codex in the project and home. '
@@ -101,7 +100,7 @@ class DirectoryPicker:
                 )
             except OSError as exc:
                 problem = f'Cannot list directory: {exc.strerror or exc}'
-        options = [Option(value='use', label='Use this directory', description=_prose(problem or ''))]
+        options = [Option(value='use', label='Use this directory', description=prose(problem or ''))]
         if self.current != self.current.parent:
             options.append(Option(value='parent', label='.. (parent directory)'))
         options += [
@@ -115,9 +114,9 @@ class DirectoryPicker:
         ]
         notice = problem or self.error or ('' if children else 'No subdirectories. This directory can be used.')
         description = (
-            (f'{_prose(_display(notice))}\n\n' if notice else '')
+            (f'{prose(_display(notice))}\n\n' if notice else '')
             + f'Current directory\n{_display(str(self.current))}\n\n'
-            + _prose(
+            + prose(
                 'Open a folder to look inside; Use this directory saves its absolute path, '
                 'the same in every project. Esc returns without changing settings.'
             )
@@ -132,28 +131,29 @@ class DirectoryPicker:
             if choice is None:
                 return None
             self.error = ''
-            if choice == 'use':
-                self.error = await to_thread.run_sync(_directory_problem, self.current) or ''
-                if not self.error:
-                    return self.current
-            elif choice == 'path':
-                text = await dialogs.text(
-                    title='Go to directory',
-                    label='Path',
-                    initial=_safe_initial(str(self.current)),
-                    placeholder='Enter a path; control characters are not copied',
-                    check=self.path_problem,
-                )
-                if text:
-                    self.current = await to_thread.run_sync(self.path, text)
-            elif choice == 'parent':
-                self.current = self.current.parent
-            elif choice == 'project':
-                self.current = self.project
-            elif choice == 'home':
-                self.current = Path.home()
-            else:
-                self.current = self.current / choice.removeprefix(_CHILD)
+            match choice:
+                case 'use':
+                    self.error = await to_thread.run_sync(_directory_problem, self.current) or ''
+                    if not self.error:
+                        return self.current
+                case 'path':
+                    text = await dialogs.text(
+                        title='Go to directory',
+                        label='Path',
+                        initial=_safe_initial(str(self.current)),
+                        placeholder='Enter a path; control characters are not copied',
+                        check=self.path_problem,
+                    )
+                    if text:
+                        self.current = await to_thread.run_sync(self.path, text)
+                case 'parent':
+                    self.current = self.current.parent
+                case 'project':
+                    self.current = self.project
+                case 'home':
+                    self.current = Path.home()
+                case _:
+                    self.current = self.current / choice.removeprefix(_CHILD)
 
     def path(self, text: str) -> Path:
         return (self.current / Path(text.strip()).expanduser()).resolve()
@@ -191,11 +191,11 @@ class FolderMenu(Generic[DepsT]):
             return _display_lines(f'{value}\n\nCannot open directory: {exc}')
         if is_project_relative(value):
             details = f'Relative path\n{value}\n\nIn this project\n{path}\n\n'
-            details += _prose(f'{problem} Skipped in this project.' if problem else 'Directory is readable.')
-            details += '\n\n' + _prose('Resolved against each project CLAI runs in.')
+            details += prose(f'{problem} Skipped in this project.' if problem else 'Directory is readable.')
+            details += '\n\n' + prose('Resolved against each project CLAI runs in.')
         else:
             details = f'Directory path\n{value}\n\nResolved location\n{path}\n\n'
-            details += _prose(problem or 'Directory is readable.')
+            details += prose(problem or 'Directory is readable.')
         return _display_lines(details)
 
     def options(self) -> tuple[list[Option], str]:
@@ -216,7 +216,7 @@ class FolderMenu(Generic[DepsT]):
             Option(
                 value='close',
                 label=SAVE_AND_CLOSE,
-                description=_prose('Changes are already saved. Return to Coder settings.'),
+                description=prose('Changes are already saved. Return to Coder settings.'),
             ),
         ]
         notices = [
@@ -224,7 +224,7 @@ class FolderMenu(Generic[DepsT]):
             '' if folders else 'No folders selected. Disk agents are off.',
             '' if self.source.sub_agents_enabled() else 'Sub-agents are disabled in Coder settings.',
         ]
-        return options, '\n'.join(_prose(notice) for notice in notices if notice)
+        return options, '\n'.join(prose(notice) for notice in notices if notice)
 
     async def run(self, dialogs: Dialogs) -> list[str]:
         """Show the list until the user closes it, saving each change; the messages to show."""
@@ -237,31 +237,13 @@ class FolderMenu(Generic[DepsT]):
             index: int | None = None
             if choice.isdigit():
                 index = int(choice)
-                choice = await dialogs.choose(
-                    title='Manage agent folder',
-                    options=[
-                        Option(value='edit', label='Edit name or path...'),
-                        Option(value='browse', label='Replace by browsing...'),
-                        Option(value='remove', label='Remove from search (keep files)'),
-                        Option(value='back', label='Back'),
-                    ],
-                    description=await to_thread.run_sync(self.details, index),
-                )
-                if choice is None or choice == 'back':
+                choice = await self._entry_action(dialogs, index)
+                if choice is None:
                     continue
             self.notice = ''
-            folders = self.folders().copy()
-            if choice == 'remove':
-                assert index is not None
-                folders.pop(index)
-            else:
-                value = await self.edit(dialogs, kind=choice, index=index)
-                if value is None:
-                    continue
-                if index is None:
-                    folders.append(value)
-                else:
-                    folders[index] = value
+            folders = await self._changed_folders(dialogs, choice=choice, index=index)
+            if folders is None:
+                continue
             try:
                 await to_thread.run_sync(self.source.save_agent_folders, folders)
             except (OSError, RuntimeError, ValueError, SQLiteError) as exc:
@@ -269,6 +251,36 @@ class FolderMenu(Generic[DepsT]):
                 continue
             self.notice = 'Folder removed. Files were not changed.' if choice == 'remove' else 'Agent folder saved.'
             messages.append(self.notice)
+
+    async def _entry_action(self, dialogs: Dialogs, index: int) -> str | None:
+        """What to do with the entry at `index`: `edit`, `browse` or `remove`; `None` to go back to the list."""
+        choice = await dialogs.choose(
+            title='Manage agent folder',
+            options=[
+                Option(value='edit', label='Edit name or path...'),
+                Option(value='browse', label='Replace by browsing...'),
+                Option(value='remove', label='Remove from search (keep files)'),
+                Option(value='back', label='Back'),
+            ],
+            description=await to_thread.run_sync(self.details, index),
+        )
+        return None if choice == 'back' else choice
+
+    async def _changed_folders(self, dialogs: Dialogs, *, choice: str, index: int | None) -> list[str] | None:
+        """The list after `choice` on the entry at `index`, or on a new entry when `None`; `None` if nothing changed."""
+        folders = self.folders().copy()
+        if choice == 'remove':
+            assert index is not None
+            folders.pop(index)
+            return folders
+        value = await self.edit(dialogs, kind=choice, index=index)
+        if value is None:
+            return None
+        if index is None:
+            folders.append(value)
+        else:
+            folders[index] = value
+        return folders
 
     async def edit(self, dialogs: Dialogs, *, kind: str, index: int | None) -> str | None:
         """The new entry, or `None` when the user backed out or it is not acceptable (saying why in `notice`)."""
@@ -317,18 +329,8 @@ class FolderMenu(Generic[DepsT]):
             return 'Use letters, numbers, underscores or hyphens. Add a directory path for other locations.'
         try:
             value = self.value(text, named=named)
-            candidate = value if named else self.path(value)
-            for position, existing in enumerate(self.folders()):
-                if position == index:
-                    continue
-                try:
-                    other = existing if is_folder_name(existing) else self.path(existing)
-                except (OSError, RuntimeError, ValueError):
-                    continue
-                if candidate == other or (
-                    isinstance(candidate, Path) and isinstance(other, Path) and _same_directory(candidate, other)
-                ):
-                    return 'This folder is already in the list.'
+            if self._is_listed(value if named else self.path(value), index=index):
+                return 'This folder is already in the list.'
             # A relative path may exist only in other projects, so only fixed locations must exist now.
             if not named and not is_project_relative(value):
                 return _directory_problem(self.path(value))
@@ -336,10 +338,25 @@ class FolderMenu(Generic[DepsT]):
             return f'Invalid directory: {exc}'
         return None
 
+    def _is_listed(self, candidate: str | Path, *, index: int | None) -> bool:
+        """Whether an entry other than the one at `index` names the same folder as `candidate`."""
+        for position, existing in enumerate(self.folders()):
+            if position == index:
+                continue
+            try:
+                other = existing if is_folder_name(existing) else self.path(existing)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if candidate == other or (
+                isinstance(candidate, Path) and isinstance(other, Path) and _same_directory(candidate, other)
+            ):
+                return True
+        return False
+
     def path(self, value: str) -> Path:
         return (self.project / Path(value).expanduser()).resolve()
 
 
 async def edit_agent_folders(source: CoderSource[DepsT], dialogs: Dialogs) -> list[str]:
-    """The **Agent folders** row's action: the folder list for the directory CLAI runs in."""
-    return await FolderMenu(source, project=Path(await anyio.Path.cwd())).run(dialogs)
+    """The **Agent folders** row's action: the folder list for the directory the session works in."""
+    return await FolderMenu(source, project=source.host.workspace).run(dialogs)

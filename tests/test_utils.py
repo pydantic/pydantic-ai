@@ -10,11 +10,12 @@ import itertools
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+import warnings
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
@@ -25,6 +26,7 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
+    ScopedTask,
     await_maybe,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
@@ -32,6 +34,7 @@ from pydantic_ai._utils import (
     get_first_param_type,
     group_by_temporal,
     is_async_callable,
+    is_google_files_api_url,
     is_str_dict,
     merge_json_schema_defs,
     replace_no_init,
@@ -42,8 +45,37 @@ from pydantic_ai._utils import (
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import undrivable_event_loop
+from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
+from .realtime.simulation._loop import SimulatedLoop
+
+READINESS_WAIT_TIMEOUT = 5
+
+
+@pytest.mark.parametrize(
+    'url,expected',
+    [
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files/abc123', True, id='file'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/files', True, id='bare-prefix'),
+        # Current prefix behavior, not a URL-validity requirement.
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/filesOther', True, id='prefix-only'),
+        pytest.param(
+            'https://generativelanguage.googleapis.com/v1beta/files/abc?alt=media#ref', True, id='query-fragment'
+        ),
+        pytest.param('', False, id='empty'),
+        pytest.param('http://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='http'),
+        pytest.param('https://generativelanguage.googleapis.com/v1/files/abc123', False, id='other-version'),
+        pytest.param('https://generativelanguage.googleapis.com/v1beta/file/abc123', False, id='other-path'),
+        pytest.param('https://GENERATIVELANGUAGE.googleapis.com/v1beta/files/abc123', False, id='case-sensitive'),
+        pytest.param('https://generativelanguage.googleapis.com.evil/v1beta/files/abc123', False, id='other-host'),
+        pytest.param('https://generativelanguage.googleapis.com:443/v1beta/files/abc123', False, id='explicit-port'),
+        pytest.param(' https://generativelanguage.googleapis.com/v1beta/files/abc123', False, id='leading-space'),
+        pytest.param('gs://bucket/file.png', False, id='cloud-storage'),
+    ],
+)
+def test_is_google_files_api_url(url: str, expected: bool):
+    """Pin classification directly: cassette matching alone does not protect prefix edge cases."""
+    assert is_google_files_api_url(url) is expected
 
 
 async def test_await_maybe():
@@ -92,7 +124,7 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         assert groups == expected
 
 
-async def test_group_by_temporal_first_window_starts_on_first_item():
+def test_group_by_temporal_first_window_starts_on_first_item(monkeypatch: pytest.MonkeyPatch):
     """The debounce window must start when the first item arrives, not when iteration begins.
 
     Regression test for #5946. A slow first item — e.g. the latency before a model's first
@@ -100,6 +132,10 @@ async def test_group_by_temporal_first_window_starts_on_first_item():
     elapsed before the item arrived and it was emitted in a group of its own. Here the first
     item is delayed well past the window, yet must still group with a second item that arrives
     within the window of the first: correct output is `[[1, 2]]`, the bug produced `[[1], [2]]`.
+
+    The test moves a virtual clock itself, and the window reads it, so the items arrive exactly when it
+    says. On the real clock, a busy runner (a GC pass, the coverage tracer, a descheduled CPU) can hold the
+    producer up past the window and split the group just as the bug did.
     """
     interval = 0.05
 
@@ -109,9 +145,19 @@ async def test_group_by_temporal_first_window_starts_on_first_item():
         await asyncio.sleep(interval / 5)  # second item arrives well within the first item's window
         yield 2
 
-    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
-        groups: list[list[int]] = [g async for g in groups_iter]
-        assert groups == [[1, 2]]
+    async def collect() -> list[list[int]]:
+        async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
+            return [g async for g in groups_iter]
+
+    with contextlib.closing(SimulatedLoop()) as loop:
+        monkeypatch.setattr('pydantic_ai._utils.time', SimpleNamespace(monotonic=loop.time))
+        groups = loop.create_task(collect())
+        loop.run_until_idle()
+        loop.advance_clock(interval * 3)
+        loop.run_until_idle()
+        loop.advance_clock(interval / 5)
+        loop.run_until_idle()
+        assert groups.result() == [[1, 2]]
 
 
 def test_check_object_json_schema():
@@ -317,7 +363,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         await asyncio.Event().wait()
 
     bystander_task = loop.create_task(bystander())
-    tasks_before = asyncio.all_tasks(loop)
 
     real_run_until_complete = loop.run_until_complete
     calls = 0
@@ -333,14 +378,13 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             raise KeyboardInterrupt
         return real_run_until_complete(future)
 
-    with pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
             utils_module.run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
     assert not bystander_task.cancelled()  # the unrelated task was left alone
-    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
     bystander_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
@@ -1084,6 +1128,48 @@ def test_merge_json_schema_defs_pattern_properties_property_names():
     )
 
 
+@pytest.mark.parametrize(
+    'body, expected_body',
+    [
+        ({'contains': {'$ref': '#/$defs/Item'}}, {'contains': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'if': {'$ref': '#/$defs/Item'}}, {'if': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'then': {'$ref': '#/$defs/Item'}}, {'then': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'else': {'$ref': '#/$defs/Item'}}, {'else': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        (
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/Item'}, 'allowed': True, 'denied': False}},
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/SchemaB_Item_1'}, 'allowed': True, 'denied': False}},
+        ),
+        (
+            {'items': [{'$ref': '#/$defs/Item'}, True, False]},
+            {'items': [{'$ref': '#/$defs/SchemaB_Item_1'}, True, False]},
+        ),
+    ],
+    ids=['contains', 'if', 'then', 'else', 'dependentSchemas', 'tuple-items'],
+)
+def test_merge_json_schema_defs_nested_subschemas(body: dict[str, Any], expected_body: dict[str, Any]):
+    """Pin ref rewriting directly, including shared defs that transitively depend on a renamed def."""
+    schema_a = {
+        **body,
+        'title': 'SchemaA',
+        'properties': {'payload': {'$ref': '#/$defs/Wrapper'}},
+        '$defs': {'Item': {'type': 'integer'}, 'Wrapper': copy.deepcopy(body)},
+    }
+    schema_b: dict[str, Any] = copy.deepcopy(schema_a)
+    schema_b['title'] = 'SchemaB'
+    schema_b['$defs']['Item'] = {'type': 'string'}
+    originals = copy.deepcopy([schema_a, schema_b])
+
+    rewritten, defs = merge_json_schema_defs([schema_a, schema_b])
+
+    assert rewritten[1] == {
+        **expected_body,
+        'title': 'SchemaB',
+        'properties': {'payload': {'$ref': '#/$defs/SchemaB_Wrapper_1'}},
+    }
+    assert defs['SchemaB_Wrapper_1'] == expected_body
+    assert [schema_a, schema_b] == originals
+
+
 def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
     """Defs that are structurally equal but whose $refs resolve to different types need separate copies."""
     schema_a = {
@@ -1441,3 +1527,55 @@ def test_replace_no_init() -> None:
     with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
         replace_no_init(self_copying, name='b')
     assert self_copying.name == 'a', 'the original must not be mutated in place'
+
+
+async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation_as_context() -> None:
+    # Directly on `ScopedTask`: its callers in the run set the run error's `__context__` themselves. `result()` reads
+    # the task's outcome outside the `except` block that caught the awaiter's cancellation, so the task's error doesn't
+    # get that cancellation as its context.
+    started = asyncio.Event()
+
+    async def body() -> int:
+        started.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await anyio.sleep_forever()
+        raise ValueError('boom')
+
+    awaiter = asyncio.create_task(ScopedTask(body()).result())
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        await started.wait()
+        awaiter.cancel('stop')
+        await asyncio.wait((awaiter,))
+    with pytest.raises(ValueError, match='boom') as exc_info:
+        awaiter.result()
+    assert exc_info.value.__context__ is None
+
+
+def _run_sync() -> None:
+    Agent(TestModel()).run_sync('hello')
+
+
+def _run_stream_sync() -> None:
+    with Agent(TestModel()).run_stream_sync('hello') as result:
+        result.get_output()
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.parametrize(
+    'entry_point',
+    [
+        pytest.param(_run_sync, id='run_sync'),
+        pytest.param(_run_stream_sync, id='run_stream_sync'),
+    ],
+)
+def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
+    fresh_event_loop_policy: None, entry_point: Callable[[], None]
+):
+    """On Python 3.12 and 3.13, a sync run in a script used to warn `There is no current event loop` (#1196).
+
+    The warning fires when the policy has never had a loop set, as in a fresh interpreter's main thread, which the
+    `fresh_event_loop_policy` fixture recreates.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        entry_point()

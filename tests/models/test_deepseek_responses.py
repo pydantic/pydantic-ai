@@ -34,18 +34,18 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     NativeOutput,
-    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, PydanticAIDeprecationWarning
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsDecimal, IsStr, try_import
+from ..conftest import IsDatetime, IsDecimal, IsStr, legacy_retry_prompt_part, try_import
+from .conftest import RequestCapture
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -127,6 +127,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -188,6 +189,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -253,6 +255,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -299,6 +302,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -382,6 +386,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -426,6 +431,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -480,7 +486,7 @@ CASES = [
                         },
                         {
                             'name': get_temperature.__qualname__,
-                            'arguments': '{"city": "Tokyo"}',
+                            'arguments': '{"city":"Tokyo"}',
                             'call_id': 'call_00_iD0U8IMtyIljI0ET7GLz1318',
                             'type': 'function_call',
                         },
@@ -552,6 +558,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -596,6 +603,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -650,7 +658,7 @@ CASES = [
                         },
                         {
                             'name': get_temperature.__qualname__,
-                            'arguments': '{"city": "Tokyo"}',
+                            'arguments': '{"city":"Tokyo"}',
                             'call_id': 'call_00_xjY8Z2BvSlzgEmmw0DtH0464',
                             'type': 'function_call',
                         },
@@ -723,6 +731,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -814,6 +823,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -880,6 +890,7 @@ CASES = [
                         cost=IsDecimal(),
                     ),
                     model_name='deepseek-v4-flash',
+                    model_id='deepseek:deepseek-v4-flash',
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
@@ -961,6 +972,26 @@ async def test_deepseek_responses(case: Case, allow_model_requests: None, deepse
     assert output == case.expected_output
     assert messages == case.expected_messages
     assert sent_bodies == case.expected_request_bodies
+
+
+@pytest.mark.parametrize('model_name', ['deepseek-flash', 'deepseek-v4-flash'])
+async def test_deepseek_responses_thinking_off(
+    model_name: str,
+    allow_model_requests: None,
+    deepseek_api_key: str,
+    request_capture: RequestCapture,
+) -> None:
+    model = OpenAIResponsesModel(
+        model_name, provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(thinking=False))
+
+    result = await agent.run('What is 17 * 23? Reply only with digits.')
+
+    assert result.output == '391'
+    body = request_capture.body('/responses')
+    assert body['model'] == model_name
+    assert body['reasoning'] == {'effort': 'none'}
 
 
 async def test_deepseek_responses_replay_unsent_item_ids(allow_model_requests: None, deepseek_api_key: str) -> None:
@@ -1050,12 +1081,14 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                legacy_retry_prompt_part('read failed', tool_name='read', tool_call_id='call-a'),
                 ToolReturnPart('view', 'contents', tool_call_id='call-b'),
             ]
         ),
     ]
-    original_history = deepcopy(history)
+    # `deepcopy` rebuilds the deprecated part through its constructor, which warns.
+    with pytest.warns(PydanticAIDeprecationWarning):
+        original_history = deepcopy(history)
 
     async with httpx2.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
         model = OpenAIResponsesModel(
@@ -1076,7 +1109,7 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
                     {
                         'type': 'function_call_output',
                         'call_id': 'call-a',
-                        'output': 'read failed\n\nFix the errors and try again.',
+                        'output': '{"error":"read failed"}',
                     },
                     {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
                     {'role': 'user', 'content': 'Reply exactly: done'},

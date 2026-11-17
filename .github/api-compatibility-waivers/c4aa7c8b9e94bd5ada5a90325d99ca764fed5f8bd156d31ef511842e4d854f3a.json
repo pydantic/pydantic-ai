@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+}

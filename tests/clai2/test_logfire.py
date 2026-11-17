@@ -4,8 +4,9 @@ import base64
 import io
 import json
 import warnings
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
+from threading import Event, Thread
 from typing import Literal
 
 import anyio
@@ -14,8 +15,8 @@ import logfire
 import pytest
 from opentelemetry import metrics, propagate, trace
 from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
@@ -36,6 +37,7 @@ from pydantic_clai2.config.api_keys import save_key
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, TurnEnd, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.process_plugins import ProcessPlugins
 from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus import dialogs
@@ -53,6 +55,7 @@ class Exporter(InMemorySpanExporter):
 class Recorder:
     def __init__(self) -> None:
         self.configure_sdk = logfire.configure
+        self.span_processor: Callable[[Exporter], SpanProcessor] = SimpleSpanProcessor
         self.exporters: list[Exporter] = []
         self.instances: list[logfire.Logfire] = []
         self.options: list[dict[str, object]] = []
@@ -100,7 +103,7 @@ class Recorder:
             token=token,
             scrubbing=scrubbing,
             metrics=False,
-            additional_span_processors=[SimpleSpanProcessor(exporter)],
+            additional_span_processors=[self.span_processor(exporter)],
             advanced=logfire.AdvancedOptions(
                 emit_configuration_span=False, base_url=advanced.base_url if advanced else None
             ),
@@ -429,6 +432,85 @@ async def test_unload_finishes_inside_outer_cancellation(recorder: Recorder) -> 
         assert recorder.exporters[0].closed
         await anyio.sleep(0)
     assert scope.cancelled_caught
+
+
+@pytest.mark.parametrize('blocked', ['export', 'shutdown'])
+def test_shutdown_wall_clock_bound(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, blocked: Literal['export', 'shutdown']
+) -> None:
+    # Exercise the SDK ignoring its timeout, without waiting out a real export deadline.
+    entered = Event()
+    release = Event()
+    workers: list[Thread] = []
+    completed = Event()
+    export = Exporter.export
+    shutdown = Exporter.shutdown
+
+    def blocking_export(self: Exporter, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        if blocked == 'export':
+            entered.set()
+            release.wait()
+        return export(self, spans)
+
+    def blocking_shutdown(self: Exporter) -> None:
+        if blocked == 'shutdown':
+            entered.set()
+            release.wait()
+        shutdown(self)
+
+    monkeypatch.setattr(Exporter, 'export', blocking_export)
+    monkeypatch.setattr(Exporter, 'shutdown', blocking_shutdown)
+    recorder.span_processor = lambda exporter: BatchSpanProcessor(exporter, schedule_delay_millis=60_000)
+
+    class DeadlineThread(Thread):
+        def join(self, timeout: float | None = None) -> None:
+            assert timeout == 3
+            assert self.daemon
+            workers.append(self)
+            assert entered.wait(10)
+            # Advance the entire join deadline while the exporter remains blocked.
+
+    host = make_host()
+    plugin = load_logfire(host)
+    exporter = recorder.exporters[0]
+    recorder.instances[0].info('queued span')
+    monkeypatch.setattr(logfire_plugin, 'Thread', DeadlineThread)
+
+    def unload() -> None:
+        anyio.run(close, plugin)
+        completed.set()
+
+    caller = Thread(target=unload, daemon=True)
+    caller.start()
+    try:
+        caller.join(10)
+        assert not caller.is_alive()
+        assert completed.is_set()
+        output = host.console.file
+        assert isinstance(output, io.StringIO)
+        assert 'Logfire shutdown timed out' in output.getvalue()
+        assert len(workers) == 1
+        assert workers[0].is_alive()
+        assert not exporter.closed
+    finally:
+        release.set()
+        caller.join(10)
+        for worker in workers:
+            Thread.join(worker, 10)
+            assert not worker.is_alive()
+    assert exporter.closed
+
+
+async def test_shutdown_propagates_flush_error(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin = load_logfire(make_host())
+
+    def fail(*, timeout_millis: int) -> bool:
+        raise RuntimeError('flush failed')
+
+    monkeypatch.setattr(recorder.instances[0], 'force_flush', fail)
+    with pytest.raises(RuntimeError, match='flush failed'):
+        await close(plugin)
+    assert recorder.exporters[0].closed
 
 
 async def test_shutdown_timeout_is_reported(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -980,3 +1062,42 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     assert source.reset(project) == 'Reset Logfire project.'
     saved = host.settings(logfire_plugin.LogfireSettings)
     assert (saved.token, saved.base_url, saved.account, saved.ui_events) == (None, None, None, True)
+
+
+async def test_one_configuration_serves_every_live_session_with_a_root_each(tmp_path: Path, recorder: Recorder) -> None:
+    """Observability is process-scoped: Logfire is configured once, and each session records under its own root."""
+    store = SettingsStore(tmp_path / 'config.db')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability')
+    process = ProcessPlugins[None](store=store, builtin=(builtin,))
+
+    def session(name: str) -> PluginLoader[None]:
+        return PluginLoader(
+            process=process,
+            console=Console(file=io.StringIO()),
+            commands=Commands(),
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+            session_id=lambda: f'conversation-{name}',
+            live_id=name,
+        )
+
+    a, b = session('a'), session('b')
+    await a.load_all()
+    await b.load_all()
+    assert len(recorder.instances) == 1
+    await b.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.close('exit')
+    assert not recorder.exporters[0].closed, 'the other session still records'
+    await b.close('exit')
+    assert recorder.exporters[0].closed
+    roots = {
+        root.context.span_id: (root.attributes or {})['agent_session_id']
+        for root in recorder.spans()
+        if root.name == 'CLAI session' and root.context is not None
+    }
+    assert set(roots.values()) == {'conversation-a', 'conversation-b'}
+    turns = [span for span in recorder.spans() if span.name == 'turn {outcome}']
+    assert [roots[span.parent.span_id] for span in turns if span.parent is not None] == [
+        'conversation-b',
+        'conversation-a',
+    ]

@@ -9,9 +9,9 @@ from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2.builtin_plugins.web import framing, remote as remote_module
+from pydantic_clai2.builtin_plugins.web import framing, service as service_module
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck, fetch_headers, frameable
-from pydantic_clai2.builtin_plugins.web.protocol import TurnEnded
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL, TurnEnded
 from pydantic_clai2.config import PluginSettings
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
@@ -233,7 +233,7 @@ def panels(web_: Web) -> list[dict[str, JsonValue]]:
 
 def test_side_panels_follow_the_turns(make_web: MakeWeb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Each loaded plugin's panels, as their views say now, framed only where the page allows it."""
-    monkeypatch.setattr(remote_module, 'VIEW_TIMEOUT', 0.05)
+    monkeypatch.setattr(service_module, 'VIEW_TIMEOUT', 0.05)
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok')), extra=panel_plugins(tmp_path))
     fetched: list[str] = []
 
@@ -243,7 +243,7 @@ def test_side_panels_follow_the_turns(make_web: MakeWeb, tmp_path: Path, monkeyp
         allowed = 'https://pydantic.dev' if url.startswith('https://traces') else 'http://testserver'
         return httpx.Headers({'content-security-policy': f'frame-ancestors {allowed}'})
 
-    web_.plugin.remote.frames = FrameCheck(fetch)
+    web_.plugin.service.frames = FrameCheck(fetch)
     traces = {
         'plugin': 'traces',
         'id': 'live',
@@ -283,7 +283,9 @@ def test_side_panels_follow_the_turns(make_web: MakeWeb, tmp_path: Path, monkeyp
         | {'url': 'http://intranet.example/page'},
     ]
     assert panels(web_) == [traces, *rest]
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'go'})
