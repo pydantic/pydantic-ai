@@ -8,7 +8,7 @@ import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
@@ -62,12 +62,23 @@ READ_TOOL_NAME = 'read_tool_result'
 READ_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'read_tool_result')
 """The kind of the `read_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
 
+GREP_TOOL_NAME = 'grep_tool_result'
+"""Default name of the registered search tool."""
+
+GREP_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'grep_tool_result')
+"""The kind of the `grep_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
+
 _EXEMPT_KINDS = frozenset(
-    {READ_TOOL_RESULT_KIND.id, LoadCapabilityReturnPart.tool_kind, ToolSearchReturnPart.tool_kind}
+    {
+        READ_TOOL_RESULT_KIND.id,
+        GREP_TOOL_RESULT_KIND.id,
+        LoadCapabilityReturnPart.tool_kind,
+        ToolSearchReturnPart.tool_kind,
+    }
 )
 """Kinds whose returns are never reduced, whatever `tool_filter` says.
 
-Besides `read_tool_result`, these are core's `load_capability` and `search_tools`: core re-reads their
+Besides the spill query tools, these are core's `load_capability` and `search_tools`: core re-reads their
 structured content from history to decide which capabilities are loaded and which tools are revealed,
 so a reduced return would leave those locked.
 """
@@ -277,9 +288,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     # --- toolset ---
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Register the `read_tool_result` tool for reading spilled payloads on demand.
+        """Register the `read_tool_result` and `grep_tool_result` tools for querying spilled payloads on demand.
 
-        When spills are files in the run's workspace, the tool steps aside for a tool of
+        When spills are files in the run's workspace, the tools step aside for a tool of
         `FileSystem`'s `READ_FILE_KIND`, which reads them too. Built once, so durable execution
         sees the toolset it registered.
         """
@@ -296,25 +307,49 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             limit: int = 200,
             from_end: bool = False,
             pattern: str | None = None,
+            unit: Literal['lines', 'bytes'] = 'lines',
         ) -> str:
             """Read a slice of a spilled tool result.
 
             Args:
                 ctx: The run context (supplied by the agent).
                 handle: The handle from the overflowed tool return.
-                offset: Number of matching lines to skip from the start (or end). Must be >= 0.
-                limit: Maximum number of lines to return (>= 1; clamped to a built-in cap).
+                offset: Number of matching lines (or bytes) to skip from the start (or end). Must be >= 0.
+                limit: Maximum number of lines (or bytes) to return (>= 1; clamped to a built-in cap).
                 from_end: Count `offset`/`limit` from the end of the result.
                 pattern: Optional literal substring; only lines containing it are returned.
+                unit: `'bytes'` slices raw bytes, for output without useful line breaks such as minified JSON.
             """
-            return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
+            return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern, unit)
 
-        tool = Tool(
-            read_tool_result,
-            tool_kind=READ_TOOL_RESULT_KIND,
-            prepare=step_aside_for_read_file if self._spills_to_run_workspace else None,
-        )
-        return FunctionToolset([tool], id=self.id or 'tool_output_limits')
+        async def grep_tool_result(
+            ctx: RunContext[AgentDepsT],
+            handle: str,
+            pattern: str,
+            context: int = 2,
+            max_matches: int = 20,
+            offset: int = 0,
+        ) -> str:
+            """Find the lines of a spilled tool result that contain a literal substring, with their line numbers.
+
+            Matching lines are prefixed `N:` and context lines `N-`; separate groups are divided by `--`.
+
+            Args:
+                ctx: The run context (supplied by the agent).
+                handle: The handle from the overflowed tool return.
+                pattern: Literal substring to find (not a regex).
+                context: Lines to show before and after each match (>= 0; clamped to a built-in cap).
+                max_matches: Maximum number of matches to return (>= 1; clamped to a built-in cap).
+                offset: Number of matches to skip, to continue a previous search. Must be >= 0.
+            """
+            return await _grep(self._store_for(ctx).read, handle, pattern, context, max_matches, offset)
+
+        prepare = step_aside_for_read_file if self._spills_to_run_workspace else None
+        tools = [
+            Tool(read_tool_result, tool_kind=READ_TOOL_RESULT_KIND, prepare=prepare),
+            Tool(grep_tool_result, tool_kind=GREP_TOOL_RESULT_KIND, prepare=prepare),
+        ]
+        return FunctionToolset(tools, id=self.id or 'tool_output_limits')
 
     # --- reduction ---
 
@@ -832,31 +867,19 @@ _MAX_READ_LINES = 1_000
 """Hard cap on lines returned by one `read_tool_result` call."""
 
 _MAX_READ_CHARS = 50_000
-"""Hard cap on characters returned by one `read_tool_result` call."""
+"""Hard cap on characters (or bytes, with `unit='bytes'`) returned by one spill query."""
+
+_MAX_GREP_MATCHES = 200
+"""Hard cap on matches returned by one `grep_tool_result` call."""
+
+_MAX_GREP_CONTEXT = 10
+"""Hard cap on context lines shown on each side of a `grep_tool_result` match."""
 
 
-async def _read_slice(
-    read: Callable[[str], Awaitable[bytes]],
-    handle: str,
-    offset: int,
-    limit: int,
-    from_end: bool,
-    pattern: str | None,
-) -> str:
-    """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
-
-    `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
-    the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text.
-    """
-    if offset < 0:
-        raise ModelRetry('`offset` must be >= 0.')
-    if limit < 1:
-        raise ModelRetry('`limit` must be >= 1.')
-    limit = min(limit, _MAX_READ_LINES)
-
+async def _load(read: Callable[[str], Awaitable[bytes]], handle: str) -> bytes | str:
+    """Read a spill, or return the message that guides the model to a valid handle."""
     try:
-        data = await read(handle)
+        return await read(handle)
     except WorkspaceError as error:
         raise_tool_failure(error)
     except (OSError, UserError):
@@ -872,6 +895,44 @@ async def _read_slice(
             'available, re-run the original tool.]'
         )
 
+
+def _cap(body: str, recovery: str) -> tuple[str, str]:
+    """Cap `body` at `_MAX_READ_CHARS`, returning it and a header note naming what was omitted."""
+    if len(body) <= _MAX_READ_CHARS:
+        return body, ''
+    omitted = len(body) - _MAX_READ_CHARS
+    return body[:_MAX_READ_CHARS], f', output capped at {_MAX_READ_CHARS:,} chars with {omitted:,} omitted; {recovery}'
+
+
+async def _read_slice(
+    read: Callable[[str], Awaitable[bytes]],
+    handle: str,
+    offset: int,
+    limit: int,
+    from_end: bool,
+    pattern: str | None,
+    unit: Literal['lines', 'bytes'] = 'lines',
+) -> str:
+    """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
+
+    `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
+    the host with catastrophic backtracking. `limit` is clamped and the joined output is
+    capped, so one call can never return an unbounded amount of text.
+    """
+    if offset < 0:
+        raise ModelRetry('`offset` must be >= 0.')
+    if limit < 1:
+        raise ModelRetry('`limit` must be >= 1.')
+    if unit == 'bytes' and pattern is not None:
+        raise ModelRetry("`pattern` filters lines, so it cannot be combined with `unit='bytes'`.")
+
+    data = await _load(read, handle)
+    if isinstance(data, str):
+        return data
+    if unit == 'bytes':
+        return _byte_slice(handle, data, offset, min(limit, _MAX_READ_CHARS), from_end)
+
+    limit = min(limit, _MAX_READ_LINES)
     lines = data.decode('utf-8', errors='replace').splitlines()
     if pattern is not None:
         lines = [line for line in lines if pattern in line]
@@ -883,10 +944,72 @@ async def _read_slice(
     else:
         window = lines[offset : offset + limit]
 
-    body = '\n'.join(window)
-    capped = ''
-    if len(body) > _MAX_READ_CHARS:
-        body = body[:_MAX_READ_CHARS]
-        capped = ', output capped'
+    body, capped = _cap('\n'.join(window), "read fewer lines, or long lines with unit='bytes'")
     header = f'[handle {handle!r}: {total:,} matching line(s); showing {len(window)}{capped}]'
+    return f'{header}\n{body}' if body else header
+
+
+def _byte_slice(handle: str, data: bytes, offset: int, limit: int, from_end: bool) -> str:
+    """Slice raw stored bytes, decoding a multi-byte UTF-8 sequence cut at either edge as U+FFFD."""
+    total = len(data)
+    if from_end:
+        end = max(0, total - offset)
+        start = max(0, end - limit)
+    else:
+        start = min(offset, total)
+        end = min(start + limit, total)
+    body = data[start:end].decode('utf-8', errors='replace')
+    header = f'[handle {handle!r}: bytes {start}-{end} of {total} (end exclusive)]'
+    return f'{header}\n{body}' if body else header
+
+
+def _grep_groups(lines: list[str], pattern: str, shown: list[int], context: int) -> str:
+    """Render the matches at `shown` with `context` lines around each, merging windows that overlap or touch."""
+    groups: list[tuple[int, int]] = []
+    for index in shown:
+        start, end = max(0, index - context), min(len(lines), index + context + 1)
+        if groups and start <= groups[-1][1]:
+            start = groups.pop()[0]
+        groups.append((start, end))
+    return '\n--\n'.join(
+        '\n'.join(f'{n + 1}{":" if pattern in lines[n] else "-"}{lines[n]}' for n in range(start, end))
+        for start, end in groups
+    )
+
+
+async def _grep(
+    read: Callable[[str], Awaitable[bytes]],
+    handle: str,
+    pattern: str,
+    context: int,
+    max_matches: int,
+    offset: int,
+) -> str:
+    """Find literal `pattern` in a spilled payload for `grep_tool_result`, with 1-based line numbers.
+
+    Context windows that overlap or touch merge into one group. Matches, context, and the joined
+    output are all capped, so one call can never return an unbounded amount of text.
+    """
+    if not pattern:
+        raise ModelRetry('`pattern` must not be empty.')
+    if context < 0:
+        raise ModelRetry('`context` must be >= 0.')
+    if max_matches < 1:
+        raise ModelRetry('`max_matches` must be >= 1.')
+    if offset < 0:
+        raise ModelRetry('`offset` must be >= 0.')
+    context = min(context, _MAX_GREP_CONTEXT)
+    max_matches = min(max_matches, _MAX_GREP_MATCHES)
+
+    data = await _load(read, handle)
+    if isinstance(data, str):
+        return data
+
+    lines = data.decode('utf-8', errors='replace').splitlines()
+    matches = [index for index, line in enumerate(lines) if pattern in line]
+    shown = matches[offset : offset + max_matches]
+    body, capped = _cap(_grep_groups(lines, pattern, shown, context), 'lower context or max_matches')
+    more = len(matches) - offset - len(shown)
+    remaining = f', {more:,} more; continue with offset={offset + len(shown)}' if more > 0 else ''
+    header = f'[handle {handle!r}: {len(matches):,} matching line(s); showing {len(shown)}{remaining}{capped}]'
     return f'{header}\n{body}' if body else header
