@@ -1288,7 +1288,12 @@ class PlaywrightBrowserSession:
                 await self._check_inherited_frame(frame, top_level=index == 0)
 
     async def _check_inherited_frame(self, frame: _Frame, *, top_level: bool) -> None:
-        """Refuse the call when `frame` holds a document the policy blocks, or has no URL to check yet."""
+        """Refuse the call when `frame` holds a document the policy blocks, or has no URL to check yet.
+
+        A top-level page outside the web is refused whatever the policy says: in this
+        mode such a tab holds the profile's own state, such as its history or an
+        extension's UI, and no request the policy could judge loaded it.
+        """
         if not frame.url:
             # CDP can expose a cross-origin frame before its URL is populated.
             try:
@@ -1306,15 +1311,15 @@ class PlaywrightBrowserSession:
             # Chromium's error page holds nothing from the origin that failed to load, and an
             # inline subframe's document came from a page this check covers, not a request.
             return
-        document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
-        if (reason := await self.decide(document)) is None:
-            return
-        if top_level and not frame.url.startswith(_WEB_URL_PREFIXES):
+        if top_level and self._is_off_web(frame.url):
             raise BrowserUnavailableError(
                 f'A tab in the default CDP context is showing a page the agent cannot read: '
                 f'{_without_credentials(frame.url)}. Close that tab in the provider browser, or navigate it '
                 'to an allowed URL, then retry.'
             )
+        document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
+        if (reason := await self.decide(document)) is None:
+            return
         raise BrowserUnavailableError(
             f'The default CDP context contains a document blocked by the browser policy '
             f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
@@ -1361,7 +1366,9 @@ class PlaywrightBrowserSession:
             # The inherited pages keep running while the checks below wait on a lookup or a
             # loading frame, so the guards go on first.
             await self._install_guards(context)
-            pages = [page for page in context.pages if not await self._is_unreadable_tab(page.url)]
+            # A tab outside the web, such as the browser's own start page, is left out whatever the
+            # policy says, rather than failing every attach to a browser that opened on it.
+            pages = [page for page in context.pages if not self._is_off_web(page.url)]
             if len(pages) > _MAX_TABS:
                 raise BrowserUnavailableError(
                     f'The default CDP context has more than {_MAX_TABS} tabs. Close some first.'
@@ -1387,18 +1394,17 @@ class PlaywrightBrowserSession:
             self.pages.append(page)
         self.page = pages[0]
 
-    async def _is_unreadable_tab(self, url: str) -> bool:
-        """Whether an inherited tab shows a page outside the web that the policy refuses, so attaching leaves it out.
+    @staticmethod
+    def _is_off_web(url: str) -> bool:
+        """Whether a default-context tab's page is one the session never exposes: anything but a web page or a blank one.
 
-        A browser's own page, such as the `chrome://newtab/` start page, and a `file:`,
-        `data:` or `blob:` document are never wired, listed, counted, navigated or
-        closed. Refusing them instead would fail every attach to a browser that
-        opened on its start page. A tab still loading, Chromium's error page and a
-        refused `http(s)` document stay in, for the document check to handle.
+        Covers the browser's own pages (`chrome://newtab/`, settings, history),
+        extension pages, and `file:`, `data:` and `blob:` documents. Chromium's
+        error page stays in: it holds nothing from the origin that failed to load.
+        A tab that reports no URL yet is still loading, and stays in for the
+        document check to wait on.
         """
-        if not url or url.startswith((_ERROR_PAGE_SCHEME, *_WEB_URL_PREFIXES)):
-            return False
-        return await self.decide(EgressRequest(url=url, kind='navigation', top_level=True)) is not None
+        return bool(url) and url != _BLANK_PAGE and not url.startswith((_ERROR_PAGE_SCHEME, *_WEB_URL_PREFIXES))
 
     async def _install_guards(self, context: PlaywrightBrowserContext) -> None:
         """Keep requests of `context` on a path routes see, and route them when the policy enforces anything.

@@ -41,9 +41,10 @@ It exercises the public `PlaywrightBrowser` surface and checks fourteen things:
   `cdp_url` function: an inherited tab on a loopback address refuses the run until
   the host closes it, then the run sees the existing cookie, the allowlist still
   bounces, the function is called once, and the host's tabs survive teardown,
-- a default context holding only a browser page (`chrome://version/`): the run
-  leaves that tab out, works in a blank tab of its own, and the browser page is
-  still open and unread when the run disconnects,
+- a default context holding only a browser page (`chrome://version/`), under a
+  policy that refuses it and one that admits it: the run leaves that tab out,
+  works in a blank tab of its own, and the browser page is still open and unread
+  when the run disconnects,
 - clean teardown: each scenario runs its own capability, whose `wrap_run` closes
   the browser when the run ends. After it prints `all checks passed`, confirm no
   Chromium lingered, e.g. `pgrep -fl chromium` shows nothing this script started.
@@ -439,9 +440,11 @@ async def _check_cdp_default_context_browser_page() -> None:
 
     The mocked suite cannot answer this: it turns on what URL a real Chrome reports
     for its own pages over CDP. The host browser's only tab shows
-    `chrome://version/`, which the allowlist refuses. The run must not fail the
-    attach or read that page: it opens a blank tab of its own, and the browser
-    page is still open on the same URL after the run disconnects.
+    `chrome://version/`, which an allowlist refuses and an open policy without the
+    private-address block admits as host `version`. Under both, the run must not
+    fail the attach or read that page, whose command line `snapshot` would
+    otherwise return: it opens a blank tab of its own, and the browser page is
+    still open on the same URL after the run disconnects.
     """
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
@@ -456,15 +459,22 @@ async def _check_cdp_default_context_browser_page() -> None:
                 (browser_page,) = default_context.pages
                 await browser_page.goto('chrome://version/')
                 title = await browser_page.title()
-                attached = PlaywrightBrowser[object](
-                    cdp_url=f'http://127.0.0.1:{port}', cdp_context='default', allowed_domains=['example.com']
-                )
-                listed, text = await _run_tools(attached, [('tabs', {}), ('get_text', {})])
-                assert 'chrome://' not in listed and 'about:blank' in listed, listed
-                assert 'cannot read' not in text and 'blocked by the browser policy' not in text, text
-                assert title and title not in listed and title not in text, (title, listed, text)
-                assert not browser_page.is_closed(), 'the run closed a browser page it left out'
-                assert browser_page.url == 'chrome://version/', browser_page.url
+                for policy in (
+                    EgressPolicy(allowed_domains=['example.com']),
+                    EgressPolicy(block_private_addresses=False),
+                ):
+                    # Each run starts from the browser page alone, without the blank tab an earlier run opened.
+                    for opened in default_context.pages[1:]:
+                        await opened.close()
+                    attached = PlaywrightBrowser[object](
+                        cdp_url=f'http://127.0.0.1:{port}', cdp_context='default', policy=policy
+                    )
+                    listed, snapshot = await _run_tools(attached, [('tabs', {}), ('snapshot', {})])
+                    assert 'chrome://' not in listed and 'about:blank' in listed, (policy, listed)
+                    assert 'cannot read' not in snapshot and 'blocked by the browser policy' not in snapshot, snapshot
+                    assert title and title not in listed and 'Command Line' not in snapshot, (policy, listed, snapshot)
+                    assert not browser_page.is_closed(), 'the run closed a browser page it left out'
+                    assert browser_page.url == 'chrome://version/', browser_page.url
             finally:
                 await default_context.close()
     print('cdp default context browser page ok -- browser page left out, run used a blank tab, page left open')

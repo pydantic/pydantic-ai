@@ -253,9 +253,10 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     `default` requires `cdp_url` and excludes `storage_state`.
     It inherits saved sign-ins and open tabs, so the agent can act as every account
     signed in to that browser: attach it to a profile dedicated to the agent, not
-    an everyday browser. A tab showing a page outside the web that the policy
-    refuses, such as the browser's own start page, is left out: it is never
-    listed, read or closed. Other loaded tab and frame URLs must pass the egress policy
+    an everyday browser. Only tabs showing an `http(s)` page, `about:blank` or
+    Chromium's error page are adopted: any other tab, such as the browser's own
+    start page, is never listed, read or closed, whatever the policy. Loaded tab
+    and frame URLs must pass the egress policy
     before handlers are attached and before tools read or act on a page. Egress
     guards and native session handlers still apply, and documents loaded while
     attached cannot register service workers. Downloads follow the browser's own

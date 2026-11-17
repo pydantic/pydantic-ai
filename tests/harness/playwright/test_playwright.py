@@ -2290,6 +2290,14 @@ _BLOCKED_DOCUMENT_PLACEMENTS: dict[str, Callable[[_FakeBrowserContext, str], Non
 }
 """Where a policy-blocked document sits in the inherited default context, given its URL."""
 
+_POLICIES_FOR_BROWSER_PAGES = [
+    pytest.param(EgressPolicy(allowed_domains=['example.com']), id='allowlist'),
+    # The suite's resolver answers every name, so the default policy admits `chrome://version/` as host `version`.
+    pytest.param(EgressPolicy(), id='default'),
+    pytest.param(EgressPolicy(block_private_addresses=False), id='open'),
+]
+"""Policies that refuse and that admit a `chrome://` page, which the default context leaves out under all of them."""
+
 
 class TestPlaywrightBrowserLifecycle:
     @pytest.mark.parametrize('tool_name', ['get_text', 'snapshot', 'screenshot', 'tabs'])
@@ -2497,30 +2505,29 @@ class TestPlaywrightBrowserLifecycle:
         assert all(not page.closed for page in browser.contexts[0].pages)
         assert browser.closed and cm.exited
 
+    @pytest.mark.parametrize('policy', _POLICIES_FOR_BROWSER_PAGES)
     @pytest.mark.parametrize(
         'start_url',
         [
             'chrome://newtab/',
+            'chrome://version/',
+            'chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html',
             'file:///home/agent/notes.txt',
             'data:text/html,<p>note</p>',
             'blob:https://example.com/preview',
         ],
     )
     async def test_default_context_leaves_tabs_outside_the_web_alone(
-        self, monkeypatch: pytest.MonkeyPatch, start_url: str
+        self, monkeypatch: pytest.MonkeyPatch, start_url: str, policy: EgressPolicy
     ) -> None:
         # A browser that opened on its start page holds nothing else, so refusing that tab would fail
-        # every attach. A `file:`, `data:` or `blob:` document in a tab falls under the same rule.
+        # every attach. Any other page outside the web falls under the same rule, whatever the policy.
         start = _FakePage(url=start_url, title='BROWSER_OWNED', body='BROWSER_OWNED')
         cm = _install_fake_driver(monkeypatch, start)
         _populate_default_context(monkeypatch, tabs=1)
         agent = Agent(
             TestModel(call_tools=['get_text', 'tabs']),
-            capabilities=[
-                PlaywrightBrowser(
-                    cdp_url='http://localhost:9222', cdp_context='default', allowed_domains=['example.com']
-                )
-            ],
+            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default', policy=policy)],
         )
         reported = _tool_results(await agent.run('inspect the existing browser'))
         assert 'Hello body' in reported
@@ -2536,13 +2543,6 @@ class TestPlaywrightBrowserLifecycle:
     async def test_default_context_lists_and_counts_only_the_tabs_it_adopts(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The start page's name does not resolve, as on a real resolver, so the default policy refuses it.
-        async def resolve(host: str) -> tuple[str, ...]:
-            if host == 'newtab':
-                raise socket.gaierror('Name or service not known')
-            return ('93.184.216.34',)
-
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
         cm = _install_fake_driver(monkeypatch, _FakePage(url='https://example.com/', title='Example'))
         start = _FakePage(url='chrome://newtab/', title='New Tab')
         # Eight adopted tabs reach the limit, so the start page fits only because it is not counted.
@@ -2559,19 +2559,16 @@ class TestPlaywrightBrowserLifecycle:
         assert browser is not None and len(browser.contexts[0].pages) == 9
         assert not start.closed and not start.handlers
 
-    async def test_default_context_names_a_tab_that_moved_to_a_page_outside_the_web(self) -> None:
+    @pytest.mark.parametrize('policy', _POLICIES_FOR_BROWSER_PAGES)
+    async def test_default_context_names_a_tab_that_moved_to_a_page_outside_the_web(self, policy: EgressPolicy) -> None:
         page = _FakePage(url='https://example.com/', body='Allowed content')
-        session = PlaywrightBrowserSession(
-            cdp_url='http://localhost:9222',
-            cdp_context='default',
-            policy=EgressPolicy(allowed_domains=['example.com']),
-        )
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default', policy=policy)
         async with session:
             tools = _toolset(page, session=session)
             assert await tools.get_text() == 'Allowed content'
-            page.url = 'chrome://settings/'
+            page.url = 'chrome://version/'
             result = await tools.get_text()
-        assert 'showing a page the agent cannot read: chrome://settings/' in result
+        assert 'showing a page the agent cannot read: chrome://version/' in result
         assert 'Close that tab in the provider browser' in result
         assert 'blocked by the browser policy' not in result
 

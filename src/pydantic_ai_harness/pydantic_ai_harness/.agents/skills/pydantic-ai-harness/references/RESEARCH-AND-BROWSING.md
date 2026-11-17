@@ -350,9 +350,10 @@ tool error and is retried, an exception ends the run, and the capability only di
 app deletes what the function created (record it on `ctx.deps`). `cdp_context='default'` reuses
 sign-ins and tabs instead of creating a `'new'` context. It requires a CDP endpoint and excludes
 `storage_state`. The agent can act as every signed-in account, so attach it to a profile dedicated
-to the agent, never an everyday browser, and set `allowed_domains` for untrusted pages. Tabs showing
-a page outside the web that the policy refuses (the browser's start page, `file:`, `data:`, `blob:`)
-are left out; other loaded tabs and frames must pass the egress policy, and new service-worker
+to the agent, never an everyday browser, and set `allowed_domains` for untrusted pages. Only
+`http(s)`, `about:blank` and error-page tabs are adopted: any other tab (the browser's start page,
+extension pages, `file:`, `data:`, `blob:`) is left out whatever the policy, and a tab that moves to
+one is refused. Loaded tabs and frames must pass the egress policy, and new service-worker
 registrations are refused; downloads follow the browser's settings.
 Playwright routes service-worker requests through the guards unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass

@@ -299,12 +299,15 @@ navigate the blocked tab in the provider browser and retry; Pydantic AI leaves i
 unchanged. A frame that reports no URL yet gets one second to load; if it still
 has none, the call returns a tool error asking the model to retry.
 
-A tab showing a page outside the web that the policy refuses, such as the
-browser's own `chrome://newtab/` start page or a `file:`, `data:` or `blob:`
-document, is left out: Pydantic AI does not list, read, navigate or close it,
-or count it toward the eight tabs, and opens a blank tab when no other is left.
-A tab that moves to such a page while attached returns a tool error naming the
-page.
+Only tabs showing an `http(s)` page, `about:blank` or Chromium's error page are
+adopted. Any other tab, such as the browser's own `chrome://newtab/` start page,
+an extension page, or a `file:`, `data:` or `blob:` document, is left out
+whatever the policy: Pydantic AI does not list, read, navigate or close it, or
+count it toward the eight tabs, and opens a blank tab when no other is left. A
+tab that moves to such a page while attached returns a tool error naming the
+page until it is navigated or closed. That includes a page the agent opens
+itself: under a policy that admits `chrome://` URLs, `navigate` still opens one
+and returns its text ([#13698](https://github.com/pydantic/pydantic-ai/issues/13698)).
 
 While attached, the session refuses new service-worker registrations, and
 Playwright leaves the browser's download and emulation settings as they are.
