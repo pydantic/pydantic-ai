@@ -901,7 +901,12 @@ async def _load(read: Callable[[str], Awaitable[bytes]], handle: str) -> bytes |
 
 
 _Entry = tuple[str, str, int, bool]
-"""A line to render: its prefix, its text, its index in the spill, and whether it is a match."""
+"""A line to render: its prefix, its text, its index in the spill, and whether it is a match.
+
+An index of -1 marks a separator between grep groups.
+"""
+
+_SEPARATOR: _Entry = ('', '', -1, False)
 
 
 def _byte_len(text: str) -> int:
@@ -918,44 +923,100 @@ def _decode(data: bytes) -> str:
     return data.decode('utf-8', 'surrogateescape')
 
 
-_Cut = tuple[int, int]
-"""A line cut by the output cap: its index in the spill and how many of its bytes were shown."""
+@dataclass
+class _Page:
+    """What `_fill` rendered within the output cap, and what it left out."""
+
+    lines: list[str] = field(default_factory=list[str])
+    shown: int = 0
+    """How many matches the page shows."""
+    cut: tuple[int, int] | None = None
+    """A match cut by the cap: its line index and how many of its bytes were shown."""
+    omitted: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
+    """Ranges of context line indices left out to stay within the cap."""
+    size: int = 0
+    first: int = -1
+    """The index of the first line offered, to report leading context that was dropped."""
+    kept: int = -1
+    """The index of the first line kept."""
+
+    def add(self, text: str, match: bool) -> None:
+        self.lines.append(text)
+        self.size += len(text) + 1
+        self.shown += match
 
 
-def _fill(entries: Iterable[_Entry]) -> tuple[list[str], int, _Cut | None]:
-    """Render `entries` up to the output cap: the lines, how many matches they show, and the match cut, if any.
+def _fill(entries: Iterable[_Entry]) -> _Page:
+    """Render `entries` up to the output cap.
 
     Stops before a line that would cross the cap, so the match count stays true to the body. Until
     the first match is in, leading context is dropped instead, so every page makes progress. A match
-    longer than the cap on its own is cut.
+    longer than the cap on its own is cut. Context left out either way is recorded in `omitted`.
     """
-    rendered: list[str] = []
-    size = shown = 0
-    for prefix, line, index, match in entries:
-        text = prefix + _display(line)
-        if size + len(text) > _MAX_READ_CHARS:
-            if shown:
-                break
-            rendered.clear()
-            size = 0
-            if not match:
-                continue
-            if len(text) > _MAX_READ_CHARS:
-                kept = line[: _MAX_READ_CHARS - len(prefix)]
-                return [prefix + _display(kept)], 1, (index, _byte_len(kept))
-        rendered.append(text)
-        size += len(text) + 1
-        shown += match
-    if rendered and rendered[-1] == '--':
-        rendered.pop()
-    return rendered, shown, None
+    page = _Page()
+    entries = iter(entries)
+    separate = False
+    for entry in entries:
+        if entry[2] < 0:
+            separate = True
+        elif _place(page, entries, entry, separate):
+            separate = False
+        else:
+            break
+    if page.kept > page.first:
+        page.omitted.insert(0, (page.first, page.kept - 1))
+    return page
 
 
-def _capped(text: str, cut: _Cut | None, more: str) -> str:
-    """The header note for output stopped at the cap, saying where the rest continues."""
-    notes: list[str] = []
-    if cut is not None:
-        index, shown_bytes = cut
+def _place(page: _Page, entries: Iterator[_Entry], entry: _Entry, separate: bool) -> bool:
+    """Add one line to `page`, returning `False` once the page is full."""
+    prefix, line, index, match = entry
+    if page.first < 0:
+        page.first = page.kept = index
+    text = ('--\n' if separate else '') + prefix + _display(line)
+    if page.size + len(text) <= _MAX_READ_CHARS:
+        page.add(text, match)
+        return True
+    if page.shown:
+        # A line opening the next group belongs to a match the next page shows.
+        if not (match or separate):
+            _omit(page, entries, index)
+        return False
+    page.lines.clear()
+    page.size = 0
+    page.kept = index if match else index + 1
+    if not match:
+        return True
+    if len(text) <= _MAX_READ_CHARS:
+        page.add(text, match)
+        return True
+    kept = line[: _MAX_READ_CHARS - len(prefix)]
+    page.add(prefix + _display(kept), match)
+    page.cut = (index, _byte_len(kept))
+    _omit(page, entries, None)
+    return False
+
+
+def _omit(page: _Page, entries: Iterator[_Entry], start: int | None) -> None:
+    """Record the context lines from `start` (or the next entry) up to the next match or group separator."""
+    end = start
+    for _, _, index, match in entries:
+        if index < 0 or match:
+            break
+        start = index if start is None else start
+        end = index
+    if start is not None and end is not None:
+        page.omitted.append((start, end))
+
+
+def _capped(text: str, page: _Page, more: str) -> str:
+    """The header note for output stopped at the cap, saying what was left out and where it continues."""
+    notes = [
+        f'context lines {start + 1}-{end + 1} omitted (line offset={start}, limit={end - start + 1})'
+        for start, end in page.omitted
+    ]
+    if page.cut is not None:
+        index, shown_bytes = page.cut
         offset = sum(_byte_len(line) for line in text.splitlines(keepends=True)[:index]) + shown_bytes
         notes.append(f"the cut line continues at unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}")
     if more:
@@ -1006,10 +1067,10 @@ async def _read_slice(
         end = offset + limit
     window = indices[first:end]
 
-    rendered, shown, cut = _fill(('', lines[index], index, True) for index in window)
-    more = f'the next line is at offset={first + shown}, from_end=False' if shown < len(window) else ''
-    header = f'[handle {handle!r}: {total:,} matching line(s); showing {shown}{_capped(text, cut, more)}]'
-    return '\n'.join([header, *rendered])
+    page = _fill(('', lines[index], index, True) for index in window)
+    more = f'the next line is at offset={first + page.shown}, from_end=False' if page.shown < len(window) else ''
+    header = f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{_capped(text, page, more)}]'
+    return '\n'.join([header, *page.lines])
 
 
 def _byte_slice(handle: str, data: bytes, offset: int, limit: int, from_end: bool) -> str:
@@ -1036,7 +1097,7 @@ def _grep_lines(lines: list[str], page: list[int], context: int) -> Iterator[_En
     for index in page:
         start = max(end, index - context)
         if end and start > end:
-            yield '--', '', 0, False
+            yield _SEPARATOR
         end = min(len(lines), index + context + 1)
         for n in range(start, end):
             match = n in hits
@@ -1075,10 +1136,9 @@ async def _grep(
     lines = text.splitlines()
     matches = [index for index, line in enumerate(lines) if pattern in line]
     page = matches[offset : offset + max_matches]
-    rendered, shown, cut = _fill(_grep_lines(lines, page, context))
-    more = len(matches) - offset - shown
-    remaining = f', {more:,} more; continue with offset={offset + shown}' if more > 0 else ''
-    header = (
-        f'[handle {handle!r}: {len(matches):,} matching line(s); showing {shown}{remaining}{_capped(text, cut, "")}]'
-    )
-    return '\n'.join([header, *rendered])
+    filled = _fill(_grep_lines(lines, page, context))
+    more = len(matches) - offset - filled.shown
+    remaining = f', {more:,} more; continue with offset={offset + filled.shown}' if more > 0 else ''
+    capped = _capped(text, filled, '')
+    header = f'[handle {handle!r}: {len(matches):,} matching line(s); showing {filled.shown}{remaining}{capped}]'
+    return '\n'.join([header, *filled.lines])

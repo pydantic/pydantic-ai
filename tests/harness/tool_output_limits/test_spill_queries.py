@@ -104,10 +104,12 @@ class TestGrepToolResult:
         )
 
     async def test_long_match_cut_by_the_cap_gives_its_byte_offset(self, tmp_path: Path) -> None:
-        out = await _query(tmp_path, 'é\n' + 'x' * 60_000, GREP_TOOL_NAME, {'pattern': 'x'})
+        out = await _query(tmp_path, 'é\n' + 'x' * 60_000 + '\nafter', GREP_TOOL_NAME, {'pattern': 'x'})
         header, body = out.split('\n', 1)
         assert header.endswith(
-            ": 1 matching line(s); showing 1, output capped at 50,000 chars; the cut line continues at unit='bytes', offset=50001, limit=50000]"
+            ': 1 matching line(s); showing 1, output capped at 50,000 chars; '
+            'context lines 1-1 omitted (line offset=0, limit=1); context lines 3-3 omitted (line offset=2, limit=1); '
+            "the cut line continues at unit='bytes', offset=50001, limit=50000]"
         )
         assert len(body) == 50_000 and body.startswith('2:x')
 
@@ -115,12 +117,34 @@ class TestGrepToolResult:
         payload = '\n'.join(['a' * 30_000, 'b' * 30_000, 'hit ' + 'c' * 30_000, 'after'])
         out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit'})
         header, body = out.split('\n', 1)
-        assert header.endswith(': 1 matching line(s); showing 1]')
+        assert header.endswith(
+            ': 1 matching line(s); showing 1, output capped at 50,000 chars; '
+            'context lines 1-2 omitted (line offset=0, limit=2)]'
+        )
         assert body.startswith('3:hit ') and body.endswith('\n4-after')
         out = await _query(
             tmp_path, '\n'.join(['a' * 30_000, 'hit ' + 'c' * 30_000]), GREP_TOOL_NAME, {'pattern': 'hit'}
         )
-        assert out.split('\n', 1)[1] == '2:hit ' + 'c' * 30_000
+        header, body = out.split('\n', 1)
+        assert header.endswith('context lines 1-1 omitted (line offset=0, limit=1)]')
+        assert body == '2:hit ' + 'c' * 30_000
+
+    async def test_long_context_after_the_last_match_is_reported(self, tmp_path: Path) -> None:
+        payload = '\n'.join(['hit ' + 'a' * 30_000, 'b' * 30_000, 'c'])
+        out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit'})
+        header, body = out.split('\n', 1)
+        assert header.endswith(
+            ': 1 matching line(s); showing 1, output capped at 50,000 chars; '
+            'context lines 2-3 omitted (line offset=1, limit=2)]'
+        )
+        assert body == '1:hit ' + 'a' * 30_000
+
+    async def test_cap_leaves_the_next_groups_context_to_the_next_page(self, tmp_path: Path) -> None:
+        payload = '\n'.join(['hit a ' + 'x' * 30_000, 'g1', 'g2', 'g3', 'c' * 30_000, 'hit b'])
+        out = await _query(tmp_path, payload, GREP_TOOL_NAME, {'pattern': 'hit', 'context': 1})
+        header, body = out.split('\n', 1)
+        assert header.endswith(': 2 matching line(s); showing 1, 1 more; continue with offset=1]')
+        assert body.endswith('\n2-g1')
 
     async def test_cap_stops_at_whole_lines_and_continues_from_there(self, tmp_path: Path) -> None:
         payload = '\n'.join(f'hit {i} ' + 'x' * 5_000 for i in range(25))
@@ -198,6 +222,10 @@ class TestReadToolResultBytes:
 
 
 class TestReadToolResultCap:
+    async def test_line_like_a_group_separator_is_kept(self, tmp_path: Path) -> None:
+        out = await _query(tmp_path, 'x' * 60 + '\n--\n', READ_TOOL_NAME, {})
+        assert out.endswith(': 2 matching line(s); showing 2]\n' + 'x' * 60 + '\n--')
+
     async def test_cut_line_continues_at_the_reported_byte_offset(self, tmp_path: Path) -> None:
         payload = 'short\r\n' + 'x' * 50_000 + 'TAIL\nnext'
         out = await _query(tmp_path, payload, READ_TOOL_NAME, {'offset': 1})

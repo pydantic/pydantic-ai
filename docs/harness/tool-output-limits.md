@@ -294,7 +294,8 @@ the model to retry.
 
 Both tools cap their output at 50,000 characters. They stop before the line that would cross the
 cap, and the header gives the `offset` of the next line (a read) or the next match (a search). A
-search drops leading context rather than its first match, so every page makes progress. A single
+search drops leading context rather than its first match, so every page makes progress, and its
+header lists any context it left out with the line `offset` and `limit` to read it. A single
 line longer than the cap is cut, and the header gives the byte offset its rest starts at, to read
 with `unit='bytes'`.
 
