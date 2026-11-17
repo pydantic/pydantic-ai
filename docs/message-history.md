@@ -1334,7 +1334,9 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
-    This means that if you want to keep the original message history, you need to make a copy of it.
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] then returns the processed history, while the result's
+    [`conversation`][pydantic_ai.agent.AgentRunResult.conversation] keeps the original history and every message the run added,
+    so you don't need to copy it yourself to store or continue the whole conversation.
     Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
 
     When using deferred tools, preserve their
@@ -1348,6 +1350,8 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
     produced during the current run. Messages provided via `message_history` are excluded —
     including the trailing `ModelRequest` when resuming without a user prompt, even though
     the framework may stamp it with the current run's `run_id` for observability.
+    Once a processor drops messages, [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] also
+    differs from `all_messages()`: it keeps the messages the processor dropped.
 
     To keep this working when your processor mutates or adds messages:
 

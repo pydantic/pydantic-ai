@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from .._appended_messages import append_to_history
 from .._run_context import AgentDepsT, RunContext
 from ..messages import ModelRequest, ToolAvailabilityDeltaPart
 from ..toolsets._capability_owned import tool_defs_from_pre_definition_load_returns
@@ -30,7 +31,7 @@ def record_loaded_capability_tools(
     tools_added = [tool_def.name for tool_def in newly_discovered]
     delta = ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=tools_added)])
     request_context.messages = [*request_context.messages, delta]
-    ctx.messages.append(delta)
+    append_to_history(ctx, delta)
     ctx.discovered_tool_names.update(tools_added)
     request_context.model_request_parameters = replace(
         request_context.model_request_parameters,

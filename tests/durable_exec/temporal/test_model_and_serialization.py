@@ -1137,6 +1137,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'validation_context',  # arbitrary user object with no serialization contract
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_appended_messages',  # run-local record of the history appended to in workflow code; never needed inside an activity
         '_event_stream_buffer',  # live run event buffer, unreachable from an activity (`emit` raises there)
         '_pending_immediate_dispatches',  # live workflow-side event deduplication state
         '_event_stream_replacements',  # live workflow-side legacy-replacement state applied at stream position

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai._appended_messages import append_to_history
 from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messages
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
@@ -102,7 +103,7 @@ def drain_pending_messages_at_end(
                 pending_messages = stamped_messages(
                     pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
                 )
-                ctx.messages.extend(pending_messages)
+                append_to_history(ctx, *pending_messages)
                 ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
                     EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
                 )
@@ -141,7 +142,7 @@ def drain_pending_messages_at_end(
     for pending, pending_messages in stamped:
         for message in pending_messages:
             if message is not final:
-                ctx.messages.append(message)
+                append_to_history(ctx, message)
         ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
             EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
         )
