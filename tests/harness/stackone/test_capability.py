@@ -13,7 +13,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
@@ -25,6 +25,13 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
 DepsT = TypeVar('DepsT')
+
+
+INDIVIDUAL_PHRASE = '{connector}_{action}_{entity}'
+
+
+def instructions(messages: list[ModelMessage]) -> str:
+    return '\n'.join(message.instructions or '' for message in messages if isinstance(message, ModelRequest))
 
 
 def tool_call_names(messages: list[ModelMessage]) -> set[str]:
@@ -228,9 +235,25 @@ class TestStackOneAuth:
             account_id='45320', auth=per_user_key, client=stackone_server, actions=['*_list_*']
         )
         agent = Agent(TestModel(), deps_type=str | None, capabilities=[capability])
-        with_key = await agent.run('list employees', deps='alice-key')
-        without_key = await agent.run('list employees', deps=None)
-        assert (tool_call_names(with_key.all_messages()), tool_call_names(without_key.all_messages())) == (
+        with_key = (await agent.run('list employees', deps='alice-key')).all_messages()
+        without_key = (await agent.run('list employees', deps=None)).all_messages()
+        assert (tool_call_names(with_key), tool_call_names(without_key)) == ({'bamboohr_list_employees'}, set())
+        assert (INDIVIDUAL_PHRASE in instructions(with_key), INDIVIDUAL_PHRASE in instructions(without_key)) == (
+            True,
+            False,
+        )
+
+    async def test_per_run_instructions_can_be_disabled(self, stackone_server: FastMCP):
+        capability = StackOne[str | None](
+            account_id='45320',
+            auth=per_user_key,
+            client=stackone_server,
+            actions=['*_list_*'],
+            include_instructions=False,
+        )
+        agent = Agent(TestModel(), deps_type=str | None, capabilities=[capability])
+        messages = (await agent.run('list employees', deps='alice-key')).all_messages()
+        assert (tool_call_names(messages), INDIVIDUAL_PHRASE in instructions(messages)) == (
             {'bamboohr_list_employees'},
-            set(),
+            False,
         )

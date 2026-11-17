@@ -9,7 +9,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset
 from pydantic_ai_harness._mcp import per_run_connection
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.stackone._toolset import (
@@ -111,8 +111,18 @@ class StackOne(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Build the StackOne toolset, connecting per run when `auth` is a function."""
         if callable(self.auth):
-            return per_run_connection(self.auth, self._connect, id=self._derived_id(), expects='a StackOne API key')
+            return per_run_connection(
+                self.auth, self._connect_for_run, id=self._derived_id(), expects='a StackOne API key'
+            )
         return self._connect(self.auth)
+
+    def _connect_for_run(self, auth: str) -> AbstractToolset[AgentDepsT]:
+        """Carry the usage instructions on the run's toolset, so a run without a key gets neither."""
+        toolset = self._connect(auth)
+        instructions = self._usage_instructions()
+        if instructions is None:
+            return toolset
+        return CombinedToolset([toolset, FunctionToolset(instructions=instructions)])
 
     def _connect(self, auth: str | None) -> StackOneToolset[AgentDepsT]:
         return StackOneToolset[AgentDepsT](
@@ -131,7 +141,13 @@ class StackOne(AbstractCapability[AgentDepsT]):
         return self.id if self.id is not None else f'{_ID_PREFIX}-{self.account_id}'
 
     def get_instructions(self) -> str | None:
-        """StackOne usage guidance; the underlying MCP toolset provides none itself."""
+        """StackOne usage guidance; the underlying MCP toolset provides none itself.
+
+        With a function `auth`, the per-run toolset carries it instead.
+        """
+        return None if callable(self.auth) else self._usage_instructions()
+
+    def _usage_instructions(self) -> str | None:
         if not self.include_instructions:
             return None
         mode = resolve_tool_mode(self.tool_mode, self.actions)
