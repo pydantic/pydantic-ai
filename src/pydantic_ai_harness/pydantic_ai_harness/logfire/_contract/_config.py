@@ -452,7 +452,7 @@ class AgentConfig(BaseModel):
 
     @field_validator('instructions', mode='before')
     @classmethod
-    def _drop_invalid_instructions(cls, data: Any) -> Any:
+    def _drop_invalid_instructions(cls, data: Any) -> Any:  # complexipy: ignore (kept diffable against logfire's copy)
         """Drop an instruction entry that doesn't validate, keeping its siblings and the rest of the config.
 
         An entry is the natural unit of degradation here, the same way a tool override is: each one adds

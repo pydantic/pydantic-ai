@@ -180,7 +180,9 @@ def _oversized_entry(text: str, *, instruction_id: str | None = None) -> ApplyIs
     )
 
 
-def apply_instructions(blocks: Sequence[Block], config: AgentConfig) -> AppliedInstructions:
+def apply_instructions(  # complexipy: ignore (kept diffable against logfire's copy)
+    blocks: Sequence[Block], config: AgentConfig
+) -> AppliedInstructions:
     """Apply the `instructions` section to the blocks an agent is about to send.
 
     An entry with an `id` replaces that block's text, or removes the block when its text is `None`.
@@ -353,7 +355,7 @@ def _namespace(tool: ToolDef, scope: CollisionScope) -> str | None:
     return tool.toolset if scope == 'toolset' else None
 
 
-def apply_tool_definitions(
+def apply_tool_definitions(  # complexipy: ignore (kept diffable against logfire's copy)
     tools: Sequence[ToolDef],
     config: AgentConfig,
     *,
@@ -701,7 +703,7 @@ def _baseline_parameters(tool: ToolDef) -> dict[str, ParameterOverride]:
     return parameters
 
 
-def build_baseline(
+def build_baseline(  # complexipy: ignore (kept diffable against logfire's copy)
     *,
     instructions: Sequence[Block] = (),
     model: str | None = None,

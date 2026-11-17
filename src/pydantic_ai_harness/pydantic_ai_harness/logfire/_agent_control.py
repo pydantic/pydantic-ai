@@ -225,6 +225,20 @@ def _report(policy: OnUnmatched, issues: Sequence[ApplyIssue]) -> None:
         raise UserError(str(exc)) from exc
 
 
+def _usable_model(model: str | None) -> str | None:
+    """The published model if this deployment can run it, else `None` with a warning."""
+    if model is None:
+        return None
+    try:
+        infer_model(model)
+    # `ImportError` is a model whose provider's extra this deployment does not install:
+    # resolving the provider imports its SDK, and that is not a reason to fail a run.
+    except (UserError, ValueError, ImportError) as error:
+        _warn_dropped(f'Managed agent config selects unknown model {model!r} ({error}); keeping the code model.')
+        return None
+    return model
+
+
 def _reset_config_hint_guard() -> None:  # pyright: ignore[reportUnusedFunction]
     """Clear the once-per-process hint guard. Intended for tests only."""
     with _config_hint_lock:
@@ -717,17 +731,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
                 code_model = ctx.model
                 self._code_model.set(f'{code_model.system}:{code_model.model_name}' if code_model is not None else None)
                 resolved = self._resolve_for_selection(self._ensure_variable_for_agent(ctx.agent), ctx)
-                model = resolved.value.model
-                if model is not None:
-                    try:
-                        infer_model(model)
-                    # `ImportError` is a model whose provider's extra this deployment does not install:
-                    # resolving the provider imports its SDK, and that is not a reason to fail a run.
-                    except (UserError, ValueError, ImportError) as error:
-                        _warn_dropped(
-                            f'Managed agent config selects unknown model {model!r} ({error}); keeping the code model.'
-                        )
-                        model = None
+                model = _usable_model(resolved.value.model)
                 if model is not None:
                     selected.append(model)
                 elif ctx.model is not None:
