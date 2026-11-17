@@ -365,12 +365,13 @@ def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio:
     return part.audio
 
 
-def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int) -> bytes:
+def seed_pcm_audio(*, audio: BinaryContent, provider_name: str | None, sample_rate: int) -> bytes:
     """Extract mono PCM16 bytes from retained WAV audio."""
+    target = f'{provider_name} realtime history' if provider_name else 'realtime history'
     if audio.media_type != 'audio/wav':
         raise UserError(
             f'`SpeechPart.audio` with media type {audio.media_type!r} cannot be seeded into '
-            f'{provider_name} realtime history. Use WAV audio matching the target session input format.'
+            f'{target}. Use WAV audio matching the target session input format.'
         )
     try:
         with wave.open(io.BytesIO(audio.data), 'rb') as wav:
@@ -380,12 +381,12 @@ def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int
             compression = wav.getcomptype()
             if source_rate != sample_rate:
                 raise UserError(
-                    f'Cannot seed retained audio recorded at {source_rate} Hz into {provider_name} realtime history: '
+                    f'Cannot seed retained audio recorded at {source_rate} Hz into {target}: '
                     f'expected {sample_rate} Hz. Resample it before passing `message_history`.'
                 )
             if channels != 1 or sample_width != 2 or compression != 'NONE':
                 raise UserError(
-                    f'Cannot seed retained audio into {provider_name} realtime history: expected mono 16-bit PCM WAV, '
+                    f'Cannot seed retained audio into {target}: expected mono 16-bit PCM WAV, '
                     f'got {channels} channel(s), {sample_width * 8}-bit samples, compression {compression!r}.'
                 )
             frame_count = wav.getnframes()
@@ -393,9 +394,7 @@ def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int
             if len(pcm) != frame_count * channels * sample_width:
                 raise wave.Error('truncated audio data')
     except (EOFError, wave.Error) as e:
-        raise UserError(
-            f'`SpeechPart.audio` cannot be seeded into {provider_name} realtime history because it is not valid WAV audio.'
-        ) from e
+        raise UserError(f'`SpeechPart.audio` cannot be seeded into {target} because it is not valid WAV audio.') from e
     return pcm
 
 

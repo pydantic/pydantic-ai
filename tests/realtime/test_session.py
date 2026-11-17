@@ -5286,6 +5286,12 @@ async def test_send_accepts_plain_content() -> None:
     await session.send('hello')
     # A WAV container (e.g. retained `SpeechPart.audio`) is unwrapped to the raw PCM the wire expects.
     await session.send(_wav_content(b'\x01\x02\x03\x04'))
+    # One recorded at another rate is refused; a session built without a model names no provider.
+    with pytest.raises(UserError) as exc_info:
+        await session.send(_wav_content(b'\x01\x02', 16000))
+    assert str(exc_info.value) == snapshot(
+        'Cannot seed retained audio recorded at 16000 Hz into realtime history: expected 24000 Hz. Resample it before passing `message_history`.'
+    )
     # Raw PCM `BinaryContent` passes through verbatim.
     await session.send(BinaryContent(data=b'\xaa\xbb', media_type='audio/pcm'))
 

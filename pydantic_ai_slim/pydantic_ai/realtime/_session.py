@@ -1993,7 +1993,7 @@ class RealtimeSession:
             await self.send_audio(
                 seed_pcm_audio(
                     audio=content,
-                    provider_name=self._provider_name or 'realtime',
+                    provider_name=self._provider_name,
                     sample_rate=self.audio_input_sample_rate,
                 )
             )
