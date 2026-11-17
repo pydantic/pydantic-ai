@@ -35,6 +35,7 @@ from ..tools import (
     ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
+    _listing_tools_before_tool_instance_defaults,  # pyright: ignore[reportPrivateUsage]
 )
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -736,6 +737,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         added = self.tools[tool.name]
         added.sequential = sequential
         added.requires_approval = requires_approval
+        assert added._shared_values is not None  # pyright: ignore[reportPrivateUsage]
+        added._shared_values.requires_approval = requires_approval  # pyright: ignore[reportPrivateUsage]
+        added._assigned_values = added._own_values()  # pyright: ignore[reportPrivateUsage]
         added.defer_loading = defer_loading
         added._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
         added._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
@@ -756,6 +760,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+        self._record_shared_values(tool)
         added = copy(tool)
         if added.max_retries is None and self.max_retries is not None:
             added.max_retries = self.max_retries
@@ -773,7 +778,23 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             added._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         if self.metadata is not None:
             added.metadata = self.metadata | (added.metadata or {})
+        added._assigned_values = added._own_values()  # pyright: ignore[reportPrivateUsage]
         self.tools[added.name] = added
+
+    def _record_shared_values(self, tool: Tool[AgentDepsT]) -> None:
+        """Record the values this toolset used to write onto `tool` itself, for Temporal and DBOS workflows started before toolsets stored copies.
+
+        Every copy shares the record, as every holder shared the `Tool`.
+        """
+        shared = tool._shared_values  # pyright: ignore[reportPrivateUsage]
+        if shared is None:
+            shared = tool._own_values()  # pyright: ignore[reportPrivateUsage]
+            tool._shared_values = shared  # pyright: ignore[reportPrivateUsage]
+        if shared.max_retries is None:
+            shared.max_retries = self.max_retries
+        shared.requires_approval = shared.requires_approval or self.requires_approval
+        if self.metadata is not None:
+            shared.metadata = self.metadata | (shared.metadata or {})
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:
@@ -798,9 +819,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
-            max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
-            if max_retries is None:
-                max_retries = ctx.max_retries
+            max_retries = self._max_retries_for(tool, ctx)
             # `retries` is keyed by the name the model calls the tool by, computed here by applying
             # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
             # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
@@ -857,10 +876,18 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         original_name = original_name if original_name is not None else tool_def.name
         tool = self.tools[original_name]
-        max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
-        return self._tool_for(
-            tool, tool_def, max_retries if max_retries is not None else ctx.max_retries, original_name
-        )
+        return self._tool_for(tool, tool_def, self._max_retries_for(tool, ctx), original_name)
+
+    def _max_retries_for(self, tool: Tool[AgentDepsT], ctx: RunContext[AgentDepsT]) -> int:
+        # Set while Temporal and DBOS list tools for a workflow started before toolsets stored copies: the tool then
+        # retries as often as it did then.
+        if _listing_tools_before_tool_instance_defaults.get():
+            max_retries = tool._values_before_copies().max_retries  # pyright: ignore[reportPrivateUsage]
+        else:
+            max_retries = tool.max_retries
+        if max_retries is None:
+            max_retries = self.max_retries
+        return max_retries if max_retries is not None else ctx.max_retries
 
     def _tool_for(
         self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int, original_name: str

@@ -7044,6 +7044,154 @@ async def test_dbos_agent_per_run_toolset_recovers_with_recorded_tools(dbos: DBO
     assert [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps] == _in_parallel
 
 
+def _call_both_tools_and_retries(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    retried = [p for p in messages[-1].parts if isinstance(p, ToolReturnPart) and p.outcome == 'retried']
+    if retried:
+        return ModelResponse(
+            parts=[ToolCallPart(p.tool_name, {}, tool_call_id=f'retry-{len(messages)}') for p in retried]
+        )
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(
+        parts=[ToolCallPart('first', {}, tool_call_id='1'), ToolCallPart('second', {}, tool_call_id='2')]
+    )
+
+
+async def first_once() -> str:
+    return await first_step_one()
+
+
+async def first_after_two_retries(ctx: RunContext[None]) -> str:
+    if ctx.retry < 2:
+        raise ModelRetry('Try again.')
+    return await first_step_one()
+
+
+_shared_tools = {
+    'requires_approval': Tool(first_once, name='first'),
+    'max_retries': Tool(first_after_two_retries, name='first'),
+    'metadata': Tool(first_once, name='first'),
+}
+# Each applies its default to its own copy of the shared `Tool`, which the agents hold through a toolset without it.
+_shared_tool_defaults_toolsets = [
+    FunctionToolset([_shared_tools['requires_approval']], requires_approval=True),
+    FunctionToolset([_shared_tools['max_retries']], max_retries=2),
+    FunctionToolset([_shared_tools['metadata']], metadata={'dbos': {'child_workflow': {}}}),
+]
+_shared_tool_defaults_agents = {
+    field: Agent(
+        FunctionModel(_call_both_tools_and_retries),
+        name=f'shared_{field}_tool_instance',
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[FunctionToolset([tool, Tool(second)], id='tools')],
+        capabilities=[DBOSDurability()],
+    )
+    for field, tool in _shared_tools.items()
+}
+shared_tool_defaults_crash_armed = threading.Event()
+
+
+@DBOS.workflow()
+async def shared_tool_defaults_workflow(field: str) -> str:
+    output = (await _shared_tool_defaults_agents[field].run('Call both tools.')).output
+    if shared_tool_defaults_crash_armed.is_set():
+        shared_tool_defaults_crash_armed.clear()
+        raise _ProcessCrash
+    return 'deferred' if isinstance(output, DeferredToolRequests) else output
+
+
+_both_calls = ['__model.request', 'first_step_one', 'second_step', '__model.request']
+
+
+@pytest.mark.parametrize(
+    ('field', 'unpatched_run', 'patched_run'),
+    [
+        (
+            'requires_approval',
+            ('deferred', ['__model.request', 'second_step']),
+            ('done', [_patch_step, *_both_calls]),
+        ),
+        (
+            'max_retries',
+            (
+                'done',
+                [
+                    '__model.request',
+                    'second_step',
+                    '__model.request',
+                    '__model.request',
+                    'first_step_one',
+                    '__model.request',
+                ],
+            ),
+            ('failed', [_patch_step, '__model.request', 'second_step', '__model.request']),
+        ),
+        (
+            'metadata',
+            (
+                'done',
+                [
+                    '__model.request',
+                    'shared_metadata_tool_instance__function_toolset__tools.call_tool__child_workflow',
+                    'DBOS.getResult',
+                    'second_step',
+                    '__model.request',
+                ],
+            ),
+            ('done', [_patch_step, *_both_calls]),
+        ),
+    ],
+)
+async def test_dbos_shared_tool_defaults_recover(
+    dbos: DBOS,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    unpatched_run: tuple[str, list[str]],
+    patched_run: tuple[str, list[str]],
+) -> None:
+    """A workflow started while `FunctionToolset` wrote its defaults onto a shared `Tool` recovers.
+
+    Without the patch marker, the agent lists the `Tool` with the `requires_approval`, `max_retries` and `metadata`
+    another toolset holding it set, as released versions did: the call waits for approval, gets that toolset's two
+    retries, or runs in a child workflow. A new workflow lists the agent's own values. Faking `DBOS.patch_async`
+    stands in for the code before the upgrade, which never called it.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+
+    async def recorded_steps(workflow_id: str) -> list[str]:
+        steps = await dbos.list_workflow_steps_async(workflow_id)
+        return [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps]
+
+    async def start() -> tuple[str, bool]:
+        """Start the workflow; return its ID and whether it crashed after the run rather than failing in it."""
+        workflow_id = f'shared-tool-defaults-{field}-{uuid.uuid4()}'
+        shared_tool_defaults_crash_armed.set()
+        with SetWorkflowID(workflow_id), pytest.raises((_ProcessCrash, UnexpectedModelBehavior)) as exc_info:
+            await shared_tool_defaults_workflow(field)
+        shared_tool_defaults_crash_armed.clear()
+        return workflow_id, isinstance(exc_info.value, _ProcessCrash)
+
+    async def unpatched(patch_name: str) -> bool:
+        return False
+
+    monkeypatch.setattr(DBOS, 'patch_async', unpatched)
+    unpatched_id, unpatched_crashed = await start()
+    monkeypatch.undo()
+    patched_id, patched_crashed = await start()
+
+    await asyncio.sleep(0.01)
+    for (workflow_id, crashed), (result, steps) in (
+        ((unpatched_id, unpatched_crashed), unpatched_run),
+        ((patched_id, patched_crashed), patched_run),
+    ):
+        assert crashed == (result != 'failed')
+        if crashed:
+            assert await (await DBOS.resume_workflow_async(workflow_id)).get_result() == result
+        assert await recorded_steps(workflow_id) == steps
+
+
 async def test_dbos_tool_instance_defaults_patch_interrupted(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
     """A run whose patch probe another run's step interrupts lists the tools as before the patch, and recovers that way.
 

@@ -71,7 +71,7 @@ from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failin
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowHistory
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.testing import ActivityEnvironment
@@ -2511,6 +2511,156 @@ async def test_function_toolset_defaults_on_tool_instances_replay(
 
     replayer = Replayer(
         workflows=[ToolInstancesWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    )
+    for history in (unpatched_history, patched_history):
+        assert (await replayer.replay_workflow(history)).replay_failure is None
+
+
+# --- A `Tool` shared with a `FunctionToolset` that sets a default, across the upgrade that copied it ---
+
+
+def _call_both_tools_and_retries(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    retried = [p for p in messages[-1].parts if isinstance(p, ToolReturnPart) and p.outcome == 'retried']
+    if retried:
+        return ModelResponse(
+            parts=[ToolCallPart(p.tool_name, {}, tool_call_id=f'retry-{len(messages)}') for p in retried]
+        )
+    return _call_both_tools_once(messages, info)
+
+
+async def first_in_workflow() -> str:
+    return 'first'
+
+
+async def first_after_two_retries(ctx: RunContext[None]) -> str:
+    if ctx.retry < 2:
+        raise ModelRetry('Try again.')
+    return 'first'
+
+
+_shared_tools = {
+    'requires_approval': Tool(first_in_workflow, name='first'),
+    'max_retries': Tool(first_after_two_retries, name='first'),
+    'metadata': Tool(first_in_workflow, name='first'),
+    'approval_set_on_copy': Tool(first_in_workflow, name='first'),
+}
+# Each applies its default to its own copy of the shared `Tool`, which the agents hold through a toolset without it.
+_shared_tool_defaults_toolsets = [
+    FunctionToolset([_shared_tools['requires_approval']], requires_approval=True),
+    FunctionToolset([_shared_tools['max_retries']], max_retries=2),
+    FunctionToolset([_shared_tools['metadata']], metadata={'temporal': False}),
+]
+_shared_tool_defaults_agent_toolsets = {
+    case: FunctionToolset([tool, Tool(second)], id='tools') for case, tool in _shared_tools.items()
+}
+# Changing a toolset's copy reached every holder of the `Tool` back when it held the `Tool` itself, so a workflow
+# started then lists it the same way.
+_shared_tool_defaults_agent_toolsets['approval_set_on_copy'].tools['first'].requires_approval = True
+_shared_tool_defaults_agents = {
+    case: Agent(
+        FunctionModel(_call_both_tools_and_retries),
+        name=f'shared_{case}_tool_instance',
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    for case, toolset in _shared_tool_defaults_agent_toolsets.items()
+}
+
+
+@workflow.defn
+class SharedToolDefaultsWorkflow:
+    @workflow.run
+    async def run(self, case: str) -> str:
+        output = (await _shared_tool_defaults_agents[case].run('Call both tools.')).output
+        return 'deferred' if isinstance(output, DeferredToolRequests) else output
+
+
+_both_calls = ['model_request', 'call_tool', 'call_tool', 'model_request']
+
+
+@pytest.mark.parametrize(
+    ('case', 'unpatched_run', 'patched_run'),
+    [
+        (
+            'requires_approval',
+            ('deferred', ['model_request', 'call_tool']),
+            ('done', _both_calls),
+        ),
+        (
+            'max_retries',
+            ('done', [*_both_calls, 'call_tool', 'model_request', 'call_tool', 'model_request']),
+            ('failed', [*_both_calls, 'call_tool']),
+        ),
+        (
+            'metadata',
+            ('done', ['model_request', 'call_tool', 'model_request']),
+            ('done', _both_calls),
+        ),
+        (
+            'approval_set_on_copy',
+            ('deferred', ['model_request', 'call_tool']),
+            ('deferred', ['model_request', 'call_tool']),
+        ),
+    ],
+)
+async def test_shared_tool_defaults_replay(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    unpatched_run: tuple[str, list[str]],
+    patched_run: tuple[str, list[str]],
+):
+    """A history recorded while `FunctionToolset` wrote its defaults onto a shared `Tool` replays.
+
+    Without the patch marker, the agent lists the `Tool` with the `requires_approval`, `max_retries` and `metadata`
+    another toolset holding it set, as released versions did: the call waits for approval, gets that toolset's two
+    retries, or runs in the workflow. A new run lists the agent's own values. A value set on the agent's copy is
+    listed in both. Unsandboxed, so `workflow.patched` can be faked for the original run.
+    """
+
+    async def run_workflow() -> tuple[tuple[str, list[str]], WorkflowHistory]:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[SharedToolDefaultsWorkflow],
+            plugins=[AgentPlugin(_shared_tool_defaults_agents[case])],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await client.start_workflow(
+                SharedToolDefaultsWorkflow.run,
+                args=[case],
+                id=f'shared-tool-defaults-{case}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+            try:
+                result = await handle.result()
+            except WorkflowFailureError:
+                result = 'failed'
+        history = await handle.fetch_history()
+        activities = [
+            event.activity_task_scheduled_event_attributes.activity_type.name.rsplit('__', 1)[-1]
+            for event in history.events
+            if event.HasField('activity_task_scheduled_event_attributes')
+        ]
+        return (result, activities), history
+
+    def unpatched(patch_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(workflow, 'patched', unpatched)
+    unpatched_result, unpatched_history = await run_workflow()
+    monkeypatch.undo()
+    patched_result, patched_history = await run_workflow()
+
+    assert unpatched_result == unpatched_run
+    assert patched_result == patched_run
+
+    replayer = Replayer(
+        workflows=[SharedToolDefaultsWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=UnsandboxedWorkflowRunner(),
     )
     for history in (unpatched_history, patched_history):
         assert (await replayer.replay_workflow(history)).replay_failure is None

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from dbos._context import DBOSContext
 
 TOOL_INSTANCE_DEFAULTS_PATCH = 'pydantic_ai:function_toolset_defaults_on_tool_instances'
-"""`DBOS.patch_async()` name marking workflows in which `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
+"""`DBOS.patch_async()` name marking workflows in which `FunctionToolset` applied its defaults to its own copy of each `Tool` instance."""
 
 _tool_instance_defaults_patched: WeakKeyDictionary[DBOSContext, asyncio.Task[bool] | bool] = WeakKeyDictionary()
 """Each workflow execution's `DBOS.patch_async()` result, shared by the agent runs in it like `workflow.patched()`'s."""
@@ -26,10 +26,11 @@ _tool_instance_defaults_patched: WeakKeyDictionary[DBOSContext, asyncio.Task[boo
 
 @dataclass
 class ToolInstanceDefaultsGateToolset(WrapperToolset[AgentDepsT]):
-    """Lists `function_toolset`'s `Tool` instances without the `sequential` and `defer_loading` a `FunctionToolset` set on them, in workflows started before it did.
+    """Lists `function_toolset`'s `Tool` instances the way they were listed before `FunctionToolset` stored copies, in workflows started before then.
 
-    DBOS numbers steps as they start, and a sequential or deferred tool changes which steps the workflow
-    starts, so those workflows can only recover without them.
+    DBOS numbers steps as they start, and a tool's `sequential`, `defer_loading`, `requires_approval`,
+    `max_retries` and `metadata` change which steps the workflow starts, so those workflows can only recover
+    with the old values.
     """
 
     function_toolset: FunctionToolset[AgentDepsT]
@@ -56,7 +57,7 @@ class ToolInstanceDefaultsGateToolset(WrapperToolset[AgentDepsT]):
 
 
 def gate_tool_instance_defaults(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-    """Wrap `toolset` in a `ToolInstanceDefaultsGateToolset` if it's a `FunctionToolset` holding a `Tool` a `FunctionToolset` made sequential or deferred."""
+    """Wrap `toolset` in a `ToolInstanceDefaultsGateToolset` if it's a `FunctionToolset` holding a `Tool` it lists differently from how it was listed before `FunctionToolset` stored copies."""
     if isinstance(toolset, FunctionToolset) and holds_tool_instance_defaults(toolset):
         return ToolInstanceDefaultsGateToolset(toolset, function_toolset=toolset)
     return toolset

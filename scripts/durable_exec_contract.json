@@ -6613,7 +6613,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
       ]
     },
-    "_without_toolset_sequential_defer_loading": {
+    "_listing_tools_before_tool_instance_defaults": {
       "engines": [
         "durable_exec"
       ],
