@@ -661,6 +661,8 @@ agent = Agent(
 
 Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and become CRITICAL for iterations once the remaining request count drops to `critical_remaining_iterations` (default `3`). It watches three kinds of limit -- `max_iterations`, `max_context_tokens` (or `max_context_fraction`), and `max_total_tokens` -- and by default warns on whichever are configured; narrow that with `warn_on`.
 
+To tell the model on every request how much of the run's `UsageLimits` and spend budgets is left, from the first request rather than past a threshold, use [Report Remaining Budget](report-remaining-budget.md).
+
 ## Cache tradeoff
 
 Clearing, deduplicating, clamping, and summarizing all rewrite message content, which invalidates the provider's prompt cache from the edit point onward -- the next request pays a cache-write. For `ClearToolResults`, use `min_clear_tokens` to skip clearing that reclaims too little to be worth busting the cache. For `ClampOversizedMessages` the cache bust is unavoidable, because the alternative is a failed request.

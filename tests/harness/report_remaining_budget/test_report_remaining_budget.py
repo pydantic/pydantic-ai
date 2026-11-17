@@ -23,10 +23,7 @@ from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
 from pydantic_ai_harness.spend_limits import Budget
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.spend_limits.UnpricedModelWarning'),
-]
+pytestmark = pytest.mark.filterwarnings('ignore::pydantic_ai_harness.spend_limits.UnpricedModelWarning')
 
 
 def _model(*usages: RequestUsage) -> FunctionModel:

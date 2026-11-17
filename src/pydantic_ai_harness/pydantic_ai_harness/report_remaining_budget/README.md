@@ -49,7 +49,7 @@ Budget remaining:
 - Token counts below 1,000 are exact; larger ones are rounded (`about 1.3k`, `about 38k`, `about 1.2M`), so the status stays short. Remainders never go below zero.
 - A `cost_limit` counts a run with no price data as having spent nothing; core warns with `CostNotFoundWarning` in that case.
 
-Nothing is sent when no limit applies, for example with `UsageLimits(request_limit=None)` and no `spend_limits`.
+A run without `usage_limits=` still has core's default `request_limit=50`, so that is reported. Nothing is sent only when no limit applies: `UsageLimits(request_limit=None)` with no other limit, and no `spend_limits`.
 
 ## Caching
 
