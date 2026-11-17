@@ -968,6 +968,9 @@ def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://api.minimax.io/anthropic')
     assert shim._anthropic_native_capabilities() == []  # pyright: ignore[reportPrivateUsage]
 
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://proxy.example.com/api.anthropic.com')
+    assert shim._anthropic_native_capabilities() == []  # pyright: ignore[reportPrivateUsage]
+
 
 def test_todo_write_renders_plan_via_harness():
     # TodoWrite maps Claude's todo schema onto the harness `planning` capability
@@ -1190,10 +1193,10 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
     assert _run_shim(_respond, sink) == 0
     assert retries == [
         "Your previous response failed the application's validation (this is automated feedback, not a message "
-        'from the user):\n<retry_feedback>\n'
+        'from the user):\n<pyai:retry_feedback>\n'
         'You ended your turn without emitting a safe output, so nothing has been posted. '
         'Continue the task and finish by calling the safe-output tool it ends with, '
-        'or `noop` if there is nothing to report.\n</retry_feedback>'
+        'or `noop` if there is nothing to report.\n</pyai:retry_feedback>'
     ]
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
 
@@ -1202,9 +1205,9 @@ def _retry_feedback_text(part: ModelRequestPart | ModelResponsePart) -> str | No
     """The text of output-validator retry feedback as a model receives it, or `None` for any other part.
 
     The model is handed prepared messages, where a `ModelRetry`'s `RetryFeedbackPart` has already become
-    user text fenced in `<retry_feedback>` behind the application attribution line.
+    user text fenced in `<pyai:retry_feedback>` behind the application attribution line.
     """
-    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback>' in part.content:
+    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<pyai:retry_feedback>' in part.content:
         return part.content
     return None
 
@@ -1672,10 +1675,13 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
     (tmp_path / 'module.py').write_text('', encoding='utf-8')
     assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
     assert {'Glob', 'Read', 'Task', 'mcp__safeoutputs__noop'} <= offered[0]
-    assert (
-        offered[1:]
-        == [{'mcp__safeoutputs__noop', 'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'}] * 2
-    )
+    assert offered[1] == {
+        'mcp__safeoutputs__noop',
+        'mcp__safeoutputs__probe',
+        'mcp__safeoutputs__submit_pull_request_review',
+    }
+    # The `noop` posted inside the reserve leaves the closing request no tools.
+    assert offered[2] == set()
     # The in-flight request's tool call still ran.
     assert len(glob_returns) == 1
     assert 'module.py' in glob_returns[0]
@@ -1768,7 +1774,7 @@ def test_safe_output_past_its_limit_is_no_longer_offered(monkeypatch: pytest.Mon
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+    # Outside the time reserve: a placeholder `noop` inside it would leave the model no tools for the review.
     noop_offered: list[bool] = []
 
     def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1784,6 +1790,52 @@ def test_safe_output_past_its_limit_is_no_longer_offered(monkeypatch: pytest.Mon
     assert _run_shim(_respond, sink, mcp_tool_names=True, noop_max=1) == 0
     # The second `noop` is past the limit, so the third request no longer offers it.
     assert noop_offered == [True, True, False, False]
+
+
+@pytest.mark.parametrize(
+    ('noop_in_reserve', 'offered_last', 'probe_return'),
+    [
+        (True, set[str](), 'error: the time budget is nearly spent; finish the task from what you already have'),
+        (False, {'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'}, 'nothing new'),
+    ],
+)
+def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, noop_in_reserve: bool, offered_last: set[str], probe_return: str
+):
+    """Streaming Resilience Sweep's model posted its `noop` in the time reserve, then called `missing_data` in a loop.
+
+    A call from memory is answered without running. A `noop` before the reserve can be a progress note, so it
+    leaves the reserve's safe outputs offered, also after gh-aw rejects a second `noop` inside the reserve.
+    """
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Streaming Resilience Sweep')
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    seconds_left = shim.RUN_TIME_RESERVE_SECS + (-1 if noop_in_reserve else 60)
+    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + seconds_left)
+    offered: list[set[str]] = []
+    probe_returns: list[str] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append({tool_def.name for tool_def in info.function_tools})
+        probe_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'mcp__safeoutputs__probe'
+        )
+        if len(offered) == 1:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'nothing to report'})])
+        monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+        if len(offered) == 2:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'still nothing'})])
+        if not probe_returns:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__probe', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink, mcp_tool_names=True, noop_max=1) == 0
+    assert probe_returns == [probe_return]
+    assert len(offered) == 4
+    assert offered[-1] == offered_last
 
 
 @pytest.mark.parametrize('parallel_tasks', [1, 2])

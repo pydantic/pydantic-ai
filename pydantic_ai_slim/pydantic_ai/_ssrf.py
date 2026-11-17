@@ -803,8 +803,12 @@ async def safe_download(
                 await response.aclose()
 
 
+class DownloadTooLargeError(ValueError):
+    """A response body exceeded the `max_bytes` passed to `safe_download`."""
+
+
 def _download_exceeds(max_bytes: int) -> ValueError:
-    return ValueError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
+    return DownloadTooLargeError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
 
 
 def _response_with_decoded_content(response: httpx2.Response, content: bytes) -> httpx2.Response:

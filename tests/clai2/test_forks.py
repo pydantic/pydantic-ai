@@ -15,6 +15,7 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.utils import Event
 from rich.console import Console
 from rich.text import Text
 
@@ -493,7 +494,8 @@ class Script:
 
         class Prompt(Generic[PromptT]):
             def __init__(self, **kwargs: object) -> None:
-                pass
+                self.app = self
+                self.on_reset: Event[Prompt[PromptT]] = Event(self)
 
             async def prompt_async(self, label: str, **kwargs: object) -> str:
                 step = steps.pop(0)

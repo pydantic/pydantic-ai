@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypeAlias, cast
@@ -13,6 +13,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
+from pydantic_ai._durable_replay import replay_scope
 from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -56,6 +57,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._function_toolset import gate_tool_instance_defaults
 from ._operation_backend import (
     TemporalBoundOperation,
     TemporalOperationBackend,
@@ -84,6 +86,9 @@ from ._transports import (
 
 _STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
 """`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
+
+_DURABLE_COUNT_TOKENS_PATCH = 'pydantic_ai:durable_count_tokens'
+"""`workflow.patched()` ID marking histories in which a count ahead of a request runs in an activity."""
 
 _DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
     ModelRequestRejectedError,
@@ -141,6 +146,11 @@ It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including th
 arguments the workflow's run method needs to resume. Returning without calling it defers the
 continuation to the next model request.
 """
+
+
+def _replaying_history() -> bool:
+    """Workflow code running while Temporal replays history already ran, and recorded its telemetry, before."""
+    return workflow.in_workflow() and workflow.unsafe.is_replaying_history_events()
 
 
 @dataclass(init=False, kw_only=True)
@@ -393,14 +403,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         request_stream = self._bound_model_operations.request_stream
         compact_messages = self._bound_model_operations.compact_messages
         cancel_suspended_response = self._bound_model_operations.cancel_suspended_response
+        count_tokens = self._bound_model_operations.count_tokens
         assert isinstance(request, TemporalBoundOperation)
         assert isinstance(request_stream, TemporalBoundOperation)
         assert isinstance(compact_messages, TemporalBoundOperation)
         assert isinstance(cancel_suspended_response, TemporalBoundOperation)
+        assert isinstance(count_tokens, TemporalBoundOperation)
         self.request_activity = request.registration
         self.request_stream_activity = request_stream.registration
         self.compact_messages_activity = compact_messages.registration
         self.cancel_suspended_response_activity = cancel_suspended_response.registration
+        self.count_tokens_activity = count_tokens.registration
 
         if self._event_stream_handler is not None:
             self._bound_event_operation = self._bind_event_operation(backend)
@@ -439,6 +452,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         config.update(self._toolset_activity_config.get(toolset_id, {}))
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
         return config
+
+    def _function_tools_listing_in_durable_context(
+        self, toolset: FunctionToolset[AgentDepsT]
+    ) -> AbstractContextManager[None]:
+        return gate_tool_instance_defaults(toolset)
 
     @contextmanager
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
@@ -555,6 +573,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
 
+    def _counts_tokens_in_durable_unit(self) -> bool:
+        return workflow.patched(_DURABLE_COUNT_TOKENS_PATCH)
+
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
@@ -568,12 +589,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads inside Temporal workflows."""
+        """Disable threads inside Temporal workflows, and keep replayed work out of telemetry."""
         if not self.in_durable_context:
             return await handler()
 
-        with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            return await handler()
+        with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
+            return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""

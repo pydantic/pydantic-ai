@@ -1371,6 +1371,59 @@ class TestEndToEnd:
         assert (tmp_path / 'ran').exists()
 
 
+class TestLoadActive:
+    """`CapabilityCreation.load_active` refuses a workspace the run would refuse, before running authored code."""
+
+    @pytest.mark.parametrize('authority', ['user', 'none'])
+    async def test_refuses_a_store_directory_below_operator_authority(
+        self, tmp_path: Path, authority: Authority
+    ) -> None:
+        creation = CapabilityCreation[None](_stored_without_validation(tmp_path))
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority=authority)
+        with pytest.raises(UserError, match=f"has `'{authority}'` authority"):
+            await creation.load_active(workspace)
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_refuses_a_workspace_that_is_not_this_machine(self, tmp_path: Path) -> None:
+        creation = CapabilityCreation[None](_stored_without_validation(tmp_path))
+        with pytest.raises(UserError, match='imports model-written Python into the agent process'):
+            await creation.load_active(_Sandbox(tmp_path))
+        assert not (tmp_path / 'ran').exists()
+
+    async def test_loads_a_store_directory_with_operator_authority(self, tmp_path: Path) -> None:
+        creation = CapabilityCreation[None](_stored_without_validation(tmp_path))
+        active = await creation.load_active(LocalWorkspaceBackend(tmp_path))
+        assert [type(capability).__name__ for capability in active] == ['Authored']
+        assert (tmp_path / 'ran').exists()
+
+    async def test_store_directory_outside_the_workspace_must_be_named_in_path_authority(self, tmp_path: Path) -> None:
+        (tmp_path / 'workspace').mkdir()
+        store = _stored_without_validation(tmp_path)
+        creation = CapabilityCreation[None](store)
+        backend = LocalWorkspaceBackend(tmp_path / 'workspace')
+        with pytest.raises(UserError, match="has `'none'` authority"):
+            await creation.load_active(backend)
+        assert not (tmp_path / 'ran').exists()
+
+        named = AuthorityWorkspace(Workspace(backend), authority='operator', path_authority={str(store): 'operator'})
+        assert len(await creation.load_active(named)) == 1
+        assert (tmp_path / 'ran').exists()
+
+
+def _stored_without_validation(tmp_path: Path) -> Path:
+    """A store holding the `_author_call` module, written without running it, so only a load can leave `ran`."""
+    store = tmp_path / 'store'
+    store.mkdir()
+    code = _author_call(tmp_path).args_as_dict()['code']
+    _write(store, 'authored', code)
+    record = AuthoredCapability(name='authored', module_file='authored.py', class_name='Authored')
+    (store / 'manifest.json').write_text(
+        f'{{"capabilities": [{record.model_dump_json()}]}}',
+        encoding='utf-8',
+    )
+    return store
+
+
 def _authoring_model(tmp_path: Path) -> FunctionModel:
     """Make a model that authors a capability, then finishes."""
 

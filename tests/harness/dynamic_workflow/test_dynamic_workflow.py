@@ -38,16 +38,19 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.dynamic_workflow import (
     DynamicWorkflow,
     DynamicWorkflowToolset,
     WorkflowAgent,
+    WorkflowCall,
     WorkflowResourceLimits,
 )
 
 from .._deferred_tools import deferring_agent, pending_agent
+from ._concurrent_sub_agents import DeferredStarts
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -515,8 +518,8 @@ async def test_sleep_completes_without_an_os_handler(code: str) -> None:
     assert out == 'awake'
 
 
-async def test_sleeps_are_charged_to_max_duration_secs() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 1})
+async def test_sleeps_are_charged_to_max_duration_seconds() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_seconds': 1})
     with pytest.raises(ModelRetry, match=r'TimeoutError: sleeping 5s would exceed the 1s this code may sleep'):
         await _run_script(ts, 'import time\ntime.sleep(5)')
 
@@ -1369,13 +1372,13 @@ async def test_sub_agent_output_serialization_error_is_wrapped() -> None:
 
 
 async def test_runaway_loop_stopped_by_duration_cap() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 0.2})
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_seconds': 0.2})
     with pytest.raises(ModelRetry, match='Runtime error'):
         await _run_script(ts, 'while True:\n    x = 1')
 
 
 async def test_awaiting_sub_agents_does_not_count_against_duration_cap() -> None:
-    # `max_duration_secs` bounds in-sandbox execution time, not wall-clock: time the script spends
+    # `max_duration_seconds` bounds in-sandbox execution time, not wall-clock: time the script spends
     # awaiting sub-agents is spent suspended on the host, so it must not accrue against the cap.
     # Here three sub-agents each sleep 0.2s on the host under a 0.1s cap; the workflow still
     # completes. Guards the documented behavior that the timer excludes sub-agent latency.
@@ -1384,7 +1387,9 @@ async def test_awaiting_sub_agents_does_not_count_against_duration_cap() -> None
         return ModelResponse(parts=[TextPart('done')])
 
     sub: Agent[object, str] = Agent(FunctionModel(slow_model), name='sub')
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=sub)], resource_limits={'max_duration_secs': 0.1})
+    ts = DynamicWorkflowToolset[object](
+        agents=[WorkflowAgent(agent=sub)], resource_limits={'max_duration_seconds': 0.1}
+    )
     code = "import asyncio\nawait asyncio.gather(sub(task='a'), sub(task='b'), sub(task='c'))"
     assert await _run_script(ts, code) == ['done', 'done', 'done']
 
@@ -1404,10 +1409,31 @@ async def test_unlimited_runs_without_a_backstop() -> None:
     assert out == 2
 
 
+def test_max_duration_secs_is_a_deprecated_alias() -> None:
+    renamed = r"resource_limits=\{'max_duration_secs': \.\.\.\}\)` has been renamed"
+    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflow\({renamed}'):
+        capability = DynamicWorkflow[object](agents=[_sub_agent()], resource_limits={'max_duration_secs': 5})
+    assert capability.resource_limits == {'max_duration_seconds': 5}
+    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflowToolset\({renamed}'):
+        toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 5})
+    assert toolset.resource_limits == {'max_duration_seconds': 5}
+    with pytest.raises(TypeError, match='`max_duration_secs` is its deprecated name'):
+        DynamicWorkflowToolset[object](
+            agents=[_wf_agent()], resource_limits={'max_duration_seconds': 5, 'max_duration_secs': 5}
+        )
+
+
+async def test_stale_max_duration_secs_key_is_rejected_at_run_time() -> None:
+    toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()])
+    toolset.resource_limits = {'max_duration_secs': 5}
+    with pytest.raises(UserError, match=r"key\(s\): \['max_duration_secs'\]"):
+        await _run_script(toolset, '1 + 1')
+
+
 @pytest.mark.parametrize('unknown_key', ['max_durations_secs', 'max_allocations'])
 def test_unknown_resource_limit_key_raises_at_construction(unknown_key: str) -> None:
     # Unknown keys must not be silently dropped, which would disable the intended cap.
-    with pytest.raises(UserError, match='Unknown `resource_limits` key'):
+    with pytest.raises(UserError, match=r"Valid keys are \['max_duration_seconds', 'max_memory'"):
         DynamicWorkflowToolset[object](
             agents=[_wf_agent()],
             resource_limits={unknown_key: 5},  # pyright: ignore[reportArgumentType]
@@ -1487,6 +1513,63 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):  # pragma: no branch
                 await task
+
+
+async def test_call_scheduler_registers_calls_before_starting_them() -> None:
+    events: list[str] = []
+    contexts: list[RunContext[object]] = []
+
+    def scheduler(ctx: RunContext[object]) -> DeferredStarts:
+        contexts.append(ctx)
+        return DeferredStarts(events)
+
+    workflow = DynamicWorkflow[object](
+        agents=[_sub_agent('A', 'alpha'), _sub_agent('B', 'beta')], call_scheduler=scheduler
+    )
+    ctx = _ctx()
+    code = (
+        "import asyncio\nfirst = await asyncio.gather(alpha(task='a'), beta(task='b'))\n[*first, await alpha(task='c')]"
+    )
+    out = await _run_script(workflow.get_toolset(), code, ctx)
+    assert out == snapshot(['A', 'B', 'A'])
+    assert events == snapshot(
+        [
+            'register alpha',
+            'register beta',
+            'flush',
+            'start alpha',
+            'start beta',
+            'register alpha',
+            'flush',
+            'start alpha',
+        ]
+    )
+    assert contexts == [ctx]
+
+
+class _FailingScheduler:
+    async def run(self, call: WorkflowCall) -> object:
+        raise ValueError('host detail')
+
+    async def flush(self) -> None:
+        pass
+
+
+async def test_call_scheduler_errors_reach_the_script_without_host_details() -> None:
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('kaboom')
+
+    code = "try:\n    await {name}(task='x')\nexcept RuntimeError as e:\n    result = str(e)\nresult"
+    failing = DynamicWorkflow[object](agents=[_sub_agent()], call_scheduler=lambda ctx: _FailingScheduler())
+    assert await _run_script(failing.get_toolset(), code.format(name='sub')) == snapshot(
+        'call scheduler raised ValueError'
+    )
+    passing = DynamicWorkflow[object](
+        agents=[Agent(FunctionModel(boom), name='bad')], call_scheduler=lambda ctx: DeferredStarts([])
+    )
+    assert await _run_script(passing.get_toolset(), code.format(name='bad')) == snapshot(
+        "sub-agent 'bad' raised ValueError"
+    )
 
 
 # --- Runtime reveal --------------------------------------------------------

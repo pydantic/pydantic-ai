@@ -14,6 +14,8 @@ capability you attach to an [`Agent`][pydantic_ai.Agent]:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .._durable_replay import record_durable_unit, replay_scope
+    from ..external_events import ExternalEventError, ExternalEventWaiter, external_event_scope
     from ._base import BaseDurabilityCapability, conversation_id_from_run_id
     from ._capability_operation import (
         CapabilityMethodDeclaration,
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
         ModelCancelSuspendedResponseParams,
         ModelCompactMessagesId,
         ModelCompactMessagesParams,
+        ModelCountTokensId,
         ModelRequestId,
         ModelRequestParams,
         OperationConfigRole,
@@ -59,6 +62,7 @@ if TYPE_CHECKING:
         durable_unit_scope,
     )
     from ._operation_names import DurableOperationNamer, JournalOperationNamer
+    from ._retry_after import model_error_retry_after
     from ._run_context import DurableRunContext
     from ._spec import DurabilityEngineSpec
     from ._toolset import CallToolResult, DynamicToolsResult, revalidate_function_call
@@ -72,6 +76,7 @@ __all__ = [
     'ModelCancelSuspendedResponseId',
     'CapabilityOperationId',
     'ModelCompactMessagesId',
+    'ModelCountTokensId',
     'DurabilityCodec',
     'DurabilityEngineSpec',
     'DurableOperationBackend',
@@ -116,10 +121,18 @@ __all__ = [
     'WorkspaceCall',
     'WorkspaceCallParams',
     'WorkspaceCallResult',
+    'ExternalEventError',
+    'ExternalEventWaiter',
+    'external_event_scope',
+    'record_durable_unit',
+    'replay_scope',
+    'model_error_retry_after',
 ]
 
 _exports = {
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
+    'record_durable_unit': ('.._durable_replay', 'record_durable_unit'),
+    'replay_scope': ('.._durable_replay', 'replay_scope'),
     'conversation_id_from_run_id': ('._base', 'conversation_id_from_run_id'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),
     'DurabilityEngineSpec': ('._spec', 'DurabilityEngineSpec'),
@@ -129,6 +142,7 @@ _exports = {
     'ModelCancelSuspendedResponseId': ('._operation', 'ModelCancelSuspendedResponseId'),
     'CapabilityOperationId': ('._operation', 'CapabilityOperationId'),
     'ModelCompactMessagesId': ('._operation', 'ModelCompactMessagesId'),
+    'ModelCountTokensId': ('._operation', 'ModelCountTokensId'),
     'DurableOperationId': ('._operation', 'DurableOperationId'),
     'EventStreamHandlerId': ('._operation', 'EventStreamHandlerId'),
     'ToolsetGetInstructionsId': ('._operation', 'ToolsetGetInstructionsId'),
@@ -170,6 +184,10 @@ _exports = {
     'WorkspaceCall': ('._workspace', 'WorkspaceCall'),
     'WorkspaceCallParams': ('._workspace', 'WorkspaceCallParams'),
     'WorkspaceCallResult': ('._workspace', 'WorkspaceCallResult'),
+    'ExternalEventError': ('..external_events', 'ExternalEventError'),
+    'ExternalEventWaiter': ('..external_events', 'ExternalEventWaiter'),
+    'external_event_scope': ('..external_events', 'external_event_scope'),
+    'model_error_retry_after': ('._retry_after', 'model_error_retry_after'),
 }
 
 
