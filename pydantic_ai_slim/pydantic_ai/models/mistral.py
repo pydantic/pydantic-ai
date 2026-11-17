@@ -528,7 +528,7 @@ class MistralModel(Model[Mistral]):
         """Process a non-streamed response, and prepare a message to return."""
         if not response.choices:
             raise ModelEmptyResponseError(
-                self.model_name, 'Unexpected empty response choices from Mistral', body=response.model_dump()
+                self.model_name, f'Empty response from {self.system}: no choices', body=response.model_dump()
             )
 
         choice = response.choices[0]

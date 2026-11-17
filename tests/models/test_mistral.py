@@ -4478,7 +4478,7 @@ async def test_empty_choices_raise_model_empty_response_error(allow_model_reques
         'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(response))
     )
 
-    with pytest.raises(ModelEmptyResponseError, match='Unexpected empty response choices from Mistral') as exc_info:
+    with pytest.raises(ModelEmptyResponseError, match='Empty response from mistral: no choices') as exc_info:
         await Agent(model).run('hello')
     assert exc_info.value.model_name == 'mistral-large-latest'
     assert exc_info.value.body == snapshot(
