@@ -402,6 +402,20 @@ These files you read were deleted from the workspace:
         result = await agent.run('again', message_history=first.all_messages())
         assert _notices(result.all_messages()) == [[], [], [f'{CHANGED}\n- `config.py`']]
 
+    async def test_conversation_continued_in_another_workspace_is_not_checked(self, tmp_path: Path) -> None:
+        """A file recorded in the first workspace isn't checked from a run in the second, even after it changes."""
+        first_dir, second_dir = tmp_path / 'first', tmp_path / 'second'
+        for directory, content in ((first_dir, 'A = 1\n'), (second_dir, 'A = 2\n')):
+            directory.mkdir()
+            (directory / 'config.py').write_text(content)
+        agent = _agent(first_dir, (None, _read('config.py')), (None, 'done'), (None, 'done again'))
+        first = await agent.run('go')
+        (first_dir / 'config.py').write_text('A = 3\n')
+        result = await agent.run(
+            'again', message_history=first.all_messages(), workspace=LocalWorkspaceBackend(working_dir=second_dir)
+        )
+        assert _notices(result.all_messages()) == [[], [], []]
+
     async def test_other_conversations_do_not_share_observations(self, tmp_path: Path) -> None:
         config = tmp_path / 'config.py'
         config.write_text('A = 1\n')

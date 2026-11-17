@@ -72,7 +72,8 @@ file is also a round trip, so lower `max_tracked_files` if requests slow down.
 - **Observations are in-process memory, per conversation.** They are held on the instance the agent was built
   with and keyed by the run's `conversation_id`, so a run continued from an earlier run's `message_history` is told
   about changes made between the runs. A conversation continued through another instance, process, or worker
-  starts with no records. An instance keeps the 1,024 most recently used conversations.
+  starts with no records, and a run in another workspace than the one a file was read in doesn't check that file.
+  An instance keeps the 1,024 most recently used conversations.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
 - **A check doesn't follow a link out of the file tool's root.** A recorded file that now resolves outside the root
   of the tool that read it, such as one replaced by a symlink, is skipped rather than read.

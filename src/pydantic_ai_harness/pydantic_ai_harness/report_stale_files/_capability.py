@@ -9,9 +9,15 @@ from typing import TYPE_CHECKING, Literal
 from pydantic_ai._framing import resembles_frame
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionCapabilityPart, ModelRequest, OperatorText, WorkspaceSource
+from pydantic_ai.messages import (
+    _AUTHORITY_RANK,  # pyright: ignore[reportPrivateUsage]
+    InstructionCapabilityPart,
+    ModelRequest,
+    OperatorText,
+    WorkspaceSource,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspacePaths
+from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspacePaths, WorkspaceRef
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.file_system import FileReadEvent, FileWrittenEvent
 from pydantic_ai_harness.file_system._content import bytes_hash
@@ -24,9 +30,6 @@ _CHANGED = (
     'Read them again before relying on them or editing them:'
 )
 _DELETED = 'These files you read were deleted from the workspace:'
-
-_AUTHORITIES = ('none', 'user', 'operator')
-"""Authorities from least to most."""
 
 _CONVERSATIONS_KEPT = 1024
 """How many conversations' observations an instance keeps, most recently used first."""
@@ -52,6 +55,8 @@ class _Observation:
     content_hash: str
     root: str
     """The root of the file tool that read or wrote the file, which a check doesn't follow a symlink out of."""
+    workspace: WorkspaceRef | None
+    """The workspace the file was read in; a run in another workspace of the conversation doesn't check it."""
 
 
 _Observations = OrderedDict[str, _Observation]
@@ -131,7 +136,7 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
     @on_event(FileReadEvent, FileWrittenEvent)
     async def _observe(self, ctx: RunContext[AgentDepsT], event: FileReadEvent | FileWrittenEvent) -> None:
         path = await ctx.workspace.resolve(event.path, base=event.root_dir)
-        self._observations[path] = _Observation(event.content_hash, event.root_dir)
+        self._observations[path] = _Observation(event.content_hash, event.root_dir, ctx.workspace.ref)
         self._observations.move_to_end(path)
         while len(self._observations) > self.max_tracked_files:
             self._observations.popitem(last=False)
@@ -148,6 +153,8 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
         deleted: list[str] = []
         budget = self.max_checked_bytes
         for path, observation in reversed(list(self._observations.items())):
+            if observation.workspace != ctx.workspace.ref:
+                continue
             state, read = await _state(ctx.workspace, path, observation, budget)
             budget -= read
             if state == 'deleted':
@@ -167,7 +174,7 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
         shown_deleted = tuple(_shown(path, working_dir, workspace.paths) for path in deleted)
         return StaleFilesPart(
             content=OperatorText(_render(shown_changed, shown_deleted, self.max_reported_files)),
-            source=min(sources, key=lambda source: _AUTHORITIES.index(source.authority)),
+            source=min(sources, key=lambda source: _AUTHORITY_RANK[source.authority]),
             scope='request',
             changed=shown_changed,
             deleted=shown_deleted,
