@@ -844,7 +844,7 @@ _CREDENTIAL_VALUE = re.compile(
 )
 
 
-_OFF_WEB_PAGE_ORIGIN = re.compile(r'^([^:/?#]*:(?://[^/?#]*)?|).*', re.DOTALL)
+_URL_ORIGIN = re.compile(r'^([^:/?#]*:(?://[^/?#]*)?|).*', re.DOTALL)
 """Keeps a URL's scheme and authority, and drops everything after them."""
 
 
@@ -864,6 +864,15 @@ def _without_credentials(url: str) -> str:
     identifies the request the model is looking for.
     """
     return _CREDENTIAL_VALUE.sub(r'\1REDACTED', _USERINFO.sub(r'\1', url))
+
+
+def _url_origin(url: str) -> str:
+    """Name a page the session refuses to expose by its scheme and authority only.
+
+    The rest of its URL is part of what it withholds: a path and query on an internal
+    host, or, for a `data:` URL, the document itself.
+    """
+    return _without_credentials(_URL_ORIGIN.sub(r'\1', url, count=1))
 
 
 def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
@@ -1385,7 +1394,7 @@ class PlaywrightBrowserSession:
             return
         raise BrowserUnavailableError(
             f'The default CDP context contains a document blocked by the browser policy '
-            f'({reason}): {_without_credentials(document.url)}. Close its tab in the provider browser, '
+            f'({reason}): {_url_origin(document.url)}. Close its tab in the provider browser, '
             'or navigate that tab to an allowed URL, then retry.'
         )
 
@@ -1464,7 +1473,7 @@ class PlaywrightBrowserSession:
         Each page is named by its scheme and authority only: the rest of such a URL can
         be the document itself, such as a `data:` URL's content or a `file:` path.
         """
-        pages = ', '.join(_without_credentials(_OFF_WEB_PAGE_ORIGIN.sub(r'\1', url, count=1)) for url in urls)
+        pages = ', '.join(_url_origin(url) for url in urls)
         return (
             f'A tab in the default CDP context is showing a page the agent cannot read ({pages}). The agent '
             'stops using that tab, which stays open in the browser. Retry the call.'

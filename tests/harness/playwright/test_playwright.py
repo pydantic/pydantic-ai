@@ -2339,9 +2339,11 @@ class TestPlaywrightBrowserLifecycle:
         )
         reported = _tool_results(await agent.run('inspect the existing browser'))
         assert 'blocked by the browser policy' in reported
-        assert 'Close its tab in the provider browser' in reported
+        # Named by scheme and host only: the path and query are part of what the policy withholds.
+        origin = '/'.join(blocked_url.split('/', 3)[:3])
+        assert f'{origin}. Close its tab in the provider browser' in reported
         assert 'INHERITED_SECRET' not in reported
-        assert 'inherited-secret' not in reported
+        assert 'inherited-secret' not in reported and '/admin' not in reported
         browser = cm.driver.chromium.browser
         assert browser is not None
         context = browser.contexts[0]
