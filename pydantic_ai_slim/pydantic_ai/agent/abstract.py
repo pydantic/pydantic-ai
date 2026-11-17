@@ -266,7 +266,7 @@ class AgentRunEvents(
             agent_run.ctx.state,
             agent_run.ctx.deps,
         )
-        cancelled._conversation = failed_run_conversation(agent_run.ctx.state, agent_run.ctx.deps)  # pyright: ignore[reportPrivateUsage]
+        cancelled._pydantic_ai_conversation = failed_run_conversation(agent_run.ctx.state, agent_run.ctx.deps)  # pyright: ignore[reportPrivateUsage]
         cancelled._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
 
     async def aclose(self) -> None:

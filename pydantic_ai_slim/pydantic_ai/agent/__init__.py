@@ -4996,7 +4996,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         async def _translate_cancellation() -> AsyncGenerator[None]:
             def _run_cancelled(message: str, *, timed_out: bool = False) -> exceptions.RunCancelled:
                 cancelled = _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
-                cancelled._conversation = _failed_conversation()  # pyright: ignore[reportPrivateUsage]
+                cancelled._pydantic_ai_conversation = _failed_conversation()  # pyright: ignore[reportPrivateUsage]
                 return cancelled
 
             try:
@@ -5208,7 +5208,7 @@ def _carrying_conversation(build: Callable[[], Conversation]) -> Generator[None]
     try:
         yield
     except exceptions.AgentRunError as error:
-        error._conversation = build()  # pyright: ignore[reportPrivateUsage]
+        error._pydantic_ai_conversation = build()  # pyright: ignore[reportPrivateUsage]
         raise
     finally:
         end_captured_run(build)

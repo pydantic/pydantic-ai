@@ -333,7 +333,7 @@ class AgentRunError(RuntimeError):
     message: str
     """The error message."""
 
-    _conversation: Conversation | None = None
+    _pydantic_ai_conversation: Conversation | None = None
 
     def __init__(self, message: str):
         self.message = message
@@ -351,7 +351,7 @@ class AgentRunError(RuntimeError):
         conversation there, or for an exception raised by a tool's own code, use
         [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
         """
-        return self._conversation
+        return self._pydantic_ai_conversation
 
     def __str__(self) -> str:
         return self.message
@@ -607,8 +607,10 @@ class UnexpectedModelBehavior(AgentRunError):
                 self.body = body
         super().__init__(message)
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.message, self.body)
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Keeps the state Pydantic AI attaches on the error's way out, like the failed run's conversation.
+        attached = {key: value for key, value in vars(self).items() if key.startswith(_ATTACHED_ATTR_PREFIX)}
+        return self.__class__, (self.message, self.body), attached or None
 
     def __str__(self) -> str:
         if self.body:
