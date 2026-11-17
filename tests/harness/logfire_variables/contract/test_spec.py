@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import warnings
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict
 from typing import Any
 
@@ -68,15 +68,17 @@ def code_of(message: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _record_warnings() -> Any:
+def _record_warnings() -> Iterator[list[warnings.WarningMessage]]:
     """Collect warnings rather than raising them, since half of every vector is what was warned."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         yield caught
 
 
-def test_the_baseline_vectors(baseline_vectors: list[dict[str, Any]], _record_warnings: Any) -> None:
-    caught: list[warnings.WarningMessage] = _record_warnings
+def test_the_baseline_vectors(
+    baseline_vectors: list[dict[str, Any]], _record_warnings: list[warnings.WarningMessage]
+) -> None:
+    caught = _record_warnings
     for vector in baseline_vectors:
         # Each vector is its own process as far as the once-per-process warning guard is concerned.
         reset_warned_messages()
@@ -102,8 +104,10 @@ def test_the_baseline_vectors(baseline_vectors: list[dict[str, Any]], _record_wa
         assert [code_of(str(warning.message)) for warning in caught] == vector.get('warnings', []), vector['name']
 
 
-def test_the_config_parsing_vectors(config_parsing_vectors: list[dict[str, Any]], _record_warnings: Any) -> None:
-    caught: list[warnings.WarningMessage] = _record_warnings
+def test_the_config_parsing_vectors(
+    config_parsing_vectors: list[dict[str, Any]], _record_warnings: list[warnings.WarningMessage]
+) -> None:
+    caught = _record_warnings
     for vector in config_parsing_vectors:
         reset_warned_messages()
         del caught[:]
@@ -219,8 +223,10 @@ def test_the_settings_apply_vectors(settings_apply_vectors: list[dict[str, Any]]
         assert issues_as_paths(applied.issues) == expected['issues'], vector['name']
 
 
-def test_the_agent_name_vectors(agent_name_vectors: list[dict[str, Any]], _record_warnings: Any) -> None:
-    caught: list[warnings.WarningMessage] = _record_warnings
+def test_the_agent_name_vectors(
+    agent_name_vectors: list[dict[str, Any]], _record_warnings: list[warnings.WarningMessage]
+) -> None:
+    caught = _record_warnings
     for vector in agent_name_vectors:
         del caught[:]
         try:

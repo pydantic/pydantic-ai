@@ -6,7 +6,7 @@ Control contract every SDK and the Logfire UI share. The contract's models are e
 publishing a value from code rather than from the UI.
 """
 
-from pydantic_ai_harness.logfire._agent_control import AgentControl
+from pydantic_ai_harness.logfire._agent_control import AgentControl, TargetingContext
 from pydantic_ai_harness.logfire._contract import (
     AgentConfig,
     AgentConfigSettings,
@@ -16,7 +16,6 @@ from pydantic_ai_harness.logfire._contract import (
     ToolDefinitionOverride,
 )
 from pydantic_ai_harness.logfire._managed_prompt import ManagedPrompt
-from pydantic_ai_harness.logfire._managed_variable import resolution_reason
 
 __all__ = [
     'AgentConfig',
@@ -26,6 +25,6 @@ __all__ = [
     'ManagedPrompt',
     'OnUnmatched',
     'ParameterOverride',
+    'TargetingContext',
     'ToolDefinitionOverride',
-    'resolution_reason',
 ]

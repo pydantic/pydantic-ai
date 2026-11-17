@@ -87,10 +87,10 @@ the first run reports the agent to your project so there is nothing to describe 
 
 Agent Control needs a `LOGFIRE_API_KEY` with the `project:read_variables` scope -- a different
 credential from the write token that sends spans. Read-only is all it is: nothing here writes to your
-project's variables. Instrumentation is not optional, though: it is how the agent tells Logfire it
-exists at all (see [Registration and the baseline](#registration-and-the-baseline)), and without
-spans neither the version that produced a given run nor whether the agent is picking its config up
-makes it back to Logfire.
+project's variables. The agent reports itself to Logfire on the Logfire instance its config is read
+from, so that needs `logfire.configure()` (see [Registration and the baseline](#registration-and-the-baseline)).
+`logfire.instrument_pydantic_ai()` is what records, on each run's spans, the config version that
+produced it and whether the agent is picking its config up.
 
 `LOGFIRE_API_KEY` is read by the Logfire instance `logfire.configure()` set up, which is the one
 `AgentControl` resolves on unless you pass `logfire_instance=`: if your application configures a
@@ -121,7 +121,7 @@ Anything you don't change in Logfire keeps doing what the code says, and removin
 that piece back the way the code has it.
 
 The settings are the canonical ones every framework has a knob for, under the names
-[`ModelSettings`](https://ai.pydantic.dev/api/settings/) gives them. Provider-specific settings
+[`ModelSettings`][pydantic_ai.settings.ModelSettings] gives them. Provider-specific settings
 (`openai_reasoning_effort`, `extra_headers`) stay in code, where they always were.
 
 What a config may hold is the same contract in every Agent Control SDK. Every copy of it -- this
@@ -132,7 +132,9 @@ from `pydantic_ai_harness.logfire` when you want to publish a value from code ra
 
 A tool's implementation and the shape of its arguments stay code-owned: Logfire edits what the model
 is *told* about a tool, never what it *does*. A renamed tool still routes to the same function, and
-`ctx.tool_name` is still the original name, so nothing in code has to know about the rename. Logfire
+`ctx.tool_name` is still the original name. Policies keyed on a tool's name that run before the
+call reaches its toolset -- `ToolGuardrail(tools=[...])`, name-filtered hooks, `prepare_tools` that
+hides tools by name -- see the advertised name, so they stop matching a renamed tool. Logfire
 shows which toolset each tool came from, and a change can be narrowed to that toolset's tool of a
 given name -- so two services sharing one config, each with its own `search`, can be told apart.
 
@@ -306,7 +308,9 @@ Tool definitions are different: the baseline records the names, descriptions, an
 descriptions assembled for that request. If a dynamic toolset derives those fields from `deps` or
 user input, that text reaches the hint span and may become the variable's example. Keep request data
 and secrets out of tool-definition metadata. Settings the contract has no field for are omitted,
-which keeps `extra_headers` and `extra_body` out of the baseline.
+which keeps `extra_headers` and `extra_body` out of the baseline. An MCP toolset or capability whose
+`id` was derived from its server URL is reported as `[REDACTED]`, as it is in every other trace, so
+the blocks and tools it contributes appear without the hostname.
 
 A very large baseline is reduced rather than cut: if it does not fit on a span attribute, its tool
 definitions are left out, and if it still does not fit it is left out entirely. Either way the hint
@@ -331,13 +335,19 @@ including across services reporting to the same project, so two agents differing
 share one config. Pass an explicit `name` to `AgentControl` to decouple it from the agent's name
 entirely -- to keep two such agents apart, or to deliberately point several at one config.
 
-`targeting_key`, `attributes`, and `render_template` work exactly as they do for
-[`ManagedPrompt`](managed-prompt.md#targeting). `AgentControl.resolved` exposes the config the
-current run picked up (`value`, `label`, `version`, `reason`), and is `None` outside a run.
+`targeting_key`, `attributes`, and `render_template` work as they do for
+[`ManagedPrompt`](managed-prompt.md#targeting), except that a callable `targeting_key` or `attributes`
+receives a [`TargetingContext`][pydantic_ai_harness.logfire.TargetingContext] rather than a full
+[`RunContext`][pydantic_ai.tools.RunContext]: the config is resolved during model selection, before the
+run context exists, so the callable gets the `deps`, `prompt` and `messages` both share.
+`AgentControl.resolved` exposes the config the current run picked up (`value`, `label`, `version`,
+`reason`), and is `None` outside a run.
 
 ## API reference
 
 ::: pydantic_ai_harness.logfire.AgentControl
+
+::: pydantic_ai_harness.logfire.TargetingContext
 
 ::: pydantic_ai_harness.logfire.AgentConfig
 

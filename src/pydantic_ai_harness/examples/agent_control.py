@@ -36,7 +36,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.logfire import AgentControl, resolution_reason
+from pydantic_ai_harness.logfire import AgentControl
 
 DEFAULT_MODEL = os.environ.get('PYDANTIC_AI_MODEL', 'anthropic:claude-fable-5')
 
@@ -237,8 +237,7 @@ def describe_resolution() -> str:
         return 'nothing (outside a run)'
     sections = sorted(resolved.value.model_dump(exclude_none=True))
     return (
-        f'reason={resolution_reason(resolved)!r} label={resolved.label!r} '
-        f'version={resolved.version} sections={sections or "none"}'
+        f'reason={resolved.reason!r} label={resolved.label!r} version={resolved.version} sections={sections or "none"}'
     )
 
 

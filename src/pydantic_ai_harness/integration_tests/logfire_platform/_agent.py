@@ -38,7 +38,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.logfire import AgentControl, resolution_reason
+from pydantic_ai_harness.logfire import AgentControl
 from pydantic_ai_harness.logfire._contract import AgentConfig, OnUnmatched
 
 from ._platform import AGENT_NAME
@@ -317,7 +317,7 @@ def build_agent(
         if resolved is None:
             return None
         return Resolved(
-            reason=resolution_reason(resolved),
+            reason=resolved.reason,
             label=resolved.label,
             version=resolved.version,
             config=resolved.value,

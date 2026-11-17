@@ -23,17 +23,23 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 import logfire
 from logfire.variables import Variable
 from logfire.variables.abstract import NoOpVariableProvider
 
 from pydantic_ai import AbstractToolset, RunContext, TemplateStr, ToolDefinition, WrapperToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, CombinedCapability, Instrumentation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionPart
-from pydantic_ai.models import ModelRequestContext, infer_model
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    InstructionPart,
+    ModelMessage,
+    ToolsetInstructionSource,
+    UserContent,
+)
+from pydantic_ai.models import Model, ModelRequestContext, infer_model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import ToolsetTool
@@ -55,14 +61,12 @@ from pydantic_ai_harness.logfire._contract import (
     apply_tool_definitions,
     build_baseline,
     canonical_json,
+    normalize_agent_name,
     report_issues,
-)
-from pydantic_ai_harness.logfire._managed_variable import (
-    ManagedVariableCapability,
-    resolution_reason,
 )
 
 if TYPE_CHECKING:
+    from logfire import Logfire
     from logfire.variables import ResolvedVariable
 
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
@@ -225,18 +229,73 @@ def _report(policy: OnUnmatched, issues: Sequence[ApplyIssue]) -> None:
         raise UserError(str(exc)) from exc
 
 
-def _usable_model(model: str | None) -> str | None:
-    """The published model if this deployment can run it, else `None` with a warning."""
+def _usable_model(model: str | None, policy: OnUnmatched) -> Model | None:
+    """The published model if this deployment can run it, else `None`, reported under `policy`.
+
+    Returns the inferred `Model` so core does not build it a second time.
+    """
     if model is None:
         return None
     try:
-        infer_model(model)
-    # `ImportError` is a model whose provider's extra this deployment does not install:
-    # resolving the provider imports its SDK, and that is not a reason to fail a run.
+        return infer_model(model)
+    # `ImportError` is a model whose provider's extra this deployment does not install: resolving the
+    # provider imports its SDK. `UserError` also covers a provider with no credentials configured.
     except (UserError, ValueError, ImportError) as error:
-        _warn_dropped(f'Managed agent config selects unknown model {model!r} ({error}); keeping the code model.')
+        message = f'Managed agent config selects model {model!r}, which this deployment cannot use ({error})'
+        if policy == 'error':
+            raise UserError(f'{message}.') from error
+        if policy == 'warn':
+            _warn_dropped(f'{message}; keeping the code model.')
         return None
-    return model
+
+
+def _resolution_reason(resolved: ResolvedVariable[Any]) -> str | None:
+    """Why a variable resolved the way it did, read off `_reason` on logfire versions before the public `reason`."""
+    reason = getattr(resolved, 'reason', None)
+    return reason if reason is not None else getattr(resolved, '_reason', None)
+
+
+_DepsT_co = TypeVar('_DepsT_co', covariant=True)
+
+
+class TargetingContext(Protocol[_DepsT_co]):
+    """What a callable `targeting_key` or `attributes` on [`AgentControl`][pydantic_ai_harness.logfire.AgentControl] receives.
+
+    The variable is resolved during model selection, before the run has a
+    [`RunContext`][pydantic_ai.tools.RunContext], and again in a run that skips selection, so the
+    callable is handed whichever of the two exists: this is what they share.
+    """
+
+    @property
+    def deps(self) -> _DepsT_co: ...
+
+    @property
+    def prompt(self) -> str | Sequence[UserContent] | None: ...
+
+    @property
+    def messages(self) -> list[ModelMessage]: ...
+
+
+def _build_variable(name: str, logfire_instance: Logfire | None) -> Variable[AgentConfig]:
+    """Declare `agent__<name>`, normalizing hyphens and refusing a name no variable can have."""
+    if name.startswith(AGENT_VARIABLE_PREFIX):
+        warnings.warn(
+            f'The {AGENT_VARIABLE_PREFIX!r} prefix is added automatically; pass the bare name rather than {name!r}.',
+            # 1=here, 2=`__post_init__`, 3=the dataclass `__init__`, 4=the user's `AgentControl(...)`.
+            stacklevel=4,
+        )
+        name = name[len(AGENT_VARIABLE_PREFIX) :]
+    variable_name = f'{AGENT_VARIABLE_PREFIX}{name.replace("-", "_")}'
+    if not variable_name.isidentifier():
+        raise ValueError(
+            f'Name {name!r} produces an invalid variable name {variable_name!r}; '
+            'names may only contain letters, digits, hyphens, and underscores.'
+        )
+    # Constructed directly rather than via `logfire.var`, which registers the name per instance and
+    # raises on a duplicate, so one config can back several agents. The empty config is the only
+    # code-side default: the agent itself is what a published value is layered onto.
+    instance = logfire_instance if logfire_instance is not None else logfire.DEFAULT_LOGFIRE_INSTANCE
+    return Variable(variable_name, type=AgentConfig, default=AgentConfig(), logfire_instance=instance)
 
 
 def _reset_config_hint_guard() -> None:  # pyright: ignore[reportUnusedFunction]
@@ -349,6 +408,22 @@ def _instruction_key(part: InstructionPart) -> str | None:
     addressed at all.
     """
     return str(part.id) if part.id is not None else None
+
+
+_MASKED = '[REDACTED]'
+
+
+def _masked_instruction_key(part: InstructionPart, toolset_ids: set[str], capability_ids: set[str]) -> str | None:
+    """`_instruction_key`, with an MCP server's URL-derived toolset or capability id masked."""
+    instruction_id = part.id
+    if instruction_id is None:
+        return None
+    source = instruction_id.source
+    if (isinstance(source, ToolsetInstructionSource) and source.id in toolset_ids) or (
+        isinstance(source, CapabilityInstructionSource) and source.id in capability_ids
+    ):
+        return str(replace(instruction_id, source=replace(source, id=_MASKED)))
+    return str(instruction_id)
 
 
 def _blocks(parts: Sequence[InstructionPart]) -> list[Block]:
@@ -488,7 +563,7 @@ class _ToolDefinitionOverridesToolset(WrapperToolset[AgentDepsT]):
 
 
 @dataclass
-class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
+class AgentControl(AbstractCapability[AgentDepsT]):
     """Manage an agent's config through one `agent__<name>` Logfire variable.
 
     The variable holds an [`AgentConfig`][pydantic_ai_harness.logfire.AgentConfig], the contract every
@@ -533,7 +608,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     agent's and every other capability's; settings passed to `run()` still win.
     Static or callable targeting inputs participate in model selection, and the resulting variable
     resolution is reused for the rest of the run so the selected model and applied config cannot
-    diverge. An unknown managed model warns and keeps the code model.
+    diverge. A managed model this deployment cannot use is reported under `on_unmatched`.
 
     Tool overrides change only the definitions shown to the model. Renames route back to the original
     implementation, collisions retain the original name, and an override the contract can't validate
@@ -614,8 +689,9 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     That is an instruction `id` no assembled block carries, or that only a dynamic block carries; a
     tool override whose `name` (and `toolset`, when set) matches no tool a toolset advertises; a
     rename another advertised tool already answers to; a parameter patch naming a parameter the tool
-    does not have; a `settings` key this version of the contract has no field for; and a top-level
-    key it has no section for at all. Each is a place where Logfire shows one thing and the agent
+    does not have; a `settings` key this version of the contract has no field for; a top-level key it
+    has no section for at all; and a `model` this deployment cannot use, which with `'warn'` or
+    `'ignore'` keeps the code model. Each is a place where Logfire shows one thing and the agent
     does another.
 
     - `'warn'` (the default) emits a `UserWarning` once per process per message.
@@ -634,11 +710,47 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     drop is: the config is resolved on every run, and the signal has to survive its own repetition.
     """
 
+    label: str | None = field(default=None, kw_only=True)
+    """Explicit targeting label on the variable to resolve (e.g. `'production'`).
+    When `None`, the variable's targeting rules select the label."""
+
+    targeting_key: str | Callable[[TargetingContext[AgentDepsT]], str | None] | None = field(default=None, kw_only=True)
+    """Stable key that seeds Logfire's deterministic rollout assignment -- the same key always lands in
+    the same percentage bucket. A static value, or a callable given a
+    [`TargetingContext`][pydantic_ai_harness.logfire.TargetingContext]. When `None`, Logfire falls back to
+    its own targeting context and then the active trace id."""
+
+    attributes: Mapping[str, Any] | Callable[[TargetingContext[AgentDepsT]], Mapping[str, Any] | None] | None = field(
+        default=None, kw_only=True
+    )
+    """Attributes for condition-based targeting rules, or a callable given a
+    [`TargetingContext`][pydantic_ai_harness.logfire.TargetingContext] that derives them."""
+
+    logfire_instance: Logfire | None = field(default=None, kw_only=True)
+    """Logfire instance to resolve the variable on. When `None`, the global default instance is
+    used. Ignored when `name` is a `Variable`."""
+
     # Override the inherited default ID: a stable id is what tells Pydantic AI an agent has one
     # managed config and that two of it are one configuration stated twice, rather than two anonymous
     # capabilities that collide. Declared in the class body rather than assigned in `__post_init__`,
     # which is where the framework reads it from.
     id: str | None = field(default=_AGENT_CONTROL_ID, kw_only=True)
+
+    _variable: Variable[AgentConfig] | None = field(init=False, repr=False, compare=False)
+    """The variable an explicit `name` declared; `None` when it is derived from each agent's name."""
+
+    _variables_by_agent: dict[str, Variable[AgentConfig]] = field(
+        init=False, default_factory=dict[str, 'Variable[AgentConfig]'], repr=False, compare=False
+    )
+    """Variables derived from an agent's `name`, keyed by the normalized name.
+
+    Keyed rather than singular because one instance can back several agents --
+    `SubAgents.shared_capabilities` passes the same object to every sub-agent -- and each reads its own."""
+
+    _build_lock: threading.Lock = field(init=False, default_factory=threading.Lock, repr=False, compare=False)
+
+    _resolved: ContextVar[ResolvedVariable[AgentConfig] | None] = field(init=False, repr=False, compare=False)
+    """Per-run resolution, isolated across concurrent runs."""
 
     _selection_resolved: ContextVar[list[ResolvedVariable[AgentConfig]] | None] = field(init=False, repr=False)
     """The resolution model selection made, handed to `wrap_run` in a box it empties.
@@ -673,15 +785,60 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         self._code_settings = ContextVar('agent_control_code_settings', default=None)
         self._code_tools = ContextVar('agent_control_code_tools', default=None)
         self._planned_issues = ContextVar('agent_control_planned_issues', default={})
-        # The empty config is the only code-side default there is. The agent itself is what a
-        # published value is layered onto, so a second place to say the same thing would only be
-        # somewhere for the two to disagree.
-        self._setup_variable(
-            self.name,
-            prefix=AGENT_VARIABLE_PREFIX,
-            value_type=AgentConfig,
-            default=AgentConfig(),
-        )
+        self._resolved = ContextVar('agent_control_resolved', default=None)
+        if isinstance(self.name, str):
+            self._variable = _build_variable(self.name, self.logfire_instance)
+            return
+        if self.name is not None and self.logfire_instance is not None:
+            warnings.warn(
+                '`logfire_instance` is ignored when `name` is a `Variable`; '
+                'the variable already carries its own Logfire instance.',
+                stacklevel=3,
+            )
+        self._variable = self.name
+
+    @property
+    def resolved(self) -> ResolvedVariable[AgentConfig] | None:
+        """The active run's [`ResolvedVariable`][logfire.variables.ResolvedVariable], or `None` outside a run."""
+        return self._resolved.get()
+
+    def get_ordering(self) -> CapabilityOrdering:
+        """Run outermost so the resolution's baggage envelops the whole run, including the run span."""
+        return CapabilityOrdering(position='outermost', wraps=[Instrumentation])
+
+    def _variable_for(self, agent: AbstractAgent[AgentDepsT, Any] | None) -> Variable[AgentConfig]:
+        """The variable this agent reads: the explicit one, or `agent__<normalized agent name>`.
+
+        The name is normalized by the contract's `normalize_agent_name`, the rule the Logfire UI and every
+        other Agent Control SDK apply, so `checkout-assistant` here and `Checkout Assistant` elsewhere reach
+        one config.
+        """
+        if self._variable is not None:
+            return self._variable
+        agent_name = agent.name if agent is not None else None
+        if not agent_name:
+            raise UserError(
+                "`AgentControl` without an explicit `name` derives its variable from the agent's `name`, "
+                'but this agent has none. Give the agent a `name=...`, or pass an explicit `name`.'
+            )
+        normalized = normalize_agent_name(agent_name)
+        if not normalized:
+            raise UserError(
+                "`AgentControl` without an explicit `name` derives its variable from the agent's `name`, but "
+                f'{agent_name!r} has no letters, digits, or underscores to derive one from. Give the agent a '
+                '`name=...` that has some, or pass an explicit `name`.'
+            )
+        with self._build_lock:
+            variable = self._variables_by_agent.get(normalized)
+            if variable is None:
+                variable = self._variables_by_agent[normalized] = _build_variable(normalized, self.logfire_instance)
+            return variable
+
+    def _get(self, variable: Variable[AgentConfig], ctx: TargetingContext[AgentDepsT]) -> ResolvedVariable[AgentConfig]:
+        """Resolve `variable` with this capability's targeting inputs, derived from `ctx` when callable."""
+        targeting_key = self.targeting_key(ctx) if callable(self.targeting_key) else self.targeting_key
+        attributes = self.attributes(ctx) if callable(self.attributes) else self.attributes
+        return variable.get(targeting_key=targeting_key, attributes=attributes, label=self.label)
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         """Bind alongside the companion that carries the overriding half of this capability.
@@ -693,7 +850,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         `CombinedCapability` keeps its children as siblings, so a container in this position would
         take the user's capability out of the tree entirely.
         """
-        if self._deferred is not None and not agent.name:
+        if self._variable is None and not agent.name:
             raise UserError(
                 "`AgentControl` without an explicit `name` reads the agent's `name`, and this agent has none. "
                 'Pydantic AI would infer one from the variable the agent is assigned to, so renaming that '
@@ -702,14 +859,6 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
                 '`AgentControl`.'
             )
         return CombinedCapability([self, _AgentControlOverrides(self)])
-
-    def _resolve_for_selection(
-        self, variable: Variable[AgentConfig], ctx: ModelSelectionContext[AgentDepsT]
-    ) -> ResolvedVariable[AgentConfig]:
-        """Resolve with the same callable targeting inputs that the authoritative run will reuse."""
-        targeting_key = self.targeting_key(ctx) if callable(self.targeting_key) else self.targeting_key  # pyright: ignore[reportArgumentType]
-        attributes = self.attributes(ctx) if callable(self.attributes) else self.attributes  # pyright: ignore[reportArgumentType]
-        return variable.get(targeting_key=targeting_key, attributes=attributes, label=self.label)
 
     def _model_selector(self) -> Callable[[ModelSelectionContext[AgentDepsT]], ModelSelection]:
         """Build the per-run selector a nameless `get_model` returns.
@@ -730,8 +879,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             if not selected:
                 code_model = ctx.model
                 self._code_model.set(f'{code_model.system}:{code_model.model_name}' if code_model is not None else None)
-                resolved = self._resolve_for_selection(self._ensure_variable_for_agent(ctx.agent), ctx)
-                model = _usable_model(resolved.value.model)
+                resolved = self._get(self._variable_for(ctx.agent), ctx)
+                model = _usable_model(resolved.value.model, self.on_unmatched)
                 if model is not None:
                     selected.append(model)
                 elif ctx.model is not None:
@@ -798,7 +947,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         is the one that was never configured, typically because the application configured its own
         and this capability resolved on the default one.
         """
-        if resolution_reason(resolved) != 'code_default':
+        if _resolution_reason(resolved) != 'code_default':
             return
         if not isinstance(variable.logfire_instance.config.get_variable_provider(), NoOpVariableProvider):
             return
@@ -838,29 +987,28 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     def _resolve(self, ctx: RunContext[AgentDepsT]) -> ResolvedVariable[AgentConfig]:
         """Reuse the resolution model selection made for this run, or resolve now when it was skipped."""
         handoff = self._selection_resolved.get()
-        resolved = handoff.pop() if handoff else super()._resolve(ctx)
-        self._warn_if_unreadable(self._ensure_variable(ctx), resolved)
+        variable = self._variable_for(ctx.agent)
+        resolved = handoff.pop() if handoff else self._get(variable, ctx)
+        self._warn_if_unreadable(variable, resolved)
         return resolved
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Add applied-section baggage inside the base's once-per-run resolution context."""
-
-        async def with_applied_sections() -> AgentRunResult[Any]:
-            config = self._current_config()
-            assert config is not None
-            sections = ','.join(
-                name
-                for name in ('instructions', 'model', 'settings', 'tool_definitions')
-                if getattr(config, name) is not None
-            )
-            if sections:
-                with logfire.set_baggage(**{'logfire.managed.applied_sections': sections}):
-                    return await handler()
-            return await handler()
-
+        """Resolve once and keep the resolution's baggage, and the applied sections, active for the run."""
+        resolved = self._resolve(ctx)
+        sections = ','.join(
+            name
+            for name in ('instructions', 'model', 'settings', 'tool_definitions')
+            if getattr(resolved.value, name) is not None
+        )
+        token = self._resolved.set(resolved)
         try:
-            return await super().wrap_run(ctx, handler=with_applied_sections)
+            with resolved:
+                if sections:
+                    with logfire.set_baggage(**{'logfire.managed.applied_sections': sections}):
+                        return await handler()
+                return await handler()
         finally:
+            self._resolved.reset(token)
             # Issues belong to the request that planned them. A run that failed between planning
             # a section and reporting it leaves some here, and the next run plans its own.
             self._planned_issues.set({})
@@ -892,9 +1040,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         """
         applied = apply_settings(config, support=_SUPPORT)
         self._plan_issues('settings', applied.issues)
-        # A `dict[str, Any]` of canonical keys is a `ModelSettings` by construction, which is a
-        # `TypedDict` and therefore not something `isinstance` can narrow to.
-        return cast(ModelSettings, applied.settings)
+        return ModelSettings(**applied.settings)
 
     def _apply_instructions(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
@@ -1033,7 +1179,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             return
         # The agent's own variable, not a shared attribute: a nameless capability backs one variable
         # per agent, so the hint has to name the one this run resolved.
-        variable = self._ensure_variable(ctx)
+        variable = self._variable_for(ctx.agent)
         config = variable.logfire_instance.config
         agent = ctx.agent
         agent_name = agent.name if agent is not None and agent.name else None
@@ -1056,7 +1202,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             'agent_control.baseline_sha256': _baseline_sha256(code_baseline),
             'agent_control.baseline_reduction': reduction,
             'agent_control.baseline_bytes': size,
-            'agent_control.resolution_reason': resolution_reason(resolved),
+            'agent_control.resolution_reason': _resolution_reason(resolved),
             **_deployment_attributes(variable.logfire_instance),
         }
         if agent_name is not None:
@@ -1081,8 +1227,20 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         to the canonical keys -- which is what keeps `extra_headers` and `extra_body`, where
         authorization headers and signed bodies live, out of a variable every project member can read.
         """
+        parameters = request_context.model_request_parameters
+        # Core marks the ids an MCP toolset or capability derived from its server URL (its hostname) and
+        # masks them in every trace; the baseline is exported on a span too, so it masks the same ids.
+        toolset_ids = parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+        capability_ids = parameters._telemetry_mcp_url_ids or set()  # pyright: ignore[reportPrivateUsage]
         return build_baseline(
-            instructions=_blocks(request_context.model_request_parameters.instruction_parts or []),
+            instructions=[
+                Block(
+                    text=part.content,
+                    id=_masked_instruction_key(part, toolset_ids, capability_ids),
+                    dynamic=part.dynamic,
+                )
+                for part in parameters.instruction_parts or []
+            ],
             model=self._code_model.get(),
             settings=self._code_settings.get(),
             tools=[
@@ -1090,7 +1248,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
                     name=tool.tool_def.name,
                     description=tool.tool_def.description,
                     parameters_json_schema=tool.tool_def.parameters_json_schema,
-                    toolset=_toolset_key(tool.toolset),
+                    toolset=_MASKED if (key := _toolset_key(tool.toolset)) in toolset_ids else key,
                 )
                 for tool in self._code_tools.get() or []
             ],
@@ -1150,7 +1308,7 @@ class _AgentControlOverrides(AbstractCapability[AgentDepsT]):
         with the config and telemetry used by the run even when a targeting callable is stateful. The
         selector does not enter the resolution as a context manager; `wrap_run` remains the owner of
         its baggage. A fully model-less agent can be driven from Logfire, and a call-site
-        `run(model=...)` still wins. An unknown managed model warns and falls back to the code model.
+        `run(model=...)` still wins. A managed model this deployment cannot use is reported under `on_unmatched`.
         """
         return self.control._model_selector()  # pyright: ignore[reportPrivateUsage]
 

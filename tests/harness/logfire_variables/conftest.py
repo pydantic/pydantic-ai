@@ -100,13 +100,6 @@ def _configure_logfire() -> None:
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    # Pin to asyncio: some tests use `asyncio` primitives directly, and the resolution behavior is
-    # backend-agnostic, so running the trio leg too would only duplicate work.
-    return 'asyncio'
-
-
-@pytest.fixture
 def publish(capfire: CaptureLogfire) -> Iterator[Publish]:
     """Publish a managed config for `agent__<agent_name>` for the rest of the test.
 

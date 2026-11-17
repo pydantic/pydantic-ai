@@ -48,9 +48,8 @@ patch on what's written in code -- absent fields keep their code values, and a m
 or unreachable remote value degrades to exactly the agent the developer wrote, never a crashed
 run. Values resolve **once per run** and the resolved label + version ride as baggage on every
 span of the run, so traces always show which version produced which behavior. Each capability's
-`resolved` exposes the active run's `ResolvedVariable`; pass it to `resolution_reason` (exported
-from `pydantic_ai_harness.logfire`) to read *why* it resolved the way it did (e.g. a
-`'code_default'` fallback), across logfire SDK versions.
+`resolved` exposes the active run's `ResolvedVariable`, whose `reason` says *why* it resolved the way
+it did (e.g. a `'code_default'` fallback).
 
 **These capabilities never write to a variable.** They read a value and nothing else, so the
 credential a deployment holds needs `project:read_variables` and nothing more. Creating the variable
@@ -112,7 +111,8 @@ records has no seams in it, so a baseline built from telemetry alone could only 
 wholesale, and copying it wholesale is exactly [the mistake](#where-your-base-prompt-lives) of
 sending the agent's own text to the model twice with a frozen `Today is <date>` in the middle of it.
 A block computed per request therefore contributes its `id` and its flag and never its rendered text,
-so nothing the run carried reaches the snapshot.
+so nothing the run carried reaches the snapshot. An MCP toolset or capability whose `id` was derived
+from its server URL is reported as `[REDACTED]`, as it is in every other trace.
 
 Span attributes share a row budget the backend enforces by truncating a long string in place, which
 for JSON produces an attribute that still looks like a string and no longer parses. So the hint holds
@@ -598,7 +598,10 @@ reach it.
   original name. The routing is read off the very tool the model was handed, so a dynamic toolset
   that put a different tool behind that name in the meantime cannot make a name-based policy
   authorize one tool and run another. A rename that collides with a name another tool already
-  advertises is dropped (other patches still apply) rather than breaking the run.
+  advertises is dropped (other patches still apply) rather than breaking the run. Policies keyed on
+  a tool's name that run before the call reaches its toolset (`ToolGuardrail(tools=[...])`,
+  name-filtered hooks, `prepare_tools` hiding by name) see the advertised name, so they stop matching
+  a renamed tool.
 - **`on_unmatched` decides what a published entry that reaches nothing costs:** an override naming a
   tool no toolset advertises (the drift case: the tool was removed or renamed in code), an instruction
   entry whose `id` no block carries -- or only a per-request block carries -- a `parameters` key the
@@ -617,8 +620,8 @@ reach it.
   `get_model` hook, so it slots in with the right precedence -- a call-site `run(model=...)` beats
   it, it beats the agent's constructor model, and a fully model-less agent (named or nameless) can be
   driven entirely from Logfire. Model selection evaluates static or callable targeting inputs once,
-  and the authoritative run resolution reuses that exact result. An unknown managed model warns and
-  keeps the code model instead of failing the run.
+  and the authoritative run resolution reuses that exact result. A managed model this deployment can't
+  use is handled by `on_unmatched`: with `'warn'` or `'ignore'` the run keeps the code model.
 - **Settings precedence:** managed settings merge **over** the agent's constructor `model_settings`
   and **under** per-run `model_settings=`, so run arguments always win.
 - **Adoption reporting:** for the run's duration, `logfire.managed.applied_sections` baggage names

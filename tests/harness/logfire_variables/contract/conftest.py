@@ -2,30 +2,35 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
-from typing import Any, cast
+from typing import Any
 
 import pytest
+from pydantic import TypeAdapter
 
 SPEC = pathlib.Path(__file__).parent / 'spec'
 """The cross-language vectors both cores are tested against; see `spec/README.md` beside them."""
 
 
+_OBJECT = TypeAdapter(dict[str, Any])
+_ARRAY = TypeAdapter(list[Any])
+
+
 def _vectors(name: str) -> list[dict[str, Any]]:
-    return cast('list[dict[str, Any]]', json.loads((SPEC / name).read_text()))
+    return TypeAdapter(list[dict[str, Any]]).validate_json((SPEC / name).read_text())
 
 
 def expand_repeats(value: Any) -> Any:
     """Expand the vector files' `{repeat, times}` shorthand, which keeps the 64 KiB cases readable."""
-    if isinstance(value, dict):
-        typed = cast(dict[str, Any], value)
-        if set(typed) == {'repeat', 'times'}:
-            return cast(str, typed['repeat']) * cast(int, typed['times'])
-        return {key: expand_repeats(item) for key, item in typed.items()}
-    if isinstance(value, list):
-        return [expand_repeats(item) for item in cast(list[Any], value)]
-    return value
+    match value:
+        case {'repeat': str(text), 'times': int(times)} if len(value) == 2:
+            return text * times
+        case dict():
+            return {key: expand_repeats(item) for key, item in _OBJECT.validate_python(value).items()}
+        case list():
+            return [expand_repeats(item) for item in _ARRAY.validate_python(value)]
+        case _:
+            return value
 
 
 @pytest.fixture(scope='session')

@@ -129,7 +129,9 @@ MCP connections exchange tool arguments and content with a configured server. Lo
 
 Agent specs can select configured capabilities and providers. Capability arguments include endpoints, such as an `MCP` server URL, which the agent host connects to with its own network access; the library does not restrict them to public addresses. YAML/JSON parsing and Pydantic validation establish the configuration's shape. The application must decide who can supply configuration that grants those capabilities or selects endpoints and resources.
 
-Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](docs/mcp/client.md), and [agent specs](docs/agent-spec.md#where-specs-come-from).
+The harness `AgentControl` capability reads an agent's instructions, model, model settings, and model-facing tool definitions from a Logfire variable on every run. Whoever can write that variable in the Logfire project can rewrite the prompt, rename and redescribe tools, and select any model whose provider the process has installed, which sends prompts, history, and tool schemas through the credentials and endpoints already configured for that provider. Tool implementations, argument schemas, and validation stay in code. Policies keyed on a tool's name that run before the call reaches its toolset, such as `ToolGuardrail(tools=[...])` and name-filtered hooks, see the published name, so they stop matching a renamed tool. The application decides who can write the variable.
+
+Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](docs/mcp/client.md), [agent specs](docs/agent-spec.md#where-specs-come-from), and [Agent Control](docs/harness/agent-control.md).
 
 ### Persistent state and tenant identity
 
@@ -148,6 +150,8 @@ Canonical guidance: [message history](docs/message-history.md), [persistence](do
 Messages, tool arguments, results, files, and provider details can contain secrets. When instrumentation is enabled, its defaults include content. Text content, binary content, and model-request parameters have separate collection controls. Review redaction, access controls, and export destinations as part of the deployment.
 
 Stock CLAI 2's default-on `observability` plugin differs: it exports whenever it finds a Logfire credential or OTLP exporter configuration, including in the environment, leaves prompts, results, and files out unless `include_content` is on, and traces every agent in the process while loaded.
+
+`AgentControl` exports one `agent_control_config_hint` span per process with a snapshot of the code-defined agent: its static instruction text, including static text passed to `run(instructions=...)`, tool names and descriptions, model, and canonical settings. The span is sent whatever `include_content` says, and its attributes are exempt from Logfire's scrubbing. Per-request instruction blocks contribute only their id, settings are reduced to the canonical keys so `extra_headers` and `extra_body` stay out, and URL-derived MCP ids are masked.
 
 A setting that suppresses one content field does not establish that the same content is absent from every event, exception, or integration. Integrations that call their own models or telemetry services are additional export channels. Local conversation, credential, and tool-output spill stores also need their documented access protections.
 

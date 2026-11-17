@@ -4,7 +4,7 @@ import json
 import sys
 import warnings
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import logfire
 import pytest
@@ -17,6 +17,7 @@ from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -25,7 +26,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import AgentControl as RootAgentControl
-from pydantic_ai_harness.logfire import AgentControl, _agent_control
+from pydantic_ai_harness.logfire import AgentControl, OnUnmatched, TargetingContext, _agent_control
 from pydantic_ai_harness.logfire._contract import (
     MAX_MODEL_FACING_TEXT_LENGTH,
     AgentConfig,
@@ -617,7 +618,7 @@ async def test_a_managed_model_whose_provider_is_not_installed_keeps_the_code_mo
 
     monkeypatch.setitem(sys.modules, 'pydantic_ai.providers.openai', None)
     publish('uninstalledprovider', {'model': 'openai:gpt-5.2', 'settings': {'max_tokens': 128}})
-    with pytest.warns(UserWarning, match="selects unknown model 'openai:gpt-5.2'"):
+    with pytest.warns(UserWarning, match="selects model 'openai:gpt-5.2', which this deployment cannot use"):
         result = await Agent(
             FunctionModel(capture_model), capabilities=[AgentControl('uninstalledprovider', label='production')]
         ).run('hello')
@@ -1036,7 +1037,7 @@ UNMATCHED_CASES = [
 
 
 async def run_with_unmatched(
-    capfire: CaptureLogfire, name: str, value: dict[str, Any], on_unmatched: Any
+    capfire: CaptureLogfire, name: str, value: dict[str, Any], on_unmatched: OnUnmatched
 ) -> list[InstructionPart]:
     """Run the block-of-each-kind agent plus the weather toolset's tool under one `on_unmatched` policy."""
     seen: list[InstructionPart] = []
@@ -1158,7 +1159,7 @@ async def test_unknown_managed_model_keeps_code_model(publish: Publish) -> None:
     # code model rather than failing, and says so once per process -- the config is resolved on every
     # run, so a warning per run would bury the signal under its own repetition.
     publish('unknown_model', AgentConfig(model='not-a-provider:not-a-model'))
-    with pytest.warns(UserWarning, match='selects unknown model') as caught:
+    with pytest.warns(UserWarning, match='which this deployment cannot use') as caught:
         agent = Agent(TestModel(), capabilities=[AgentControl('unknown_model', label='production')])
         result = await agent.run('hello')
         await agent.run('again')
@@ -1166,32 +1167,43 @@ async def test_unknown_managed_model_keeps_code_model(publish: Publish) -> None:
     assert result.output.startswith('success')
 
 
-async def test_nameless_model_selector_resolves_once_per_run(monkeypatch: pytest.MonkeyPatch, publish: Publish) -> None:
+async def test_unusable_managed_model_follows_on_unmatched(publish: Publish) -> None:
+    publish('unusable_model', AgentConfig(model='not-a-provider:not-a-model'))
+    strict = Agent(TestModel(), capabilities=[AgentControl('unusable_model', label='production', on_unmatched='error')])
+    with pytest.raises(UserError, match="selects model 'not-a-provider:not-a-model'"):
+        await strict.run('hello')
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        quiet = Agent(
+            TestModel(), capabilities=[AgentControl('unusable_model', label='production', on_unmatched='ignore')]
+        )
+        assert (await quiet.run('hello')).output.startswith('success')
+
+
+async def test_nameless_model_selector_resolves_once_per_run(publish: Publish) -> None:
     # A nameless capability's selector is evaluated once per request step, but the managed model is a
     # run-stable value, so it memoizes and resolves the variable exactly once even across steps.
-    resolves: list[str] = []
-    original = AgentControl[Any]._resolve_for_selection  # pyright: ignore[reportPrivateUsage]
+    prompts: list[object] = []
 
-    def counting(self: AgentControl[Any], variable: Variable[Any], ctx: Any) -> Any:
-        resolves.append(variable.name)
-        return original(self, variable, ctx)
-
-    monkeypatch.setattr(AgentControl, '_resolve_for_selection', counting)
+    def targeting(ctx: TargetingContext[object]) -> str:
+        prompts.append(ctx.prompt)
+        return 'key'
 
     def a_tool() -> str:
         return 'ok'
 
     publish('multi_step', AgentConfig(model='test'))
-    capability = AgentControl(label='production')
+    capability = AgentControl(label='production', targeting_key=targeting)
     # A model-less agent with one tool: `TestModel` calls the tool (step 1) then answers (step 2).
     await Agent(None, name='multi_step', tools=[a_tool], capabilities=[capability]).run('hello')
-    assert resolves == ['agent__multi_step']
+    assert prompts == ['hello']
 
 
 async def test_callable_targeting_resolution_is_reused_for_run(publish: Publish) -> None:
     calls = 0
 
-    def targeting(_ctx: RunContext[object]) -> str:
+    def targeting(_ctx: TargetingContext[object]) -> str:
         nonlocal calls
         calls += 1
         return f'key-{calls}'
@@ -1214,11 +1226,11 @@ async def test_a_call_site_model_run_resolves_its_own_targeting(publish: Publish
     keys: list[str] = []
     tenants: list[str] = []
 
-    def targeting(ctx: RunContext[str]) -> str:
+    def targeting(ctx: TargetingContext[str]) -> str:
         keys.append(ctx.deps)
         return ctx.deps
 
-    def attributes(ctx: RunContext[str]) -> dict[str, str]:
+    def attributes(ctx: TargetingContext[str]) -> dict[str, str]:
         tenants.append(ctx.deps)
         return {'tenant': ctx.deps}
 
@@ -1267,10 +1279,12 @@ async def test_the_hooks_outside_a_run_are_inert() -> None:
     # inspection is. Both halves of the split are asked, because each reaches for the same resolution.
     bound = AgentControl('outside_run').for_agent(Agent(TestModel()))
     assert isinstance(bound, CombinedCapability)
-    request = cast(Any, object())
-    for half in bound.capabilities:
-        assert await half.before_model_request(cast(Any, None), request) is request
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    request = ModelRequestContext(
+        model=TestModel(), messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    for half in bound.capabilities:
+        assert await half.before_model_request(ctx, request) is request
     contributed = bound.capabilities[1].get_model_settings()
     assert callable(contributed) and contributed(ctx) == ModelSettings()
 
@@ -1290,19 +1304,11 @@ async def test_a_setting_the_baseline_leaves_out_is_still_sent(capfire: CaptureL
     with variables_provider(capfire, VariablesConfig(variables={})):
         await Agent(
             FunctionModel(model),
-            model_settings=cast(
-                ModelSettings,
-                {
-                    'temperature': 0.1,
-                    'extra_headers': {'Authorization': 'Bearer sk-secret'},
-                    'openai_custom_option': object(),
-                },
-            ),
+            model_settings=ModelSettings(temperature=0.1, extra_headers={'Authorization': 'Bearer sk-secret'}),
             capabilities=[AgentControl('secretless_baseline')],
         ).run('hello')
 
-    assert sent[0] is not None and sent[0]['extra_headers'] == {'Authorization': 'Bearer sk-secret'}  # type: ignore[typeddict-item]
-    assert sent[0]['openai_custom_option'] is not None  # type: ignore[typeddict-item]
+    assert sent[0] is not None and sent[0].get('extra_headers') == {'Authorization': 'Bearer sk-secret'}
 
 
 async def test_rename_routes_to_the_tool_the_model_was_handed(capfire: CaptureLogfire) -> None:

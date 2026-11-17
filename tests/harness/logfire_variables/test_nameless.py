@@ -42,7 +42,8 @@ def test_an_inferred_agent_name_is_refused_at_construction() -> None:
 
 
 def test_explicit_name_rules_unchanged() -> None:
-    assert AgentControl('Checkout-Agent')._variable.name == 'agent__Checkout_Agent'  # pyright: ignore[reportPrivateUsage]
+    variable = AgentControl('Checkout-Agent')._variable  # pyright: ignore[reportPrivateUsage]
+    assert variable is not None and variable.name == 'agent__Checkout_Agent'
     with pytest.raises(ValueError, match='invalid variable name'):
         AgentControl('Checkout Agent')
 
@@ -95,3 +96,17 @@ async def test_failed_model_selection_leaves_no_resolution_behind() -> None:
     with pytest.raises(UserError, match='has no model to run'):
         await Agent(None, name='stranded', capabilities=[capability]).run('hello')
     assert capability._selection_resolved.get() is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_prefixed_name_warns_at_the_call_site() -> None:
+    with pytest.warns(UserWarning, match='added automatically') as caught:
+        variable = AgentControl('agent__checkout')._variable  # pyright: ignore[reportPrivateUsage]
+    assert variable is not None and variable.name == 'agent__checkout'
+    assert caught[0].filename == __file__
+
+
+async def test_an_agent_whose_name_was_removed_is_refused_at_run_time() -> None:
+    agent = Agent(TestModel(), name='checkout', capabilities=[AgentControl()])
+    agent.name = None
+    with pytest.raises(UserError, match='this agent has none'):
+        await agent.run('hello', infer_name=False)

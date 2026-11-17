@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any
+
+from pydantic import TypeAdapter
 
 from pydantic_ai_harness.logfire._contract import (
     AGENT_CONFIG_JSON_SCHEMA,
@@ -38,15 +40,11 @@ INSTRUCTION_BLOCK_SCHEMA: dict[str, Any] = next(
 def subschemas(schema: dict[str, Any]) -> Iterator[dict[str, Any]]:
     """Every object schema reachable from `schema`, itself included."""
     yield schema
-    children: list[Any] = [
-        *cast(dict[str, Any], schema.get('properties', {})).values(),
-        schema.get('items'),
-        schema.get('additionalProperties'),
-        *cast(list[Any], schema.get('anyOf', [])),
-    ]
-    for child in children:
+    properties: dict[str, Any] = schema.get('properties', {})
+    any_of: list[Any] = schema.get('anyOf', [])
+    for child in [*properties.values(), schema.get('items'), schema.get('additionalProperties'), *any_of]:
         if isinstance(child, dict):
-            yield from subschemas(cast(dict[str, Any], child))
+            yield from subschemas(TypeAdapter(dict[str, Any]).validate_python(child))
 
 
 def test_schema_matches_the_digest_every_copy_pins() -> None:
