@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
@@ -426,3 +427,27 @@ class TestToolBridge:
         assert seen[0] == ['load_capability', 'tool_search', 'tool_describe', 'tool_call']
         assert '_get_weather' in seen[-1]
         assert _returns(result.all_messages())[-1] == 'Sunny in Kyiv'
+
+    async def test_concurrent_bridged_calls_share_tool_calls_limit(self):
+        ran: list[str] = []
+
+        async def ping(host: str) -> str:
+            """Ping a host."""
+            ran.append(host)
+            await anyio.sleep(0)
+            return f'pong from {host}'
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    _call('tool_call', name='ping', args_json='{"host": "a"}'),
+                    _call('tool_call', name='ping', args_json='{"host": "b"}'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(respond), tools=[ping], capabilities=[ToolBridge()])
+
+        with pytest.raises(UsageLimitExceeded, match='tool_calls_limit'):
+            await agent.run('ping both', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert len(ran) == 1

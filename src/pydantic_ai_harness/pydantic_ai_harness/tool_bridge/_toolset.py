@@ -197,6 +197,11 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         )
         call = ToolCallPart(tool_name=name, args=args_json or '{}')
         reserved = reserve_nested_call(ctx)
+        # The `tool_call` running this counts only once it returns, so it is pending too: concurrent
+        # `tool_call`s would otherwise all pass the check before any of them is counted.
+        # usage-attribution: a temporary pending-call reservation, released below
+        ctx.usage.tool_calls += reserved
+        reserved *= 2
         try:
             return await manager.handle_call(
                 call, approved=ctx.tool_call_approved, metadata=ctx.tool_call_metadata, wrap_validation_errors=False
