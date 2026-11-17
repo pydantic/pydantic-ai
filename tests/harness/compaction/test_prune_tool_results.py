@@ -164,6 +164,22 @@ class TestPruneToolResults:
         assert returns['g1'] == PRUNED
         assert returns['g2'] == JUNK
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_leaves_an_earlier_result_with_a_reused_id(self) -> None:
+        look = ModelResponse(parts=[ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g2')])
+        script = Script([GREP, look, GREP, _prune('g1'), DONE])
+
+        result = await _agent(script, PruneToolResults()).run('find the TODOs')
+
+        returns = [
+            str(part.content)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_call_id == 'g1'
+        ]
+        assert returns == [JUNK, PRUNED]
+
     async def test_refuses_a_result_from_an_earlier_step(self) -> None:
         look = ModelResponse(parts=[ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g2')])
         script = Script([GREP, look, _prune('g1'), DONE])

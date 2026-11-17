@@ -93,17 +93,27 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
             return result
         tool_call_id: str = args['tool_call_id']
         content = f'{self.placeholder} {args["summary"]}'
-        target = next((part for part in _latest_returns(ctx.messages) if part.tool_call_id == tool_call_id), None)
+        messages: list[ModelMessage] = list(ctx.messages)
+        start, end = _latest_step(messages)
+        target = next(
+            (
+                part
+                for message in messages[start:end]
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id
+            ),
+            None,
+        )
         if target is None:
             return f'Not pruned: {tool_call_id!r} is not a result from your previous step.'
         if cleared_return(target, content) is None:
             return f'Not pruned: the result of {tool_call_id!r} is structured data that cannot be replaced.'
         if len(content) >= len(str(target.content)):
             return 'Not pruned: the summary is not shorter than the result.'
-        messages: list[ModelMessage] = list(ctx.messages)
 
         async def prune() -> list[ModelMessage]:
-            return replace_returns(messages, {tool_call_id: content})
+            step = replace_returns(messages[start:end], {tool_call_id: content})
+            return [*messages[:start], *step, *messages[end:]]
 
         ctx.messages[:] = await compact_with_span(
             ctx, strategy='PruneToolResults', messages=messages, compact=prune, model_requested=True
@@ -111,19 +121,13 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
         return result
 
 
-def _latest_returns(messages: Sequence[ModelMessage]) -> list[ToolReturnPart]:
-    """The tool results the latest model response answered.
+def _latest_step(messages: Sequence[ModelMessage]) -> tuple[int, int]:
+    """The bounds of the requests the latest model response answered.
 
-    On a resume with deferred tool results, the returns already executed in the latest step follow that
+    Only these are searched and rewritten, so a reused tool call ID can't reach an older result. On a
+    resume with deferred tool results, the returns already executed in the latest step follow that
     response, so it is found by type rather than by position.
     """
-    returns: list[ToolReturnPart] = []
-    responses = 0
-    for message in reversed(messages):
-        if isinstance(message, ModelResponse):
-            responses += 1
-            if responses == 2:
-                break
-        elif responses:
-            returns.extend(part for part in message.parts if isinstance(part, ToolReturnPart))
-    return returns
+    responses = [index for index, message in enumerate(messages) if isinstance(message, ModelResponse)]
+    start = responses[-2] + 1 if len(responses) > 1 else 0
+    return start, responses[-1]
