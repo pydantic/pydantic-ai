@@ -31,7 +31,7 @@ def _agent(capability: CurrentTime[None], sent: list[ModelRequest]) -> Agent[Non
 
 
 class _HostZone(tzinfo):
-    """A `tzinfo` whose `str()` is a host path, as `dateutil`'s are; the prompt names it by `tzname()`."""
+    """A `tzinfo` that isn't a `ZoneInfo`, named only by `tzname()`."""
 
     def __init__(self, name: str | None) -> None:
         self.name = name
@@ -44,9 +44,6 @@ class _HostZone(tzinfo):
 
     def tzname(self, dt: datetime | None) -> str | None:
         return self.name
-
-    def __repr__(self) -> str:
-        return "tzfile('/usr/share/zoneinfo/XST')"  # pragma: no cover
 
 
 def _german_strftime(format: str, t: object) -> str:

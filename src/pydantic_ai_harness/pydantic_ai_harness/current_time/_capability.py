@@ -55,11 +55,11 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
         stamp = next((m.timestamp for m in reversed(ctx.messages) if isinstance(m, ModelRequest) and m.timestamp), None)
         if stamp is None:
             return None
-        zone = self._zone
-        now = stamp.astimezone(zone)
+        now = stamp.astimezone(self._zone)
         hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec='minutes')
-        offset = hour[len('YYYY-MM-DDTHH:MM') :]
-        name = (zone.key if isinstance(zone, ZoneInfo) else None) or now.tzname() or f'UTC{offset}'
+        offset = hour[16:]  # The `+HH:MM` after `YYYY-MM-DDTHH:MM`.
+        key = self._zone.key if isinstance(self._zone, ZoneInfo) else None
+        name = key or now.tzname() or f'UTC{offset}'
         weekday = _WEEKDAYS[now.weekday()]
         if self.precision == 'date':
             text = f"Today's date is {weekday}, {now.date().isoformat()} ({name})."
