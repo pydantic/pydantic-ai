@@ -326,7 +326,7 @@ print(result.output)
 #> order_id='ord_8Kq2Zp' customer_id='cus_Q8fZ3kLmW2' total_cents=6249
 ```
 
-The sandbox gets one function per output type, named and typed like the outputs listed in [`RunContext.output_tool_defs`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.output_tool_defs), whatever the [output mode](https://ai.pydantic.dev/output/#output-modes). Here that's `final_result`, so the model can write:
+The sandbox gets one function per output type, named and typed like the outputs in [`RunContext.output_tools`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.output_tools), whatever the [output mode](https://ai.pydantic.dev/output/#output-modes). Here that's `final_result`, so the model can write:
 
 ```python
 order = await get_order(order_id='ord_8Kq2Zp')

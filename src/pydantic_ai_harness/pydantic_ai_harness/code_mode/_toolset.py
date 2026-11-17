@@ -1252,7 +1252,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return `None`, since a call stops the snippet instead of returning.
         """
         output_names: dict[str, str] = {}
-        for tool_def in ctx.output_tool_defs:
+        for tool_def in ctx.output_tools.values():
             safe_name = sanitize_tool_name(tool_def.name)
             if safe_name in callable_defs or safe_name == RUN_CODE_TOOL_NAME:
                 raise UserError(
