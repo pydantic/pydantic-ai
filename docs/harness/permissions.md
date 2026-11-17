@@ -108,7 +108,7 @@ A `command` rule only matches tools that declare a shell command argument (see [
 - An `'ask'` or `'deny'` rule matches a simple command that contains its words anywhere, including inside quotes. So `sudo rm -rf /`, `ls; rm -rf /`, and `sh -c "rm -rf /"` match `'rm -rf'`, and its first word also matches a path ending in it, such as `/bin/rm`.
 - Some commands are too complex to split: those with `$` (expansions, substitutions, and `$'...'` quoting), backticks, quoted or escaped operators (`echo '|'`), process substitution, subshells, here-documents, line breaks, or unbalanced quotes. Any command on a `'windows'` workspace is one too, since PowerShell quotes differently. When ask or deny command rules apply to the tool, such a command asks unless a deny rule's words appear in it. No rule allows it, not even one for the whole tool, so the mode decides.
 
-An allow rule trusts everything after its words, so allowing `find` also allows `find . -delete`: allow the narrowest commands you can. Deny rules match words, not behavior, so `rm -r -f` does not match `'rm -rf'`. Like `ask_commands`, rules are a convenience, not a sandbox.
+An allow rule trusts everything after its words, so allowing `find` also allows `find . -delete`: allow the narrowest commands you can. Deny rules match words, not behavior, so `rm -r -f` does not match `'rm -rf'`. Rules are checked when a call is about to run, so calls to [external tools](../deferred-tools.md#external-tool-execution), which your application runs, are not checked. Like `ask_commands`, rules are a convenience, not a sandbox.
 
 In an agent spec, `rules` is a list of mappings of these fields (`PermissionRuleSpec`), with `tools` limited to the serializable forms.
 
