@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import os
 import time
@@ -694,6 +695,20 @@ class TestTruncate:
         assert isinstance(out, ToolReturn)
         assert out.content == 'note'
         assert out.metadata == {'k': 1}
+
+    async def test_dense_output_obeys_token_budget(self):
+        """over_tokens=True prices this 348-character base64 payload at 278 tokens, and 4 characters per token gave 87.
+
+        Not a VCR test: the estimate is a pure function of the text, so there is no request to record.
+        """
+        payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
+
+        def limits(over: int) -> ToolOutputLimits[object]:
+            return ToolOutputLimits(bands=[Band(over=over, action=Truncate(max_chars=50))], over_tokens=True)
+
+        assert await _run(limits(300), payload) == payload
+        out = await _run(limits(200), payload)
+        assert isinstance(out, str) and len(out) == 50 and out == payload[:20] + payload[-30:]
 
 
 # ---------------------------------------------------------------------------

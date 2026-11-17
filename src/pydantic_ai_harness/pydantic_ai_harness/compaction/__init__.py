@@ -17,6 +17,7 @@ from pydantic_ai_harness.compaction._events import REPORT_CONTEXT_USAGE_EVENTS, 
 from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompaction
 from pydantic_ai_harness.compaction._manual import compact_now
 from pydantic_ai_harness.compaction._pinning import PinSource, is_pinned, pin, reinject_pinned
+from pydantic_ai_harness.compaction._prune_tool_results import PruneToolResults
 from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
 from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
@@ -46,6 +47,7 @@ __all__ = [
     'DeduplicateFileReads',
     'FallbackCompaction',
     'PinSource',
+    'PruneToolResults',
     'SlidingWindowCompaction',
     'SummarizingCompaction',
     'SupportsFocus',
