@@ -29,6 +29,7 @@ from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
 from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
+from ..conftest import message_shape
 from ..test_anthropic import MockAnthropic, completion_message
 
 with try_import() as imports_successful:
@@ -364,6 +365,10 @@ async def test_too_complex_inferred_native_output_is_attempted_in_tool_output(
             {'tool_choice': None, 'output_format': True, 'tools': []},
             {'tool_choice': {'type': 'auto'}, 'output_format': False, 'tools': [('final_result', None)]},
         ]
+    )
+    # The model never sees the rejected attempt: the Tool Output attempt sends the same single user message.
+    assert [message_shape(body) for body in request_capture.bodies()] == snapshot(
+        [[('user', ['text'])], [('user', ['text'])]]
     )
     assert result.usage.requests == 1
     [failed] = result.response.failed_attempts or []
