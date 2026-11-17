@@ -24,8 +24,8 @@ def event_ctx(ctx: RunContext[AgentDepsT], capability: str, *, asks: bool = Fals
     if isinstance(ctx, DurableRunContext):
         if asks:
             raise UserError(
-                f'{capability} cannot ask listeners about a change from inside a durable unit. '
-                'Run the tool inline in the durable workflow instead.'
+                f"{capability}'s {ctx.tool_name!r} tool cannot ask listeners about a change from inside a "
+                "durable unit. Keep the tool's default `metadata`, which runs it inline in the durable workflow."
             )
         render = sys.modules.get('pydantic_ai_harness.render._compat')
         return ctx if render is not None and isinstance(ctx, render.RenderRunContext) else None

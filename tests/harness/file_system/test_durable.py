@@ -136,7 +136,7 @@ async def test_temporal_write_in_an_activity_fails_closed(tmp_path: Path) -> Non
                 )
     activity_error = exc_info.value.cause
     assert isinstance(activity_error, ActivityError)
-    assert 'cannot ask listeners about a change' in str(activity_error.cause)
+    assert "FileSystem's 'write_file' tool cannot ask listeners about a change" in str(activity_error.cause)
     assert not (tmp_path / 'note.txt').exists()
 
 

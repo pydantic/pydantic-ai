@@ -262,7 +262,10 @@ class TestAzureDurableTaskDurability:
             ],
         )
         with registered_agent(durable_worker, agent):
-            with pytest.raises(OrchestrationFailedError, match='cannot ask listeners about a change'):
+            with pytest.raises(
+                OrchestrationFailedError,
+                match=re.escape(f"FileSystem's {tool_name!r} tool cannot ask listeners about a change"),
+            ):
                 run_agent(durable_worker, agent, deps=None)
         assert (tmp_path / 'note.txt').read_text() == 'original'
         assert not (tmp_path / 'sub').exists()
