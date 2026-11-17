@@ -1335,7 +1335,41 @@ async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None
     agent = Agent(m)
 
     result = await agent.run('What is 6 times 7? Reply with just the number.')
-    assert result.all_messages() == snapshot()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What is 6 times 7? Reply with just the number.', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user asks: "What is 6 times 7? Reply with just the number."
+
+We should comply: 42. Provide just the number.\
+"""
+                    ),
+                    TextPart(content='42'),
+                ],
+                usage=RequestUsage(input_tokens=85, output_tokens=42, cost=Decimal('0.00004425')),
+                model_name='openai/gpt-oss-120b',
+                model_id='huggingface:openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://router.huggingface.co/groq',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-e8703237-1cff-4156-a873-2d1437e7a79b',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
@@ -1357,7 +1391,37 @@ async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests:
                 part_events.append(event)
 
     assert result is not None
-    assert result.all_messages() == snapshot()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What is 6 times 7? Reply with just the number.', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user asks: "What is 6 times 7? Reply with just the number." So answer should be "42". Must be just the number.'
+                    ),
+                    TextPart(content='42'),
+                ],
+                usage=RequestUsage(input_tokens=85, output_tokens=43, cost=Decimal('0.00004500')),
+                model_name='openai/gpt-oss-120b',
+                model_id='huggingface:openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://router.huggingface.co/groq',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-048ba2b0-af70-4072-bea0-e1161fd1deec',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
     first_event = part_events[0]
     assert isinstance(first_event, PartStartEvent)
     assert isinstance(first_event.part, ThinkingPart)
