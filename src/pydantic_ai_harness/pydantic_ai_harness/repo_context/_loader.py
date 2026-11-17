@@ -74,20 +74,31 @@ loading when only `CLAUDE.md` is configured."""
 
 
 async def _real_file(
-    workspace: Workspace, path: Path, filenames: Sequence[str], *, autoload_symlink_roots: Sequence[Path] = ()
+    workspace: Workspace,
+    directory: Path,
+    filename: str,
+    filenames: Sequence[str],
+    *,
+    autoload_symlink_roots: Sequence[Path] = (),
 ) -> tuple[Path, Path] | None:
     """Return the resolved read/dedup target and display path of an authorized instruction file.
 
-    A same-directory link such as `CLAUDE.md -> AGENTS.md` is labeled by its target's name. Its target must
-    itself be an instruction file, named in `filenames` or one of `AGENTS.md` and `CLAUDE.md`: a repository's
-    `AGENTS.md -> .env` would otherwise send a file the file tools may deny to the model.
+    The file must resolve inside `directory`, so a linked directory in a `filename` such as
+    `.github/copilot-instructions.md` cannot reach outside it. A same-directory link such as
+    `CLAUDE.md -> AGENTS.md` is labeled by its target's name. Its target must itself be an instruction file,
+    named in `filenames` or one of `AGENTS.md` and `CLAUDE.md`: a repository's `AGENTS.md -> .env` would
+    otherwise send a file the file tools may deny to the model.
     """
+    path = directory / filename
     text = str(path)
     entry = await stat_or_none(workspace, text)
     if entry is None or entry.is_dir:
         return None
     real = Path(await workspace.realpath(text))
-    if real.parent == Path(await workspace.realpath(str(path.parent))):
+    real_parent = Path(await workspace.realpath(str(path.parent)))
+    if real.parent == real_parent and (
+        path.parent == directory or real_parent.is_relative_to(await workspace.realpath(str(directory)))
+    ):
         if real.name != path.name and real.name not in filenames and real.name not in _INSTRUCTION_NAMES:
             return None
         return real, path.parent / real.name
@@ -141,7 +152,7 @@ async def _dir_context_file(
     """The resolved target and label of the first of `filenames` in `directory` that `_real_file` accepts."""
     for filename in filenames:
         candidate = await _real_file(
-            workspace, directory / filename, filenames, autoload_symlink_roots=autoload_symlink_roots
+            workspace, directory, filename, filenames, autoload_symlink_roots=autoload_symlink_roots
         )
         if candidate is not None:
             return candidate
@@ -179,9 +190,13 @@ def render_context_file(file: ContextFile, *, label: str) -> str:
     return f'<context-file path="{html.escape(label)}">\n{content}\n</context-file>'
 
 
-def render_context_file_path(label: str) -> str:
-    """Name a file without its contents, as an empty `<context-file>` tag with the label attribute-escaped."""
-    return f'<context-file path="{html.escape(label)}" />'
+def context_file_part_content(file: ContextFile) -> str:
+    """A nested file's text as a `ContextFilePart` holds it: as written, without trailing line terminators.
+
+    Pydantic AI sends a data part's content byte for byte: text in it that opens or closes the `<context_file>` frame, or
+    looks like one of the application's frames, gets a note saying the file's author wrote it.
+    """
+    return file.content.rstrip('\r\n')
 
 
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:
