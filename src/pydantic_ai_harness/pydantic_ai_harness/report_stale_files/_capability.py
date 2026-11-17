@@ -153,6 +153,8 @@ async def _state(
         return 'deleted', 0
     except (OSError, WorkspaceError):
         return 'unknown', 0
+    if len(content) > budget:
+        return 'unknown', len(content)
     return ('fresh' if bytes_hash(content) == content_hash else 'changed'), len(content)
 
 

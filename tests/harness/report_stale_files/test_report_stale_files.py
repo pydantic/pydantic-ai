@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from pathlib import Path
 
 import anyio.to_thread
@@ -18,6 +19,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
 from pydantic_ai_harness.report_stale_files import STALE_FILES_ORIGIN
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
@@ -71,6 +73,13 @@ def _agent(
         deps_type=type(None),
         capabilities=[LocalWorkspace(tmp_path), file_system or FileSystem(), capability or ReportStaleFiles()],
     )
+
+
+class UnsizedBackend(LocalWorkspaceBackend):
+    """A local workspace whose `stat` doesn't report sizes."""
+
+    async def stat(self, path: str) -> FileEntry:
+        return replace(await super().stat(path), size=None)
 
 
 def _read(path: str) -> ToolCallPart:
@@ -203,6 +212,20 @@ class TestReportStaleFiles:
         )
         result = await agent.run('go')
         assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `newer.txt`']
+
+    async def test_file_that_reads_past_the_byte_budget_is_not_hashed(self, tmp_path: Path) -> None:
+        """A backend that can't tell a file's size up front, as the shell fallback can't, still keeps to the budget."""
+        target = tmp_path / 'data.txt'
+        target.write_text('one\n')
+        agent = _agent(
+            tmp_path,
+            (None, _read('data.txt')),
+            (lambda: target.write_text('grown well past the budget\n'), _LIST),
+            (None, 'done'),
+            capability=ReportStaleFiles(max_checked_bytes=10),
+        )
+        result = await agent.run('go', workspace=UnsizedBackend(working_dir=tmp_path))
+        assert _notices(result.all_messages()) == [[], [], []]
 
     async def test_one_notice_names_changed_then_deleted_files_within_one_budget(self, tmp_path: Path) -> None:
         for name in ('changed.txt', 'deleted.txt', 'gone.txt'):
