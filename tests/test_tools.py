@@ -2275,6 +2275,30 @@ async def test_function_toolset_lists_a_tool_it_leaves_unchanged_as_is():
     assert [prepared is tool for prepared in tool.prepared_on] == [True, True, True]
 
 
+async def test_function_toolset_defaults_set_after_adding_reach_no_tool():
+    """A toolset's `strict` or `sequential` set after it added a tool reaches neither a `Tool` instance nor a function.
+
+    Not a VCR test: it pins the values a toolset lists; no request is involved.
+    """
+
+    def instance_tool() -> str:  # pragma: no cover
+        return 'x'
+
+    def function_tool() -> str:  # pragma: no cover
+        return 'y'
+
+    toolset = FunctionToolset([Tool(instance_tool)])
+    toolset.add_function(function_tool)
+    toolset.strict = True
+    toolset.sequential = True
+
+    tools = await toolset.get_tools(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    assert {name: (tool.tool_def.strict, tool.tool_def.sequential) for name, tool in tools.items()} == {
+        'instance_tool': (None, False),
+        'function_tool': (None, False),
+    }
+
+
 def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():
     """Toolset `sequential`/`defer_loading=True` wins over a raw `Tool`'s plain `False`.
 

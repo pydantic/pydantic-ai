@@ -39,6 +39,16 @@ from ..tools import (
 from .abstract import AbstractToolset, ToolsetTool
 
 
+@dataclass(frozen=True)
+class _ToolInstanceDefaults:
+    """A toolset's values for a `Tool` instance, as they were when the toolset added it."""
+
+    strict: bool | None
+    include_return_schema: bool | None
+    sequential: bool
+    defer_loading: bool
+
+
 @dataclass(kw_only=True)
 class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a function toolset tool that keeps track of the function to call."""
@@ -164,9 +174,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ]
 
         self.tools = {}
-        # Names of the tools added as `Tool` instances, which get this toolset's `strict`, `include_return_schema`,
-        # `sequential` and `defer_loading` when it lists them. A function added with `add_function` already has them.
-        self._tool_instance_names: set[str] = set()
+        # This toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` when it added each `Tool`
+        # instance, which the instance gets when the toolset lists it. A function added with `add_function` already has
+        # them.
+        self._tool_instance_defaults: dict[str, _ToolInstanceDefaults] = {}
         for tool in tools:
             if isinstance(tool, Tool):
                 self.add_tool(tool)  # pyright: ignore[reportUnknownArgumentType]
@@ -733,7 +744,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
-        self._tool_instance_names.discard(tool.name)
+        del self._tool_instance_defaults[tool.name]
         # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
         tool.requires_approval = requires_approval
         return tool
@@ -743,8 +754,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
         when the tool sets none. Its `strict` and `include_return_schema` apply when the tool leaves them unset,
-        and its `sequential` and `defer_loading` when they're `True`. Those four apply when the toolset lists the
-        tool, so another toolset or agent holding the same `Tool` lists it with its own.
+        and its `sequential` and `defer_loading` when they're `True`. Those four are the toolset's values when the tool
+        is added, and apply when the toolset lists it, so another toolset or agent holding the same `Tool` lists it
+        with its own.
 
         Args:
             tool: The tool to add.
@@ -758,23 +770,29 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
-        self._tool_instance_names.add(tool.name)
+        self._tool_instance_defaults[tool.name] = _ToolInstanceDefaults(
+            strict=self.strict,
+            include_return_schema=self.include_return_schema,
+            sequential=self.sequential,
+            defer_loading=self._defer_loading,
+        )
 
     def _listed_tool(self, name: str, tool: Tool[AgentDepsT]) -> Tool[AgentDepsT]:
         """`tool` as this toolset lists it under `name`.
 
-        A `Tool` instance gets the toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` on a
-        copy, so the `Tool` itself keeps its own values for every other toolset and agent holding it. When they change
-        nothing, the toolset lists the `Tool` itself.
+        A `Tool` instance gets the toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` from
+        when it was added, on a copy, so the `Tool` itself keeps its own values for every other toolset and agent
+        holding it. When they change nothing, the toolset lists the `Tool` itself.
         """
-        if name not in self._tool_instance_names:
+        defaults = self._tool_instance_defaults.get(name)
+        if defaults is None:
             return tool
-        strict = tool.strict if tool.strict is not None else self.strict
+        strict = tool.strict if tool.strict is not None else defaults.strict
         include_return_schema = (
-            tool.include_return_schema if tool.include_return_schema is not None else self.include_return_schema
+            tool.include_return_schema if tool.include_return_schema is not None else defaults.include_return_schema
         )
-        sequential = self.sequential and not tool.sequential
-        defer_loading = self._defer_loading and not tool.defer_loading
+        sequential = defaults.sequential and not tool.sequential
+        defer_loading = defaults.defer_loading and not tool.defer_loading
         if (strict, include_return_schema, sequential, defer_loading) == (
             tool.strict,
             tool.include_return_schema,
