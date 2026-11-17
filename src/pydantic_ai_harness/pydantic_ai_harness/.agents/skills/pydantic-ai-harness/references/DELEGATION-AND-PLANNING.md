@@ -199,7 +199,8 @@ orchestrator = Agent(
 ```
 
 - `delegate_task` takes `background=True` and `resume=<task_id>`; the model also gets `list_tasks`,
-  `check_task` (a running task's recent activity, from `DelegationTasks.snapshot(task_id)`), `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
+  `check_task` (a running task's recent activity, from `DelegationTasks.snapshot(task_id)`),
+  `message_task`, `answer_task`, and `cancel_task(force=False)`. Sub-agents get `ask_parent`
   (`SubAgent(can_ask_questions=False)` removes it; `SubAgent(resumable=False)` makes one one-shot, as
   `DelegationTasks(one_shot=...)` does by name for an owner the application binds).
 - Without a bound `DelegationTasks`, each run opens its own owner: background reports arrive as

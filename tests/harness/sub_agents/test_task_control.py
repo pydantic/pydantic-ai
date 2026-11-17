@@ -1,6 +1,7 @@
 """`SubAgents(task_control=TaskControl())`: background tasks, task-control tools, questions, events, remote agents.
 
-Scenarios run real agent runs on `FunctionModel`/`TestModel`, in process, except where a test needs a hand-built history.
+Scenarios run real agent runs on `FunctionModel`/`TestModel`, in process, except where a test needs a hand-built
+history.
 """
 
 from __future__ import annotations
