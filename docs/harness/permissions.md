@@ -94,7 +94,7 @@ A `PermissionRule` matches a call when every field it sets matches:
 
 - `tools` is a [`ToolSelector`][pydantic_ai.tools.ToolSelector], as for other tool-scoped capabilities: `'all'` (the default), a list of names, a metadata match, or a predicate.
 - `args` maps argument names to globs for their string values. Each value is matched as given and as a normalized path, so `notes/../secrets/key` is also matched as `secrets/key`. On a `'windows'` workspace both forms are compared case-insensitively, with `/` for separators. Symlinks are not resolved. An allow rule needs both forms to match. An ask or deny rule needs either, and also matches the end of a longer path, so `secrets/*` covers `/project/secrets/key` and `../secrets/key`.
-- `command` is the words of a shell command, described below.
+- `command` is the words of a shell command, described below. An allow rule that globs a shell tool's command argument through `args` never matches, since a glob would let `git status; python evil.py` through `git *`: use `command` to allow commands.
 
 When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order, so a broad allow rule cannot override a deny rule.
 

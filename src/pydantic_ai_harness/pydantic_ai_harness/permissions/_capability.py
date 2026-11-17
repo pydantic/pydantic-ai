@@ -276,7 +276,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
         """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
         command = _command(tool_def, args)
         rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
-        rule = decide(rules, command=command, args=args, posix=ctx.workspace.platform != 'windows')
+        posix = ctx.workspace.platform != 'windows'
+        rule = decide(rules, command=command, command_arg=_command_arg(tool_def), args=args, posix=posix)
         if rule is not None and rule.verdict != 'allow':
             return _rule_asks(ctx, rule, _subject(tool_def, args, command))
         return self._mode_asks(
@@ -315,13 +316,17 @@ class Permissions(AbstractCapability[AgentDepsT]):
         return None
 
 
-def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
-    """The shell command a call runs, when its tool declares one."""
+def _command_arg(tool_def: ToolDefinition) -> str | None:
+    """The argument holding the shell command a tool runs, when it declares one."""
     metadata = tool_def.metadata or {}
     name = metadata.get('code_arg_name')
-    if metadata.get('code_arg_language') != 'shell' or not isinstance(name, str):
-        return None
-    command = args.get(name)
+    return name if metadata.get('code_arg_language') == 'shell' and isinstance(name, str) else None
+
+
+def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
+    """The shell command a call runs, when its tool declares one."""
+    name = _command_arg(tool_def)
+    command = None if name is None else args.get(name)
     return command if isinstance(command, str) else None
 
 

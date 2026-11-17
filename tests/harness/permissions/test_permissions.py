@@ -654,6 +654,13 @@ class TestPermissionRules:
 
         assert (result.output == 'saved') is runs
 
+    async def test_an_allow_rule_globbing_the_command_argument_never_matches(self) -> None:
+        """A glob would let `git status; python evil.py` through `git *`, so only `command` can allow commands."""
+        rules = [PermissionRule('allow', tools=['run_command'], args={'command': 'git *'})]
+
+        assert await _verdict('git status; python evil.py', rules) == 'ask'
+        assert await _verdict('git status', rules) == 'ask'
+
     async def test_an_allow_rule_skips_read_only_asks_but_not_ask_commands(self) -> None:
         """`ask_commands` still asks about a command an allow rule matches; remove a pattern from it to opt out."""
         allow_git = [PermissionRule('allow', command='git')]

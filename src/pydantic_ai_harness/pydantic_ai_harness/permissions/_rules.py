@@ -60,6 +60,8 @@ class PermissionRule(Generic[AgentDepsT]):
     args: Mapping[str, str] = field(default_factory=dict[str, str])
     """Globs for string arguments by name, such as `{'path': 'docs/*'}`. A missing or non-string argument does not match.
 
+    An `'allow'` rule that globs a shell tool's command argument never matches: use `command` to allow commands.
+
     Each value is matched as given and as a normalized path: an `'allow'` rule needs both to match, others either,
     and also match the end of a longer path, so `'secrets/*'` covers `/project/secrets/key`.
     """
@@ -249,16 +251,23 @@ def _arg_matches(rule: PermissionRule[Any], value: object, glob: str, *, posix: 
 
 
 def decide(
-    rules: Sequence[PermissionRule[Any]], *, command: str | None, args: Mapping[str, Any], posix: bool
+    rules: Sequence[PermissionRule[Any]],
+    *,
+    command: str | None,
+    command_arg: str | None,
+    args: Mapping[str, Any],
+    posix: bool,
 ) -> PermissionRule[Any] | None:
     """The rule deciding a call to a tool `rules` all apply to, or `None` when no rule does.
 
+    An allow rule that globs the shell command argument (`command_arg`) is skipped: only `command` splits a command.
     With `posix=False`, for a Windows workspace, a command is never split, since PowerShell quotes differently.
     """
     applicable = [
         rule
         for rule in rules
-        if all(_arg_matches(rule, args.get(name), glob, posix=posix) for name, glob in rule.args.items())
+        if not (rule.verdict == 'allow' and command_arg in rule.args)
+        and all(_arg_matches(rule, args.get(name), glob, posix=posix) for name, glob in rule.args.items())
     ]
     found = [rule for rule in applicable if rule.command is None]
     command_rules = [rule for rule in applicable if rule.command is not None]
