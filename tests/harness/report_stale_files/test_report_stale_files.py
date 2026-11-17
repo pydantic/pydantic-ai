@@ -27,7 +27,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend, Workspace
+from pydantic_ai.workspaces import FileEntry, LocalWorkspaceBackend, Workspace, WorkspaceError
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
 from pydantic_ai_harness.report_stale_files import STALE_FILES_ORIGIN
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
@@ -81,6 +81,17 @@ def _agent(
         deps_type=type(None),
         capabilities=[LocalWorkspace(tmp_path), file_system or FileSystem(), capability or ReportStaleFiles()],
     )
+
+
+class FlakyBackend(LocalWorkspaceBackend):
+    """A local workspace whose reads fail while `failing` is set."""
+
+    failing = False
+
+    async def read_bytes(self, path: str) -> bytes:
+        if self.failing:
+            raise WorkspaceError('The workspace is unavailable.')
+        return await super().read_bytes(path)
 
 
 class UnsizedBackend(LocalWorkspaceBackend):
@@ -266,6 +277,28 @@ These files you read were deleted from the workspace:
 """
             ]
         )
+
+    async def test_file_the_workspace_fails_to_read_is_checked_again(self, tmp_path: Path) -> None:
+        target = tmp_path / 'data.txt'
+        target.write_text('one\n')
+        backend = FlakyBackend(working_dir=tmp_path)
+
+        def change_and_fail() -> None:
+            target.write_text('two\n')
+            backend.failing = True
+
+        def recover() -> None:
+            backend.failing = False
+
+        agent = _agent(
+            tmp_path,
+            (None, _read('data.txt')),
+            (change_and_fail, _LIST),
+            (recover, _LIST),
+            (None, 'done'),
+        )
+        result = await agent.run('go', workspace=backend)
+        assert _notices(result.all_messages()) == [[], [], [], [f'{CHANGED}\n- `data.txt`']]
 
     async def test_least_recently_observed_file_is_dropped_past_the_limit(self, tmp_path: Path) -> None:
         for name in ('a.txt', 'b.txt'):
