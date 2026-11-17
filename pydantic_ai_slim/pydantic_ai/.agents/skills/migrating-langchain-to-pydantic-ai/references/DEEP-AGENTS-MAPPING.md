@@ -72,7 +72,7 @@ Enforce authorization and isolation at the backing service. Treat prompt instruc
 
 ## Orchestration and recovery
 
-Import `SubAgent` and `SubAgents` from `pydantic_ai_harness.subagents`. Harness can load its Markdown agent format from configured folders, but it does not consume a Deep Agents YAML roster. Parse and validate retained application configuration into explicit `Agent` and `SubAgent` objects, or intentionally convert it: YAML `system_prompt` becomes `Agent.instructions` or the Markdown body, `description` remains the description, and `tools` become explicit toolsets or a `tool_resolver`. Set the child model explicitly or through `AgentOverride`; a `model` key in Harness Markdown is parsed but not applied.
+Import `SubAgent` and `SubAgents` from `pydantic_ai_harness.sub_agents`. Harness can load its Markdown agent format from configured folders, but it does not consume a Deep Agents YAML roster. Parse and validate retained application configuration into explicit `Agent` and `SubAgent` objects, or intentionally convert it: YAML `system_prompt` becomes `Agent.instructions` or the Markdown body, `description` remains the description, and `tools` become explicit toolsets or a `tool_resolver`. Set the child model explicitly or through `AgentOverride`; a `model` key in Harness Markdown is parsed but not applied.
 
 | Deep Agents feature | Pydantic AI and Harness candidate | Important difference |
 | --- | --- | --- |
@@ -125,11 +125,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness.compaction import SlidingWindowCompaction
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.skills import Skills
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 
 async def stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:

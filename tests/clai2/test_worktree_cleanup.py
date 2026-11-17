@@ -1,4 +1,4 @@
-"""Worktree shutdown removes an unchanged checkout CLAI created, and keeps changed work unless removal is confirmed."""
+"""Worktree shutdown removes a checkout with nothing to lose, and keeps unpushed work unless removal is confirmed."""
 
 import io
 import os
@@ -152,6 +152,15 @@ def checkout(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
+def origin(repo: Path) -> Path:
+    """A remote of `repo` that nothing has been pushed to."""
+    origin = repo.parent / 'origin.git'
+    git(repo, 'init', '--bare', str(origin))
+    git(repo, 'remote', 'add', 'origin', str(origin))
+    return origin
+
+
+@pytest.fixture
 def launched(checkout: Path) -> Worktree:
     """The hand-made checkout as CLAI saw it at launch, with a commit made since."""
     worktree = Worktree(path=checkout, branch='feature', head=git(checkout, 'rev-parse', 'HEAD'), created=False)
@@ -166,19 +175,38 @@ def created(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Worktree:
     worktree = open_worktree(name='task')
     assert worktree.created and worktree.new_branch
     monkeypatch.chdir(worktree.path)
-    return replace(worktree, remove_if_unchanged=True)
+    return replace(worktree, remove_if_unchanged=True, remove_if_pushed=True)
+
+
+@pytest.fixture
+def pushed(launched: Worktree, origin: Path) -> Worktree:
+    """A checkout `--worktree` reopened, whose commit since launch is on the remote."""
+    git(launched.path, 'push', 'origin', 'feature')
+    return replace(launched, remove_if_pushed=True)
+
+
+def at_exit(worktree: Worktree, *, moved: bool) -> Worktree:
+    """`worktree` as launched before its last commit if `moved`, or after it."""
+    return worktree if moved else replace(worktree, head=git(worktree.path, 'rev-parse', 'HEAD'))
 
 
 def test_notice_names_what_exit_does(created: Worktree) -> None:
-    assert created.notice == f'Worktree: {created.path} (branch: clai-task). Removed on exit if unchanged.'
-    kept = replace(created, remove_if_unchanged=False)
-    assert kept.notice == f'Worktree: {created.path} (branch: clai-task). Kept unless removal is confirmed on exit.'
+    where = f'{created.path} (branch: clai-task).'
+    assert created.notice == f'Worktree: {where} Removed on exit if unchanged, or if clean and pushed.'
+    reopened = replace(created, created=False, remove_if_unchanged=False)
+    assert reopened.notice == (
+        f'Reopened worktree: {where} Removed on exit if clean and pushed, otherwise kept unless removal is confirmed.'
+    )
+    kept = replace(created, remove_if_unchanged=False, remove_if_pushed=False)
+    assert kept.notice == f'Worktree: {where} Kept unless removal is confirmed on exit.'
+    unread = replace(created, remove_if_pushed=False)
+    assert unread.notice == f'Worktree: {where} Removed on exit if unchanged.'
 
 
 def test_unchanged_checkout_is_kept_unless_marked(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A checkout the CLI did not mark, as with piped input when it was opened, is kept without asking."""
+    """An unpushed checkout the CLI did not mark, as with piped input when it was opened, is kept without asking."""
     monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
-    offer_worktree_cleanup(worktree=replace(created, remove_if_unchanged=False))
+    offer_worktree_cleanup(worktree=replace(created, remove_if_unchanged=False, remove_if_pushed=False))
     assert created.path.exists()
 
 
@@ -711,6 +739,98 @@ def test_changed_created_checkout_still_asks(
     assert 'Worktree kept at' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize('moved', [False, True])
+def test_clean_pushed_checkout_is_removed_without_asking(
+    pushed: Worktree,
+    repo: Path,
+    origin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    removal_command: RemovalCommand,
+    moved: bool,
+) -> None:
+    """Pushed commits are safe on the remote, whether or not `HEAD` moved since launch."""
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
+    offer_worktree_cleanup(
+        worktree=at_exit(pushed, moved=moved), read_remove_commands=lambda: {str(repo / '.git'): ['custom']}
+    )
+    assert not pushed.path.exists()
+    assert Path.cwd() == repo
+    assert git(repo, 'rev-parse', 'feature') == git(origin, 'rev-parse', 'feature')
+    assert not removal_command.calls
+    assert capsys.readouterr() == (f'Removed worktree {pushed.path}. Branch kept.\n', '')
+
+
+@pytest.mark.parametrize('change', ['untracked', 'modified', 'commit'])
+def test_pushed_checkout_with_later_work_still_asks(
+    pushed: Worktree, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """Uncommitted files and unpushed commits are work only this checkout or its branch holds."""
+    if change == 'untracked':
+        (pushed.path / 'new.txt').write_text('draft')
+    elif change == 'modified':
+        (pushed.path / 'tracked.txt').write_text('edited')
+    else:
+        git(pushed.path, 'commit', '--allow-empty', '-m', 'Unpushed')
+    picker = AsyncMock(return_value='keep')
+    monkeypatch.setattr(worktrees, 'ask_removal', picker)
+    offer_worktree_cleanup(worktree=pushed)
+    picker.assert_awaited_once()
+    assert pushed.path.exists()
+
+
+@pytest.mark.parametrize('moved', [False, True])
+def test_pushed_checkout_clai_did_not_open_is_never_removed_without_asking(
+    pushed: Worktree, monkeypatch: pytest.MonkeyPatch, moved: bool
+) -> None:
+    """A checkout CLAI was only launched inside is asked about if it changed, and kept if not."""
+    picker = AsyncMock(return_value='keep')
+    monkeypatch.setattr(worktrees, 'ask_removal', picker)
+    offer_worktree_cleanup(worktree=replace(at_exit(pushed, moved=moved), remove_if_pushed=False))
+    assert picker.await_count == moved
+    assert pushed.path.exists()
+
+
+@pytest.mark.parametrize('moved', [False, True])
+def test_saved_keep_choice_outlives_a_push(
+    launched: Worktree,
+    repo: Path,
+    origin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    moved: bool,
+) -> None:
+    store = SettingsStore(repo.parent / 'config.db')
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(return_value='never'))
+    offer_worktree_cleanup(worktree=launched, store=store)
+    git(launched.path, 'push', 'origin', 'feature')
+    capsys.readouterr()
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
+    offer_worktree_cleanup(worktree=replace(at_exit(launched, moved=moved), remove_if_pushed=True), store=store)
+    assert launched.path.exists()
+    assert capsys.readouterr() == (f'Worktree kept at {launched.path}.\n', '')
+
+
+@pytest.mark.parametrize('moved', [False, True])
+def test_unreadable_keep_choice_never_removes_without_asking(
+    pushed: Worktree,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    moved: bool,
+) -> None:
+    """A pushed checkout whose saved choice cannot be read is asked about if it changed, and kept if not."""
+    store = SettingsStore(repo.parent / 'config.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('DROP TABLE kept_worktrees')
+    picker = AsyncMock(return_value='keep')
+    monkeypatch.setattr(worktrees, 'ask_removal', picker)
+    offer_worktree_cleanup(worktree=at_exit(pushed, moved=moved), store=store)
+    assert picker.await_count == moved
+    assert pushed.path.exists()
+    assert capsys.readouterr().err.count('Cannot read worktree cleanup preference') == 1
+
+
 def run_cli(
     monkeypatch: pytest.MonkeyPatch,
     *args: str,
@@ -746,10 +866,22 @@ def run_cli(
     return prompts
 
 
+@pytest.mark.parametrize('readable', [True, False])
 @pytest.mark.parametrize('commit', [False, True])
-def test_update_keeps_the_launch_snapshot(repo: Path, monkeypatch: pytest.MonkeyPatch, commit: bool) -> None:
-    """The relaunched build starts without `--worktree`, yet still removes an unchanged checkout the first one made."""
+def test_update_keeps_the_launch_snapshot(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, commit: bool, readable: bool
+) -> None:
+    """The relaunched build starts without `--worktree`, yet still removes an unchanged checkout the first one made.
+
+    That holds even when the saved keep choices cannot be read, which only stops removal once pushed.
+    """
     monkeypatch.delenv('CLAI_RELAUNCH_WORKTREE', raising=False)
+    if not readable:
+
+        def unreadable(path: Path, *, store: SettingsStore | None) -> bool | None:
+            return None
+
+        monkeypatch.setattr(worktrees, 'kept_checkout', unreadable)
     monkeypatch.chdir(repo)
     workspace = repo / '.worktrees/task'
     assert run_cli(monkeypatch, '-w', 'task', repo=repo, relaunch=True) == []
@@ -768,6 +900,63 @@ def test_update_keeps_the_launch_snapshot(repo: Path, monkeypatch: pytest.Monkey
     assert bool(git(repo, 'branch', '--list', 'clai-task')) == commit
 
 
+@pytest.mark.parametrize('update', [False, True])
+@pytest.mark.parametrize('push', [False, True])
+def test_reopened_worktree_is_removed_only_once_pushed(
+    repo: Path, origin: Path, monkeypatch: pytest.MonkeyPatch, update: bool, push: bool
+) -> None:
+    """`--worktree` marks a checkout it reopens, and `/update` hands the mark and launch commit to the relaunched build."""
+    monkeypatch.delenv('CLAI_RELAUNCH_WORKTREE', raising=False)
+    workspace = repo / '.worktrees/task'
+
+    def commit() -> None:
+        git(workspace, 'commit', '--allow-empty', '-m', 'Work')
+
+    def session() -> None:
+        if push:
+            git(workspace, 'push', 'origin', 'clai-task')
+
+    monkeypatch.chdir(repo)
+    assert len(run_cli(monkeypatch, '-w', 'task', repo=repo, session=commit)) == 1
+    monkeypatch.chdir(repo)
+    if update:
+        assert run_cli(monkeypatch, '-w', 'task', repo=repo, relaunch=True) == []
+        assert os.environ['CLAI_RELAUNCH_WORKTREE'] == f'reopened {git(workspace, "rev-parse", "HEAD")}'
+        assert run_cli(monkeypatch, repo=repo, session=session) == []
+    else:
+        assert run_cli(monkeypatch, '-w', 'task', repo=repo, session=session) == []
+    assert workspace.exists() != push
+    assert git(repo, 'branch', '--list', 'clai-task')
+
+
+def test_saved_keep_choice_unmarks_a_reopened_worktree(
+    repo: Path, origin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launch notice and the `/update` handover agree with the exit that keeps the checkout."""
+    monkeypatch.delenv('CLAI_RELAUNCH_WORKTREE', raising=False)
+    workspace = repo / '.worktrees/task'
+
+    def commit() -> None:
+        git(workspace, 'commit', '--allow-empty', '-m', 'Work')
+
+    monkeypatch.chdir(repo)
+    assert len(run_cli(monkeypatch, '-w', 'task', repo=repo, session=commit, answer='never')) == 1
+    git(workspace, 'push', 'origin', 'clai-task')
+    monkeypatch.chdir(repo)
+    entered: list[Worktree] = []
+    enter = cli._enter_worktree  # pyright: ignore[reportPrivateUsage]
+
+    def spy(*, name: str, headless: bool, store: SettingsStore) -> Worktree:
+        entered.append(enter(name=name, headless=headless, store=store))
+        return entered[-1]
+
+    monkeypatch.setattr(cli, '_enter_worktree', spy)
+    assert run_cli(monkeypatch, '-w', 'task', repo=repo, relaunch=True) == []
+    assert entered[0].notice.endswith('Kept unless removal is confirmed on exit.')
+    assert 'CLAI_RELAUNCH_WORKTREE' not in os.environ
+    assert workspace.exists()
+
+
 def test_relaunch_from_a_kept_checkout_hands_nothing_over(
     repo: Path, checkout: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -776,13 +965,16 @@ def test_relaunch_from_a_kept_checkout_hands_nothing_over(
     assert 'CLAI_RELAUNCH_WORKTREE' not in os.environ
 
 
+@pytest.mark.parametrize('push', [False, True])
 def test_session_commits_in_a_hand_made_checkout_still_ask(
-    repo: Path, checkout: Path, monkeypatch: pytest.MonkeyPatch
+    repo: Path, checkout: Path, origin: Path, monkeypatch: pytest.MonkeyPatch, push: bool
 ) -> None:
-    """The snapshot is taken before the session, so its commits count as changes."""
+    """The snapshot is taken before the session, so its commits count as changes, pushed or not."""
 
     def work() -> None:
         git(checkout, 'commit', '--allow-empty', '-m', 'Work')
+        if push:
+            git(checkout, 'push', 'origin', 'feature')
 
     prompts = run_cli(monkeypatch, repo=repo, session=work)
     assert len(prompts) == 1

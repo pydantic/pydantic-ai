@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+from collections.abc import Mapping
 from typing import Any, Literal, assert_never, cast, get_args
 
 from openai.types import responses
@@ -166,6 +167,63 @@ def map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolPar
         # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
         cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
     return web_search_tool
+
+
+def map_code_interpreter_tool_param(
+    tool: CodeExecutionTool, provider_name: str
+) -> responses.tool_param.CodeInterpreter:
+    """Map a [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] to a Responses `code_interpreter` tool."""
+    container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
+    if tool.files:
+        # Cross-provider files are dropped silently here, not raised via
+        # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
+        provider_file_ids = [file.file_id for file in tool.files if file.provider_name == provider_name]
+        if provider_file_ids:
+            container['file_ids'] = provider_file_ids
+    return {'type': 'code_interpreter', 'container': container}
+
+
+def map_mcp_server_tool_param(tool: MCPServerTool) -> responses.tool_param.Mcp:
+    """Map an [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] to a Responses `mcp` tool."""
+    mcp_tool = responses.tool_param.Mcp(
+        type='mcp',
+        server_label=tool.id,
+        require_approval='never',
+    )
+
+    if tool.authorization_token:  # pragma: no branch
+        mcp_tool['authorization'] = tool.authorization_token
+
+    if tool.allowed_tools is not None:  # pragma: no branch
+        mcp_tool['allowed_tools'] = tool.allowed_tools
+
+    if tool.description:  # pragma: no branch
+        mcp_tool['server_description'] = tool.description
+
+    if tool.headers:  # pragma: no branch
+        mcp_tool['headers'] = tool.headers
+
+    if tool.url.startswith(MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME + ':'):
+        _, connector_id = tool.url.split(':', maxsplit=1)
+        mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
+    else:
+        mcp_tool['server_url'] = tool.url
+
+    return mcp_tool
+
+
+def map_web_search_call_for_replay(
+    item: NativeToolCallPart, args: Mapping[str, object]
+) -> responses.ResponseFunctionWebSearchParam:
+    """Map a `WebSearchTool` call to the `web_search_call` item that replays it by its ID."""
+    # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
+    action = {k: v for k, v in args.items() if v is not None}
+    return responses.ResponseFunctionWebSearchParam(
+        id=item.id or item.tool_call_id,
+        action=cast(responses.response_function_web_search_param.Action, action),
+        status='completed',
+        type='web_search_call',
+    )
 
 
 def map_web_search_tool_call(

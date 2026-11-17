@@ -1,6 +1,7 @@
 ---
-# Trusted host-side Z.AI health check. Keep ZAI_API_KEY in the provider_health job, the agent-start recheck below
-# and the record step of provider_health_record, never in the agent container.
+# Trusted host-side Z.AI health check. Keep ZAI_API_KEY and ZAI_BACKUP_API_KEY in the provider_health job, the
+# agent-start recheck below, the record step of provider_health_record and the OpenCode threat detection step in
+# shared/engine-zai.md, never in the agent container.
 jobs:
   provider_health:
     name: Check Z.AI provider health
@@ -12,6 +13,7 @@ jobs:
     outputs:
       ready: ${{ steps.health.outputs.ready }}
       reason: ${{ steps.health.outputs.reason }}
+      account: ${{ steps.health.outputs.account }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -25,6 +27,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
@@ -84,6 +87,7 @@ jobs:
         if: steps.agent_artifact.outcome == 'success' && steps.health_artifact.outcome == 'success'
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
           PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -91,6 +95,7 @@ jobs:
         run: |
           python3 -I .github/scripts/agent_provider_health.py record \
             --agent-session agent/agent-session.jsonl \
+            --health-artifact provider-health/provider-health.json \
             --output provider-health/run-result.json
       - name: Add the host-recorded agent result to the health decision artifact
         if: hashFiles('provider-health/run-result.json') != ''
@@ -106,7 +111,8 @@ jobs:
 # decided, and incidents opened in the meantime must still stop inference. Once the job
 # holds the slot, these steps rerun the default-branch controller with the gate's identity
 # and replace its artifact, so the monitor reconciles the decision the run acted on.
-# They run on the host before any workspace script; the key never reaches the container.
+# They run on the host before any workspace script; the keys never reach the container. The recheck's `account`
+# output selects the engine's key in `shared/engine-zai.md`; keep its step id.
 # A blocked decision fails the job before the engine starts: a `noop` would still spend
 # a threat-detection pass.
 pre-agent-steps:
@@ -115,6 +121,7 @@ pre-agent-steps:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
       PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}
       GITHUB_WORKFLOW: ${{ github.workflow }}
       PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
@@ -130,6 +137,7 @@ pre-agent-steps:
       python3 "$RUNNER_TEMP/provider-health/agent_provider_health.py" check \
         --output "$RUNNER_TEMP/provider-health/provider-health.json"
   - name: Replace health decision for the incident monitor
+    id: agent_start_health_artifact
     if: (!cancelled()) && steps.agent_start_health.outputs.ready != ''
     continue-on-error: true
     uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -144,6 +152,15 @@ pre-agent-steps:
       REASON: ${{ steps.agent_start_health.outputs.reason }}
     run: |
       echo "::error::Provider health blocked inference at agent start: ${REASON}"
+      exit 1
+  # The record and the monitor read the uploaded decision. When the replacement failed, it still holds the gate's
+  # decision, so a recheck that chose another account would have them attribute the run to the gate's account.
+  - name: Stop before inference when the health decision hides the run's account
+    if: steps.agent_start_health_artifact.outcome == 'failure' && steps.agent_start_health.outputs.account != needs.provider_health.outputs.account
+    env:
+      ACCOUNT: ${{ steps.agent_start_health.outputs.account }}
+    run: |
+      echo "::error::The agent-start decision for the ${ACCOUNT} Z.AI account could not replace the gate's decision"
       exit 1
 ---
 

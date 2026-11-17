@@ -498,15 +498,16 @@ class AoePlugin(Plugin[AoeSettings]):
 
         The AoE session is what holds the conversation, so it is resumed even when the pane now runs in
         another directory than it was saved in, as after AoE renamed or moved its worktree.
+        Its history shows through the renderers loaded so far, not those of plugins registered after this one.
         """
         conversation = self.host.conversation
         if conversation_id is None or conversation.messages or conversation.title is not None:
             return
         try:
             notice = await conversation.resume(conversation_id, allow_other_workspace=True)
-        except (LookupError, ValueError, RuntimeError) as error:
+        except (LookupError, ValueError, RuntimeError) as exc:
             _LOGGER.debug('aoe: could not resume %s', conversation_id, exc_info=True)
-            notice = f'Could not resume conversation {conversation_id} of this AoE session: {error}'
+            notice = f'Could not resume conversation {conversation_id} of this AoE session: {exc}'
         self.host.console.print(notice, markup=False)
 
     async def on_turn_end(self, event: TurnEnd) -> None:

@@ -120,7 +120,13 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
     # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
     # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
-    harness_modules = ('pydantic_ai_harness', 'opentelemetry') if find_spec('pydantic_ai_harness') is not None else ()
+    # `PromptInjectionDefender` verdicts cross the activity boundary as `stackone_defender` dataclasses,
+    # which only decode in workflow code when their module is the host's.
+    harness_modules = (
+        ('pydantic_ai_harness', 'opentelemetry', 'stackone_defender')
+        if find_spec('pydantic_ai_harness') is not None
+        else ()
+    )
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
