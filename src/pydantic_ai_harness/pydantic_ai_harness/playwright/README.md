@@ -319,9 +319,10 @@ agent stops using that tab, which stays open in the browser. The next call works
 on another tab, or on a new blank one. A frame that appears during a call, such
 as an extension's menu injected when the agent clicks into a login field, can
 still be captured by that call's `snapshot` or `screenshot_on_navigate` image;
-the next call drops the tab. That includes a page the agent opens
-itself: under a policy that admits `chrome://` URLs, `navigate` still opens one
-and returns its text ([#13698](https://github.com/pydantic/pydantic-ai/issues/13698)).
+the next call drops the tab. A `chrome://` page the agent opens itself through
+`navigate` follows the policy instead: under a policy that admits it, `navigate`
+returns its text before the next call drops the tab
+([#13698](https://github.com/pydantic/pydantic-ai/issues/13698)).
 
 While attached, the session refuses new service-worker registrations, and
 Playwright leaves the browser's download and emulation settings as they are.
