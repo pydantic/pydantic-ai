@@ -53,7 +53,8 @@ class ToolErrorInfo:
 
 
 def _describe(ctx: RunContext[Any], info: ToolErrorInfo) -> str:
-    return f'`{info.name}` raised {type(info.error).__name__}: {info.error}'
+    description = f'`{info.name}` raised {type(info.error).__name__}'
+    return f'{description}: {message}' if (message := str(info.error)) else description
 
 
 @dataclass

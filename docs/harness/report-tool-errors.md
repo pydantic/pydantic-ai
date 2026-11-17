@@ -29,7 +29,7 @@ def divide(a: int, b: int) -> float:
 
 ## What the model sees
 
-The failed call gets a tool result with `outcome='failed'` that names the tool, the exception type and its message:
+The failed call gets a tool result with `outcome='failed'` that names the tool, the exception type and its message, if it has one:
 
 ```text
 `divide` raised ZeroDivisionError: division by zero

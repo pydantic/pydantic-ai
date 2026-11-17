@@ -63,6 +63,10 @@ def _agent(model: FunctionModel, *capabilities: AbstractCapability[None]) -> Age
         raise ToolFailed('not today')
 
     @agent.tool_plain
+    def fetch() -> str:
+        raise TimeoutError
+
+    @agent.tool_plain
     def guarded() -> str:
         raise ApprovalRequired
 
@@ -99,6 +103,10 @@ class TestReportToolErrors:
         assert _tool_results(result.all_messages()) == snapshot(
             [('c1', '`divide` raised ZeroDivisionError: division by zero', 'failed'), ('c2', 0.5, 'success')]
         )
+
+    def test_exception_without_a_message_is_reported_by_type(self) -> None:
+        result = _agent(_scripted([ToolCallPart('fetch', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
+        assert _tool_results(result.all_messages()) == snapshot([('c1', '`fetch` raised TimeoutError', 'failed')])
 
     def test_failing_again_is_reported_again(self) -> None:
         result = _agent(
