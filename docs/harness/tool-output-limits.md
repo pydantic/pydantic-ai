@@ -265,7 +265,7 @@ from `metadata` on the resulting `ToolReturnPart` after `Agent.run`.
 ## Size unit
 
 Thresholds are measured in characters by default. Set `over_tokens=True` to measure in
-estimated tokens (the same ~4-chars-per-token heuristic as [compaction](compaction.md)); pass a
+estimated tokens (the same [text estimate](compaction.md#triggers) as compaction); pass a
 `tokenizer` callable for accuracy. `Truncate.max_chars` is always characters -- truncation is a
 character operation regardless of the threshold unit. The cap includes the truncation marker
 and applies separately to each reduced text value. If the budget cannot fit both retained
