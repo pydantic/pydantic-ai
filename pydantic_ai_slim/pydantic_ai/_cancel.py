@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from . import _utils
+from .exceptions import UserError
 
 if TYPE_CHECKING:
     from .run import AgentRun
@@ -49,9 +50,11 @@ __all__ = (
 class CancellationToken:
     """A thread-safe handle for cancelling one or more agent runs.
 
-    A token is permanently cancelled after [`cancel`][pydantic_ai.CancellationToken.cancel] is
-    called. The same token may be passed to multiple concurrent runs, in which case all of them
-    are cancelled.
+    A token is permanently cancelled once [`cancel`][pydantic_ai.CancellationToken.cancel]
+    succeeds. The same token may be passed to multiple concurrent runs, in which case all of them
+    are cancelled. If a run's event loop can't be reached from where the token is fired, as with a run
+    inside a Temporal workflow cancelled from outside it, `cancel()` raises a [`UserError`][pydantic_ai.exceptions.UserError] and the
+    token stays uncancelled (see [Temporal cancellation](../durable_execution/temporal.md#cancellation)).
     """
 
     def __init__(self) -> None:
@@ -68,7 +71,15 @@ class CancellationToken:
     def cancel(self) -> None:
         """Cancel every live run registered with this token.
 
-        This method is idempotent and may be called from any thread.
+        Idempotent once it succeeds, and may be called from any thread as long as each run's event
+        loop can be reached from it.
+
+        Raises:
+            UserError: If a run's event loop can't be reached from the calling thread or loop, as with
+                a run inside a Temporal workflow fired from outside it (see
+                [Temporal cancellation](../durable_execution/temporal.md#cancellation)). The other
+                registered runs are still cancelled, but the token stays uncancelled and that run
+                untouched, so firing the token again from the run's own loop still cancels it.
         """
         with self._lock:
             if self._cancelled:
@@ -76,10 +87,21 @@ class CancellationToken:
             self._cancelled = True
             registrations = tuple(self._registrations)
 
-        # `RunCancellation.cancel()` is itself thread-safe: it delivers synchronously when called
-        # on the run's own loop and marshals via `call_soon_threadsafe` otherwise.
+        # `RunCancellation.cancel()` delivers synchronously when called on the run's own loop and
+        # marshals via `call_soon_threadsafe` otherwise, raising `UserError` for a loop that can't be
+        # reached that way. Every run is still tried: one unreachable run doesn't shield the others.
+        error: UserError | None = None
         for cancellation in registrations:
-            cancellation.cancel()
+            try:
+                cancellation.cancel()
+            except UserError as e:
+                error = error or e
+        if error is not None:
+            # Leave the token uncancelled so firing it again from the right place still reaches the
+            # run that was missed; runs already cancelled ignore the repeat request.
+            with self._lock:
+                self._cancelled = False
+            raise error
 
     def _register(self, cancellation: RunCancellation) -> None:
         with self._lock:
@@ -181,24 +203,30 @@ class RunCancellation:
         self._request(timed_out=True)
 
     def _request(self, *, timed_out: bool) -> None:
-        with self._lock:
-            if self._finished or self._requested:
-                return
-            self._requested = True
-            self._timed_out = timed_out
-            owner = self._owner
-            loop = self._loop
-            if owner is None or loop is None or owner.done():
-                return
-
         try:
             running_loop = asyncio.get_running_loop()
         except RuntimeError:
             running_loop = None
-        if running_loop is loop:
+        with self._lock:
+            if self._finished or self._requested:
+                return
+            owner = self._owner
+            loop = self._loop
+            if owner is not None and loop is not None and not owner.done() and running_loop is not loop:
+                try:
+                    loop.call_soon_threadsafe(self._deliver)
+                except NotImplementedError:
+                    # A loop that only its own code may drive, like a Temporal workflow's: a cancel
+                    # from elsewhere would land at a point the engine never recorded. Raise without
+                    # recording the request, so it isn't delivered at the next step boundary either.
+                    raise UserError(
+                        "This run's event loop can't be reached from another thread or loop. Cancel it "
+                        'from code running on that loop, such as a Temporal `@workflow.signal` handler.'
+                    ) from None
+            self._requested = True
+            self._timed_out = timed_out
+        if running_loop is loop and owner is not None and not owner.done():
             self._deliver()
-        else:
-            loop.call_soon_threadsafe(self._deliver)
 
     def _deliver(self) -> None:
         with self._lock:
@@ -288,6 +316,11 @@ class RunBinding:
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation)
     agent_run: AgentRun[Any, Any] | None = None
+    started_by_installed_package: bool = False
+    """Whether an installed package started the run, decided in the caller's stack before the background run.
+
+    The run itself can't tell: below its task are only the frames of whatever drives the event loop.
+    """
 
 
 _current_run_binding: ContextVar[RunBinding | None] = ContextVar('pydantic_ai.run_binding', default=None)

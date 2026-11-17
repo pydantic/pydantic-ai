@@ -8,6 +8,28 @@ Let an agent search and change content in a Notion workspace. `Notion` gives the
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Notion: search and edit a workspace through Notion's MCP server
+    accDescr: Inside your agent, the model calls tools of the Notion capability, such as notion-search, and gets their results. The capability gets a token for each run from your auth function, and with read_only=True it drops the tools not marked read-only. It calls the Notion MCP server at mcp.notion.com/mcp with an OAuth access token, and the server rejects a Notion integration token.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        notion["Notion()<br/>notion-search,<br/>notion-&lt;tool&gt;"]:::capability
+    end
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    server["Notion MCP server<br/>mcp.notion.com/mcp"]:::external
+    rejected["Notion integration token"]:::blocked
+    model <-->|"tool call, result"| notion
+    auth -->|"token for each run"| notion
+    notion <-->|"OAuth access token"| server
+    notion -.-x|"drops"| dropped
+    server -.-x|"rejects"| rejected
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Install and connect
 
 ```bash
@@ -98,7 +120,7 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's instructions from reaching the model.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's instructions from reaching the model.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 

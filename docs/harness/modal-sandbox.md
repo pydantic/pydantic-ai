@@ -11,17 +11,39 @@ Run your agent's commands and file edits in an isolated [Modal](https://modal.co
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Modal Sandbox: your agent's commands run in a Modal cloud sandbox
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools. Their ctx.workspace is a Modal cloud sandbox from ModalSandbox's get_workspace hook, reached over the Modal API with your Modal token and running until destroy(ref) or a timeout. A later run reattaches with the WorkspaceRef in the message history, and a ref to an ended sandbox gives WorkspaceUnavailableError.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        modal["ModalSandbox()<br/>get_workspace hook"]:::capability
+    end
+    sandbox["Modal cloud sandbox<br/>runs until destroy(ref)<br/>or a timeout"]:::external
+    gone["WorkspaceUnavailableError"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| modal
+    ref -.->|"a later run reattaches"| modal
+    modal <-->|"Modal API,<br/>your Modal token"| sandbox
+    modal -.-x|"ref to an<br/>ended sandbox"| gone
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[modal,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,modal,anthropic]"
 ```
 
 ```bash
 py-cli modal token new
 ```
 
-This saves your Modal credentials; in CI, set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` instead. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+This saves your Modal credentials; in CI, set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` instead. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -64,7 +86,7 @@ For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) 
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 from pydantic_ai_harness.shell import Shell
 
@@ -112,6 +134,41 @@ The ref holds no credentials, so the process that reattaches needs your Modal cr
 `image`, `app_name`, `create_app_if_missing`, `sandbox_timeout`, and `idle_timeout` only shape a new sandbox; `working_dir` and `env` apply to every command, including after you reattach.
 
 Already have a `modal.Sandbox`? Pass `workspace=ModalSandboxBackend(sandbox=sandbox)` to a run, with `ModalSandboxBackend` from `pydantic_ai_harness.modal_sandbox`. `ModalSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. A backend's `get_sandbox()` returns its `modal.Sandbox` for Modal features the workspace API does not cover; on a backend with no sandbox yet it creates one, like the first operation. It doesn't change who terminates the sandbox: whoever holds the ref does.
+
+## Use different credentials for each user
+
+`ModalSandbox(client=modal.Client.from_credentials(token_id, token_secret))` sets one client for the capability, in place of the environment and config file. Modal keeps one client from the environment for the whole process, so that can't serve several users at once. When each user has their own Modal account, supply the workspace from a capability of your own, which builds the client from the run's `deps`:
+
+```python {test="skip"}
+from dataclasses import dataclass
+
+import modal
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness import Coder
+from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
+
+
+@dataclass
+class User:
+    modal_client: modal.Client
+
+
+@dataclass
+class UsersModal(AbstractCapability[User]):
+    def get_workspace(self, ctx: RunContext[User], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if ref is not None and ref.provider != 'modal':
+            return None
+        return ModalSandboxBackend(ref=ref, client=ctx.deps.modal_client)
+
+
+agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersModal(), Coder()])
+```
+
+Building a Modal client opens a connection, so build it ahead of the run rather than in `get_workspace`, which must not do I/O. Under [Temporal](../durable_execution/temporal.md), `deps` are serialized for every activity, so a client can't be on them: put a user ID there instead, and have `get_workspace` look that user's client up on the worker.
+
+Destroy a user's sandbox with that user's client, as in `await ModalSandbox(client=user.modal_client).destroy(ref)`. A client for another account may not find the sandbox, and a sandbox that isn't found returns quietly, so it would keep running and billing with no error.
 
 ## Prepare a sandbox before the run
 
@@ -163,7 +220,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
     await ModalSandbox().destroy(ref)
 ```
 
-`ModalSandbox().backend(ref)` constructs a backend for an existing ref without I/O. `destroy(ref)` uses the sandbox ID directly; it does not resume an expired sandbox or run its tools, and a sandbox that no longer exists returns quietly. A sandbox whose image command ignores Modal's stop signal (a bare `python` image, for example) can keep running for about 30 seconds after `destroy` returns. Only destroy sandboxes you own.
+`ModalSandbox().backend(ref)` constructs a backend for an existing ref without I/O. `destroy(ref)` uses the sandbox ID directly, with the instance's `client`; it does not resume an expired sandbox or run its tools, and a sandbox that no longer exists returns quietly. A sandbox whose image command ignores Modal's stop signal (a bare `python` image, for example) can keep running for about 30 seconds after `destroy` returns. Only destroy sandboxes you own.
 
 A sandbox you don't terminate ends when its `sandbox_timeout` runs out, or after `idle_timeout` seconds without activity if you set one. See [Modal's timeouts](https://modal.com/docs/guide/sandbox#timeouts).
 
@@ -171,6 +228,8 @@ A failed run returns no result, so there is no ref to store, and `after_run` doe
 
 ```python
 from typing import Any
+
+import anyio
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
@@ -184,7 +243,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await ModalSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await ModalSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
@@ -202,7 +264,10 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder(), ho
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 Modal runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 
@@ -213,7 +278,7 @@ The sandbox is isolated from your machine, not from the network: it has outbound
 Install the `temporal` extra too:
 
 ```bash
-pip/uv-add "pydantic-ai-harness[modal,anthropic,temporal]"
+pip/uv-add "pydantic-ai-harness[coder,modal,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.
@@ -275,8 +340,7 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 
 ### What changed in the lifecycle
 
-- A run no longer terminates the sandbox. It runs until you terminate it or its `sandbox_timeout` ends it (see [Clean up](#clean-up)). Set `idle_timeout=` to have Modal stop an unused sandbox sooner, or call `await ModalSandbox().destroy(result.workspace.ref)` when you're done with it.
-- `sandbox_timeout` defaults to 24 hours instead of 5 minutes, so a later run can continue in the same sandbox.
+- A run no longer terminates the sandbox (see [Clean up](#clean-up)), and `sandbox_timeout` defaults to 24 hours instead of 5 minutes, so a later run can continue in the same sandbox.
 - A run that continues a `message_history` reattaches to the previous run's sandbox. Pass `workspace='new'` for a fresh one.
 - Reattaching to an expired or terminated sandbox raises `WorkspaceUnavailableError`. No empty replacement is created. If a command exits 137 because the sandbox was terminated mid-command, it raises the same error; a SIGKILLed command in a running sandbox returns exit 137.
 
@@ -302,6 +366,10 @@ The previous `ModalSandbox` registered its own `run_command`, `read_file`, `writ
 | `ModalSandboxExecResult` | Removed. Use `pydantic_ai.workspaces.CommandResult`. |
 | `ModalSandboxError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceError`. It doesn't cover sandbox creation that doesn't finish within 10 minutes (`TimeoutError`), or transient Modal errors such as connection failures, which propagate unchanged so a durable engine can retry them. Without the `modal` package, importing `pydantic_ai_harness.modal_sandbox` raises `ImportError`. |
 | `ModalSandboxTerminalError`, `ModalSandboxUnavailableError`, `ModalSandboxAuthError` | Removed. Catch `pydantic_ai.workspaces.WorkspaceUnavailableError`. |
+
+## Further reading
+
+- [The agent outgrew your laptop](https://pydantic.dev/articles/harness-modal) (Pydantic): from a shell agent on your laptop to parallel `ModalSandbox` containers
 
 ## API reference
 

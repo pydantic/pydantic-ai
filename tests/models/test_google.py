@@ -21,6 +21,7 @@ from httpx2 import (
     AsyncByteStream as HTTPX2AsyncByteStream,
     AsyncClient as HTTPX2AsyncClient,
     ConnectError as HTTPX2ConnectError,
+    HTTPStatusError as HTTPX2HTTPStatusError,
     MockTransport as HTTPX2MockTransport,
     ReadError as HTTPX2ReadError,
     Request as HTTPX2Request,
@@ -68,6 +69,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -76,6 +78,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
     UnexpectedModelBehavior,
     UserError,
@@ -233,9 +236,11 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                     cost=Decimal('0.0001102'),
                 ),
                 model_name='gemini-2.5-flash',
+                model_id='google:gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -311,9 +316,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     cost=Decimal('0.0000125'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -348,9 +355,11 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     cost=Decimal('0.0000175'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -391,9 +400,11 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
                         details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
                     ),
                     model_name='gemini-2.0-flash-exp',
+                    model_id='google:gemini-2.0-flash-exp',
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -454,9 +465,11 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     cost=Decimal('0.00146125'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -497,9 +510,11 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     cost=Decimal('0.00228625'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -536,9 +551,11 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     cost=Decimal('0.0011575'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -978,9 +995,11 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                     cost=Decimal('0.0000045'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1056,10 +1075,12 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'input_text_tokens': 14,
                 },
                 'model_name': 'gemini-1.5-flash',
+                'model_id': 'google:gemini-1.5-flash',
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': 'google',
                 'provider_url': 'https://generativelanguage.googleapis.com/',
+                'canonical_system': 'google',
                 'provider_details': {
                     'finish_reason': 'SAFETY',
                     'safety_ratings': [
@@ -1224,9 +1245,11 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     cost=Decimal('0.03931'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1315,9 +1338,11 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     cost=Decimal('0.03898875'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1474,9 +1499,11 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     cost=Decimal('0.04167875'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1591,6 +1618,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     citations=IsCitationList(),
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1601,6 +1629,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='text',
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=1,
@@ -1611,6 +1640,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -1648,6 +1678,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
         ]
     )
@@ -1736,9 +1767,11 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     cost=Decimal('0.04112'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1820,9 +1853,11 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                     cost=Decimal('0.0009481'),
                 ),
                 model_name='gemini-2.5-flash',
+                model_id='google:gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1910,9 +1945,11 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     cost=Decimal('0.0015476'),
                 ),
                 model_name='gemini-2.5-flash',
+                model_id='google:gemini-2.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1933,6 +1970,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     tool_call_id=IsStr(),
                     provider_name='google',
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -1943,6 +1981,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1959,6 +1998,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -1984,6 +2024,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -2152,9 +2193,11 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     cost=Decimal('0.020902'),
                 ),
                 model_name='gemini-3-pro-preview',
+                model_id='google:gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2200,9 +2243,11 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     cost=Decimal('0.027436'),
                 ),
                 model_name='gemini-3-pro-preview',
+                model_id='google:gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2282,9 +2327,11 @@ async def test_google_model_thinking_part_from_other_model(
                     cost=Decimal('0.01724625'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=datetime.UTC),
@@ -2339,9 +2386,11 @@ async def test_google_model_thinking_part_from_other_model(
                     cost=Decimal('0.0200525'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2402,9 +2451,11 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     cost=Decimal('0.0126025'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2456,6 +2507,7 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
                     provider_details={'thought_signature': IsStr()},
                 ),
                 previous_part_kind='thinking',
+                canonical_system='google',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
@@ -2516,6 +2568,7 @@ The most important rule is to **stay alert and be predictable**. Always assume a
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -2599,9 +2652,11 @@ async def test_google_url_input(
                 parts=[TextPart(content=Is(expected_output))],
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
+                model_id='google-cloud:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2645,9 +2700,11 @@ async def test_google_url_input_force_download(
                 parts=[TextPart(content=Is(output))],
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
+                model_id='google-cloud:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2706,9 +2763,11 @@ async def test_google_tool_config_any_with_tool_without_args(
                     cost=Decimal('0.0000025'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2739,9 +2798,11 @@ async def test_google_tool_config_any_with_tool_without_args(
                     cost=Decimal('0.0000047'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2966,9 +3027,11 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     cost=Decimal('0.0000053'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3005,9 +3068,11 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     cost=Decimal('0.0000079'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3082,9 +3147,11 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                     cost=Decimal('0.00154125'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3123,9 +3190,11 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                     cost=Decimal('0.00083'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3183,9 +3252,11 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                     cost=Decimal('0.0000088'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3250,9 +3321,11 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                     cost=Decimal('0.0000234'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3299,9 +3372,11 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                     cost=Decimal('0.0000132'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3364,9 +3439,11 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                     cost=Decimal('0.00422625'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3405,9 +3482,11 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                     cost=Decimal('0.001535'),
                 ),
                 model_name='gemini-2.5-pro',
+                model_id='google:gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3462,9 +3541,11 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                     cost=Decimal('0.0000348'),
                 ),
                 model_name='gemini-2.0-flash',
+                model_id='google:gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3708,9 +3789,11 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                     cost=Decimal('0.0002345'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google-cloud:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id='5QlpatShBNyV3tMPkcCE2Ak',
                 finish_reason='stop',
@@ -3803,9 +3886,11 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     cost=Decimal('0.0161805'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google-cloud:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id='6wlpatX_FviAjNsP4MPYsQw',
                 finish_reason='stop',
@@ -4248,6 +4333,7 @@ def test_google_process_response_empty_candidates(google_provider: GoogleProvide
             timestamp=IsDatetime(),
             provider_name='google',
             provider_url='https://generativelanguage.googleapis.com/',
+            canonical_system='google',
             provider_response_id='resp-456',
         )
     )
@@ -4616,9 +4702,11 @@ async def test_google_stream_usage_survives_mid_stream_error(
             parts=[TextPart(content='hello')],
             usage=RequestUsage(input_tokens=20025, output_tokens=10),
             model_name='gemini-test',
+            model_id='google:gemini-2.5-flash',
             timestamp=IsDatetime(),
             provider_name='google',
             provider_url='https://generativelanguage.googleapis.com/',
+            canonical_system='google',
             provider_response_id='resp-1',
             run_id=IsStr(),
             conversation_id=IsStr(),
@@ -4750,9 +4838,11 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         cost=Decimal('0.00334875'),
                     ),
                     model_name='gemini-2.5-pro',
+                    model_id='google:gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -4831,9 +4921,11 @@ Here are some key facts about the Eiffel Tower:
                         cost=Decimal('0.0145825'),
                     ),
                     model_name='gemini-2.5-pro',
+                    model_id='google:gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -4934,9 +5026,11 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         cost=Decimal('0.00877125'),
                     ),
                     model_name='gemini-2.5-pro',
+                    model_id='google:gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -4956,6 +5050,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         tool_call_id=IsStr(),
                         provider_name='google',
                     ),
+                    canonical_system='google',
                 ),
                 PartEndEvent(
                     index=0,
@@ -4966,6 +5061,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     next_part_kind='text',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=1,
@@ -4999,6 +5095,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         citations=IsCitationList(),
                     ),
                     next_part_kind='builtin-tool-return',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=2,
@@ -5015,6 +5112,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     previous_part_kind='text',
+                    canonical_system='google',
                 ),
             ]
         )
@@ -5565,9 +5663,11 @@ async def test_thinking_with_tool_calls_from_other_model(
                     cost=Decimal('0.00276625'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=datetime.UTC),
@@ -5609,9 +5709,11 @@ async def test_thinking_with_tool_calls_from_other_model(
                     cost=Decimal('0.00124375'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=datetime.UTC),
@@ -5650,9 +5752,11 @@ async def test_thinking_with_tool_calls_from_other_model(
                     cost=Decimal('0.001966'),
                 ),
                 model_name='gemini-3-pro-preview',
+                model_id='google:gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5975,6 +6079,45 @@ async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: No
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
+@pytest.mark.parametrize(
+    ('transport_error', 'expected'),
+    [
+        pytest.param(HTTPX2HTTPStatusError, ModelRateLimitError, id='gave-up-status'),
+        pytest.param(HTTPX2ConnectError, ModelConnectionError, id='connect'),
+    ],
+)
+async def test_google_count_tokens_transport_error_is_wrapped(
+    allow_model_requests: None,
+    transport_error: type[HTTPX2HTTPStatusError | HTTPX2ConnectError],
+    expected: type[ModelAPIError],
+):
+    """A transport failure from `count_tokens` is mapped like one from the request, not raised as the raw `httpx2` error.
+
+    Not a VCR test: a retrying transport that gave up on a status, or a refused connection, raises before
+    `google.genai` sees a response, so there is nothing to record.
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        if transport_error is HTTPX2ConnectError:
+            raise HTTPX2ConnectError('connection refused', request=request)
+        response = HTTPX2Response(429, request=request)
+        raise HTTPX2HTTPStatusError('Client error 429', request=request, response=response)
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert isinstance(exc_info.value, expected)
+    assert isinstance(exc_info.value.__cause__, transport_error)
+
+
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
@@ -6018,9 +6161,11 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                     cost=Decimal('0.002668'),
                 ),
                 model_name='gemini-3-pro-preview',
+                model_id='google:gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6029,6 +6174,11 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
             ),
         ]
     )
+
+
+def _gemini_api_model() -> GoogleModel:
+    """A Gemini API model, which replays thought signatures recorded under `google`."""
+    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='mock-api-key'))
 
 
 def test_google_thought_signature_on_thinking_part():
@@ -6047,7 +6197,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6058,7 +6208,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6082,7 +6232,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6092,7 +6242,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6116,7 +6266,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6126,7 +6276,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6154,7 +6304,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name=None,  # ModelResponse doesn't have provider_name set
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert response_with_item_provider_name == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -6172,7 +6322,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='openai',  # Different provider on ModelResponse
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert response_with_different_provider == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -6188,7 +6338,7 @@ def test_google_missing_tool_call_thought_signature():
             ],
             provider_name='openai',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert google_response == snapshot(
         {
@@ -6256,9 +6406,11 @@ async def test_google_streaming_tool_call_thought_signature(
                     cost=Decimal('0.002602'),
                 ),
                 model_name='gemini-3-pro-preview',
+                model_id='google:gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6288,9 +6440,11 @@ async def test_google_streaming_tool_call_thought_signature(
                     cost=Decimal('0.000610'),
                 ),
                 model_name='gemini-3-pro-preview',
+                model_id='google:gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6310,6 +6464,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -6320,6 +6475,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -6401,7 +6557,13 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     prepared = m.prepare_messages(messages)
     system_instruction, contents = await m._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
-    assert system_instruction == {'role': 'user', 'parts': [{'text': 'You are helpful.'}]}
+    assert system_instruction == {
+        'role': 'user',
+        'parts': [
+            {'text': lookalike_note_announcement(system_role=False)},
+            {'text': 'You are helpful.'},
+        ],
+    }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
         part['text']
@@ -6526,6 +6688,66 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
     assert http_options.timeout == custom_timeout * 1000
+
+
+@pytest.mark.vcr()
+async def test_google_tool_return_with_ref_key_is_accepted(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """Gemini reads a `$ref` key in a function response as a reference to a named part and rejects the request
+    (`400 INVALID_ARGUMENT: The referenced name ... does not match to a display_name`), so such a return goes as text.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+
+    @agent.tool_plain
+    def get_layout() -> dict[str, Any]:
+        """Return the dashboard layout."""
+        return {'layout': [{'$ref': '#/defs/panel'}], 'title': 'x'}
+
+    result = await agent.run('Call get_layout and tell me the title in one word.')
+
+    assert result.output == snapshot('x')
+    function_response = cast(
+        dict[str, Any], cast(list[Any], request_capture.body(':generateContent', index=1)['contents'])[-1]
+    )['parts'][0]['functionResponse']
+    assert function_response['response'] == snapshot({'output': '{"layout":[{"$ref":"#/defs/panel"}],"title":"x"}'})
+
+
+@pytest.mark.parametrize(
+    'content, expected',
+    [
+        pytest.param(
+            {'$ref': '#/defs/panel', 'title': 'x'}, {'output': '{"$ref":"#/defs/panel","title":"x"}'}, id='top-level'
+        ),
+        pytest.param(
+            {'layout': [{'$ref': '#/defs/panel'}]}, {'output': '{"layout":[{"$ref":"#/defs/panel"}]}'}, id='nested'
+        ),
+        pytest.param([{'$ref': '#/defs/panel'}], {'output': '[{"$ref":"#/defs/panel"}]'}, id='list'),
+        pytest.param({'ref': 'x'}, {'ref': 'x'}, id='no-ref-unchanged'),
+    ],
+)
+async def test_google_tool_return_ref_key_mapping(google_provider: GoogleProvider, content: Any, expected: Any):
+    """Every `$ref` position becomes JSON text, and other returns stay objects.
+
+    A mapping test rather than one cassette per shape: cassette matching ignores the body, and the VCR test
+    above already shows Gemini accepting the text form.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_layout', content=content, tool_call_id='call_1')])
+    ]
+
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
+
+    assert contents == [
+        {
+            'role': 'user',
+            'parts': [{'function_response': {'name': 'get_layout', 'response': expected, 'id': 'call_1'}}],
+        }
+    ]
 
 
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
@@ -6725,9 +6947,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
+                    {'text': '<pyai:tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -7344,9 +7566,11 @@ async def test_google_vertex_service_tier_flex(
                     cost=Decimal('0.0001585'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google-cloud:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND_FLEX'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7395,9 +7619,11 @@ async def test_google_vertex_service_tier_flex_stream(
                     cost=Decimal('0.0003055'),
                 ),
                 model_name='gemini-3-flash-preview',
+                model_id='google-cloud:gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'timestamp': IsDatetime(), 'finish_reason': 'STOP', 'traffic_type': 'ON_DEMAND_FLEX'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7444,9 +7670,11 @@ async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_
                     cost=Decimal('0.0006795'),
                 ),
                 model_name='gemini-3.5-flash',
+                model_id='google:gemini-3.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',

@@ -34,7 +34,8 @@ from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMod
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
+from tests.function_model_prefix import HOOK_REWRITES_REQUEST
 
 from .conftest import IsDatetime, IsStr, RequestCapture, try_import
 
@@ -205,6 +206,7 @@ async def test_newcomer_history_shape():
                 parts=[ToolCallPart(tool_name='unlock', args={}, tool_call_id='c1')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_unlock_then_call_later:',
+                model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -222,6 +224,7 @@ async def test_newcomer_history_shape():
                 parts=[ToolCallPart(tool_name='later', args={}, tool_call_id='c2')],
                 usage=RequestUsage(input_tokens=59, output_tokens=4),
                 model_name='function:_unlock_then_call_later:',
+                model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -238,6 +241,7 @@ async def test_newcomer_history_shape():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=61, output_tokens=5),
                 model_name='function:_unlock_then_call_later:',
+                model_id='function:function:_unlock_then_call_later:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -326,6 +330,7 @@ def _with_copied_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
         pytest.param(_with_copied_tail, id='request-only-copy-of-tail'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_newcomer_is_persisted_when_a_hook_ends_the_request_in_a_request_only_message(
     rewrite: Callable[[list[ModelMessage]], list[ModelMessage]],
 ):
@@ -370,6 +375,7 @@ async def test_newcomer_is_persisted_when_a_hook_ends_the_request_in_a_request_o
     assert _deltas(result.all_messages()) == [['later']]
 
 
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_newcomer_is_recorded_inside_a_compaction_a_hook_adds_to_the_request():
     """A hook that compacts the request without persisting it leaves the persisted tail before the boundary.
 
@@ -462,6 +468,7 @@ def _strip_deltas_once(at_request: int) -> Callable[[list[ModelMessage]], list[M
         pytest.param(lambda: _strip_deltas_once(3), id='once-after-recording'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
 async def test_delta_removed_by_a_hook_is_recorded_again(
     make_processor: Callable[[], Callable[[list[ModelMessage]], list[ModelMessage]]],
 ):
@@ -644,6 +651,19 @@ async def test_rotating_out_every_visible_tool_establishes_the_newcomers(
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
 
 
+class _RestrictToLater(AbstractCapability[Any]):
+    """Restrict `tool_choice` to the `later` newcomer once it is present."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if any(tool.name == 'later' for tool in request_context.model_request_parameters.function_tools):
+            request_context.model_settings = merge_model_settings(
+                request_context.model_settings, ModelSettings(tool_choice=ToolOrOutput(function_tools=['later']))
+            )
+        return request_context
+
+
 @pytest.mark.parametrize(
     'native_tools',
     [
@@ -670,31 +690,77 @@ async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainl
     )
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
 
-    class RestrictToLater(AbstractCapability[Any]):
-        async def before_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            if any(tool.name == 'later' for tool in request_context.model_request_parameters.function_tools):
-                request_context.model_settings = merge_model_settings(
-                    request_context.model_settings, ModelSettings(tool_choice=ToolOrOutput(function_tools=['later']))
-                )
-            return request_context
-
-    toolset = FunctionToolset[Any]()
-
-    @toolset.tool_plain
-    def unlock() -> str:
-        toolset.add_function(_later, name='later')
-        return 'unlocked'
-
-    capabilities: list[AbstractCapability[Any]] = [RestrictToLater(), *(NativeTool(tool) for tool in native_tools)]
-    result = await Agent(model, toolsets=[toolset], capabilities=capabilities).run('go')
+    result = await _add_function_agent(model, _RestrictToLater(), *(NativeTool(tool) for tool in native_tools)).run(
+        'go'
+    )
 
     assert result.output == 'done'
     assert [
         [(tool['name'], tool.get('defer_loading', False)) for tool in kwargs['tools']]
         for kwargs in get_mock_chat_completion_kwargs(client)
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
+
+
+_NO_BETAS: list[list[str]] = [[], [], []]
+# The request before `unlock` runs has no newcomer to reveal.
+_TOOL_ADDITION_BETAS: list[list[str]] = [
+    [],
+    ['mid-conversation-tool-changes-2026-07-01'],
+    ['mid-conversation-tool-changes-2026-07-01'],
+]
+
+
+@pytest.mark.parametrize(
+    ('restrict', 'native_tools', 'count_betas', 'request_betas'),
+    [
+        pytest.param(False, [], _TOOL_ADDITION_BETAS, _TOOL_ADDITION_BETAS, id='newcomer-deferred'),
+        pytest.param(True, [], _NO_BETAS, _NO_BETAS, id='newcomer-declared-plainly'),
+        pytest.param(
+            True,
+            [MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')],
+            _NO_BETAS,
+            [['mcp-client-2025-04-04']] * 3,
+            id='newcomer-declared-plainly-native-mcp-server',
+        ),
+    ],
+)
+async def test_anthropic_count_tokens_sends_the_tool_addition_beta_its_request_sends(
+    allow_model_requests: None,
+    restrict: bool,
+    native_tools: list[AbstractNativeTool],
+    count_betas: list[list[str]],
+    request_betas: list[list[str]],
+):
+    """`count_tokens` sends the `tool_addition` beta exactly when the request it precedes does.
+
+    A deferred newcomer is revealed through a `tool_addition`, which needs the beta on both. A `tool_choice` naming
+    only the newcomer declares it plainly instead, so neither sends it. The count leaves out `mcp_servers`, which the
+    endpoint rejects, so it leaves out the MCP beta as well.
+    """
+    usage = BetaUsage(input_tokens=1, output_tokens=1)
+    client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaToolUseBlock(id='c1', input={}, name='unlock', type='tool_use')], usage),
+            completion_message([BetaToolUseBlock(id='c2', input={}, name='later', type='tool_use')], usage),
+            completion_message([BetaTextBlock(text='done', type='text')], usage),
+        ]
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+    capabilities: list[AbstractCapability[Any]] = [NativeTool(tool) for tool in native_tools]
+    if restrict:
+        capabilities.append(_RestrictToLater())
+
+    result = await _add_function_agent(model, *capabilities).run(
+        'go', usage_limits=UsageLimits(count_tokens_before_request=True)
+    )
+
+    assert result.output == 'done'
+    requests = get_mock_chat_completion_kwargs(client)
+    counts, creates = requests[::2], requests[1::2]
+    assert [kwargs['tools'] for kwargs in counts] == [kwargs['tools'] for kwargs in creates]
+    # An empty `betas` list goes out as `omit`.
+    assert [kwargs['betas'] or [] for kwargs in creates] == request_betas
+    assert [kwargs['betas'] or [] for kwargs in counts] == count_betas
 
 
 async def test_anthropic_tool_choice_excluding_a_newcomer_does_not_reveal_it(allow_model_requests: None):

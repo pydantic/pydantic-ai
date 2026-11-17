@@ -8,6 +8,23 @@ signed-in user's workspace.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Day AI: CRM records and meeting context through Day AI's MCP server
+    accDescr: Inside your agent, the model calls tools of the DayAI capability, prefixed day_ai_, and gets their results. Your auth function gives the capability a token for each run. The capability sends tools/call requests with an OAuth Bearer token to the Day AI MCP server at day.ai/api/mcp and gets the results back.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        dayai["DayAI()<br/>day_ai_&lt;tool&gt;"]:::capability
+    end
+    server["Day AI MCP server<br/>day.ai/api/mcp"]:::external
+    model <-->|"tool call, result"| dayai
+    auth -->|"token for each run"| dayai
+    dayai <-->|"tools/call,<br/>OAuth Bearer token"| server
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Before you start
 
 Day AI MCP needs a paid Day AI Agent tier; the tools and limits of your tier and
@@ -171,7 +188,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one with a
 proxy or MCP handlers. The client then owns the URL and authentication, so
 passing `client` together with `auth` raises an error.
@@ -185,8 +202,7 @@ credentials](#per-user-credentials) to connect each user separately.
 
 `DayAI` emits no spans of its own. Core's
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/)
-already records each Day AI tool call as a tool span, and connecting makes no
-decision worth a span of its own.
+already records each Day AI tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -217,5 +233,3 @@ from pydantic_ai_harness import DayAI
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[DayAI])
 ```
-
-Pass `custom_capability_types` so the loader can create `DayAI` from the file.

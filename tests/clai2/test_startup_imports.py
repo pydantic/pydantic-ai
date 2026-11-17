@@ -25,7 +25,7 @@ try:
     main()
 finally:
     assert 'pydantic_ai' not in sys.modules
-    assert 'pydantic_clai2._app' not in sys.modules
+    assert 'pydantic_clai2.app' not in sys.modules
     assert 'pydantic_clai2.cli.headless' not in sys.modules
 """
     result = subprocess.run(

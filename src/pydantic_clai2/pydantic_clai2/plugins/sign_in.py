@@ -4,7 +4,7 @@ The session waits for every plugin to load, and a prompt waits for its tools, so
 nobody finishes holds everything up. A plugin therefore offers its sign-in from its settings menu or a command, through
 `sign_in_now`, behind a waiting screen that Esc closes. Runs use only what is already stored: without a sign-in the
 plugin adds no tools and `warn_if_signed_out` says how to sign in, and a sign-in the service rejects fails the run at
-once with `SignInRequired`.
+once with `SignInRequiredError`.
 
 A `SignInMethod` is one service's sign-in. `pydantic_clai2.mcp.OAuthSignIn` is the one for an MCP server's browser
 OAuth; `pydantic_clai2.pkce.PKCESignIn` and Logfire's device sign-in are others.
@@ -26,7 +26,7 @@ from pydantic_clai2.ui.rendering import theme
 __all__ = (
     'SUBCOMMANDS',
     'SignInMethod',
-    'SignInRequired',
+    'SignInRequiredError',
     'Signing',
     'not_signed_in',
     'run_subcommand',
@@ -39,7 +39,7 @@ __all__ = (
 )
 
 
-class SignInRequired(UserError):
+class SignInRequiredError(UserError):
     """A run needs a sign-in that only the user can start; the message says how."""
 
 
@@ -187,3 +187,20 @@ async def wait_for_sign_in(method: Signing, dialogs: Dialogs | None = None) -> b
         ),
         task=lambda show: method.sign_in(show=show),
     )
+
+
+# TODO(v3): remove the `SignInRequired` alias and this `__getattr__`.
+def __getattr__(name: str) -> object:
+    if name == 'SignInRequired':
+        import warnings
+
+        from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            '`SignInRequired` has been renamed to `SignInRequiredError`. '
+            'Update your imports; this deprecated alias will be removed in a future release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return SignInRequiredError
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

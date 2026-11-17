@@ -43,7 +43,7 @@ from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, htt
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.plugins.menus import Option
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs as terminal_dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
@@ -351,7 +351,7 @@ async def test_the_browser_sign_in_redirects_to_localhost_and_shows_the_link(mon
             pass
 
     monkeypatch.setattr(OAuth, 'redirect_handler', open_browser)
-    monkeypatch.setattr('pydantic_clai2.mcp._client.Client', Connect)
+    monkeypatch.setattr('pydantic_clai2.mcp.client.Client', Connect)
     await BROWSER_SIGN_IN(grain_module.SIGN_IN, show=shown.append)
     assert opened == [url]
     assert shown == [f'If no browser opened, open this link:\n{url}']

@@ -886,13 +886,18 @@ async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> Non
 
 
 async def test_error_on_first_streamed_segment_propagates_from_consumer_and_cancels_wrap() -> None:
-    """A streamed model error surfaces in the consumer task and cancels the model-request wrapper."""
+    """A streamed model error after the first event surfaces in the consumer task and cancels the model-request wrapper.
+
+    An error before the first event is raised while the stream is primed instead, where an
+    `on_model_request_error` hook can still handle it: see `test_model_request_attempts.py`.
+    """
 
     @dataclass
     class _ExplodingStream(StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='partial'):
+                yield event
             raise RuntimeError('stream exploded')
-            yield  # pragma: no cover
 
         async def close_stream(self) -> None:
             pass
@@ -946,8 +951,8 @@ async def test_error_on_first_streamed_segment_propagates_from_consumer_and_canc
     agent = Agent(_ExplodingModel(), capabilities=[hooks])
 
     with pytest.raises(RuntimeError, match='stream exploded'):
-        async with agent.run_stream('go'):
-            pass
+        async with agent.run_stream('go') as result:
+            await result.get_output()
 
     assert calls == ['wrap:before', 'wrap:cancelled']
 
@@ -1200,8 +1205,14 @@ async def test_streamed_background_detach_records_suspended_and_resumes() -> Non
     assert new_messages[-1].state == 'complete'
 
 
-async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('polled', [False, True], ids=['continued', 'polled'])
+async def test_nonstream_model_change_chain_counts_against_strict_ceiling(
+    polled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A model-change replace chain is bound by `MAX_GENERATION_CONTINUATIONS`, not the poll backstop.
+
+    Also when the model waits between segments: only a batch request, whose model bounds its own polls, is
+    counted as a poll under a new ID.
 
     Each suspended segment reports a different `model_name`, so the merge *replaces* — but as *fresh*
     generation, not a same-id re-poll of one background job. It must therefore count against the strict
@@ -1229,6 +1240,12 @@ async def test_nonstream_model_change_chain_counts_against_strict_ceiling(monkey
             _suspended_model_change('m3', 'r3'),
         ]
     )
+    if polled:
+
+        def poll_at_once(response: ModelResponse) -> float:
+            return 0.0
+
+        monkeypatch.setattr(model, 'continuation_delay', poll_at_once)
     agent = Agent(model)
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Model response 'r3' was suspended more than the maximum"):

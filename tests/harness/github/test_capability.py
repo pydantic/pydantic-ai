@@ -130,6 +130,12 @@ class TestGitHub:
         with pytest.raises(UserError, match='`client` owns the connection'):
             GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets, lockdown=lockdown)
 
+    async def test_client_accepts_empty_auth(self, server: FastMCP) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        agent = Agent(TestModel(), capabilities=[GitHub(client=server, auth='', read_only=True)])
+        result = await agent.run('Use the tools')
+        assert result.output == '{"github_read_resource":"read"}'
+
     @pytest.mark.parametrize(
         'capability',
         [

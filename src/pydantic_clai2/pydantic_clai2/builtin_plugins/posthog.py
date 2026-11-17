@@ -47,7 +47,7 @@ from pydantic_clai2.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 

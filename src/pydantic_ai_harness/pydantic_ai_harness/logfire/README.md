@@ -19,6 +19,25 @@ pip install 'pydantic-ai-harness[logfire]'
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/logfire/)
 
+```mermaid
+flowchart TB
+    accTitle: Managed Prompt: instructions you change in Logfire, not in code
+    accDescr: As an agent run starts, the ManagedPrompt capability resolves the Logfire managed variable prompt__support_agent once in its wrap_run hook. It gives the resolved value to the model as instructions and sets the label and version as baggage on the agent run span and its children. Those spans go to Logfire traces, where each span records the prompt label.
+    variable[("Logfire<br/>managed variable<br/>prompt__support_agent")]:::external
+    subgraph run["Agent run"]
+        prompt["ManagedPrompt()<br/>wrap_run hook"]:::capability
+        spans["agent run span<br/>and its children"]
+    end
+    model(["model"])
+    traces["Logfire traces<br/>each span records<br/>the prompt label"]:::external
+    variable -->|"resolved once,<br/>as the run starts"| prompt
+    prompt -->|"resolved value<br/>as instructions"| model
+    prompt -->|"label and version<br/>as baggage"| spans
+    spans --> traces
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## `ManagedPrompt`
 
 `ManagedPrompt` takes an agent's instructions from a Logfire-managed
@@ -38,6 +57,8 @@ instructions for that run. While the run is active, the selected label (and the 
 later) is set as baggage, so every span in the run records which prompt produced it.
 
 ### Usage
+
+If Logfire is not set up yet, run `uvx logfire-cli wizard --task pydantic-ai` once from your project; see [Using Logfire](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire) for details.
 
 Pass the prompt name and a default value. The name `support_agent` is declared as the managed
 variable `prompt__support_agent`, the naming Logfire's Prompt management uses (hyphens in a
@@ -155,7 +176,7 @@ Within one conversation (runs that continue from `message_history`), a new value
 that prefix. The block keeps the value the conversation started with, and the new version is
 [appended](https://pydantic.dev/docs/ai/core-concepts/agent/#appending-instruction-changes) to the history as a
 replacement, so the cached conversation behind it stays reusable. That's also why the prompt is
-sent inside a `<context id="capability:managed-prompt-support_agent">` element from the first
+sent inside a `<pyai:context id="capability:managed-prompt-support_agent">` element from the first
 request. Appended changes reach the model as system messages, so keep the prompt, and the `deps`
 fields `render_template=True` fills in, to text you control: see
 [keep untrusted text out of instructions](https://pydantic.dev/docs/ai/core-concepts/agent/#untrusted-instruction-text).

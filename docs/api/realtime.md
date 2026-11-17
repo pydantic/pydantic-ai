@@ -110,6 +110,7 @@ completes.
 vocabulary yielded by a connection:
 [`AudioDelta`][pydantic_ai.realtime.codec.AudioDelta],
 [`OutputTranscript`][pydantic_ai.realtime.codec.OutputTranscript],
+[`OutputSpeechTimestamps`][pydantic_ai.realtime.codec.OutputSpeechTimestamps],
 [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],

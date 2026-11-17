@@ -26,7 +26,7 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
-from ...exceptions import AgentRunError, UserError
+from ...exceptions import AgentRunError, FallbackExceptionGroup, UserError
 from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import ContinueAsNewHandler, TemporalDurability, worker_registrations
@@ -120,7 +120,13 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
     # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
     # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
-    harness_modules = ('pydantic_ai_harness', 'opentelemetry') if find_spec('pydantic_ai_harness') is not None else ()
+    # `PromptInjectionDefender` verdicts cross the activity boundary as `stackone_defender` dataclasses,
+    # which only decode in workflow code when their module is the host's.
+    harness_modules = (
+        ('pydantic_ai_harness', 'opentelemetry', 'stackone_defender')
+        if find_spec('pydantic_ai_harness') is not None
+        else ()
+    )
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
@@ -199,6 +205,9 @@ class PydanticAIPlugin(SimplePlugin):
             # continuation ceilings raised by the workflow-side continuation loop: they
             # must fail the workflow (preserving the exception type for the caller)
             # rather than fail the workflow *task*, which Temporal would retry forever.
+            # `FallbackExceptionGroup` is the same kind of failure: the `ModelFallback` capability
+            # attempts its models from workflow code, and raises it there when every one failed.
+            # It's an `ExceptionGroup`, not an `AgentRunError`, so it's listed on its own.
             # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
             # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
             # would otherwise turn it into a `UserError`; without it those would hang the same way.
@@ -210,6 +219,7 @@ class PydanticAIPlugin(SimplePlugin):
                 UserError,
                 PydanticUserError,
                 AgentRunError,
+                FallbackExceptionGroup,
                 UnsupportedEventLoopError,
                 WorkspaceError,
             ],

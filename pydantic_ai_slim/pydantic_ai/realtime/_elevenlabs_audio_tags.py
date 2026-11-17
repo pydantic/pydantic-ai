@@ -40,6 +40,17 @@ def strip_audio_tags(text: str, *, started: bool = False) -> tuple[str, list[str
     return (result if started else result.lstrip()), tags
 
 
+def may_start_audio_tag(text: str) -> bool:
+    """Whether what follows `text` could still make it start with an audio tag, `text` starting with `[`."""
+    return _AUDIO_TAG_START.fullmatch(text) is not None
+
+
+def leading_audio_tag_length(text: str) -> int:
+    """How long the audio tag `text` starts with is, which `strip_audio_tags` would remove, or 0 if there's none."""
+    match = _AUDIO_TAG.match(text)
+    return match.end() if match is not None and not match[1][0].isupper() else 0
+
+
 @dataclass
 class AudioTagStripper:
     """Strips audio tags from streamed text so that the pieces add up to the whole text stripped at once.

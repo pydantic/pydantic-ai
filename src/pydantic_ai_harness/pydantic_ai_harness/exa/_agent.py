@@ -112,14 +112,6 @@ _CANCEL_GRACE_SECONDS = 5.0
 """How long a cancelled or failed inline poll waits for Exa to accept the runs' cancellation."""
 
 
-def _default_runs() -> ExaAgentRuns:
-    """Build the default Agent runs client from the `EXA_API_KEY` environment variable."""
-    return DefaultExa(
-        missing_key_hint='ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
-        'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
-    )
-
-
 def agent_run_result(
     run: AgentRun, *, output_schema: type[BaseModel] | dict[str, object] | None = None
 ) -> ToolReturn[str]:
@@ -144,16 +136,7 @@ def agent_run_result(
     output = run.output
     body = (output.text or '') if output is not None else ''
     if output is not None and output.structured is not None:
-        structured: object = output.structured
-        if isinstance(output_schema, type):
-            try:
-                body = output_schema.model_validate(structured).model_dump_json()
-            except ValidationError as error:
-                raise ModelRetry(
-                    f'Exa agent run {run.id} output did not match the configured schema: {error}'
-                ) from error
-        else:
-            body = json.dumps(structured, ensure_ascii=False)
+        body = _structured_body(run.id, output.structured, output_schema)
     if not body:
         body = '(no text output)'
     grounding = output.grounding if output is not None and output.grounding else []
@@ -163,6 +146,16 @@ def agent_run_result(
         with_sources(text, sources),
         metadata={RUN_ID_METADATA_KEY: run.id, 'sources': source_list(sources)},
     )
+
+
+def _structured_body(run_id: str, structured: object, output_schema: type[BaseModel] | dict[str, object] | None) -> str:
+    """A completed run's structured output as JSON, validated when `output_schema` is a model class."""
+    if isinstance(output_schema, type):
+        try:
+            return output_schema.model_validate(structured).model_dump_json()
+        except ValidationError as error:
+            raise ModelRetry(f'Exa agent run {run_id} output did not match the configured schema: {error}') from error
+    return json.dumps(structured, ensure_ascii=False)
 
 
 async def _create_run(
@@ -481,8 +474,11 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
 
     @cached_property
     def _default_runs_client(self) -> ExaAgentRuns:
-        """One default client per capability, so its connection pool is reused across requests."""
-        return _default_runs()
+        """One default client per capability, built from `EXA_API_KEY`, so its connection pool is reused."""
+        return DefaultExa(
+            missing_key_hint='ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
+            'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
+        )
 
     @classmethod
     def from_spec(
@@ -496,6 +492,8 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         timeout_ms: int = 3_600_000,
         guidance: str | None = None,
         id: str | None = 'exa_agent',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> ExaAgent[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -513,4 +511,6 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             timeout_ms=timeout_ms,
             guidance=guidance,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

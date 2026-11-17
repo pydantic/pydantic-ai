@@ -186,7 +186,7 @@ _MESSAGE_JSON = {
 
 
 def _history(
-    provider_name: str = 'anthropic', provider_response_id: str = 'msg_0122'
+    provider_name: str = 'anthropic', provider_response_id: str = 'msg_0122', provider_url: str | None = None
 ) -> list[ModelRequest | ModelResponse]:
     return [
         ModelRequest.user_text_prompt('Say hi.'),
@@ -194,6 +194,7 @@ def _history(
             parts=[TextPart('Hi!')],
             model_name='claude-sonnet-4-5',
             provider_name=provider_name,
+            provider_url=provider_url,
             provider_response_id=provider_response_id,
         ),
     ]
@@ -285,3 +286,30 @@ async def test_cache_diagnostics_skip_other_provider_with_message_id(allow_model
 
     [body] = bodies
     assert body['diagnostics'] == {'previous_message_id': None}
+
+
+@pytest.mark.parametrize(
+    ('provider_url', 'previous_message_id'),
+    [('https://api.anthropic.com/', 'msg_0122'), ('https://gateway-a.example', None)],
+    ids=['same-endpoint', 'other-endpoint'],
+)
+async def test_cache_diagnostics_skip_other_endpoint(
+    allow_model_requests: None, provider_url: str, previous_message_id: str | None
+):
+    """A message stored at another `anthropic` endpoint isn't one this endpoint can compare against."""
+    bodies: list[dict[str, Any]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_MESSAGE_JSON)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        client = AsyncAnthropic(api_key='x', http_client=http_client)
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model, model_settings=AnthropicModelSettings(max_tokens=_MAX_TOKENS, anthropic_cache_diagnostics=True)
+        )
+        await agent.run('Reply with exactly: OK', message_history=_history(provider_url=provider_url))
+
+    [body] = bodies
+    assert body['diagnostics'] == {'previous_message_id': previous_message_id}

@@ -29,7 +29,7 @@ from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
@@ -99,7 +99,7 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         console = self.host.console
         auth = self.settings.auth
         if isinstance(auth, KeyReference):
-            if auth.name not in load_keys():
+            if auth.name not in await to_thread.run_sync(load_keys):
                 # Each run fails closed until the key is saved.
                 console.print(
                     f'Day AI has no token: {auth.name} is not in /keys. {SETUP}',

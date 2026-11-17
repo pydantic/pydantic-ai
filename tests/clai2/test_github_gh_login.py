@@ -20,7 +20,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.github import SETUP
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.gh_cli import INSTALL, GhLogin, GhToken, gh_command, gh_host, gh_token, start_login
+from pydantic_clai2.gh_cli import INSTALL, GhLogin, GhToken, gh_command, gh_host, gh_token, gh_user, start_login
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus import dialogs
@@ -80,7 +80,7 @@ async def test_browser_sign_in_through_gh(tmp_path: Path, monkeypatch: pytest.Mo
     assert shell.loader.capabilities() == [
         GitHub[None](defer_loading=True, auth=GhToken(hostname='github.com', setup=SETUP), read_only=True)
     ]
-    assert GhToken(hostname='github.com', setup=SETUP)(None) == 'gho_browser'
+    assert await GhToken(hostname='github.com', setup=SETUP)(None) == 'gho_browser'
 
 
 async def test_the_terminal_waiting_screen_closes_once_gh_finishes(
@@ -177,19 +177,26 @@ async def test_without_gh_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert f'The GitHub CLI (gh) is not installed. {INSTALL}' in shell.output.getvalue()
     assert (await shell.sign_in())[0] == [f'The GitHub CLI (gh) is not installed. {INSTALL}']
     with pytest.raises(UserError, match='not installed'):
-        GhToken(hostname='github.com', setup=SETUP)(None)
+        await GhToken(hostname='github.com', setup=SETUP)(None)
 
 
-def test_gh_token_ignores_token_variables(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:
+async def test_gh_token_ignores_token_variables(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:
     monkeypatch.setenv('GH_TOKEN', 'from-the-environment')
     monkeypatch.setenv('GITHUB_TOKEN', 'from-the-environment')
     token = GhToken(hostname='github.com', setup=SETUP)
     with pytest.raises(UserError, match=r'no login for github\.com\. Run /plugins configure github'):
-        token(None)
+        await token(None)
     fake_gh.sign_in(token='gho_first')
-    assert token(None) == 'gho_first'
+    assert await token(None) == 'gho_first'
     fake_gh.sign_in(token='gho_switched')
-    assert token(None) == 'gho_switched'
+    assert await token(None) == 'gho_switched'
+
+
+def test_gh_user(fake_gh: FakeGh) -> None:
+    assert gh_user('github.com') is None
+    fake_gh.sign_in()
+    assert gh_user('github.com') == 'octocat'
+    assert fake_gh.calls()[-1] == 'api --hostname github.com user --jq .login'
 
 
 @pytest.mark.parametrize(
@@ -207,6 +214,14 @@ def test_gh_command_finds_gh_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyP
     executable.write_text('#!/bin/sh\n')
     executable.chmod(0o755)
     assert gh_command() == [str(executable)]
+
+
+def test_a_stalled_gh_api_fails_instead_of_hanging(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:
+    monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.3)
+    fake_gh.sign_in()
+    fake_gh.hang_on_api()
+    with pytest.raises(UserError, match=r'^GitHub did not answer gh within 0\.3 seconds\.$'):
+        gh_user('github.com')
 
 
 def test_a_stalled_gh_auth_token_fails_instead_of_hanging(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:
@@ -274,7 +289,8 @@ async def test_cancelling_as_the_code_arrives_still_stops_gh(
     await shell.loader.enable('github')
     await cancel_once_gh_starts(shell, fake_gh)
     with anyio.fail_after(10):
-        while not started or started[0].process.poll() is None:
+        # `gh` may already have stopped by the first check, and then the loop body never runs.
+        while not started or started[0].process.poll() is None:  # pragma: no branch
             await anyio.sleep(0.02)
     assert shell.login() == 'key'
 
@@ -282,7 +298,14 @@ async def test_cancelling_as_the_code_arrives_still_stops_gh(
 async def test_a_stalled_check_after_sign_in_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh
 ) -> None:
-    monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.5)
+    def stalls_after_sign_in(hostname: str) -> str | None:
+        # Only the check after sign-in meets the hung `gh`; the one before keeps the usual timeout, since
+        # starting the fake `gh` can itself outlast a short one on a loaded runner.
+        if (fake_gh.state / 'token-hang').exists():
+            monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.5)
+        return gh_token(hostname)
+
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.gh_token', stalls_after_sign_in)
     fake_gh.next_login('stall-token')
     shell = Shell(tmp_path, {'login': 'key'})
     await shell.loader.enable('github')

@@ -377,7 +377,7 @@ Deep agents are autonomous agents that combine multiple architectural patterns a
 - **Planning and progress tracking** — agents break down complex tasks into steps and track their progress, giving users visibility into what the agent is working on. See [`Planning`](harness/planning.md).
 - **File system operations** — reading, writing, and editing files in the run's workspace, on the local machine or in a sandboxed container. See [`FileSystem`](harness/filesystem.md) and [`Shell`](harness/shell.md).
 - **Task delegation** — spawning specialized sub-agents for specific tasks, with isolated context to prevent recursive delegation issues. See [`SubAgents`](harness/subagents.md) and [Agent Delegation](#agent-delegation) above.
-- **Sandboxed code execution** — running AI-generated code in isolated environments to prevent accidents. See [`Shell`](harness/shell.md) with a sandbox backend such as [`DockerSandbox`](harness/docker-sandbox.md), and [`CodeMode`](harness/code-mode.md).
+- **Sandboxed code execution** — running AI-generated code in isolated environments to prevent accidents. See [`Shell`](harness/shell.md) with a workspace backend such as [`DockerContainer`](harness/docker-container.md), and [`CodeMode`](harness/code-mode.md).
 - **Context management** — automatic conversation compaction to handle long sessions that would otherwise exceed token limits. See [Compaction](capabilities/compaction.md) and the Harness [compaction strategies](harness/compaction.md).
 - **Human-in-the-loop** — approval workflows for dangerous operations like code execution or file deletion. See [Requiring Tool Approval](toolsets.md#requiring-tool-approval).
 - **Durable execution** — preserving agent state across transient API failures and application errors or restarts. See [Durable Execution](durable_execution/overview.md).
@@ -390,7 +390,7 @@ Multi-agent systems can be challenging to debug due to their complexity; when mu
 
 ### Tracing Agent Delegation
 
-With [Logfire](logfire.md), you can trace the entire flow across multiple agents:
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project to [set up Logfire](logfire.md#using-logfire) and trace the entire flow across multiple agents. It has your coding agent add this instrumentation:
 
 ```python
 import logfire
@@ -416,7 +416,7 @@ This is essential for understanding and optimizing complex agent workflows. When
 
 If your Pydantic AI application includes a TypeScript frontend, API gateway, or services in other languages, Logfire can trace them too—Logfire provides SDKs for Python, JavaScript/TypeScript, and Rust, plus compatibility with any OpenTelemetry-instrumented application. See traces from your entire stack in a unified view. For details on sending data from other languages using standard OpenTelemetry, see the [alternative clients guide](https://logfire.pydantic.dev/docs/how-to-guides/alternative-clients/).
 
-Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md) for details.
+Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can also use any OTel-compatible backend. See the [Logfire integration guide](logfire.md#using-logfire) for details.
 
 ## Examples
 

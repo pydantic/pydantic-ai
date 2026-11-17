@@ -37,6 +37,7 @@ jobs:
       E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
       SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
 
   report:
     needs: [live]
@@ -71,4 +72,7 @@ jobs:
 
           Close this issue once a nightly run passes.
           EOF
-          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/nightly.md"
+          # The alert goes to the owner of the sandbox integrations. `pydanty:skip` keeps pydanty
+          # from triaging it: the run page already shows what failed.
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/nightly.md" \
+            --assignee adtyavrdhn --label pydanty:skip

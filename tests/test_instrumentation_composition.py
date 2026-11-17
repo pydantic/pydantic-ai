@@ -27,6 +27,7 @@ from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolse
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr, try_import
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace import TracerProvider
@@ -189,6 +190,7 @@ async def test_deferred_capability_loaded_or_not() -> None:
     )
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_is_recorded_as_resolved_on_each_step() -> None:
     """A `DynamicToolset` resolves per step, so the run records every toolset it resolved to."""
     capability, exporter = instrumentation()

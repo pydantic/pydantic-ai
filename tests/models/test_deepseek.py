@@ -462,6 +462,7 @@ async def test_deepseek_model_thinking_part(
                     cost=Decimal('0.00005908'),
                 ),
                 model_name='deepseek-v4-flash',
+                model_id='deepseek:deepseek-v4-flash',
                 timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
@@ -521,6 +522,7 @@ async def test_deepseek_model_thinking_stream(
                     cost=Decimal('0.00009744'),
                 ),
                 model_name='deepseek-v4-flash',
+                model_id='deepseek:deepseek-v4-flash',
                 timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
@@ -624,3 +626,25 @@ async def test_deepseek_chat_native_output_refused(allow_model_requests: None, d
 
     with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
         await agent.run('Say hi.')
+
+
+async def test_deepseek_max_tokens_limits_output(
+    allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
+):
+    """The `max_tokens` setting goes out as `max_tokens`, the only output limit DeepSeek honours.
+
+    DeepSeek's Chat Completions endpoint silently ignores `max_completion_tokens`, so a request carrying
+    it runs to its natural end. The recorded response stops at the limit with `finish_reason='length'`.
+    """
+    model = OpenAIChatModel(
+        'deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, model_settings=OpenAIChatModelSettings(max_tokens=8, thinking=False))
+
+    result = await agent.run('Write a 150-word story about a lighthouse keeper.')
+
+    body = request_capture.body('/chat/completions')
+    assert body['max_tokens'] == 8
+    assert 'max_completion_tokens' not in body
+    assert result.response.finish_reason == 'length'
+    assert result.usage.output_tokens == 8

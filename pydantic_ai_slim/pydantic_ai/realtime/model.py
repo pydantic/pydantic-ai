@@ -16,7 +16,7 @@ from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._unsupported_settings import warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
-from ..messages import ModelMessage
+from ..messages import ModelMessage, SpeechTimestampGranularity
 from ..models import ModelRequestParameters
 from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
@@ -217,6 +217,7 @@ _GUARANTEE_SETTINGS: dict[RealtimeModelSettingName, str] = {
     'parallel_tool_calls': '',
     'async_tool_calls': ' Its tool calls always run asynchronously.',
     'reconnect': ' A dropped connection ends the session.',
+    'output_speech_timestamps': ' Its speech carries no timestamps.',
 }
 """The realtime settings a model warns about ignoring, with a hint to append to the warning, as
 `GUARANTEE_SETTINGS` lists them for standard models."""
@@ -309,6 +310,11 @@ class RealtimeModel(AbstractModel):
         unsupported: set[str] = set(self.unsupported_settings)
         if self.profile.get('async_tool_call_mode', 'never') == 'always':
             unsupported.add('async_tool_calls')
+        if (
+            model_settings.get('output_speech_timestamps')
+            and self._output_speech_timestamp_granularity(model_settings) is None
+        ):
+            unsupported.add('output_speech_timestamps')
         warn_unsupported_settings(
             self.model_id,
             model_settings,
@@ -316,6 +322,17 @@ class RealtimeModel(AbstractModel):
             has_function_tools=bool(model_request_parameters.function_tools),
             guarantees=_GUARANTEE_SETTINGS,
         )
+
+    def _output_speech_timestamp_granularity(
+        self, model_settings: RealtimeModelSettings | None
+    ) -> SpeechTimestampGranularity | None:
+        """How finely this session reports when the model's speech is heard, or `None` if it doesn't.
+
+        The profile's [`output_speech_timestamp_granularity`][pydantic_ai.realtime.RealtimeModelProfile.output_speech_timestamp_granularity],
+        for a model whose support doesn't depend on the session's settings.
+        """
+        del model_settings
+        return self.profile.get('output_speech_timestamp_granularity')
 
     def _async_tool_calls(self, model_settings: RealtimeModelSettings | None) -> bool:
         """Whether this session's tool calls run asynchronously, for adapters that have to say so on the wire.

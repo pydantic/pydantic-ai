@@ -13,7 +13,7 @@ export const Thinking = memo(function Thinking({ text, live }: { text: string; l
         <span className={live ? 'shimmer' : ''}>{live ? 'Thinking' : 'Thought'}</span>
         <ChevronIcon size={12} className="chevron" />
       </button>
-      {shown && <Markdown className="thinking-body" text={text} />}
+      {shown && <Markdown className="thinking-body" text={text} live={live} />}
     </div>
   )
 })

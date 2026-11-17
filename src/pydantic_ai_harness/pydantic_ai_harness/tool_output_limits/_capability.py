@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, TypeGuard
+from typing import Any
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._framing import second_model_prompt
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -19,15 +22,18 @@ from pydantic_ai.messages import (
     ToolReturnContent,
     ToolSearchReturnPart,
     UserContent,
+    is_multi_modal_content,
 )
-from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
+from pydantic_ai_harness._models import is_request_response_model
+from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
-from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
+from pydantic_ai_harness.file_system import READ_FILE_KIND
+from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -46,7 +52,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +91,12 @@ def _spills(action: Action | None) -> bool:
     while action is not None:
         if isinstance(action, Spill):
             return True
-        action = None if isinstance(action, Passthrough) else action.then
+        action = _next_action(action)
     return False
 
 
 def _default_bands() -> list[Band]:
-    """Lossless spill with a bounded truncation fallback: zero LLM cost, no silent drop."""
+    """Spill to the store, falling back to truncation when the store write fails."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
@@ -138,7 +144,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         from pydantic_ai import Agent
         from pydantic_ai_harness.tool_output_limits import (
             Band,
-            LocalFileStore,
+            LocalFileOverflowStore,
             ToolOutputLimits,
             Spill,
             Summarize,
@@ -154,7 +160,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                         Band(over=20_000, action=Summarize()),
                         Band(over=5_000, action=Truncate()),
                     ],
-                    store=LocalFileStore(),
+                    store=LocalFileOverflowStore(),
                 )
             ],
         )
@@ -174,14 +180,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     """Measure band thresholds in estimated tokens instead of characters."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
+    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to the compaction text estimate."""
 
-    store: OverflowStore | WorkspaceStore | None = None
+    store: OverflowStore | WorkspaceOverflowStore | None = None
     """Backend for spilled payloads.
 
-    Defaults to a `WorkspaceStore` in the run's workspace. When the bands can spill and no store
+    Defaults to a `WorkspaceOverflowStore` in the run's workspace. When the bands can spill and no store
     has a workspace to write to, the run fails at its start: attach a workspace, or pass
-    `store=LocalFileStore()` to keep spills on this machine.
+    `store=LocalFileOverflowStore()` to keep spills on this machine.
     """
 
     strip_ansi: bool = False
@@ -202,15 +208,44 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
     id: str | None = 'tool_output_limits'
 
-    _store: OverflowStore | WorkspaceStore = field(init=False, repr=False)
+    _store: OverflowStore | WorkspaceOverflowStore = field(init=False, repr=False)
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    _spilled_calls: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Spill name -> the run step that first wrote it, on the per-run instance `for_run` returns.
+
+    A `tool_call_id` is only unique within one response, so a later response can reuse one. The step
+    of a name's first spill is what tells the two apart: the call that wrote it first keeps the
+    documented `run_id/tool_call_id.retry` handle, and a later call that would land on the same name
+    is parked one level down. Kept on the instance rather than read off the history, which a
+    capability such as a compaction may rewrite mid-run.
+    """
 
     def __post_init__(self) -> None:
-        self._store = self.store if self.store is not None else WorkspaceStore()
+        self._store = self.store if self.store is not None else WorkspaceOverflowStore()
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the configuration, with the later band winning a shared threshold, then re-derive from it.
+
+        `_store`, `_bands`, and `_per_tool` are derived in `__post_init__`, which merging skips, so
+        they are rebuilt from the merged configuration: a merged band list keeps the largest-first
+        order a single instance has, and a stated `store` is the one spills go to.
+        """
+        limits = [capability for capability in capabilities if isinstance(capability, ToolOutputLimits)]
+        assert len(limits) == len(capabilities)
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        bands: list[Band] = []
+        for capability in limits:
+            thresholds = {band.over for band in capability.bands}
+            bands = [band for band in bands if band.over not in thresholds] + list(capability.bands)
+        merged = replace_no_init(merged, bands=bands)
+        merged.__post_init__()
+        return merged
 
     @staticmethod
     def _prepare_bands(bands: Sequence[Band]) -> list[Band]:
@@ -224,29 +259,37 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when a band can spill but no store has a workspace to write to."""
         store = self._store
         if (
-            isinstance(store, WorkspaceStore)
+            isinstance(store, WorkspaceOverflowStore)
             and store.workspace is None
             and not ctx.workspace.attached
             and any(_spills(band.action) for bands in (self._bands, *self._per_tool.values()) for band in bands)
         ):
             raise UserError(
                 "`ToolOutputLimits` spills oversized tool output to the run's workspace, but none is attached "
-                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileStore()` "
+                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileOverflowStore()` "
                 'to keep spills on this machine.'
             )
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ToolOutputLimits[AgentDepsT]:
+        """Return a copy with no spill names recorded, so runs don't share them.
+
+        A shallow copy rather than `replace`, which would rebuild the toolset that `get_toolset`
+        builds once for durable execution.
+        """
+        return replace_no_init(self, _spilled_calls={})
 
     @property
     def _spills_to_run_workspace(self) -> bool:
         """Whether spills are files in the run's workspace, which the run's file tools can read.
 
-        Known from configuration: the default `WorkspaceStore` without a `workspace` of its own.
+        Known from configuration: the default `WorkspaceOverflowStore` without a `workspace` of its own.
         """
         store = self._store
-        return isinstance(store, WorkspaceStore) and store.workspace is None
+        return isinstance(store, WorkspaceOverflowStore) and store.workspace is None
 
     def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
         store = self._store
-        return store.bind(ctx.workspace) if isinstance(store, WorkspaceStore) else store
+        return store.bind(ctx.workspace) if isinstance(store, WorkspaceOverflowStore) else store
 
     # --- toolset ---
 
@@ -322,13 +365,18 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         if isinstance(return_value, BaseException):
             return original
-
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-        value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
+        new_value: object | None
+        items: list[object] = return_value if is_object_list(return_value) else [return_value]
+        if any(is_multi_modal_content(item) for item in items):
+            new_value, value_handle, value_bytes = await self._reduce_data_beside_files(ctx, call, bands, items)
+        else:
+            value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+            new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
+            value_bytes = len(value_unit.data)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
-        if value_text is None and content_text is None:
+        if new_value is None and content_text is None:
             return original
 
         return self._assemble(
@@ -336,12 +384,37 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return_value=return_value,
             content=content,
             metadata=metadata,
-            value_unit=value_unit,
-            value_text=value_text,
+            new_value=new_value,
             value_handle=value_handle,
+            value_bytes=value_bytes,
             content_text=content_text,
             content_handle=content_handle,
         )
+
+    async def _reduce_data_beside_files(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        bands: Sequence[Band],
+        items: list[object],
+    ) -> tuple[list[object] | None, str | None, int]:
+        """Reduce the data beside the files of a return value, which reach the model as files.
+
+        A lone data item is measured as itself and several as one JSON list. Core sends that data as text, so
+        a lone raw `bytes` item is measured as text too, not as a binary unit that `Truncate` would pass over.
+        When reduced, the result goes ahead of the files. Returns `(new_items, handle, data_bytes)`, with
+        `new_items` None when nothing was reduced.
+        """
+        files = [item for item in items if is_multi_modal_content(item)]
+        data = [item for item in items if not is_multi_modal_content(item)]
+        if not data:
+            return None, None, 0
+        value = data[0] if len(data) == 1 else data
+        unit = self._make_unit(to_text(value) if is_binary(value) else value, tool_name=call.tool_name, suffix='')
+        reduced, handle = await self._reduce(ctx, call, bands, unit)
+        if reduced is None:
+            return None, None, 0
+        return [reduced, *files], handle, len(unit.data)
 
     def _assemble(
         self,
@@ -350,9 +423,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return_value: ToolReturnContent,
         content: str | Sequence[UserContent] | None,
         metadata: object,
-        value_unit: _Unit,
-        value_text: str | None,
+        new_value: object | None,
         value_handle: str | None,
+        value_bytes: int,
         content_text: str | None,
         content_handle: str | None,
     ) -> object:
@@ -360,9 +433,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if wrapped:
             new_metadata = metadata
             if value_handle is not None or content_handle is not None:
-                new_metadata = _with_handles(metadata, value_handle, len(value_unit.data), content_handle)
+                new_metadata = _with_handles(metadata, value_handle, value_bytes, content_handle)
             wrapped_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text if value_text is not None else return_value,
+                return_value=new_value if new_value is not None else return_value,
                 content=content_text if content_text is not None else content,
                 metadata=new_metadata,
             )
@@ -371,10 +444,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         # A plain (non-`ToolReturn`) result has no separate content part.
         if value_handle is not None:
             spilled_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text, metadata=_with_handles(None, value_handle, len(value_unit.data))
+                return_value=new_value, metadata=_with_handles(None, value_handle, value_bytes)
             )
             return spilled_out
-        return value_text
+        return new_value
 
     def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
@@ -483,6 +556,20 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None, None
         return await self._apply(ctx, call, then, unit)
 
+    def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
+        """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
+
+        `suffix` keeps a return's `return_value` and `content` spills on distinct handles. A later
+        step reusing a name already spilled this run (see `_spilled_calls`) gets
+        `run_id/<step>/tool_call_id.retry` instead of the plain `run_id/tool_call_id.retry`.
+        """
+        run_id = ctx.run_id or 'run'
+        name = f'{call.tool_call_id or "call"}.{ctx.retry}{suffix}'
+        first_step = self._spilled_calls.setdefault(name, ctx.run_step)
+        if first_step == ctx.run_step:
+            return f'{run_id}/{name}'
+        return f'{run_id}/{ctx.run_step}/{name}'
+
     async def _spill(
         self,
         ctx: RunContext[AgentDepsT],
@@ -490,22 +577,42 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         action: Spill,
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
-        key = _handle_key(ctx, call, unit.suffix)
-        try:
-            handle = await self._store_for(ctx).write(key, unit.data)
-        except (UserError, WorkspaceReadOnlyError) as error:
-            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
-            # say so rather than degrading quietly.
-            warnings.warn(f'ToolOutputLimits: could not spill a {call.tool_name!r} result: {error}', stacklevel=2)
-            return await self._fallback(ctx, call, action.then, unit)
-        except Exception as exc:
-            _log_fallback('Spilling', call.tool_name, action.then, exc)
+        key = self._handle_key(ctx, call, unit.suffix)
+        # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
+        if unit.binary:
+            payload = base64.b64encode(unit.data).decode('ascii')
+        else:
+            assert unit.text is not None
+            payload = unit.text
+        handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
+        if handle is None:
             return await self._fallback(ctx, call, action.then, unit)
 
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
         )
         return preview, handle
+
+    # A durable operation, so a replay returns the recorded outcome instead of writing again: a
+    # second write could return a different handle, or succeed where the first failed.
+    @durable_operation('spill')
+    async def _write_spill(
+        self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, payload: str, binary: bool, fallback: str
+    ) -> str | None:
+        """Write a spill and return its handle, or `None` when the store could not take it.
+
+        `payload` is the text, or base64 when `binary`: a durable engine may carry it to another worker as JSON.
+        """
+        data = base64.b64decode(payload) if binary else payload.encode('utf-8')
+        try:
+            return await self._store_for(ctx).write(key, data)
+        except (UserError, WorkspaceReadOnlyError) as error:
+            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
+            # say so rather than degrading quietly.
+            warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=3)
+        except Exception as exc:
+            _log_fallback('Spilling', tool_name, fallback, exc)
+        return None
 
     def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
         """How the model reads a spill back, naming the tools by the names they have in this run."""
@@ -536,7 +643,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             # the user's to fix, not something to mask by silently truncating instead.
             raise
         except Exception as exc:
-            _log_fallback('Summarizing', call.tool_name, action.then, exc)
+            _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
             return await self._fallback(ctx, call, action.then, unit)
         return summary, None
 
@@ -557,12 +664,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         agent: Agent[None, str] = Agent(
             model, name='tool_output_limits', instructions='You summarize oversized tool output.'
         )
-        run = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-        )
+        with second_model_prompt():
+            run = await agent.run(
+                prompt,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+            )
         return run.output.strip()
 
     @staticmethod
@@ -571,7 +679,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         model = action.model if action.model is not None else ctx.model
         if isinstance(model, str):
             return model
-        if not _is_request_response_model(model):
+        if not is_request_response_model(model):
             raise UserError(
                 'Summarizing oversized tool output needs a request-response model, but the run '
                 f'uses {type(model).__name__}, which is not one. Set a `model=` on the '
@@ -651,35 +759,15 @@ def _fallback_label(then: Action | None) -> str:
     return 'the unreduced output' if then is None else type(then).__name__
 
 
-def _log_fallback(operation: str, tool_name: str, then: Action | None, exc: Exception) -> None:
+def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception) -> None:
     logger.warning(
         '%s output of tool %r failed (%s); falling back to %s',
         operation,
         tool_name,
         type(exc).__name__,
-        _fallback_label(then),
+        fallback,
         exc_info=exc,
     )
-
-
-def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
-    """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
-
-    `suffix` keeps a return's `return_value` and `content` spills on distinct handles.
-    """
-    run_id = ctx.run_id or 'run'
-    call_id = call.tool_call_id or 'call'
-    return f'{run_id}/{call_id}.{ctx.retry}{suffix}'
-
-
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    """`TypeGuard` so a mapping narrows to a known element type, not `Unknown`."""
-    return isinstance(value, Mapping)
-
-
-def _is_request_response_model(value: AbstractModel) -> TypeGuard[Model[Any]]:
-    """Narrow an abstract model without losing its provider client type."""
-    return isinstance(value, Model)
 
 
 def _with_handles(
@@ -687,41 +775,63 @@ def _with_handles(
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
-) -> dict[str, object]:
-    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
-    base: dict[str, object] = {}
-    if _is_mapping(existing):
-        base.update(_copy_mapping(existing))
-    elif existing is not None:
-        base['original_metadata'] = existing
+) -> object:
+    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens).
+
+    A list or tuple stays a list, with the handles appended as one dict item: that is the
+    shape the AG-UI and Vercel AI adapters read UI events and chunks from, and both skip
+    items that are not events, so wrapping it in a dict would silently drop them. A single
+    event or chunk becomes a one item list for the same reason.
+    """
+    handles: dict[str, object] = {}
     if value_handle is not None:
-        base['overflow_handle'] = value_handle
-        base['overflow_bytes'] = value_bytes
+        handles['overflow_handle'] = value_handle
+        handles['overflow_bytes'] = value_bytes
     if content_handle is not None:
-        base['overflow_content_handle'] = content_handle
-    return base
+        handles['overflow_content_handle'] = content_handle
+
+    if is_mapping(existing):
+        return {**{str(key): existing[key] for key in existing}, **handles}
+    if is_object_list_or_tuple(existing):
+        return [*existing, handles]
+    if _is_ui_event(existing):
+        return [existing, handles]
+    if existing is not None:
+        return {'original_metadata': existing, **handles}
+    return handles
 
 
-def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
-    """Copy an arbitrary mapping with stringified keys (tool metadata is app-defined)."""
-    return {str(key): source[key] for key in source}
+def _is_ui_event(value: object) -> bool:
+    """Whether `value` is a single AG-UI event or Vercel AI data chunk the UI adapters pass through."""
+    try:
+        from ag_ui.core import BaseEvent
+    except ImportError:
+        pass
+    else:
+        if isinstance(value, BaseEvent):
+            return True
+    try:
+        from pydantic_ai.ui.vercel_ai._utils import DATA_CHUNK_TYPES
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(value, DATA_CHUNK_TYPES)
 
 
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
-        size_desc = f'{len(unit.data):,} bytes (binary)'
+        size_description = f'{len(unit.data):,} bytes (binary)'
         body = f'<{len(unit.data):,} bytes of binary data>'
         sketch = ''
     else:
         text = unit.text or ''
         size_unit = 'tokens' if over_tokens else 'chars'
         amount = measure(text, over_tokens=over_tokens, tokenizer=None) if over_tokens else len(text)
-        size_desc = f'{amount:,} {size_unit}'
+        size_description = f'{amount:,} {size_unit}'
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = f'[Tool output too large ({size_desc}); stored to handle {handle!r}.{read_hint}]'
+    header = f'[Tool output too large ({size_description}); stored to handle {handle!r}.{read_hint}]'
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')

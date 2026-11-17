@@ -22,7 +22,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
-from pydantic_clai2 import _app, open_stock_agent
+from pydantic_clai2 import app, open_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
@@ -119,7 +119,7 @@ async def test_plugin_settings_override_the_stock_coder(
 
 
 async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
-    """Everything else, starting with the customization guide, is one catalog line until the model loads it."""
+    """Everything else, starting with the CLAI docs capability, is one catalog line until the model loads it."""
     seen: list[AgentInfo] = []
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -129,7 +129,7 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
         else:
             yield 'done'
 
-    # The CLI adds the guide to this stock set, as `create_stock_agent` does.
+    # The CLI adds the docs capability to this stock set, as `create_stock_agent` does.
     async with open_stock_agent(
         workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[customization_guide()]
     ) as agent:
@@ -258,25 +258,27 @@ async def test_plugins_get_their_settings_and_close_on_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
 ) -> None:
     log = tmp_path / 'lifecycle'
-    plugin = tmp_path / 'lifecycle.py'
+    plugin = tmp_path / 'lifecycle_probe.py'
     plugin.write_text(
         'from pathlib import Path\n'
         'from pydantic import BaseModel\n'
         'from pydantic_clai2.plugins import Plugin\n'
+        'def record(text, *, after=False):\n'
+        f'    log = Path({str(log)!r})\n'
+        "    log.write_text((log.read_text() + ':' if after else '') + text)\n"
         'class Options(BaseModel):\n'
         "    greeting: str = 'default'\n"
         "    target: str = 'default'\n"
         'class Lifecycle(Plugin[Options]):\n'
         '    async def on_session_start(self, event):\n'
-        f"        Path({str(log)!r}).write_text(self.settings.greeting + ' ' + self.settings.target)\n"
+        "        record(self.settings.greeting + ' ' + self.settings.target)\n"
         '    async def on_session_end(self, event):\n'
-        f'        p = Path({str(log)!r})\n'
-        "        p.write_text(p.read_text() + ':' + event.reason)\n"
+        '        record(event.reason, after=True)\n'
     )
     stock = PluginSettings(
-        id='compaction', factory='lifecycle', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
+        id='compaction', factory='lifecycle_probe', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
     )
-    monkeypatch.setattr(_app, 'STOCK_PLUGINS', (stock,))
+    monkeypatch.setattr(app, 'STOCK_PLUGINS', (stock,))
     with pytest.raises(RuntimeError, match='host failed') if fail else nullcontext():
         async with open_stock_agent(workspace=tmp_path, plugin_settings={'compaction': {'target': 'host'}}):
             assert log.read_text() == 'stock host'
