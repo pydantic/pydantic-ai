@@ -6,7 +6,24 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](https://pydantic.dev/docs/ai/img/harness/ask-user.svg)
+```mermaid
+flowchart TB
+    accTitle: Ask User: the model asks multiple-choice questions mid-run
+    accDescr: The model sends questions to ask_user_question on AskUser and gets the picked labels. AskUser rejects calls outside the limits or with control characters as a retry and passes an AskUserRequest to the answerer, a terminal menu or web form, which asks the user the questions and returns the picks as an AskUserResponse. With answerer=None, the run pauses with DeferredToolRequests.
+    model(["model"])
+    ask["AskUser()<br/>ask_user_question"]:::capability
+    rejected["outside the limits or<br/>control characters"]:::blocked
+    answerer["answerer<br/>terminal menu<br/>or web form"]
+    paused["run pauses with<br/>DeferredToolRequests"]
+    user(["user"])
+    model <-->|"questions, picked labels"| ask
+    ask -.-x|"rejects as a retry"| rejected
+    ask <-->|"AskUserRequest,<br/>AskUserResponse"| answerer
+    ask -.->|"answerer=None"| paused
+    answerer <-->|"questions, picks"| user
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Usage
 
@@ -169,7 +186,7 @@ AskUser(answerer=pick_first, timeout=300)
 Each question is a [deferred tool call](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) marked as a question: the tool raises
 `CallDeferred(kind='question')`, so `DeferredToolRequests.kind()` reports `'question'` for it. `AskUser`
 then answers its own questions in its `handle_deferred_tool_calls` hook, one at a time, by calling the
-answerer through `wait_for_external_event`, the same wait [`RequestInput`](https://pydantic.dev/docs/ai/capabilities/request-input/) uses. That
+answerer through `wait_for_external_event`, the same wait a [`HandleDeferredToolCalls` handler that takes a resume token](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/#a-handler-that-takes-a-token) uses. That
 makes the wait durable on an engine that supports it:
 
 - In a plain run, the answerer is called in process.
@@ -215,9 +232,9 @@ agent = Agent('anthropic:claude-fable-5-2', capabilities=[AskUser(answerer=hand_
 Because the question is a deferred call, it waits until the other tool calls from the same model
 response have finished.
 
-`AskUser` answers its questions before a `HandleDeferredToolCalls` handler or `RequestInput` is asked about what's left, wherever you list them, and its answer passes the tool's `after_tool_execute` hooks, such as result guards, as it did when the tool waited for it.
+`AskUser` answers its questions before a `HandleDeferredToolCalls` handler is asked about what's left, wherever you list them, and its answer passes the tool's `after_tool_execute` hooks, such as result guards, as it did when the tool waited for it.
 To handle every pending call in one place instead, pass `answerer=None` and answer the question in
-`RequestInput`'s `ask` with `ask_user_result`, as the next section shows for a later run.
+a `HandleDeferredToolCalls` handler with `ask_user_result`, as the next section shows for a later run.
 
 ## Pausing the run until the user answers
 

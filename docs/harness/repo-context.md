@@ -11,7 +11,29 @@ description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pyd
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![RepoContext has three strategies. On by default, autoload puts one instruction file per directory, AGENTS.md or else CLAUDE.md, into the instructions: the working directory's, plus each ancestor's when walk_up is set, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. On by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues the contents of that directory's AGENTS.md before the next model request.](../img/harness/repo-context.svg)
+```mermaid
+flowchart TB
+    accTitle: Repo Context: load the instruction files a repo already has
+    accDescr: On by default, RepoContext instruction autoload loads AGENTS.md or CLAUDE.md in the working directory as instructions once, at run start, and nested traversal adds AGENTS.md in src/api to the message tail after a read or listing. Off by default, asset inventory answers the model's inventory_agent_context() with skills, agents and hooks from .claude, .agents, .codex and .grok.
+    subgraph workspace["Workspace"]
+        files["AGENTS.md or<br/>CLAUDE.md in the<br/>working directory"]
+        roots[".claude, .agents,<br/>.codex, .grok"]
+        nested["AGENTS.md<br/>in src/api"]
+    end
+    subgraph repo["RepoContext()"]
+        autoload["instruction<br/>autoload<br/>on by default"]:::capability
+        inventory["asset<br/>inventory<br/>off by default"]:::capability
+        traversal["nested<br/>traversal<br/>on by default"]:::capability
+    end
+    model(["model"])
+    files -->|"once, at run start"| autoload
+    roots -->|"skills, agents, hooks"| inventory
+    nested -->|"after a read or listing"| traversal
+    autoload -->|"instructions"| model
+    inventory <-->|"inventory_agent_context()"| model
+    traversal -->|"message tail"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -148,7 +170,7 @@ over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
-`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+`FileWrittenEvent` from `pydantic_ai_harness.file_system`; set `root_dir` to the
 directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
@@ -176,6 +198,28 @@ not just the file you originally linked.
 Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
 
 Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
+
+### Pinning accepted files
+
+An app that asks the user to accept a workspace's instruction files, skills or sub-agent definitions before trusting them can pin what was accepted. Record [`file_digest(workspace, path)`][pydantic_ai_harness.repo_context.file_digest] when the user accepts a file, and before each run pass the recorded digests to [`pin_accepted_files`][pydantic_ai_harness.repo_context.pin_accepted_files]. A file whose content no longer matches is capped at `changed` (`'none'` by default) through an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace], so [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] reports the lower level until the user accepts the new content and the app records its new digest. Showing the user what changed is up to the app, which holds the accepted content.
+
+```python {test="skip"}
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.repo_context import file_digest, pin_accepted_files
+
+workspace = Workspace(LocalWorkspaceBackend('./project'))
+accepted = {'AGENTS.md': await file_digest(workspace, 'AGENTS.md')}  # when the user accepts it
+
+# Later, after AGENTS.md changed:
+pinned = await pin_accepted_files(workspace, accepted)
+print(await pinned.authority_of('AGENTS.md'))
+#> none
+# Pass `pinned` as the run's `workspace=`.
+```
+
+A changed file never rises above the level the workspace already gives it, and files not in `accepted` keep the workspace's level. Files are compared when `pin_accepted_files` is called, not when they are read later in the run.
+
+The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Files you didn't write](../workspace.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
 
 ## Cache cost
 
@@ -227,3 +271,7 @@ RepoContext(
 ::: pydantic_ai_harness.repo_context.AgentContextInventory
 
 ::: pydantic_ai_harness.repo_context.AssetRoot
+
+::: pydantic_ai_harness.repo_context.file_digest
+
+::: pydantic_ai_harness.repo_context.pin_accepted_files

@@ -24,8 +24,6 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import detach_dbos_logging, without_admin_server
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -63,13 +61,12 @@ def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, A
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'enable_otlp': False,
     }
-    dbos = DBOS(config=without_admin_server(dbos_config))
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 # ---------------------------------------------------------------------------
