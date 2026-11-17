@@ -51,6 +51,14 @@ of tool calls (`started`/`completed`/`failed`). It stores message history only: 
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.
 
+It is not the recommended session store: to store conversations, use core's `ConversationStore`
+(`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
+already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has.
+Settle a session whose newest run ends on unanswered tool calls (a pending approval or deferred result)
+first: its last `complete` snapshot leaves that turn out (see "Moving sessions to a `ConversationStore`"
+on the Step Persistence page).
+
 ```python
 import asyncio
 
@@ -98,8 +106,8 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   write, so the user needs index-creation privileges.
 - `PostgresStepStore(pool, *, table='step_persistence')`: `pool` is your own `asyncpg` pool (the
   driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
-  is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
-  `CREATE` on the schema.
+  is a prefix of at most 40 characters. It creates its tables on first use unless they all exist, so only that
+  first call needs `CREATE` on the schema.
 
 File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them

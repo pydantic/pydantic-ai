@@ -7,6 +7,7 @@ import importlib.abc
 import importlib.machinery
 import importlib.util
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -33,6 +34,8 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend,
 from tests.realtime.simulation._loop import SimulatedLoop
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 async def started(**settings: Any) -> ModalSandboxBackend:
@@ -706,6 +709,7 @@ class TestWorkingDir:
         await started(image='ubuntu:22.04')
         assert fake_modal.create_kwargs[-1]['workdir'] is None
 
+    @posix_only
     async def test_configured_working_dir_is_where_commands_start(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         home, project = tmp_path / 'home', tmp_path / 'project'
         home.mkdir()
@@ -1051,6 +1055,7 @@ class TestFilesystem:
             ('pkg', '/srv/pkg', True, None),
         ]
 
+    @posix_only
     async def test_reads_refuse_anything_but_a_regular_file(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         # A device can stream without end into this process, like a FIFO can block it; the local
         # backend refuses both, and so does this one. A link to one is refused too.
@@ -1097,6 +1102,7 @@ class TestFilesystem:
         with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
             await backend.read_bytes('/tmp/a.txt')
 
+    @posix_only
     async def test_symlinks_follow_relative_chained_dangling_and_looping_targets(
         self, fake_modal: FakeModal, tmp_path: Path
     ) -> None:
@@ -1115,6 +1121,7 @@ class TestFilesystem:
             'relative': (False, 5),
         }
 
+    @posix_only
     async def test_list_dir_raises_a_link_target_failure_unwrapped(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         # Link targets resolve concurrently; a failure must reach error mapping, not an ExceptionGroup.
         fake_modal.host_root = tmp_path
@@ -1130,6 +1137,7 @@ class TestFilesystem:
         with pytest.raises(PermissionError):
             await backend.list_dir(str(tmp_path))
 
+    @posix_only
     async def test_parent_and_relative_leaf_symlink_write(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'a' / 'sub').mkdir(parents=True)
@@ -1152,6 +1160,7 @@ class TestFilesystem:
             await backend.write_bytes(str(tmp_path / 'abs' / 'loop'), b'no')
         assert (tmp_path / 'a' / 'sub' / 'loop').is_symlink()
 
+    @posix_only
     async def test_unresolved_kernel_link_is_not_replaced(
         self, fake_modal: FakeModal, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1170,6 +1179,7 @@ class TestFilesystem:
             await backend.write_bytes(str(link), b'no')
         assert link.is_symlink()
 
+    @posix_only
     async def test_dangling_symlink_is_listed_but_does_not_exist(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'dangling').symlink_to('missing')
@@ -1180,6 +1190,7 @@ class TestFilesystem:
             await backend.stat(str(tmp_path / 'dangling'))
         assert await backend.exists(str(tmp_path / 'dangling')) is False
 
+    @posix_only
     async def test_list_dir_resolves_links_concurrently(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'target').write_bytes(b'x')
@@ -1205,6 +1216,7 @@ class TestFilesystem:
             entries = await backend.list_dir(str(tmp_path))
         assert len(entries) == 21
 
+    @posix_only
     async def test_symlink_loop_is_not_found(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'loop').symlink_to('loop')
@@ -1221,6 +1233,7 @@ class TestFilesystem:
         await backend.remove('/tmp/pkg')
         assert fake_modal.sandboxes[0].removals == [('/tmp/pkg', True)]
 
+    @posix_only
     async def test_remove_refuses_the_working_dir_and_its_ancestors(
         self, fake_modal: FakeModal, tmp_path: Path
     ) -> None:
