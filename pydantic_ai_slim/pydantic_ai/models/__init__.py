@@ -863,6 +863,48 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """
 
 
+@dataclass(frozen=True)
+class _Projection:
+    """The history between two passes of `Model.prepare_messages`, with what earlier passes noted about it."""
+
+    messages: list[ModelMessage]
+    params: ModelRequestParameters | None
+    authored: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The history as stored, after speech becomes user text, lined up part for part with `messages` until the
+    lookalike notes are added. Lookalike frames are looked for in what the user, a tool, a file or a summarizer wrote
+    and in the text retry feedback quotes, never in the frame the framework renders around it."""
+    standing_prompt_count: int = 0
+    """How many opening parts of the first request are the standing system prompt the history was authored with."""
+    has_frame: bool = False
+    """Whether any request has a frame or a lookalike note to explain, as the `lookalike_notes` pass found."""
+    had_system_prompt: bool = False
+    """Whether the history had a mid-conversation system prompt before answered request-scoped prompts were dropped."""
+    untranslated: list[ModelMessage] | None = None
+    """The history before the `local_tool_search` pass translated native tool-search exchanges, for the repair after."""
+
+    def with_messages(self, messages: list[ModelMessage]) -> _Projection:
+        return self if messages is self.messages else replace(self, messages=messages)
+
+
+_PartKind: TypeAlias = type[ModelRequestPart] | type[ModelResponsePart]
+
+
+@dataclass(frozen=True)
+class _ProjectionPass:
+    """One named step of `Model.prepare_messages`, from stored history toward what the adapters map."""
+
+    name: str
+    run: Callable[[Model, _Projection], _Projection]
+    reads: frozenset[_PartKind] = frozenset()
+    """The part kinds whose presence changes this pass's output, besides the ones it consumes. Only kinds some pass
+    consumes or drops need listing: every other kind stays in the history throughout."""
+    consumes: frozenset[_PartKind] = frozenset()
+    """The part kinds this pass reads and renders as other parts, so what they carry stays in the history. A later pass
+    sees the rendered parts, or the kind itself on a model whose gate keeps it."""
+    drops: frozenset[_PartKind] = frozenset()
+    """The part kinds this pass leaves out of the history with nothing in their place, so no later pass may read them."""
+
+
 class _SettingsLayer(NamedTuple):
     """A scope of model settings, named as `Model._warn_if_thinking_overridden` describes it in its warning."""
 
@@ -2057,9 +2099,241 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         projection = _Projection(messages, model_request_parameters)
-        for projection_pass in _PROJECTION_PASSES:
+        for projection_pass in self._PROJECTION_PASSES:
             projection = projection_pass.run(self, projection)
         return projection.messages
+
+    def _drop_capability_loads_pass(self, projection: _Projection) -> _Projection:
+        # The model sees a capability's load as its instructions and tools, not as the record that loads it. Only after
+        # the `instruction_state` pass, which folds a code load's record in.
+        return projection.with_messages(_drop_capability_load_deltas(projection.messages))
+
+    def _instruction_state_pass(self, projection: _Projection) -> _Projection:
+        messages, params = projection.messages, projection.params
+        if not _has_instruction_state(messages):
+            return projection
+        # The same path choice as the prefix statement in `prepare_request`; on the fallback path the
+        # `system_voice` pass `<system>`-wraps the update. Projection must run while the history still carries a code
+        # load's `CapabilityLoadDeltaPart`: it's the only record of that load, and folding it in is what keeps a
+        # code-loaded block rendered across instruction windows. The records go out only after, never in the messages
+        # the model sees.
+        return projection.with_messages(
+            _project_instruction_state(
+                messages,
+                inline_system=self.profile.get('supports_inline_system_prompts', False),
+                prefix=params.instruction_parts if params is not None else None,
+            )
+        )
+
+    def _system_prompt_contexts_pass(self, projection: _Projection) -> _Projection:
+        params = projection.params
+        return projection.with_messages(
+            _render_system_prompt_contexts(
+                projection.messages,
+                inline_system=self.profile.get('supports_inline_system_prompts', False),
+                # The appending instruction blocks the prefix opens are followed by the sentence already.
+                prefix_states_rule=params is not None and bool(_tagged_append_parts(params.instruction_parts or [])),
+            )
+        )
+
+    def _model_settings_deltas_pass(self, projection: _Projection) -> _Projection:
+        return projection.with_messages(
+            _project_model_settings_deltas(
+                projection.messages,
+                keep=self._renders_effort_deltas and self.profile.get('supports_mid_conversation_effort', False),
+            )
+        )
+
+    def _speech_pass(self, projection: _Projection) -> _Projection:
+        return projection.with_messages(
+            _convert_speech_parts(projection.messages, include_audio=self.profile.get('supports_audio_input', False))
+        )
+
+    def _authored_pass(self, projection: _Projection) -> _Projection:
+        # Counted before any delta or note renders into a `SystemPromptPart`: the standing prompt is what the history
+        # was authored with, and a note or announcement in the first request is not part of it.
+        messages = projection.messages
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        # Left out while they're still typed: once rendered, nothing says they were request-scoped.
+        messages = _without_answered_parts(messages, is_downgraded_request_scoped)
+        return replace(
+            projection,
+            messages=messages,
+            authored=messages,
+            standing_prompt_count=standing_prompt_count,
+        )
+
+    def _retry_feedback_pass(self, projection: _Projection) -> _Projection:
+        # Translated before every later pass, the tool-availability announcement and the `<system>` wrap included, so
+        # they see the plain parts a retry becomes rather than the retry itself.
+        return projection.with_messages(
+            _translate_retry_parts(
+                projection.messages,
+                keep_feedback=self._renders_retry_feedback,
+                # Without a system role, a retry that would join the standing prompt is a `<system>` block like
+                # the rest.
+                sealed=self._seals_system_blocks,
+            )
+        )
+
+    def _unsupported_tool_return_files_pass(self, projection: _Projection) -> _Projection:
+        return projection.with_messages(_replace_unsupported_tool_return_files(projection.messages, self.profile))
+
+    def _special_tokens_pass(self, projection: _Projection) -> _Projection:
+        # After retry feedback becomes user text, and before any pass after this renders the application's own text.
+        return projection.with_messages(
+            break_special_tokens_in_messages(projection.messages, self.profile, self.accepts_stateless_artifacts)
+        )
+
+    def _tool_results_first_pass(self, projection: _Projection) -> _Projection:
+        # The passes since `authored` replace or reorder parts one for one, so `authored` still lines up with
+        # `messages`.
+        authored, messages = _tool_results_first(projection.authored, projection.messages)
+        return replace(projection, authored=authored, messages=messages)
+
+    def _tool_call_ids_pass(self, projection: _Projection) -> _Projection:
+        # Fitted ahead of the notes too, one part for one, so a tool result's note names the call by the ID the wire
+        # carries. The `rendered_tool_call_ids` pass fits the parts rendered after this.
+        if (length := self.profile.get('tool_call_id_length')) is None:
+            return projection
+        return projection.with_messages(_fit_tool_call_ids(projection.messages, length))
+
+    def _lookalike_notes_pass(self, projection: _Projection) -> _Projection:
+        framing_announcement = self._framing_announcement(projection.params)
+        messages, has_frame = self._note_lookalike_frames(
+            projection.authored, projection.messages, announce=framing_announcement != 'never'
+        )
+        return replace(
+            projection,
+            messages=messages,
+            has_frame=has_frame,
+            # Looked for before answered request-scoped prompts are dropped, so the announcement stays once it's in.
+            had_system_prompt=_has_mid_conversation_system_prompt(messages, projection.standing_prompt_count),
+        )
+
+    def _superseded_request_scoped_prompts_pass(self, projection: _Projection) -> _Projection:
+        if self.profile.get('supports_request_scoped_system_prompts', False):
+            return projection.with_messages(_drop_request_scoped_prompts_no_user_message_clears(projection.messages))
+        return projection.with_messages(_drop_superseded_request_scoped_prompts(projection.messages))
+
+    def _legacy_tool_reveals_pass(self, projection: _Projection) -> _Projection:
+        return projection.with_messages(self._translate_legacy_tool_reveals(projection.messages, projection.params))
+
+    def _tool_availability_deltas_pass(self, projection: _Projection) -> _Projection:
+        return projection.with_messages(self._render_tool_availability_deltas(projection.messages, projection.params))
+
+    def _local_tool_search_pass(self, projection: _Projection) -> _Projection:
+        from .._tool_search import synthesize_local_tool_search_messages
+
+        supports_native_tool_search = ToolSearchTool in self.profile.get(
+            'supported_native_tools', SUPPORTED_NATIVE_TOOLS
+        )
+        return replace(
+            projection,
+            messages=synthesize_local_tool_search_messages(
+                projection.messages,
+                keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None,
+                pair_returns=self.profile.get('rejects_unpaired_tool_calls', False),
+            ),
+            untranslated=projection.messages,
+        )
+
+    def _request_scoped_tail_pass(self, projection: _Projection) -> _Projection:
+        return projection.with_messages(
+            _move_request_scoped_prompts_to_tail(projection.messages, self._goes_in_request_scoped_tail)
+        )
+
+    def _system_voice_pass(self, projection: _Projection) -> _Projection:
+        if self.profile.get('supports_inline_system_prompts', False):
+            return projection
+        unwrapped = projection.messages
+        messages = _wrap_non_leading_system_prompts(
+            unwrapped,
+            standing_prompt_count=projection.standing_prompt_count,
+            sealed=self._seals_system_blocks,
+            keep_request_scoped=self.profile.get('supports_request_scoped_system_prompts', False),
+        )
+        messages = self._announce_in_standing_prompt(
+            messages,
+            self._framing_announcement(projection.params),
+            # A rendered tool-availability delta is a `<system>` block too, so a wrap counts.
+            needed=any((projection.has_frame, projection.had_system_prompt, messages is not unwrapped)),
+            standing_prompt_count=projection.standing_prompt_count,
+            model_request_parameters=projection.params or ModelRequestParameters(),
+        )
+        return projection.with_messages(messages)
+
+    def _tool_result_order_pass(self, projection: _Projection) -> _Projection:
+        return projection.with_messages(_order_tool_results_by_call(projection.messages))
+
+    def _tool_search_repair_pass(self, projection: _Projection) -> _Projection:
+        # After the `tool_result_order` pass, so the returns land where an agent run's repair after `prepare_messages`
+        # puts them.
+        if projection.untranslated is None:
+            # Run on its own, without the `local_tool_search` pass before it, there's nothing it translated.
+            return projection
+        return projection.with_messages(
+            self._repair_dangling_translated_tool_search_calls(projection.messages, projection.untranslated)
+        )
+
+    _PROJECTION_PASSES: ClassVar[tuple[_ProjectionPass, ...]] = (
+        _ProjectionPass(
+            'instruction_state',
+            _instruction_state_pass,
+            reads=frozenset({CapabilityLoadDeltaPart}),
+            consumes=frozenset({InstructionDeltaPart, InstructionBaselinePart}),
+        ),
+        _ProjectionPass(
+            'drop_capability_loads', _drop_capability_loads_pass, drops=frozenset({CapabilityLoadDeltaPart})
+        ),
+        _ProjectionPass('system_prompt_contexts', _system_prompt_contexts_pass, reads=frozenset({SystemPromptPart})),
+        _ProjectionPass(
+            'model_settings_deltas', _model_settings_deltas_pass, drops=frozenset({ModelSettingsDeltaPart})
+        ),
+        _ProjectionPass('speech', _speech_pass, consumes=frozenset({SpeechPart})),
+        _ProjectionPass('authored', _authored_pass, reads=frozenset({SystemPromptPart})),
+        _ProjectionPass(
+            'retry_feedback',
+            _retry_feedback_pass,
+            reads=frozenset({SystemPromptPart}),
+            consumes=frozenset({RetryFeedbackPart, RetryPromptPart}),  # pyright: ignore[reportDeprecated]
+        ),
+        _ProjectionPass('unsupported_tool_return_files', _unsupported_tool_return_files_pass),
+        _ProjectionPass('special_tokens', _special_tokens_pass),
+        _ProjectionPass('tool_results_first', _tool_results_first_pass, reads=frozenset({SystemPromptPart})),
+        _ProjectionPass('tool_call_ids', _tool_call_ids_pass),
+        _ProjectionPass(
+            'lookalike_notes',
+            _lookalike_notes_pass,
+            reads=frozenset({SystemPromptPart}),
+            consumes=frozenset({CapabilityPart}),
+        ),
+        _ProjectionPass(
+            'superseded_request_scoped_prompts',
+            _superseded_request_scoped_prompts_pass,
+            reads=frozenset({SystemPromptPart, RetryFeedbackPart}),
+        ),
+        _ProjectionPass('legacy_tool_reveals', _legacy_tool_reveals_pass),
+        _ProjectionPass(
+            'tool_availability_deltas', _tool_availability_deltas_pass, consumes=frozenset({ToolAvailabilityDeltaPart})
+        ),
+        _ProjectionPass(
+            'local_tool_search',
+            _local_tool_search_pass,
+            consumes=frozenset({NativeToolSearchCallPart, NativeToolSearchReturnPart}),
+        ),
+        _ProjectionPass('request_scoped_tail', _request_scoped_tail_pass, reads=frozenset({SystemPromptPart})),
+        _ProjectionPass('system_voice', _system_voice_pass, consumes=frozenset({SystemPromptPart})),
+        _ProjectionPass('tool_result_order', _tool_result_order_pass),
+        _ProjectionPass('tool_search_repair', _tool_search_repair_pass),
+        _ProjectionPass('rendered_tool_call_ids', _tool_call_ids_pass),
+    )
+    """The passes `Model.prepare_messages` runs, in order.
+
+    `tests/test_projection_passes.py` checks the declarations against what each pass does, and that no pass drops a
+    kind a later pass reads.
+    """
 
     def _goes_in_request_scoped_tail(self, part: ModelRequestPart) -> bool:
         """Whether `part` goes last in the current request, because the next request won't send it.
@@ -5453,292 +5727,6 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
     new_messages = [fit_message(message) for message in messages]
     return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
-
-
-@dataclass(frozen=True)
-class _Projection:
-    """The history between two passes of `Model.prepare_messages`, with what earlier passes noted about it."""
-
-    messages: list[ModelMessage]
-    params: ModelRequestParameters | None
-    authored: list[ModelMessage] = field(default_factory=list[ModelMessage])
-    """The history as stored, after speech becomes user text, lined up part for part with `messages` until the
-    lookalike notes are added. Lookalike frames are looked for in what the user, a tool, a file or a summarizer wrote
-    and in the text retry feedback quotes, never in the frame the framework renders around it."""
-    standing_prompt_count: int = 0
-    """How many opening parts of the first request are the standing system prompt the history was authored with."""
-    has_frame: bool = False
-    """Whether any request has a frame or a lookalike note to explain, as the `lookalike_notes` pass found."""
-    had_system_prompt: bool = False
-    """Whether the history had a mid-conversation system prompt before answered request-scoped prompts were dropped."""
-    untranslated: list[ModelMessage] | None = None
-    """The history before the `local_tool_search` pass translated native tool-search exchanges, for the repair after."""
-
-    def with_messages(self, messages: list[ModelMessage]) -> _Projection:
-        return self if messages is self.messages else replace(self, messages=messages)
-
-
-_PartKind: TypeAlias = type[ModelRequestPart] | type[ModelResponsePart]
-
-
-@dataclass(frozen=True)
-class _ProjectionPass:
-    """One named step of `Model.prepare_messages`, from stored history toward what the adapters map."""
-
-    name: str
-    run: Callable[[Model, _Projection], _Projection]
-    reads: frozenset[_PartKind] = frozenset()
-    """The part kinds whose presence changes this pass's output, besides the ones it consumes. Only kinds some pass
-    consumes or drops need listing: every other kind stays in the history throughout."""
-    consumes: frozenset[_PartKind] = frozenset()
-    """The part kinds this pass reads and renders as other parts, so what they carry stays in the history. A later pass
-    sees the rendered parts, or the kind itself on a model whose gate keeps it."""
-    drops: frozenset[_PartKind] = frozenset()
-    """The part kinds this pass leaves out of the history with nothing in their place, so no later pass may read them."""
-
-
-def _drop_capability_loads_pass(model: Model, projection: _Projection) -> _Projection:
-    # The model sees a capability's load as its instructions and tools, not as the record that loads it. Only after
-    # the `instruction_state` pass, which folds a code load's record in.
-    return projection.with_messages(_drop_capability_load_deltas(projection.messages))
-
-
-def _instruction_state_pass(model: Model, projection: _Projection) -> _Projection:
-    messages, params = projection.messages, projection.params
-    if not _has_instruction_state(messages):
-        return projection
-    # The same path choice as the prefix statement in `prepare_request`; on the fallback path the `system_voice`
-    # pass `<system>`-wraps the update. Projection must run while the history still carries a code load's
-    # `CapabilityLoadDeltaPart`: it's the only record of that load, and folding it in is what keeps a code-loaded
-    # block rendered across instruction windows. The records go out only after, never in the messages the model sees.
-    return projection.with_messages(
-        _project_instruction_state(
-            messages,
-            inline_system=model.profile.get('supports_inline_system_prompts', False),
-            prefix=params.instruction_parts if params is not None else None,
-        )
-    )
-
-
-def _system_prompt_contexts_pass(model: Model, projection: _Projection) -> _Projection:
-    params = projection.params
-    return projection.with_messages(
-        _render_system_prompt_contexts(
-            projection.messages,
-            inline_system=model.profile.get('supports_inline_system_prompts', False),
-            # The appending instruction blocks the prefix opens are followed by the sentence already.
-            prefix_states_rule=params is not None and bool(_tagged_append_parts(params.instruction_parts or [])),
-        )
-    )
-
-
-def _model_settings_deltas_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(
-        _project_model_settings_deltas(
-            projection.messages,
-            keep=model._renders_effort_deltas and model.profile.get('supports_mid_conversation_effort', False),  # pyright: ignore[reportPrivateUsage]
-        )
-    )
-
-
-def _speech_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(
-        _convert_speech_parts(projection.messages, include_audio=model.profile.get('supports_audio_input', False))
-    )
-
-
-def _authored_pass(model: Model, projection: _Projection) -> _Projection:
-    # Counted before any delta or note renders into a `SystemPromptPart`: the standing prompt is what the history
-    # was authored with, and a note or announcement in the first request is not part of it.
-    messages = projection.messages
-    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
-    standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
-    # Left out while they're still typed: once rendered, nothing says they were request-scoped.
-    messages = _without_answered_parts(messages, is_downgraded_request_scoped)
-    return replace(
-        projection,
-        messages=messages,
-        authored=messages,
-        standing_prompt_count=standing_prompt_count,
-    )
-
-
-def _retry_feedback_pass(model: Model, projection: _Projection) -> _Projection:
-    # Translated before every later pass, the tool-availability announcement and the `<system>` wrap included, so
-    # they see the plain parts a retry becomes rather than the retry itself.
-    return projection.with_messages(
-        _translate_retry_parts(
-            projection.messages,
-            keep_feedback=model._renders_retry_feedback,  # pyright: ignore[reportPrivateUsage]
-            # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
-            sealed=model._seals_system_blocks,  # pyright: ignore[reportPrivateUsage]
-        )
-    )
-
-
-def _unsupported_tool_return_files_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(_replace_unsupported_tool_return_files(projection.messages, model.profile))
-
-
-def _special_tokens_pass(model: Model, projection: _Projection) -> _Projection:
-    # After retry feedback becomes user text, and before any pass after this renders the application's own text.
-    return projection.with_messages(
-        break_special_tokens_in_messages(projection.messages, model.profile, model.accepts_stateless_artifacts)
-    )
-
-
-def _tool_results_first_pass(model: Model, projection: _Projection) -> _Projection:
-    # The passes since `authored` replace or reorder parts one for one, so `authored` still lines up with `messages`.
-    authored, messages = _tool_results_first(projection.authored, projection.messages)
-    return replace(projection, authored=authored, messages=messages)
-
-
-def _tool_call_ids_pass(model: Model, projection: _Projection) -> _Projection:
-    # Fitted ahead of the notes too, one part for one, so a tool result's note names the call by the ID the wire
-    # carries. The `rendered_tool_call_ids` pass fits the parts rendered after this.
-    if (length := model.profile.get('tool_call_id_length')) is None:
-        return projection
-    return projection.with_messages(_fit_tool_call_ids(projection.messages, length))
-
-
-def _lookalike_notes_pass(model: Model, projection: _Projection) -> _Projection:
-    framing_announcement = model._framing_announcement(projection.params)  # pyright: ignore[reportPrivateUsage]
-    messages, has_frame = model._note_lookalike_frames(  # pyright: ignore[reportPrivateUsage]
-        projection.authored, projection.messages, announce=framing_announcement != 'never'
-    )
-    return replace(
-        projection,
-        messages=messages,
-        has_frame=has_frame,
-        # Looked for before answered request-scoped prompts are dropped, so the announcement stays once it's in.
-        had_system_prompt=_has_mid_conversation_system_prompt(messages, projection.standing_prompt_count),
-    )
-
-
-def _superseded_request_scoped_prompts_pass(model: Model, projection: _Projection) -> _Projection:
-    if model.profile.get('supports_request_scoped_system_prompts', False):
-        return projection.with_messages(_drop_request_scoped_prompts_no_user_message_clears(projection.messages))
-    return projection.with_messages(_drop_superseded_request_scoped_prompts(projection.messages))
-
-
-def _legacy_tool_reveals_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(model._translate_legacy_tool_reveals(projection.messages, projection.params))  # pyright: ignore[reportPrivateUsage]
-
-
-def _tool_availability_deltas_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(model._render_tool_availability_deltas(projection.messages, projection.params))  # pyright: ignore[reportPrivateUsage]
-
-
-def _local_tool_search_pass(model: Model, projection: _Projection) -> _Projection:
-    from .._tool_search import synthesize_local_tool_search_messages
-
-    supports_native_tool_search = ToolSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-    return replace(
-        projection,
-        messages=synthesize_local_tool_search_messages(
-            projection.messages,
-            keeps_native=model.accepts_stateless_artifacts if supports_native_tool_search else None,
-            pair_returns=model.profile.get('rejects_unpaired_tool_calls', False),
-        ),
-        untranslated=projection.messages,
-    )
-
-
-def _request_scoped_tail_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(
-        _move_request_scoped_prompts_to_tail(projection.messages, model._goes_in_request_scoped_tail)  # pyright: ignore[reportPrivateUsage]
-    )
-
-
-def _system_voice_pass(model: Model, projection: _Projection) -> _Projection:
-    if model.profile.get('supports_inline_system_prompts', False):
-        return projection
-    unwrapped = projection.messages
-    messages = _wrap_non_leading_system_prompts(
-        unwrapped,
-        standing_prompt_count=projection.standing_prompt_count,
-        sealed=model._seals_system_blocks,  # pyright: ignore[reportPrivateUsage]
-        keep_request_scoped=model.profile.get('supports_request_scoped_system_prompts', False),
-    )
-    messages = model._announce_in_standing_prompt(  # pyright: ignore[reportPrivateUsage]
-        messages,
-        model._framing_announcement(projection.params),  # pyright: ignore[reportPrivateUsage]
-        # A rendered tool-availability delta is a `<system>` block too, so a wrap counts.
-        needed=any((projection.has_frame, projection.had_system_prompt, messages is not unwrapped)),
-        standing_prompt_count=projection.standing_prompt_count,
-        model_request_parameters=projection.params or ModelRequestParameters(),
-    )
-    return projection.with_messages(messages)
-
-
-def _tool_result_order_pass(model: Model, projection: _Projection) -> _Projection:
-    return projection.with_messages(_order_tool_results_by_call(projection.messages))
-
-
-def _tool_search_repair_pass(model: Model, projection: _Projection) -> _Projection:
-    # After the `tool_result_order` pass, so the returns land where an agent run's repair after `prepare_messages`
-    # puts them.
-    if projection.untranslated is None:
-        # Run on its own, without the `local_tool_search` pass before it, there's nothing it translated.
-        return projection
-    return projection.with_messages(
-        model._repair_dangling_translated_tool_search_calls(projection.messages, projection.untranslated)  # pyright: ignore[reportPrivateUsage]
-    )
-
-
-_PROJECTION_PASSES: tuple[_ProjectionPass, ...] = (
-    _ProjectionPass(
-        'instruction_state',
-        _instruction_state_pass,
-        reads=frozenset({CapabilityLoadDeltaPart}),
-        consumes=frozenset({InstructionDeltaPart, InstructionBaselinePart}),
-    ),
-    _ProjectionPass('drop_capability_loads', _drop_capability_loads_pass, drops=frozenset({CapabilityLoadDeltaPart})),
-    _ProjectionPass('system_prompt_contexts', _system_prompt_contexts_pass, reads=frozenset({SystemPromptPart})),
-    _ProjectionPass('model_settings_deltas', _model_settings_deltas_pass, drops=frozenset({ModelSettingsDeltaPart})),
-    _ProjectionPass('speech', _speech_pass, consumes=frozenset({SpeechPart})),
-    _ProjectionPass('authored', _authored_pass, reads=frozenset({SystemPromptPart})),
-    _ProjectionPass(
-        'retry_feedback',
-        _retry_feedback_pass,
-        reads=frozenset({SystemPromptPart}),
-        consumes=frozenset({RetryFeedbackPart, RetryPromptPart}),  # pyright: ignore[reportDeprecated]
-    ),
-    _ProjectionPass('unsupported_tool_return_files', _unsupported_tool_return_files_pass),
-    _ProjectionPass('special_tokens', _special_tokens_pass),
-    _ProjectionPass('tool_results_first', _tool_results_first_pass, reads=frozenset({SystemPromptPart})),
-    _ProjectionPass('tool_call_ids', _tool_call_ids_pass),
-    _ProjectionPass(
-        'lookalike_notes',
-        _lookalike_notes_pass,
-        reads=frozenset({SystemPromptPart}),
-        consumes=frozenset({CapabilityPart}),
-    ),
-    _ProjectionPass(
-        'superseded_request_scoped_prompts',
-        _superseded_request_scoped_prompts_pass,
-        reads=frozenset({SystemPromptPart, RetryFeedbackPart}),
-    ),
-    _ProjectionPass('legacy_tool_reveals', _legacy_tool_reveals_pass),
-    _ProjectionPass(
-        'tool_availability_deltas', _tool_availability_deltas_pass, consumes=frozenset({ToolAvailabilityDeltaPart})
-    ),
-    _ProjectionPass(
-        'local_tool_search',
-        _local_tool_search_pass,
-        consumes=frozenset({NativeToolSearchCallPart, NativeToolSearchReturnPart}),
-    ),
-    _ProjectionPass('request_scoped_tail', _request_scoped_tail_pass, reads=frozenset({SystemPromptPart})),
-    _ProjectionPass('system_voice', _system_voice_pass, consumes=frozenset({SystemPromptPart})),
-    _ProjectionPass('tool_result_order', _tool_result_order_pass),
-    _ProjectionPass('tool_search_repair', _tool_search_repair_pass),
-    _ProjectionPass('rendered_tool_call_ids', _tool_call_ids_pass),
-)
-"""The passes `Model.prepare_messages` runs, in order.
-
-`tests/test_projection_passes.py` checks the declarations against what each pass does, and that no pass drops a kind a
-later pass reads.
-"""
 
 
 # TODO(v3): remove `RetryPromptPart`
