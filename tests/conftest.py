@@ -1627,25 +1627,18 @@ def _patch_hf_provider_mappings():
     except ImportError:
         return
 
-    # (provider, Hugging Face model id, the provider's own model id, task)
-    models: list[tuple[str, str, str, str]] = [
-        ('together', 'deepseek-ai/DeepSeek-R1', 'deepseek-ai/DeepSeek-R1', 'conversational'),
-        (
-            'together',
-            'meta-llama/Llama-4-Scout-17B-16E-Instruct',
-            'meta-llama/Llama-4-Scout-17B-16E-Instruct',
-            'conversational',
-        ),
-        ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
-        ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
-        ('novita', 'meta-llama/Llama-3.1-8B-Instruct', 'meta-llama/llama-3.1-8b-instruct', 'conversational'),
+    models: list[tuple[str, str, str]] = [
+        ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('together', 'meta-llama/Llama-4-Scout-17B-16E-Instruct', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
     ]
 
-    for provider, model_id, provider_model_id, task in models:
-        HARDCODED_MODEL_INFERENCE_MAPPING.setdefault(provider, {})[model_id] = InferenceProviderMapping(
+    for provider, model_id, task in models:
+        HARDCODED_MODEL_INFERENCE_MAPPING[provider][model_id] = InferenceProviderMapping(
             provider=provider,
             hf_model_id=model_id,
-            providerId=provider_model_id,
+            providerId=model_id,
             status='live',
             task=task,
         )

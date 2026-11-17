@@ -17,6 +17,8 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from cassetter import Cassette
     from huggingface_hub import ChatCompletionOutputLogprobs, ChatCompletionOutputMessage
+    from huggingface_hub.hf_api import InferenceProviderMapping
+    from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
 
     from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -29,8 +31,23 @@ pytestmark = [
 ]
 
 
+@pytest.fixture
+def novita_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Map the model to Novita without the Hub lookup, which these recordings don't carry."""
+    mapping = InferenceProviderMapping(
+        provider='novita',
+        hf_model_id='meta-llama/Llama-3.1-8B-Instruct',
+        providerId='meta-llama/llama-3.1-8b-instruct',
+        status='live',
+        task='conversational',
+    )
+    monkeypatch.setitem(HARDCODED_MODEL_INFERENCE_MAPPING, 'novita', {mapping.hf_model_id: mapping})
+
+
 @pytest.mark.vcr()
-async def test_huggingface_logprobs(allow_model_requests: None, huggingface_api_key: str, vcr: Cassette):
+async def test_huggingface_logprobs(
+    allow_model_requests: None, huggingface_api_key: str, vcr: Cassette, novita_mapping: None
+):
     model = HuggingFaceModel(
         'meta-llama/Llama-3.1-8B-Instruct',
         provider=HuggingFaceProvider(provider_name='novita', api_key=huggingface_api_key),
@@ -100,7 +117,9 @@ async def test_huggingface_logprobs_null_top_logprobs(allow_model_requests: None
 
 
 @pytest.mark.vcr()
-async def test_huggingface_logprobs_streaming(allow_model_requests: None, huggingface_api_key: str, vcr: Cassette):
+async def test_huggingface_logprobs_streaming(
+    allow_model_requests: None, huggingface_api_key: str, vcr: Cassette, novita_mapping: None
+):
     model = HuggingFaceModel(
         'meta-llama/Llama-3.1-8B-Instruct',
         provider=HuggingFaceProvider(provider_name='novita', api_key=huggingface_api_key),
