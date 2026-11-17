@@ -5,6 +5,7 @@ Kept free of any sandbox or kernel dependency, so each capability's optional ext
 
 from __future__ import annotations
 
+import builtins
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -32,6 +33,16 @@ the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
 
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
+
+BUILTIN_NAMES = frozenset(dir(builtins))
+"""Every CPython builtin, which no sandboxed tool may be named after.
+
+Code is resolved against the sandbox's builtins, so a tool called `open` or `print` never runs as
+the model intends: Monty looks the builtin up first and the tool is unreachable, while the IPython
+kernel puts the tool in the namespace ahead of the builtin, so the model's own `open(...)` calls the
+tool. All of CPython's builtins, not just the current sandbox's set, so a builtin added later
+cannot take over a tool that works today.
+"""
 
 
 def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
@@ -98,6 +109,11 @@ def partition_callable_tools(
             raise UserError(
                 f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
                 f'meta-tool. Rename your tool to avoid conflicts.'
+            )
+        if safe_name in BUILTIN_NAMES:
+            raise UserError(
+                f'Tool name {name!r} is a Python builtin, so code in the sandbox cannot call the tool by that '
+                'name. Rename the tool, for example with `toolset.prefixed(...)` or `toolset.renamed(...)`.'
             )
         if safe_name in callable_defs:
             existing = sanitized_to_original.get(safe_name, safe_name)
@@ -166,8 +182,8 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         # This call counts once it succeeds, and so does the enclosing `run_code` call.
         try:
             usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 2))
-        except UsageLimitExceeded as e:
-            return NestedCallOutcome(error=e, usage_limit_exceeded=e, tool_kind=tool_kind)
+        except UsageLimitExceeded as exc:
+            return NestedCallOutcome(error=exc, usage_limit_exceeded=exc, tool_kind=tool_kind)
         # A pending call counts toward the limit until it settles: calls started together with
         # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
         # counts the call itself once it succeeds, so the reservation is released however it ends.
@@ -176,19 +192,19 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         ctx.usage.tool_calls += 1
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
-    except (CallDeferred, ApprovalRequired) as e:
+    except (CallDeferred, ApprovalRequired) as exc:
         # No handler resolved the deferral. The sandbox can't round-trip to the caller, so the
         # error propagates through Monty -> MontyRuntimeError -> ModelRetry.
         error = UserError(
-            f'Tool {call_part.tool_name!r} raised {type(e).__name__} inside code mode, '
+            f'Tool {call_part.tool_name!r} raised {type(exc).__name__} inside code mode, '
             'but no `HandleDeferredToolCalls` capability resolved it. Add a handler '
             'capability on the agent so deferred and approval-required calls can '
             'be resolved inline.'
         )
-        error.__cause__ = e
+        error.__cause__ = exc
         return NestedCallOutcome(error=error, tool_kind=tool_kind)
-    except Exception as e:
-        return NestedCallOutcome(error=e, tool_kind=tool_kind)
+    except Exception as exc:
+        return NestedCallOutcome(error=exc, tool_kind=tool_kind)
     finally:
         ctx.usage.tool_calls -= reserved
 

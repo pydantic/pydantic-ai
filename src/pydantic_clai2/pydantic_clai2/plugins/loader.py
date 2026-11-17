@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Generic, Literal
 from uuid import uuid4
 
-from anyio import CancelScope, fail_after
+from anyio import CancelScope, fail_after, to_thread
 from anyio.lowlevel import checkpoint
 from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
@@ -331,10 +331,6 @@ class SessionPlugins(Generic[DepsT]):
         self._entries = refreshed
         return list(refreshed.values())
 
-    def _saved(self, entry: PluginEntry[DepsT]) -> PluginSettings:
-        """The stored declaration as it is now, without refreshing `entries()` mid-load."""
-        return self._process.stored(entry.name) or entry.declaration
-
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
 
@@ -432,7 +428,7 @@ class SessionPlugins(Generic[DepsT]):
         with `/plugins enable`, `add`, or `reload` still raises.
         """
         if self.enabled:
-            self._process.ensure_plugins_dir(self._console)
+            await to_thread.run_sync(self._process.ensure_plugins_dir, self._console)
         self._process.join(self)
         failures: list[PluginLoadFailed] = []
         for entry in self._registration_order():
@@ -836,7 +832,8 @@ class SessionPlugins(Generic[DepsT]):
         loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
-            self._process.store.save_plugin(self._saved(entry), requires=host.requirements)
+            # The pre-load declaration: the refreshed entry may describe a replacement saved during the load.
+            self._process.store.update_plugin_requirements(entry.declaration, requires=host.requirements)
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now, in every live session, and remember it as disabled."""
@@ -863,8 +860,8 @@ class SessionPlugins(Generic[DepsT]):
         # A relative path never names a drop-in, only an approval saved before paths were anchored: forget it.
         if entry.path is not None and entry.path.is_absolute() and not entry.shipped:
             # Unrelated file plugins remain removable even when the drop-in directory cannot be resolved.
-            if entry.path.parent.parent.name == CHECKOUTS_DIR and entry.path.parent == checkout_dir(
-                self.plugins_dir, name
+            if entry.path.parent.parent.name == CHECKOUTS_DIR and entry.path.parent == await to_thread.run_sync(
+                checkout_dir, self.plugins_dir, name
             ):
                 checkout_notice = (
                     f' Checkout kept at {entry.path.parent}. Delete that directory before reinstalling from Git.'

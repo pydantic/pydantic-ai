@@ -72,10 +72,13 @@ class FakeSandbox:
     resource: dict[str, str]
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
+    credential_proxy: dict[str, object] | None = None
     secure_access: bool = False
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
+    stream_breaks: int = 0
+    """How often its streams were broken, so a command starting meanwhile can tell."""
 
     def info(self) -> dict[str, Any]:
         info: dict[str, Any] = {
@@ -172,6 +175,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             env=body.get('env') or {},
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
+            credential_proxy=body.get('credentialProxy'),
             secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )
@@ -239,7 +243,9 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
 
     def break_streams(self, sandbox_id: str, sandbox: FakeSandbox | None = None) -> None:
         """Break the sandbox's command streams without stopping its commands, as a network failure does."""
-        for queue in (sandbox or self.sandboxes[sandbox_id]).streams:
+        sandbox = sandbox or self.sandboxes[sandbox_id]
+        sandbox.stream_breaks += 1
+        for queue in sandbox.streams:
             queue.put_nowait(('broken', None))
 
     async def _execd(self, request: httpx.Request) -> httpx.Response:
@@ -265,6 +271,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         cwd = body.get('cwd') or self.image_working_dir
         if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
+        stream_breaks = sandbox.stream_breaks
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
             '-c',
@@ -281,11 +288,12 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         self.processes.append(process)
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         sandbox.streams.append(queue)
-        # The command can run before this registers it, so a kill that saw neither the process nor its stream ends
-        # them here.
+        # The command can run before this registers it, so a kill or a stream break that came meanwhile, and saw
+        # neither the process nor its stream, takes effect here.
         if sandbox.state != 'Running':  # pragma: lax no cover
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
+        if sandbox.stream_breaks != stream_breaks:  # pragma: lax no cover
             queue.put_nowait(('broken', None))
         return httpx.Response(
             200,

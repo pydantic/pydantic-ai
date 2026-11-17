@@ -871,7 +871,7 @@ async def _auto_install_chromium() -> str | None:
     mocked test surface. On failure the merged stdout/stderr is returned so the
     launch path can surface why the install failed instead of the generic hint.
     """
-    proc = await asyncio.create_subprocess_exec(
+    process = await asyncio.create_subprocess_exec(
         sys.executable,
         '-m',
         'playwright',
@@ -881,12 +881,12 @@ async def _auto_install_chromium() -> str | None:
         stderr=asyncio.subprocess.STDOUT,
     )
     try:
-        stdout, _ = await proc.communicate()
+        stdout, _ = await process.communicate()
     except asyncio.CancelledError:
-        proc.terminate()
-        await proc.wait()
+        process.terminate()
+        await process.wait()
         raise
-    if proc.returncode == 0:
+    if process.returncode == 0:
         return None
     return stdout.decode(errors='replace')
 

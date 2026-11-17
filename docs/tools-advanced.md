@@ -79,9 +79,9 @@ Whether a file can travel inside the tool result depends on the model **and** th
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
 ```text
-<tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
+<pyai:tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
 [the image]
-</tool_result>
+</pyai:tool_result>
 ```
 
 The tool result itself carries `See file d9a13f.` in place of the file, and each file gets its own tags, so the model can match every file to the call that produced it even when several tools return media in the same step. A failed Gemini tool return is the one exception: its result is Gemini's native `error` string, which takes no file references, so there the tags alone carry the attribution. Realtime sessions frame tool-produced files the same way. This mirrors how a mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is framed as `<system>...</system>` for a model whose API has no place to put one.
@@ -559,7 +559,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and 5.2, and Mythos 5.1 and 5.2; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. Converse has no `'none'` mode, so `'none'` drops the tools. Once the history has a tool call, Converse requires them, so they stay: Claude gets its native `'none'`, while other models aren't prevented from calling them ([#10435](https://github.com/pydantic/pydantic-ai/issues/10435)). See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
@@ -669,7 +669,7 @@ Rule of thumb: raise `ModelRetry` when you want the model to try again with corr
 
 You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
 
-`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
+`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. A tool that [Code Mode](harness/code-mode.md) calls from a snippet reports an uncaught `ToolFailed` the same way, as a failed `run_code` result. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
 
 ### Tool Timeout
 
@@ -1007,7 +1007,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
 
     * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
-    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape. The exception is the legacy [`AsyncAnthropicBedrock` client](models/anthropic.md#aws-bedrock), where recorded `bm25` calls replay as `regex` unless the run uses `ToolSearch(strategy='bm25')`.
+    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. Where the model's profile sets [`rejects_unpaired_tool_calls`][pydantic_ai.profiles.ModelProfile.rejects_unpaired_tool_calls], the translation pairs the calls with their results: a result whose ID names no earlier call, as in history OpenAI recorded with an output item's ID, is matched to the oldest call in its response still waiting for one, and a call whose result never arrived, as when Anthropic ends a response on a client tool call, gets the synthesized interrupted result described in [Making histories provider-valid](message-history.md#making-histories-provider-valid). The OpenAI provider and the Claude API's own Anthropic client set it, directly or through the [Pydantic AI Gateway](gateway.md); other endpoints get the history as translated, and one that rejects an unpaired tool call opts in with `profile={'rejects_unpaired_tool_calls': True}`. A provider's own native history retains its exact replay shape. The exception is the legacy [`AsyncAnthropicBedrock` client](models/anthropic.md#aws-bedrock), where recorded `bm25` calls replay as `regex` unless the run uses `ToolSearch(strategy='bm25')`.
 
 #### Tool-availability history portability
 

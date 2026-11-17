@@ -107,7 +107,7 @@ class WrapperModel(Model):
     wrapped: Model
     """The underlying model being wrapped."""
 
-    def __init__(self, wrapped: Model | KnownModelName):
+    def __init__(self, wrapped: Model | KnownModelName | str):
         super().__init__()
         self.wrapped = infer_model(wrapped)
 

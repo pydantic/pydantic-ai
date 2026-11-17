@@ -11,7 +11,29 @@ description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pyd
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![RepoContext has three strategies. On by default, autoload puts one instruction file per directory, AGENTS.md or else CLAUDE.md, into the instructions: the working directory's, plus each ancestor's when walk_up is set, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. On by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues the contents of that directory's AGENTS.md before the next model request.](../img/harness/repo-context.svg)
+```mermaid
+flowchart TB
+    accTitle: Repo Context: load the instruction files a repo already has
+    accDescr: On by default, RepoContext instruction autoload loads AGENTS.md or CLAUDE.md in the working directory as instructions once, at run start, and nested traversal adds AGENTS.md in src/api to the message tail after a read or listing. Off by default, asset inventory answers the model's inventory_agent_context() with skills, agents and hooks from .claude, .agents, .codex and .grok.
+    subgraph workspace["Workspace"]
+        files["AGENTS.md or<br/>CLAUDE.md in the<br/>working directory"]
+        roots[".claude, .agents,<br/>.codex, .grok"]
+        nested["AGENTS.md<br/>in src/api"]
+    end
+    subgraph repo["RepoContext()"]
+        autoload["instruction<br/>autoload<br/>on by default"]:::capability
+        inventory["asset<br/>inventory<br/>off by default"]:::capability
+        traversal["nested<br/>traversal<br/>on by default"]:::capability
+    end
+    model(["model"])
+    files -->|"once, at run start"| autoload
+    roots -->|"skills, agents, hooks"| inventory
+    nested -->|"after a read or listing"| traversal
+    autoload -->|"instructions"| model
+    inventory <-->|"inventory_agent_context()"| model
+    traversal -->|"message tail"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -91,13 +113,17 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (on by default)
 
-When the model lists a directory or reads a file in it, surface the
-instruction file of that directory and of every directory between it and
-the working directory, shallowest first: reading `packages/foo/src/x.py` also
-surfaces `packages/foo/AGENTS.md`. This strategy subscribes to `FileReadEvent` and
-`DirectoryListedEvent`, so it receives normalized, containment-checked paths
-instead of inspecting raw tool arguments. It is on by default, so with
-`FileSystem` on the agent nothing else is needed; this switches it to pointers:
+When the model lists a directory, reads a file in it, or writes or edits a file
+in it, surface the instruction file of that directory and of every directory
+between it and the working directory, shallowest first: reading
+`packages/foo/src/x.py` also surfaces `packages/foo/AGENTS.md`. A plain
+`FileWrittenEvent` for the instruction file itself counts as surfacing it, since
+the model wrote the whole file. A `FileReadEvent` or `FileEditedEvent` for it
+doesn't: a read can return part of the file and an edit changes part of it. This
+strategy subscribes to `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent`, so it receives normalized, containment-checked paths instead
+of inspecting raw tool arguments. It is on by default, so with `FileSystem` on the
+agent nothing else is needed; this switches it to pointers:
 
 ```python
 from pydantic_ai import Agent
@@ -143,9 +169,9 @@ more deeply nested file wins a conflict, and the user's direct instructions win
 over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
-the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
-`pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's
-`path` is relative to.
+the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent` from `pydantic_ai_harness.file_system`; set `root_dir` to the
+directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A
@@ -171,7 +197,7 @@ not just the file you originally linked.
 
 Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
 
-Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
+Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
 
 ## Cache cost
 

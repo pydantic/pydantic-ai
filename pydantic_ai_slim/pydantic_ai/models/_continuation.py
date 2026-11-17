@@ -449,6 +449,29 @@ class _ContinuationStreamedResponse(StreamedResponse):
     _primed_segment: tuple[AsyncExitStack, StreamedResponse] | None = field(default=None, init=False)
     # Whether `prime()` went on to the stitched stream's first event, as it does past a first segment without output.
     _primed_stitched: bool = field(default=False, init=False)
+    # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
+    # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
+    # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
+    # so it keeps the small `max_generation_continuations` cap; only a *same-id* re-suspension (OpenAI background
+    # poll) re-fetches one long-running job under the same `provider_response_id`, so a healthy job
+    # that legitimately runs for minutes must not be killed by the small cap — it gets the far more
+    # generous `max_background_polls` backstop. Mirrors the non-streaming continuation loop in
+    # `_agent_graph`. See `MAX_BACKGROUND_POLLS`.
+    _accumulate_count: int = field(default=0, init=False)
+    _replace_count: int = field(default=0, init=False)
+    # Mode of the merge that produced the current suspended response, used to pick its ceiling. A
+    # continuation chain is homogeneous in practice (a poll chain is all same-id, a `pause_turn` chain
+    # all-accumulate), so the previous merge's mode reliably classifies the next re-issue.
+    _last_mode: MergeMode | None = field(default=None, init=False)
+    # Whether a segment has been requested yet, after which `return_pending` ends the stream on a pending response.
+    _requested: bool = field(default=False, init=False)
+    # Index at which the most recent segment's parts began in the stitched stream. A replaced
+    # segment reuses this (same parts under the same id); an accumulated segment appends after
+    # all prior parts. See `_segment_offset`.
+    _last_segment_start: int = field(default=0, init=False)
+    # Index at which the current segment's parts begin. Resolved lazily on the first reindexable event, once
+    # `sub.provider_response_id` is populated, so replace-vs-accumulate matches the eventual `merge_mode`.
+    _segment_start: int | None = field(default=None, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream every segment as one continuous event stream.
@@ -660,103 +683,27 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 )
         return accumulate_count, replace_count
 
-    async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:  # noqa: C901
-        # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
-        # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
-        # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
-        # so it keeps the small `max_generation_continuations` cap; only a *same-id* re-suspension (OpenAI background
-        # poll) re-fetches one long-running job under the same `provider_response_id`, so a healthy job
-        # that legitimately runs for minutes must not be killed by the small cap — it gets the far more
-        # generous `max_background_polls` backstop. Mirrors the non-streaming continuation loop in
-        # `_agent_graph`. See `MAX_BACKGROUND_POLLS`.
-        accumulate_count = 0
-        replace_count = 0
-        # Mode of the merge that produced the current suspended `response`, used to pick its ceiling. A
-        # continuation chain is homogeneous in practice (a poll chain is all same-id, a `pause_turn` chain
-        # all-accumulate), so the previous merge's mode reliably classifies the next re-issue.
-        last_mode: MergeMode | None = None
+    async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
         response = self.initial_suspended_response
-        # Index at which the most recent segment's parts began in the stitched stream. A replaced
-        # segment reuses this (same parts under the same id); an accumulated segment appends after
-        # all prior parts. See `_segment_offset`.
-        last_segment_offset = 0
-        requested = False
         try:
-            while True:
-                if self._cancelled or self._stopped:
-                    break
-
-                if response is None:
-                    messages = self.base_messages
-                elif response.state == 'suspended':
-                    if self.return_pending and requested and self.model.continuation_delay(response) is not None:
-                        self._ended_pending = True
-                        break
-                    accumulate_count, replace_count = self._count_continuation(
-                        response, last_mode, accumulate_count, replace_count
-                    )
-                    # A primed first segment already waited out the delay before it was opened. Mirroring the
-                    # non-streaming loop, a resumed pending response is checked on straight away.
-                    if (
-                        self._primed_segment is None
-                        and (delay := self.model.continuation_delay(response))
-                        and (requested or not self.return_pending)
-                    ):
-                        await self.sleep_func(delay)
-                        # A `cancel()`/`close_stream()` from another task during the inter-poll sleep
-                        # already tore down the server-side job; don't open the next sub-stream, which
-                        # for Anthropic `pause_turn` would actively resume generation and burn tokens.
-                        if self._cancelled or self._stopped:
-                            break
-                    messages = [*self.base_messages, response]
-                else:
-                    break
-
+            while (messages := await self._next_segment_messages(response)) is not None:
                 # While this sub is in flight, `_merged_response` holds the accumulator of
                 # all prior segments (excluding the current sub) so `get()` can fold in the
                 # live `sub.get()` snapshot without double-counting.
                 self._merged_response = response
-                # Resolved lazily on the first reindexable event, once `sub.provider_response_id`
-                # is populated, so replace-vs-accumulate matches the eventual `merge_mode`.
-                segment_offset: int | None = None
+                self._segment_start = None
                 async with self._open_segment(messages) as sub:
-                    requested = True
+                    self._requested = True
                     self._current_sub = sub
                     async for event in sub:
-                        if isinstance(event, FinalResultEvent):
-                            self.final_result_event = event
-                            yield event
-                            continue
-                        if segment_offset is None:
-                            segment_offset = self._segment_offset(response, sub, last_segment_offset)
-                        yield self._reindex(event, segment_offset)
+                        yield self._stitch_event(event, response, sub)
 
-                last_segment_offset = segment_offset or 0
+                self._last_segment_start = self._segment_start or 0
 
                 # Read `sub.get()` AFTER the `async with` exits so late-stamped metadata
                 # (e.g. a `FallbackModel` continuation pin) is captured.
-                sub_response = sub.get()
-                if self.request_context is not None:
-                    report_continuation_segment(self.request_context, sub_response, self._observers)
-                if response is None:
-                    if sub_response.state == 'suspended':
-                        self.finalize_response(sub_response)
-                    merged = sub_response
-                else:
-                    # Continuation segments are separately billed requests. Finalize their usage before
-                    # merging so additive costs preserve per-request pricing, including pricing tiers.
-                    self.finalize_response(response)
-                    self.finalize_response(sub_response)
-                    # Classify this transition (replace vs accumulate) so the next re-issue is counted
-                    # against the right ceiling.
-                    last_mode = merge_mode(response, sub_response)
-                    merged = merge_responses(response, sub_response)
-
-                self._merged_response = merged
-                self._current_sub = None
-                self._usage = merged.usage
                 # Advance before checking usage so a limit trip cancels the newest suspended job, not the previous one.
-                response = merged
+                response = self._merge_segment(response, sub.get())
                 self.check_usage(self.usage)
 
             self._merged_response = response
@@ -784,6 +731,72 @@ class _ContinuationStreamedResponse(StreamedResponse):
             # additional usage. This also handles `aclose()` racing a debounced consumer's prefetch task.
             if self._current_sub is not None:
                 self.finalize_response(self._current_sub.get())
+
+    async def _next_segment_messages(self, response: ModelResponse | None) -> list[ModelMessage] | None:
+        """The messages that request the next segment after `response`, or `None` once the stream ends.
+
+        Counts a re-issue of a suspended `response` against its ceiling, and waits out its continuation delay.
+        """
+        if self._cancelled or self._stopped:
+            return None
+        if response is None:
+            return self.base_messages
+        if response.state != 'suspended':
+            return None
+        if self.return_pending and self._requested and self.model.continuation_delay(response) is not None:
+            self._ended_pending = True
+            return None
+        self._accumulate_count, self._replace_count = self._count_continuation(
+            response, self._last_mode, self._accumulate_count, self._replace_count
+        )
+        # A primed first segment already waited out the delay before it was opened. Mirroring the
+        # non-streaming loop, a resumed pending response is checked on straight away.
+        if (
+            self._primed_segment is None
+            and (delay := self.model.continuation_delay(response))
+            and (self._requested or not self.return_pending)
+        ):
+            await self.sleep_func(delay)
+            # A `cancel()`/`close_stream()` from another task during the inter-poll sleep
+            # already tore down the server-side job; don't open the next sub-stream, which
+            # for Anthropic `pause_turn` would actively resume generation and burn tokens.
+            if self._cancelled or self._stopped:
+                return None
+        return [*self.base_messages, response]
+
+    def _stitch_event(
+        self, event: ModelResponseStreamEvent, response: ModelResponse | None, sub: StreamedResponse
+    ) -> ModelResponseStreamEvent:
+        """Re-emit a segment's event in the stitched stream, capturing its final result or offsetting its part index."""
+        if isinstance(event, FinalResultEvent):
+            self.final_result_event = event
+            return event
+        if self._segment_start is None:
+            self._segment_start = self._segment_offset(response, sub, self._last_segment_start)
+        return self._reindex(event, self._segment_start)
+
+    def _merge_segment(self, response: ModelResponse | None, sub_response: ModelResponse) -> ModelResponse:
+        """Merge a finished segment's response into the response of the segments before it."""
+        if self.request_context is not None:
+            report_continuation_segment(self.request_context, sub_response, self._observers)
+        if response is None:
+            if sub_response.state == 'suspended':
+                self.finalize_response(sub_response)
+            merged = sub_response
+        else:
+            # Continuation segments are separately billed requests. Finalize their usage before
+            # merging so additive costs preserve per-request pricing, including pricing tiers.
+            self.finalize_response(response)
+            self.finalize_response(sub_response)
+            # Classify this transition (replace vs accumulate) so the next re-issue is counted
+            # against the right ceiling.
+            self._last_mode = merge_mode(response, sub_response)
+            merged = merge_responses(response, sub_response)
+
+        self._merged_response = merged
+        self._current_sub = None
+        self._usage = merged.usage
+        return merged
 
     @staticmethod
     def _segment_offset(response: ModelResponse | None, sub: StreamedResponse, last_segment_offset: int) -> int:

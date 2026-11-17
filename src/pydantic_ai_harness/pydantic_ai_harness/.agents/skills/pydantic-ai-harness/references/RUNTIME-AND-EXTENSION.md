@@ -279,6 +279,25 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
 opt out).
 
+Approvals: add core `HandleDeferredToolCalls(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`), whose `ask` takes a resume token,
+next to `AWSLambdaDurability()` instead of ending the run with `DeferredToolRequests` output and starting
+a second run. A call that needs approval, an answer or external execution creates a Lambda callback and
+runs `ask(ctx, requests, callback_id)` once in a step (`{name}__external_event.deferred_tool_calls.ask`).
+If `ask` returns `DeferredToolResults`, the step records it and the run continues (the callback is left
+open, unused); if it returns `None`, the execution suspends. `AskUser` questions use the same mechanism
+(`{name}__external_event.ask_user_question`). The approver sends the
+JSON form of `DeferredToolResults` (`{"approvals": {"<tool_call_id>": true}}`, or
+`{"kind": "tool-denied", "message": ...}` / `{"kind": "tool-approved", "override_args": {...}}`) with
+`aws lambda send-durable-execution-callback-success --callback-id ... --cli-binary-format
+raw-in-base64-out --result '<json>'` (boto3 `send_durable_execution_callback_success`). On replay the
+model is not called again and `ask` does not rerun. A timeout or `send-durable-execution-callback-failure`
+denies every pending approval and fails every pending external call with a message, and the run
+continues; an invalid decision or a stale tool call ID raises `UserError`. Other deferred-call handlers
+(a token-less `HandleDeferredToolCalls`, `ApprovalReviewer`, `AskUser`) run first. An `ask` that returns `None` only
+delivers the question; the answer comes from your approval endpoint. Outside a durable handler (local development) the same agent
+waits in process and `pydantic_ai.external_events.resolve_external_event(token, decision)` resolves it;
+from inside a checkpointed tool, the wait raises `UserError`.
+
 Gotchas:
 
 - A run is durable only inside `durable_agent_handler` or `run_durable(lambda: agent.run(...),
@@ -444,21 +463,21 @@ active on the **next** run, and only if you pass it in:
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness import CapabilityCreation
 
+workspace = LocalWorkspaceBackend('.')
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[creation])
 
 
 
 async def main():
     history = None
     for prompt in ['Add a capability that logs tool calls.', 'Now refactor utils.py.']:
-        result = await agent.run(
-            prompt, message_history=history, capabilities=creation.store.load_active()
-        )
+        extra = await creation.load_active(workspace)
+        result = await agent.run(prompt, message_history=history, capabilities=extra, workspace=workspace)
         history = result.all_messages()
 ```
 
@@ -466,8 +485,11 @@ Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorks
 authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
 `ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
 a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
-With `defer_loading=True` these checks refuse each authoring tool call instead. `store.load_active()` runs outside this check, since it has no workspace. Only use it where you would run the
-model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+With `defer_loading=True` these checks refuse each authoring tool call instead. `creation.load_active(workspace)`
+makes them against `workspace` before loading, and only against it, so pass the same workspace as `agent.run(workspace=...)`
+instead of a `LocalWorkspace` capability (for a directory outside the working directory,
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('.')), authority='operator', path_authority={'/abs/path': 'operator'})`); `creation.store.load_active()` has no workspace and skips them, so only
+use it where you would run the model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
 a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
@@ -505,7 +527,10 @@ or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted o
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
 `PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
 `SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
-`answerer` callable, so in practice it is passed in code too. Pass those instances with the
+`answerer` callable, so in practice it is passed in code too. `CompactOnRequest`, `DeduplicateFileReads`,
+`FallbackCompaction` and `TieredCompaction` have spec names too, but each requires strategies or a
+`file_key` callable that JSON cannot express, so the spec schema leaves them out and they are
+Python-only. Pass those instances with the
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
@@ -532,19 +557,19 @@ from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness.experimental.acp import (
-    AcpSession,
-    AcpSessionConfig,
+    ACPSession,
+    ACPSessionConfig,
     InMemorySessionStore,
     run_acp_stdio_sync,
 )
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5')
 
 
-def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-    return AcpSessionConfig(
+def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+    return ACPSessionConfig(
         deps=None,
         capabilities=[FileSystem[None](), Shell[None]()],
         workspace=LocalWorkspaceBackend(session.cwd),
@@ -557,7 +582,7 @@ if __name__ == '__main__':
     )
 ```
 
-`AcpSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
+`ACPSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
 `workspace` default to `None`, so an agent without file or shell tools needs no workspace.
 
 Gotchas: root tools at `session.cwd` through `session_config`, not a static `FileSystem`. Tools marked
@@ -580,6 +605,12 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 regenerated `.lock.yml`, including for existing workflows. Upgrading the CLI alone leaves existing
 locks unchanged. Omit `evals`, which protected capture rejects. Treat `PAI_AGENT` modules and
 caller-supplied `PYTHONPATH` as trusted engine configuration. Point both settings only at code you trust.
+
+For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
+Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
+Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
+OTLP endpoints and credentials stay on the host, so the launcher's direct OTLP export does not run under gh-aw.
+See the engine README's observability section.
 
 Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
 outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
