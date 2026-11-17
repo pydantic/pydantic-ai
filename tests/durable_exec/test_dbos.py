@@ -7362,15 +7362,13 @@ def _first_in_child_workflow(case: str) -> tuple[str, list[str]]:
         ('metadata_reset_between_adds', ('done', _both_calls)),
     ],
 )
-async def test_dbos_shared_tool_defaults_recover(
-    dbos: DBOS, monkeypatch: pytest.MonkeyPatch, case: str, expected_run: tuple[str, list[str]]
-) -> None:
+async def test_dbos_shared_tool_defaults_recover(dbos: DBOS, case: str, expected_run: tuple[str, list[str]]) -> None:
     """A `Tool` another toolset holds is listed with the `requires_approval`, `max_retries` and `metadata` it carries.
 
     That's how released versions listed it, so a workflow started on one recovers: the call waits for approval, gets
     the other toolset's two retries, or runs in a child workflow, and a value set on the `Tool` between two toolsets
-    adding it, or reset, is listed as set. Neither workflow records a patch. Faking `DBOS.patch_async` stands in for
-    the code before the upgrade, which never called it.
+    adding it, or reset, is listed as set. The workflow records no patch, so one started before the upgrade, which
+    never called `DBOS.patch_async`, recovers the same way.
 
     Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
     """
@@ -7380,29 +7378,19 @@ async def test_dbos_shared_tool_defaults_recover(
         recorded = await dbos.list_workflow_steps_async(workflow_id)
         return [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in recorded]
 
-    async def start() -> tuple[str, bool]:
-        """Start the workflow; return its ID and whether it crashed after the run rather than failing in it."""
-        workflow_id = f'shared-tool-defaults-{case}-{uuid.uuid4()}'
-        shared_tool_defaults_crash_armed.set()
-        with SetWorkflowID(workflow_id), pytest.raises((_ProcessCrash, UnexpectedModelBehavior)) as exc_info:
-            await shared_tool_defaults_workflow(case)
-        shared_tool_defaults_crash_armed.clear()
-        return workflow_id, isinstance(exc_info.value, _ProcessCrash)
-
-    async def unpatched(patch_name: str) -> bool:
-        return False
-
-    monkeypatch.setattr(DBOS, 'patch_async', unpatched)
-    unpatched_id, unpatched_crashed = await start()
-    monkeypatch.undo()
-    patched_id, patched_crashed = await start()
+    workflow_id = f'shared-tool-defaults-{case}-{uuid.uuid4()}'
+    shared_tool_defaults_crash_armed.set()
+    with SetWorkflowID(workflow_id), pytest.raises((_ProcessCrash, UnexpectedModelBehavior)) as exc_info:
+        await shared_tool_defaults_workflow(case)
+    shared_tool_defaults_crash_armed.clear()
 
     await asyncio.sleep(0.01)
-    for workflow_id, crashed in ((unpatched_id, unpatched_crashed), (patched_id, patched_crashed)):
-        assert crashed == (result != 'failed')
-        if crashed:
-            assert await (await DBOS.resume_workflow_async(workflow_id)).get_result() == result
-        assert await recorded_steps(workflow_id) == steps
+    # A run that fails in the agent ends the workflow; only one that crashed after it is left to recover.
+    if isinstance(exc_info.value, _ProcessCrash):
+        assert await (await DBOS.resume_workflow_async(workflow_id)).get_result() == result
+    else:
+        assert result == 'failed'
+    assert await recorded_steps(workflow_id) == steps
 
 
 async def test_dbos_tool_instance_defaults_patch_interrupted(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
