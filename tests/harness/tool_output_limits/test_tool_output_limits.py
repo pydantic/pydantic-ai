@@ -651,7 +651,10 @@ class TestTruncate:
         assert out.metadata == {'k': 1}
 
     async def test_dense_output_obeys_token_budget(self):
-        """over_tokens=True prices this 348-character base64 payload at 278 tokens, and 4 characters per token gave 87."""
+        """over_tokens=True prices this 348-character base64 payload at 278 tokens, and 4 characters per token gave 87.
+
+        Not a VCR test: the estimate is a pure function of the text, so there is no request to record.
+        """
         payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
 
         def limits(over: int) -> ToolOutputLimits[object]:

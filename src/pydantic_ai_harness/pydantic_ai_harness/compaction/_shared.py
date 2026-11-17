@@ -226,7 +226,7 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
     return []
 
 
-_LATIN_OR_CYRILLIC = re.compile(r'[\u0080-\u024f\u0400-\u04ff]')
+_LATIN_OR_CYRILLIC = re.compile(r'[\u00c0-\u024f\u0400-\u04ff]')
 """Accented Latin and Cyrillic letters, which tokenize denser than other non-ASCII text."""
 
 _ASTRAL = re.compile(r'[\U00010000-\U0010ffff]')
