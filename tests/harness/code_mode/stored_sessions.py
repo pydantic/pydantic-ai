@@ -62,9 +62,6 @@ class StoredSession:
             raise error
         return await self.session.feed_start(code, **kwargs)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.session, name)
-
 
 @dataclass
 class StoredSessionPool:

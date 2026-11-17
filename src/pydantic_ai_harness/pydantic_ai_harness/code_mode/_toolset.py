@@ -1303,9 +1303,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         A remote sandbox otherwise keeps the workflow task waiting on the network while a snippet
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
-        out only where they behave as they do here: an `os_access` handler may use workflow APIs, Monty
-        does not keep `'overlay'` mount writes across a stored snapshot, and a `repl_store` restores
-        into and saves the live session. The operation needs the capability's `id`. The first `run_code`
+        out only where they behave as they do here: an `os_access` handler may use workflow APIs, and Monty
+        does not keep `'overlay'` mount writes across a stored snapshot. The operation needs the capability's `id`. The first `run_code`
         call decides for the whole run, so a run never moves REPL state between the two paths, and
         `workflow.patched` keeps runs that started before this existed on the path they started on.
         """
@@ -1319,7 +1318,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             run_state.durable_turns = (
                 self.monty_sandbox is not None
                 and self.os_access is None
-                and self.repl_store is None
                 and all(mount.mode != 'overlay' for mount in mounts)
                 and _workflow_patched(_DURABLE_TURNS_PATCH)
             )
@@ -1550,7 +1548,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     'Code execution failed and the session was reset. Re-run any imports, recreate '
                     f'any state you need, and try again.\n{capture.prepend_to(error_text)}{_started_calls_note(execution)}'
                 )
-            case 'panic':
+            case 'panic':  # pragma: no branch
                 # Convert a sandbox panic to a retry rather than end the run.
                 # A panic aborts the VM mid-execution, so the REPL's accumulated state cannot
                 # be trusted; drop it so the retry starts from a fresh, type-checked session.

@@ -57,7 +57,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+from pydantic_ai import Agent, Tool, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelRequest,
@@ -278,10 +278,9 @@ def echo(value: Any) -> Any:
 
 
 def blob() -> dict[str, Any]:
-    """Return values plain JSON does not carry: bytes that are not UTF-8 and a NaN, nested too."""
+    """Return values plain JSON does not carry: bytes that are not UTF-8, nested too."""
     return {
         'raw': b'\xff\x00',
-        'nan': float('nan'),
         'nested': {'a': {'b': b'\xff', 'c': 2}, 't': [[1, b'x']]},
     }
 
@@ -310,8 +309,8 @@ _CALL_SITE_SNIPPETS = [
     # Values plain JSON would change, in a tool result and in the snippet's result.
     'v = await blob()\n'
     'import datetime\n'
-    'e = await echo(value=[(1, b"x"), {2: (b"y",)}])\n'
-    '[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], v["nested"], e, (1, ...),\n'
+    'e = await echo(value=[(1, b"x"), {2: (b"y",)}, float("nan")])\n'
+    '[type(v["raw"]).__name__, v["raw"], v["nested"], e, (1, ...),\n'
     ' {(1, 2): {"k": (b"a",)}}, datetime.date(2026, 1, 1)]',
     # Bytes that are not UTF-8 reach the tool's call as on the workflow-side path, which rejects them.
     'await echo(value=b"\\xff")',
@@ -413,7 +412,12 @@ session_loss_code_mode_agent = Agent(
     FunctionModel(_session_loss_model),
     name='code_mode_temporal_session_loss_agent',
     capabilities=[
-        CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+        # `'unlimited'` too: a turn then has no `max_suspensions` for earlier turns to use up.
+        CodeMode(
+            id='code',
+            monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+            resource_limits='unlimited',
+        ),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -425,18 +429,6 @@ class SessionLossWorkflow:
     async def run(self, prompt: str) -> str:
         result = await session_loss_code_mode_agent.run(prompt)
         return result.output
-
-
-class _InMemoryReplStore:
-    def __init__(self) -> None:
-        self.states: dict[str, bytes] = {}
-
-    async def load(self, ctx: RunContext[Any]) -> bytes | None:
-        return self.states.get(ctx.conversation_id or '')
-
-    async def save(self, ctx: RunContext[Any], state: bytes | None) -> None:
-        if state is not None:
-            self.states[ctx.conversation_id or ''] = state
 
 
 # Runs that keep the workflow-side path although the server stores sessions.
@@ -460,19 +452,6 @@ workflow_side_code_mode_agents = {
         toolsets=[FunctionToolset(tools=[add], id='math')],
         capabilities=[
             CodeMode(monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
-            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
-        ],
-    ),
-    'repl_store': Agent(
-        FunctionModel(_code_mode_model),
-        name='code_mode_temporal_repl_store_agent',
-        toolsets=[FunctionToolset(tools=[add], id='math')],
-        capabilities=[
-            CodeMode(
-                id='code',
-                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
-                repl_store=_InMemoryReplStore(),
-            ),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     ),
@@ -913,10 +892,9 @@ async def test_remote_turns_fall_back_without_stored_sessions(client: Client) ->
     assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
 
 
-@pytest.mark.parametrize('reason', ['overlay', 'no_id', 'repl_store'])
+@pytest.mark.parametrize('reason', ['overlay', 'no_id'])
 async def test_remote_turns_stay_in_the_workflow(client: Client, reason: str) -> None:
-    """An `'overlay'` mount (the default mode), a `CodeMode` without `id`, or a `repl_store` keeps every
-    turn in the workflow."""
+    """An `'overlay'` mount (the default mode) or a `CodeMode` without `id` keeps every turn in the workflow."""
     workflow_id = f'test_code_mode_temporal_workflow_side_{reason}'
     async with Worker(
         client,
