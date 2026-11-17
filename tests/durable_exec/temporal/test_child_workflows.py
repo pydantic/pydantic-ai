@@ -726,7 +726,7 @@ async def test_activity_only_worker_registers_no_child_workflows(client: Client)
         'agent__delegating_agent__toolset__delegation_tools__call_tool__child_workflow'
     )
     child_history = await client.get_workflow_handle(child_start.workflow_id).fetch_history()
-    assert _scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
+    assert scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
 
 
 class _ChildWorkflow(Protocol):
