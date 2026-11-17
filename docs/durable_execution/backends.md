@@ -384,6 +384,20 @@ so in the engine's documentation. An engine whose container runs on an event loo
 need an override: [Azure Durable Task](../harness/azure-durable-task.md)'s orchestration loop turns
 every `asyncio` timer, plain sleeps included, into a durable timer.
 
+## Waiting a provider's `Retry-After`
+
+A model error can say how long to wait before the request is attempted again, in its
+[`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. When your engine retries a model
+operation that failed, wait that long instead of its configured backoff, as a durable wait the engine
+schedules rather than a sleep inside the durable unit.
+[`model_error_retry_after(error, maximum=...)`][pydantic_ai.durable_exec.model_error_retry_after] finds
+the model error in the chain of the exception the unit failed with and caps the wait at `maximum`,
+typically the engine's maximum retry interval. It returns `None` when no model error asked for a wait,
+so the configured backoff applies. Temporal sets the result as the failed activity's
+`next_retry_delay`. An engine with no way to set the delay of one retry, or no durable timer to wait
+it with, should say in its documentation that it doesn't wait `retry_after`, rather than sleep in the
+process that runs the unit.
+
 ## Replays and telemetry
 
 A replayed run executes the agent loop again, so its instrumentation runs again too. Tell it which

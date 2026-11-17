@@ -139,6 +139,11 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_unsent_heartbeat(reason): a replay may end before its final recorded `pong` or idle-audio frame '
+        'goes out; reason required',
+    )
 
 
 @pytest.hookimpl(trylast=True)
@@ -560,9 +565,14 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
     ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
     ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
-    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # The harness reads its own package metadata once per process (the lookup is cached) to name its version in
+    # client attribution metadata: the You.com `X-Client-Info` header and the MongoDB connection handshake.
+    ('os.stat', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    # PyMongo checks for `/.dockerenv` with a sync `Path.exists` whenever it builds pool options, including when an
+    # `AsyncMongoClient` opens its topology on the event loop, and offers no way to skip the check.
+    ('os.stat', 'pymongo/pool_options.py', 'get_container_env_info'),
     # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
     # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
     # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
@@ -718,8 +728,20 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+)
+
+
+# Third-party functions that do only blocking setup, as (file, function): any blocking call below one
+# is allowed. Exempted whole rather than call by call, so a dependency changing which file call it
+# makes inside does not fail the suite.
+BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
+    # The agent-sandbox SDK loads the in-cluster or kubeconfig credentials once per client, on first
+    # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
+    # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
+    ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
 )
 
 
@@ -755,6 +777,9 @@ def _configure_blockbuster(
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
+    for path, setup_function in BLOCKBUSTER_LIBRARY_SETUP:
+        for function in bb.functions.values():
+            function.can_block_in(path, setup_function)
     local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
     local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
     for filename, functions in local_files:
@@ -1234,6 +1259,32 @@ def gave_up_on(
     return gave_up
 
 
+def retrying_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.AsyncClient:
+    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status.
+
+    Once it gives up, it raises the transport's `HTTPStatusError` rather than return the status to the provider SDK.
+    """
+    # Imported here rather than at module scope: `tenacity` is an optional dependency.
+    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
+
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
+
+    def validate_response(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    transport = AsyncHTTPX2TenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type(httpx2.HTTPStatusError),
+            wait=wait_none(),
+            stop=stop_after_attempt(3),
+            reraise=True,
+        ),
+        wrapped=httpx2.MockTransport(handler),
+        validate_response=validate_response,
+    )
+    return httpx2.AsyncClient(transport=transport)
+
+
 def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
     """Decode a wire request using HTTPX's content-encoding support."""
     return httpx2.Response(200, content=content, headers=headers).content
@@ -1631,6 +1682,11 @@ def crusoe_api_key() -> str:
 @pytest.fixture(scope='session')
 def fireworks_api_key() -> str:
     return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def deepinfra_api_key() -> str:
+    return os.getenv('DEEPINFRA_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
