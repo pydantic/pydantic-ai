@@ -896,7 +896,9 @@ Budget remaining:
   by window (`spend limit for this run`, `this conversation`, `today`, `this month`, `in total`) plus `name` unless
   `'default'`; counter-only budgets are left out. Tokens of 1,000 or more are rounded (`about 38k`).
 - Pass the same `SpendLimits` instance the agent carries; its store is read on every request.
-- Nothing is sent when no limit applies. No spans: the status is part of the recorded model request.
+- A run without `usage_limits=` still reports core's default `request_limit=50`; nothing is sent only with
+  `UsageLimits(request_limit=None)`, no other limit and no `spend_limits`. No spans: the status is part of
+  the recorded model request.
 
 ## RefineOutput
 
