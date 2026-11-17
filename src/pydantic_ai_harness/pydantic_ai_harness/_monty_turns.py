@@ -387,7 +387,7 @@ async def _answer_in_turn(
             return snapshot
         elif snapshot.is_os_function and snapshot.function_name not in SLEEP_FUNCTIONS:
             snapshot = await snapshot.resume_auto()
-        elif not _serializes((snapshot.args, snapshot.kwargs)):
+        elif not _serializes((to_wire(snapshot.args), to_wire(snapshot.kwargs))):
             message = (
                 f'{snapshot.function_name}() got an argument that has no JSON form, so it cannot be sent to the tool'
             )

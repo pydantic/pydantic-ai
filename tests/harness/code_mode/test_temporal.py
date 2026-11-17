@@ -309,6 +309,8 @@ _CALL_SITE_SNIPPETS = [
     'e = await echo(value=[(1, b"x"), {2: (b"y",)}])\n'
     '[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], v["nested"], e, (1, ...),\n'
     ' {(1, 2): {"k": (b"a",)}}, datetime.date(2026, 1, 1)]',
+    # Bytes that are not UTF-8 reach the tool's call as on the workflow-side path, which rejects them.
+    'await echo(value=b"\\xff")',
 ]
 
 
@@ -954,7 +956,7 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
     returns = await _run_call_sites(client, workflow_id, stores=True)
     workflow_side = await _run_call_sites(client, f'{workflow_id}_workflow_side', stores=False)
 
-    type_error, added, call_sites, syntax_error, no_json_form, values = returns
+    type_error, added, call_sites, syntax_error, no_json_form, values, not_utf8 = returns
     assert type_error.startswith('Type error in code:\nerror[missing-argument]')
     assert added == 2
     first_line = (Path(__file__).parent / 'stored_sessions.py').read_text().splitlines()[0]
@@ -971,7 +973,8 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         'add() got an argument that has no JSON form, so it cannot be sent to the tool',
     ]
     # On the workflow-side path that argument fails the tool's validation, which fails the snippet.
-    assert [*returns[:4], values] == [*workflow_side[:4], workflow_side[5]]
+    assert [*returns[:4], values, not_utf8] == [*workflow_side[:4], *workflow_side[5:]]
+    assert not_utf8.endswith('ValueError: Error serializing to JSON: invalid utf-8 sequence of 1 bytes from index 0')
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     # The type-checked snippet that fails and the syntax error are one turn each. The mounted file read
@@ -983,7 +986,9 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
-        *['monty_turn', 'call_tool', 'monty_turn', 'model_request'],
+        *['monty_turn', 'call_tool', 'monty_turn'],
+        # The non-UTF-8 argument fails before the tool's activity starts.
+        *['model_request', 'monty_turn', 'monty_turn', 'monty_turn', 'model_request'],
     ]
     replay_result = await Replayer(
         workflows=[CallSiteWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()
