@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 import httpx2
 from typing_extensions import TypedDict
 
-from pydantic_ai._ssrf import is_private_ip
+from pydantic_ai._ssrf import is_cloud_metadata_ip, is_private_ip
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
@@ -223,8 +223,12 @@ def _check_page_url(url: str) -> None:
         raise ModelRetry(f'{url!r} is not an absolute http(s) URL.')
     host = _domain(parsed.host)
     address = _ip_address(host)
-    if host == 'localhost' or host.endswith('.localhost') or (address is not None and is_private_ip(address)):
-        raise ModelRetry(f'{url!r} names a private or local address, which `get_page` does not read.')
+    if (
+        host == 'localhost'
+        or host.endswith('.localhost')
+        or (address is not None and (is_private_ip(address) or is_cloud_metadata_ip(address)))
+    ):
+        raise ModelRetry(f'{url!r} names a private, local, or cloud metadata address, which `get_page` does not read.')
 
 
 def _ip_address(host: str) -> str | None:

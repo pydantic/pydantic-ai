@@ -105,8 +105,8 @@ The domain lists apply to `web_search` only. Firecrawl turns them into `site:`
 operators, which some self-hosted search backends treat as hints, so results
 outside them are also dropped before the model sees them. `get_page` reads any
 public `http(s)` URL the model passes; it refuses other schemes, `localhost`,
-and private, loopback, and link-local IP addresses, including shorthand IPv4
-spellings such as `127.1` or `0x7f000001`. It does not resolve hostnames, since the
+private, loopback, and link-local IP addresses, and cloud metadata addresses,
+including shorthand IPv4 spellings such as `127.1` or `0x7f000001`. It does not resolve hostnames, since the
 scraper does that, so a self-hosted deployment still needs its own egress
 rules to keep the scraper away from internal hosts.
 

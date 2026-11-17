@@ -417,6 +417,8 @@ class TestFirecrawlSearchToolset:
             'http://127.0.0.1:8080/',
             'http://[::1]/',
             'http://169.254.169.254/',
+            # Azure's metadata endpoint is a public address.
+            'http://168.63.129.16/',
             # Shorthand IPv4 forms that URL parsers, including the scraper's, rewrite to loopback or metadata.
             'http://127.1/',
             'http://2130706433/',
@@ -431,7 +433,9 @@ class TestFirecrawlSearchToolset:
         # A self-hosted scraper fetches from inside your network, and the model picks the URL.
         client = FakeClient(page={'markdown': 'secret'})
 
-        with pytest.raises(ModelRetry, match=r'is not an absolute http\(s\) URL|names a private or local address'):
+        with pytest.raises(
+            ModelRetry, match=r'is not an absolute http\(s\) URL|names a private, local, or cloud metadata address'
+        ):
             await FirecrawlSearch[None](client=client).get_toolset().get_page(url)
         assert client.urls == []
 
