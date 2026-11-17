@@ -2363,6 +2363,83 @@ class TestPlaywrightBrowserLifecycle:
             inherited.url = 'https://example.com/'
             assert await tools.get_text() == 'Allowed content'
 
+    async def test_default_context_check_resumes_where_its_deadline_cut_it_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(toolset_module, '_DOCUMENT_CHECK_DEADLINE_MS', 20)
+        stalled = {f'frame{i}.example.org' for i in range(4)}
+        looked_up: list[str] = []
+
+        async def resolve(host: str) -> tuple[str, ...]:
+            looked_up.append(host)
+            if host in stalled:
+                await asyncio.Event().wait()
+            return ('93.184.216.34',)
+
+        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+
+        def inherit(context: _FakeBrowserContext) -> None:
+            # A fresh page per connection: a retried attach reconnects and sees new frame objects.
+            page = _FakePage(url='https://example.com/', title='Crowded')
+            page.frames.extend(_FakeFrameContent(url=f'https://frame{i}.example.org/') for i in range(4))
+            context.opened.insert(0, page)
+
+        _install_fake_driver(monkeypatch, _FakePage(url='about:blank'))
+        _populate_default_context(monkeypatch, tabs=0, inherit=inherit)
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default')
+        async with session:
+            tools = PlaywrightBrowserToolset[None](session=session)
+            assert 'retry the call to check the rest' in await tools.tabs()
+            assert looked_up == ['example.com', 'frame0.example.org']
+            # As if the lookup cache had churned: only the session's own record of admitted documents remains.
+            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            looked_up.clear()
+            stalled -= {'frame0.example.org', 'frame1.example.org'}
+            assert 'retry the call to check the rest' in await tools.tabs()
+            assert looked_up == ['frame0.example.org', 'frame1.example.org', 'frame2.example.org']
+            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            looked_up.clear()
+            stalled.clear()
+            assert await tools.tabs() == '0 (active): Crowded -- https://example.com/'
+            assert looked_up == ['frame2.example.org', 'frame3.example.org']
+
+    async def test_default_context_checks_a_document_again_once_its_frame_navigates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        looked_up: list[str] = []
+
+        async def resolve(host: str) -> tuple[str, ...]:
+            looked_up.append(host)
+            return ('93.184.216.34',)
+
+        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        page = _FakePage(url='https://example.com/', title='Embedding')
+        frame = _FakeFrameContent(url='https://embed.example.org/')
+        page.frames.append(frame)
+        session = PlaywrightBrowserSession(
+            cdp_url='http://localhost:9222',
+            cdp_context='default',
+            policy=EgressPolicy(blocked_domains=['blocked.example']),
+        )
+        async with session:
+            tools = _toolset(page, session=session)
+            await tools.tabs()
+            assert looked_up == ['example.com', 'embed.example.org']
+            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            looked_up.clear()
+            await tools.tabs()
+            assert looked_up == []
+            frame.url = 'https://blocked.example/'
+            assert 'blocked by the browser policy' in await tools.tabs()
+        frame.url = 'https://embed.example.org/'
+        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        looked_up.clear()
+        # A new use of the session checks everything again.
+        async with session:
+            tools = _toolset(page, session=session)
+            await tools.tabs()
+            assert looked_up == ['example.com', 'embed.example.org']
+
     async def test_default_context_leaves_out_a_tab_whose_url_arrives_off_the_web(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

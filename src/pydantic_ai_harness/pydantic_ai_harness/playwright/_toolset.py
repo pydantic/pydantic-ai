@@ -208,6 +208,15 @@ The check runs on every tool call, so the wait is kept short: a frame still load
 costs each call at most this long before the call is refused as one to retry.
 """
 
+_DOCUMENT_CHECK_DEADLINE_MS: int = 5_000
+"""Bound on one call's check of the default context's loaded documents, all frames together.
+
+A page can carry many frames, each waiting on a lookup, so the bound covers the
+whole check rather than each frame. It outlasts one frame's worst case (the URL
+wait plus a host lookup), and documents that passed are remembered, so each
+retry checks at least one more document than the last.
+"""
+
 _PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
 _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
 """Why the private-address block refused a URL, shared by the pre-check and the route guard."""
@@ -1150,6 +1159,10 @@ class PlaywrightBrowserSession:
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
         self._launch_lock = anyio.Lock(fast_acquire=True)
+        # The policy is fixed for the session, so a document's verdict depends only on its URL
+        # and whether it is the top-level one. Kept across attach attempts: a retried attach
+        # reconnects and gets new frame objects for the same documents.
+        self._admitted_documents: set[tuple[str, bool]] = set()
         self.tracer: Tracer = _FALLBACK_TRACER
         """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
@@ -1320,11 +1333,21 @@ class PlaywrightBrowserSession:
 
         Request routes cannot check documents loaded before attachment. Recheck
         every tab because listing reads inactive titles and closing the active
-        tab can select another inherited page.
+        tab can select another inherited page. A document that passed is not checked
+        again, and one deadline covers the whole check: a call that runs out of time
+        is refused as one to retry, and the next starts from what this one admitted.
         """
-        for page in pages:
-            for index, frame in enumerate(page.frames):
-                await self._check_inherited_frame(frame, top_level=index == 0)
+        try:
+            async with asyncio.timeout(_DOCUMENT_CHECK_DEADLINE_MS / 1000):
+                for page in pages:
+                    for index, frame in enumerate(page.frames):
+                        await self._check_inherited_frame(frame, top_level=index == 0)
+        except TimeoutError:
+            raise BrowserUnavailableError(
+                'The default CDP context holds more documents than one call can check against the browser '
+                f'policy in {_DOCUMENT_CHECK_DEADLINE_MS // 1000} seconds. The documents checked so far are '
+                'remembered: retry the call to check the rest.'
+            ) from None
 
     async def _check_inherited_frame(self, frame: _Frame, *, top_level: bool) -> None:
         """Refuse the call when `frame` holds a document the policy blocks, or has no URL to check yet.
@@ -1353,8 +1376,12 @@ class PlaywrightBrowserSession:
         if top_level and self._is_off_web(frame.url):
             # Reached when the URL arrived during the wait above: the next call leaves the tab out.
             raise BrowserUnavailableError(self._off_web_tab_message([frame.url]))
+        admitted = (frame.url, top_level)
+        if admitted in self._admitted_documents:
+            return
         document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
         if (reason := await self.decide(document)) is None:
+            self._admitted_documents.add(admitted)
             return
         raise BrowserUnavailableError(
             f'The default CDP context contains a document blocked by the browser policy '
@@ -1751,6 +1778,7 @@ class PlaywrightBrowserSession:
             self._cdp_url = None
         self.launch_error = None
         self.dialog_decision = None
+        self._admitted_documents.clear()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, *_: object) -> None:

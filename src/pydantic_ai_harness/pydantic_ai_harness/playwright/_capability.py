@@ -259,7 +259,10 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     tracked tab moves to such a page, the call that finds it returns an error
     naming the page by its scheme and host only, and the agent stops using that
     tab, which stays open in the browser. Loaded tab and frame URLs must pass the egress policy
-    before handlers are attached and before tools read or act on a page. Egress
+    before handlers are attached and before tools read or act on a page. A
+    document that passed is not checked again until its frame navigates, and one
+    call spends at most five seconds checking: a call that runs out asks the model
+    to retry, and the retry picks up where it stopped. Egress
     guards and native session handlers still apply, and documents loaded while
     attached cannot register service workers. Downloads follow the browser's own
     settings. Requests from workers registered before attachment go through the

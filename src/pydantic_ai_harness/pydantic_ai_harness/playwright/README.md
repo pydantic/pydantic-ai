@@ -297,7 +297,11 @@ and `srcdoc`, `data:` and `blob:` subframes load no document a request could
 carry, so they are not put to the policy. On refusal, close or
 navigate the blocked tab in the provider browser and retry; Pydantic AI leaves it
 unchanged. A frame that reports no URL yet gets one second to load; if it still
-has none, the call returns a tool error asking the model to retry.
+has none, the call returns a tool error asking the model to retry. The check runs
+on every call, but a document that passed is not checked again until its frame
+navigates, and one call spends at most five seconds on it. A context with more
+documents than that allows gets a tool error asking the model to retry, and each
+retry picks up from the documents already checked.
 
 Only tabs showing an `http(s)` page, `about:blank` or Chromium's error page are
 adopted. Any other tab, such as the browser's own `chrome://newtab/` start page,
