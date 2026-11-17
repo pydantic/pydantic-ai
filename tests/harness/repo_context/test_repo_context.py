@@ -1347,9 +1347,10 @@ class TestNestedTraversal:
         result = await Agent(
             FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=tmp_path), repo_context]
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
-        notes = _repo_notes(result.all_messages())
-        assert [path for path in expected if any(path in note for note in notes)] == expected
-        assert len(notes) == len(expected)
+        # Pointer notes, shallowest first, so the comparison also checks the order the model reads them in.
+        assert _repo_notes(result.all_messages()) == [
+            f'<context_file_path>{path}</context_file_path>' for path in expected
+        ]
 
     @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
     async def test_a_link_into_an_excluded_directory_is_not_surfaced(self, tmp_path: Path) -> None:
