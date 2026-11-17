@@ -7845,7 +7845,8 @@ async def test_stream_cancelled_at_any_point_leaves_no_task_behind(
         ) -> ModelResponse:
             raise error
 
-    agent = Agent(TestModel(), capabilities=[HandlesErrors()] if primed else [])
+    capabilities: list[AbstractCapability[None]] = [HandlesErrors()] if primed else []
+    agent = Agent(TestModel(), capabilities=capabilities)
 
     async def consume() -> None:
         with capture_run_messages() as messages:
