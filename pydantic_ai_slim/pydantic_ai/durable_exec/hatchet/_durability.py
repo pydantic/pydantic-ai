@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, cast
@@ -10,10 +10,15 @@ from hatchet_sdk import DurableContext, Hatchet, Standalone
 from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
+from pydantic_ai.durable_exec._base import (
+    MODEL_RESPONSE_STREAM_EVENT_TYPES,
+    BaseDurabilityCapability,
+    conversation_id_from_run_id,
+)
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
     ToolsetCallToolId,
@@ -27,12 +32,15 @@ from pydantic_ai.exceptions import (
     ModelRequestTimeout,
     UserError,
 )
+from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
-from pydantic_ai.run import AgentRunResult
+from pydantic_ai.output import OutputDataT
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
+from ._event_stream import HatchetAgentRunEvents, HatchetEventStream, publish_event, task_event_stream_handler
 from ._operation_backend import (
     HatchetOperationBackend,
     HatchetOperationConfig,
@@ -114,6 +122,7 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         toolset_task_config: Mapping[str, HatchetTaskConfig] | None = None,
         run_context_type: type[HatchetRunContext[AgentDepsT]] = HatchetRunContext[AgentDepsT],
         non_retryable_model_errors: Sequence[type[ModelAPIError]] = _DEFAULT_NON_RETRYABLE_MODEL_ERRORS,
+        event_stream: bool | HatchetEventStream = False,
     ) -> None:
         """Create a `HatchetDurability` capability.
 
@@ -143,6 +152,12 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
                 [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]; `()` retries them all.
+            event_stream: `True`, or a [`HatchetEventStream`][pydantic_ai.durable_exec.hatchet.HatchetEventStream],
+                to publish the run's events to a Hatchet durable stream topic, by default one per run, so a
+                consumer outside the durable task can observe them as they happen with
+                [`stream_agent_events()`][pydantic_ai.durable_exec.hatchet.HatchetDurability.stream_agent_events].
+                Model events are published live from the model request task, so tokens stream through.
+                Orthogonal to `event_stream_handler`: when both are set, the handler still sees every event.
 
         Note:
             A tool's `'hatchet'` metadata can override the run options of its task (`priority`, `sticky`,
@@ -180,6 +195,9 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         # Shared with the bound copies `for_agent()` makes, so `workflows` on the instance the user holds lists
         # the tasks of every agent it's attached to.
         self._registered_tasks: list[Standalone[TaskInput, TaskOutput]] = []
+        self._event_stream = (
+            HatchetEventStream() if event_stream is True else event_stream if event_stream is not False else None
+        )
 
     @property
     def in_durable_context(self) -> bool:
@@ -327,3 +345,114 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
 
         with set_agent_graph_sleep(durable_sleep):
             return await super().wrap_run(ctx, handler=handler)
+
+    # --- Durable streams ---
+
+    def _run_topic(self) -> str | None:
+        """The run's durable stream topic, inside a durable task with `event_stream` set."""
+        if (config := self._event_stream) is None or not self.in_durable_context:
+            return None
+        return config.topic(self.name, self._durable_context().workflow_run_id)
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        # A topic is a reason to stream on its own, but only inside a durable task, where there is one.
+        return super().has_wrap_run_event_stream or self._run_topic() is not None
+
+    def _model_stream_event_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """Publish the live model stream from inside the model request task that produces it."""
+        handler = super()._model_stream_event_handler()
+        if (config := self._event_stream) is None:
+            return handler
+        return task_event_stream_handler(self.hatchet, config, self.name, handler=handler)
+
+    async def wrap_run_event_stream(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
+        """Publish the run's durable-task-side events to its topic."""
+        events = super().wrap_run_event_stream(ctx, stream=stream)
+        config = self._event_stream
+        topic = self._run_topic()
+        if config is None or topic is None:
+            async for event in events:
+                yield event
+            return
+
+        # Model events were published by the task that produced them; these are their copies. A replayed durable
+        # task publishes the rest again, in the same order, so their IDs say which ones a consumer already has.
+        index = 0
+        try:
+            async for event in events:
+                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (
+                    config.events is None or config.events(event)
+                ):
+                    await publish_event(self.hatchet, config, topic, message_id=f'{ctx.run_id}:{index}', event=event)
+                    index += 1
+                yield event
+        finally:
+            await aclose_if_supported(events)
+
+    def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """Pair with the terminal-event publisher when publishing events; it wraps outside the base's companions."""
+        companions = super()._companion_capabilities()
+        if self._event_stream is None:
+            return companions
+        return [_TerminalEventPublisher(self), *companions]
+
+    async def _publish_terminal_event(self, ctx: RunContext[AgentDepsT], result: AgentRunResult[Any]) -> None:
+        config = self._event_stream
+        topic = self._run_topic()
+        if config is not None and topic is not None:
+            await publish_event(
+                self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', event=AgentRunResultEvent(result)
+            )
+
+    def stream_agent_events(
+        self,
+        workflow_run_id: str,
+        *,
+        output_type: type[OutputDataT] = cast('type[Any]', Any),
+        cursor: str | None = None,
+    ) -> HatchetAgentRunEvents[OutputDataT]:
+        """Subscribe to the events a durable agent run publishes with `event_stream` set.
+
+        This is a durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events]: the events
+        arrive typed and in order, ending with the [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent]
+        that carries the run's result, so they can be handed to a [`UIAdapter`][pydantic_ai.ui.UIAdapter]. The
+        topic keeps its messages after the run, so a consumer can subscribe late, or again.
+
+        Args:
+            workflow_run_id: The workflow run ID of the durable task running the agent.
+            output_type: The agent's output type, so the terminal event's result is decoded into it.
+            cursor: The `cursor` of an earlier iterator, to resume right after the last event it read.
+        """
+        config = self._event_stream
+        if config is None:
+            raise UserError(
+                'This `HatchetDurability` has no `event_stream`, so its runs publish no events to subscribe to. '
+                'Pass `event_stream=True` to publish them.'
+            )
+        topic = config.topic(self.name, workflow_run_id)
+        subscription = self.hatchet.streams.aio_subscribe(topic, namespace=config.namespace, cursor=cursor)
+        return HatchetAgentRunEvents(subscription, output_type=output_type)
+
+
+class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
+    """Publishes the run's terminal event from the `outermost` tier, once every capability has shaped the result.
+
+    `HatchetDurability` is `innermost`, and `after_run` runs innermost-first, so its own `after_run` would publish
+    a result other capabilities still transform.
+    """
+
+    def __init__(self, durability: HatchetDurability[AgentDepsT]) -> None:
+        self._durability = durability
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        await self._durability._publish_terminal_event(ctx, result)  # pyright: ignore[reportPrivateUsage]
+        return result

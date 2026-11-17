@@ -1,0 +1,280 @@
+"""`HatchetDurability` against a real Hatchet engine, run embedded in the test process's machine.
+
+One engine and one worker serve the whole module: the worker runs its tasks in a thread of this process, so the
+agents, models and tools defined in `_build_app` are the ones the durable tasks and their child tasks run.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import signal
+import threading
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass, field
+from typing import Any
+
+import pytest
+from pydantic import BaseModel
+
+from pydantic_ai import (
+    Agent,
+    AgentRunResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelResponse,
+    PartDeltaEvent,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from hatchet_sdk import ClientConfig, DurableContext, Hatchet, Standalone, Worker
+    from hatchet_sdk.config import EmbeddedHatchetConfig
+
+    from pydantic_ai.durable_exec.hatchet import HatchetDurability, HatchetEventStream
+    from pydantic_ai.durable_exec.hatchet._operation_backend import hatchet_task_name
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='hatchet-sdk not installed'),
+    pytest.mark.xdist_group(name='hatchet'),
+]
+
+
+class Prompt(BaseModel):
+    prompt: str
+
+
+class RunOutput(BaseModel):
+    output: str
+    run_id: str
+
+
+@dataclass
+class Deps:
+    city_prefix: str
+
+
+@dataclass
+class Calls:
+    """What the models and tools saw, in the worker that ran them."""
+
+    model_requests: int = 0
+    tools: list[str] = field(default_factory=list[str])
+
+
+def _weather_model(calls: Calls) -> FunctionModel:
+    """Call `get_weather` once, then answer with what it returned."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.model_requests += 1
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'})])
+        return ModelResponse(parts=[TextPart(f'Answer: {messages[-1].parts[0].content}')])  # pyright: ignore
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        calls.model_requests += 1
+        if len(messages) == 1:
+            yield {0: ('get_weather', '{"city": "Paris"}', None)}  # pyright: ignore[reportReturnType]
+            return
+        for chunk in ['It is ', 'sunny.']:
+            yield chunk
+
+    return FunctionModel(respond, stream_function=stream)
+
+
+@dataclass
+class App:
+    hatchet: Hatchet
+    calls: Calls
+    durability: HatchetDurability[Deps]
+    streaming_durability: HatchetDurability[None]
+    run_weather: Standalone[Prompt, RunOutput]
+    run_streaming: Standalone[Prompt, RunOutput]
+    run_failing_model: Standalone[Prompt, dict[str, str]]
+
+
+def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
+    calls = Calls()
+
+    durability = HatchetDurability[Deps](hatchet)
+    weather_agent = Agent(_weather_model(calls), name='weather', deps_type=Deps, capabilities=[durability])
+
+    @weather_agent.tool
+    async def get_weather(ctx: RunContext[Deps], city: str) -> str:
+        calls.tools.append(city)
+        return f'sunny in {ctx.deps.city_prefix}{city}'
+
+    @hatchet.durable_task(name='pydantic_ai_test_weather', input_validator=Prompt)
+    async def run_weather(input: Prompt, ctx: DurableContext) -> RunOutput:
+        result = await weather_agent.run(input.prompt, deps=Deps(city_prefix='downtown '))
+        return RunOutput(output=result.output, run_id=result.run_id)
+
+    streaming_durability = HatchetDurability[None](hatchet, event_stream=HatchetEventStream())
+    streaming_agent = Agent(_weather_model(Calls()), name='streaming', capabilities=[streaming_durability])
+
+    @streaming_agent.tool_plain(name='get_weather')
+    async def get_weather_plain(city: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        return f'sunny in {city}'
+
+    @hatchet.durable_task(name='pydantic_ai_test_streaming', input_validator=Prompt)
+    async def run_streaming(input: Prompt, ctx: DurableContext) -> RunOutput:
+        result = await streaming_agent.run(input.prompt)
+        return RunOutput(output=result.output, run_id=result.run_id)
+
+    def reject(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=400, model_name='rejecting', body={'error': 'bad request'})
+
+    failing_durability = HatchetDurability[None](hatchet)
+    failing_agent = Agent(FunctionModel(reject), name='failing', capabilities=[failing_durability])
+
+    @hatchet.durable_task(name='pydantic_ai_test_failing_model', input_validator=Prompt)
+    async def run_failing_model(input: Prompt, ctx: DurableContext) -> dict[str, str]:
+        try:
+            await failing_agent.run(input.prompt)
+        except ModelHTTPError as error:
+            return {'type': type(error).__name__, 'status_code': str(error.status_code), 'body': str(error.body)}
+        raise AssertionError('the model error was not raised')  # pragma: no cover
+
+    app = App(
+        hatchet=hatchet,
+        calls=calls,
+        durability=durability,
+        streaming_durability=streaming_durability,
+        run_weather=run_weather,
+        run_streaming=run_streaming,
+        run_failing_model=run_failing_model,
+    )
+    workflows: list[Any] = [
+        run_weather,
+        run_streaming,
+        run_failing_model,
+        *durability.workflows,
+        *streaming_durability.workflows,
+        *failing_durability.workflows,
+    ]
+    return app, workflows
+
+
+@pytest.fixture(scope='module')
+def app(tmp_path_factory: pytest.TempPathFactory) -> Iterator[App]:
+    """An embedded Hatchet engine and a worker serving every durable task and child task in this module."""
+    # A data directory of its own, so the tests never share a database with a developer's embedded engine.
+    data_dir = tmp_path_factory.mktemp('hatchet') / 'postgres'
+    hatchet = Hatchet.from_embedded(ClientConfig(embedded=EmbeddedHatchetConfig(postgres_data_dir=str(data_dir))))
+    app, workflows = _build_app(hatchet)
+    # The worker installs its own signal handlers; put pytest's back once it's done.
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    worker: Worker = hatchet.worker('pydantic-ai-test-worker', workflows=workflows)
+    thread = threading.Thread(target=worker.start, daemon=True)
+    thread.start()
+    try:
+        yield app
+    finally:
+        loop = worker._loop  # pyright: ignore[reportPrivateUsage]
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(worker._exit_gracefully(), loop).result(timeout=30)  # pyright: ignore[reportPrivateUsage]
+        thread.join(timeout=30)
+        hatchet.stop_embedded()
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+
+
+async def test_agent_run_in_durable_task(app: App):
+    """Model requests and tool calls run as child tasks, with `deps` serialized into the tool's task."""
+    app.calls.tools.clear()
+    output = await app.run_weather.aio_run(Prompt(prompt='What is the weather?'))
+    assert output.output == 'Answer: sunny in downtown Paris'
+    assert app.calls.tools == ['Paris']
+
+
+async def test_child_tasks_are_registered(app: App):
+    """Every operation is a task with a valid Hatchet name; the agent's own `<agent>` toolset ID is escaped."""
+    assert sorted(task.name for task in app.durability.workflows) == [
+        'weather__function_toolset___x3c_agent_x3e_.call_tool',
+        'weather__function_toolset___x3c_agent_x3e_.validate_args',
+        'weather__model.cancel_suspended_response',
+        'weather__model.compact_messages',
+        'weather__model.count_tokens',
+        'weather__model.request',
+        'weather__model.request_stream',
+    ]
+
+
+async def test_replayed_durable_task_reuses_child_results(app: App):
+    """A durable task reset to after its child tasks replays their results instead of running them again."""
+    ref = await app.run_weather.aio_run(Prompt(prompt='What is the weather?'), wait_for_result=False)
+    first = await ref.aio_result()
+    requests, tools = app.calls.model_requests, list(app.calls.tools)
+
+    details = await app.hatchet.runs.aio_get_details(ref.workflow_run_id)
+    (task_run,) = details.task_runs.values()
+    # Two model requests and a tool call are nodes 1-3 of the durable event log; branch from after them.
+    await app.hatchet.runs.aio_reset_durable_task(task_run.external_id, node_id=4, branch_id=1)
+    replayed = RunOutput.model_validate(await app.hatchet.runs.get_run_ref(ref.workflow_run_id).aio_result())
+
+    assert replayed == first
+    assert (app.calls.model_requests, app.calls.tools) == (requests, tools)
+
+
+
+async def test_model_error_keeps_its_type(app: App):
+    """A model error raised in a model request task reaches the durable task as the error the model raised."""
+    assert await app.run_failing_model.aio_run(Prompt(prompt='hi')) == {
+        'type': 'ModelHTTPError',
+        'status_code': '400',
+        'body': "{'error': 'bad request'}",
+    }
+
+
+async def test_event_stream(app: App):
+    """Tool events and the result are published from the durable task, and model token deltas from the model task."""
+    ref = await app.run_streaming.aio_run(Prompt(prompt='What is the weather?'), wait_for_result=False)
+    events = [event async for event in app.streaming_durability.stream_agent_events(ref.workflow_run_id)]
+    result = await ref.aio_result()
+
+    assert [type(event).__name__ for event in events if not isinstance(event, PartDeltaEvent)] == [
+        'PartStartEvent',
+        'FunctionToolCallEvent',
+        'FunctionToolResultEvent',
+        'PartStartEvent',
+        'FinalResultEvent',
+        'AgentRunResultEvent',
+    ]
+    assert any(isinstance(event, FunctionToolCallEvent) for event in events)
+    assert any(isinstance(event, FunctionToolResultEvent) for event in events)
+    terminal = events[-1]
+    assert isinstance(terminal, AgentRunResultEvent)
+    assert terminal.result.output == RunOutput.model_validate(result).output == 'It is sunny.'
+
+
+async def test_outside_durable_task_is_transparent(app: App):
+    """Outside a durable task the agent runs in-process, without spawning tasks."""
+    agent = Agent(TestModel(), name='transparent', capabilities=[HatchetDurability(app.hatchet)])
+    result = await agent.run('hi')
+    assert result.output == 'success (no tool calls)'
+
+
+def test_hatchet_task_name_escapes_invalid_characters():
+    """Hatchet names allow letters, digits, `.`, `-` and `_`; everything else is escaped deterministically."""
+    assert hatchet_task_name('my agent__function_toolset__<agent>.call_tool') == (
+        'my_x20_agent__function_toolset___x3c_agent_x3e_.call_tool'
+    )
+
+
+def test_invalid_task_config(app: App):
+    """An unknown task config key fails when the capability is created, not when the task runs."""
+    with pytest.raises(UserError, match=r"`task_config` has unknown Hatchet task config keys: \['timeout'\]"):
+        HatchetDurability(app.hatchet, task_config={'timeout': 1})  # pyright: ignore[reportArgumentType]
+
+
+
+def test_stream_agent_events_needs_event_stream(app: App):
+    with pytest.raises(UserError, match='has no `event_stream`'):
+        app.durability.stream_agent_events('run-id')

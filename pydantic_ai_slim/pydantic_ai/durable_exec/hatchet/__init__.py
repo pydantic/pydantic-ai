@@ -6,7 +6,8 @@ whose results the durable task's event log records.
 """
 
 from ._durability import HatchetDurability
+from ._event_stream import HatchetAgentRunEvents, HatchetEventStream
 from ._operation_backend import HatchetTaskConfig
 from ._run_context import HatchetRunContext
 
-__all__ = ['HatchetDurability', 'HatchetRunContext', 'HatchetTaskConfig']
+__all__ = ['HatchetAgentRunEvents', 'HatchetDurability', 'HatchetEventStream', 'HatchetRunContext', 'HatchetTaskConfig']
