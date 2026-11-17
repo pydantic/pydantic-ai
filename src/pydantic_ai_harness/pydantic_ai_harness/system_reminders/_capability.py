@@ -22,10 +22,12 @@ from pydantic_ai.messages import (
     InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelSource,
     OperatorSource,
     OperatorText,
+    SystemPromptPart,
     TextContent,
     TextPart,
     UserPromptPart,
@@ -68,10 +70,11 @@ else:
 
 
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
-"""The `origin` in the `metadata` of the parts an earlier version enqueued for a `GeneratedReminder` firing.
+"""The `origin` in the `metadata` of the parts an earlier version enqueued for some reminder firings.
 
-A `SystemPromptPart` note and a `TextContent` with the generated text. Still recognized in a saved history; a firing
-is now a `GeneratedReminderPart`.
+For a `GeneratedReminder`, a `SystemPromptPart` note and a `TextContent` with the generated text; for a
+`skip_unchanged` reminder, a `SystemPromptPart` with its text. Still recognized in a saved history; a firing is now a
+`GeneratedReminderPart` or a `ReminderPart`.
 """
 
 _Scope: TypeAlias = Literal['conversation', 'request']
@@ -787,8 +790,17 @@ def _lasting_reminder_texts(messages: Sequence[ModelMessage], reminders: Sequenc
         for message in post_compaction_window(messages)
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, ReminderPart) and part.scope == 'conversation'
+        if (isinstance(part, ReminderPart) or _is_legacy_reminder_prompt(part)) and part.scope == 'conversation'
     }
+
+
+def _is_legacy_reminder_prompt(part: ModelRequestPart) -> TypeGuard[SystemPromptPart]:
+    """A `skip_unchanged` reminder as an earlier version enqueued it, before `ReminderPart`."""
+    return (
+        isinstance(part, SystemPromptPart)
+        and is_str_dict(part.metadata)
+        and part.metadata.get('origin') == _REMINDER_ORIGIN
+    )
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:

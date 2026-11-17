@@ -1600,6 +1600,38 @@ class TestEndToEnd:
         assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1, 1, 1, 2]
         assert [_sent_texts(messages).count('<system>Be brief.</system>') for messages in seen] == [1, 2, 3, 3, 4]
 
+    async def test_unchanged_reminder_recognizes_a_copy_an_earlier_version_recorded(self) -> None:
+        """A history saved before `ReminderPart` holds the reminder as a tagged `SystemPromptPart`; it's not sent again."""
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            deps_type=type(None),
+            capabilities=[
+                SystemReminders[None](
+                    reminders=[Reminder('Run the tests.', tag=None, scope='conversation', skip_unchanged=True)]
+                )
+            ],
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('one'), SystemPromptPart('Run the tests.', metadata=_ORIGIN)]),
+            ModelResponse(parts=[TextPart('done')]),
+        ]
+
+        result = await agent.run('two', message_history=history)
+
+        assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1]
+        assert not any(
+            isinstance(part, ReminderPart)
+            for message in result.new_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
     async def test_unchanged_reminder_is_recorded_again_after_a_history_processor_listed_before_it_trims_it(
         self,
     ) -> None:
