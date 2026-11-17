@@ -887,7 +887,8 @@ class TestRequestEnv:
             'sk-typed',
         ]
         assert returns[1] == (
-            'ANTHROPIC_API_KEY is set for every command started from now on. Restart a server started before it.'
+            'ANTHROPIC_API_KEY is set for every command started from now on, until CLAI restarts; ask again if a '
+            'command then finds it missing. Restart a server started before it.'
         )
         [asked] = dialogs.asked
         assert asked.title == (
@@ -941,7 +942,7 @@ class TestRequestEnv:
         [
             ('ANTHROPIC_API_KEY', 'The user did not give ANTHROPIC_API_KEY.'),
             ('api key', "'api key' is not an environment variable name: use capitals, digits, and underscores."),
-            # `$` alone would let a trailing newline through, splitting E2B's profile line.
+            # A trailing newline is not part of a name.
             (
                 'API_KEY\n',
                 "'API_KEY\\n' is not an environment variable name: use capitals, digits, and underscores.",

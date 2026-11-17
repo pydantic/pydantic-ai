@@ -2868,8 +2868,9 @@ Without a `gh` login, the sandbox has no GitHub access, and its copy has no `ori
 | `kubernetes` | `pydantic-clai2[kubernetes]` | `CLAI_KUBERNETES_WARM_POOL`, and `CLAI_KUBERNETES_NAMESPACE` if it is not `default`; `kubectl`'s current context | in the sandbox pod | anything run in the pod, and anyone who can exec into it |
 
 A key the agent asks for with `request_env` reaches every command it starts in the sandbox afterwards,
-on every provider, until CLAI exits; after a restart it asks again and you pick the same saved `/keys` entry.
-It goes to the provider with each command: inside the command for `daytona` and `render`, in its URL for `sprites`.
+on every provider, for as long as this conversation stays open in CLAI. After a restart, a `/reload`, or a
+conversation reopened in another session, it asks again and you pick the same saved `/keys` entry.
+It goes to the provider with each command: inside the command for `boxd`, `daytona` and `render`, in its URL for `sprites`.
 
 Install a provider with `uv tool install 'pydantic-clai2[PROVIDER]'`, and add its keys in `/keys`.
 `/sandbox PROVIDER` says what is missing.

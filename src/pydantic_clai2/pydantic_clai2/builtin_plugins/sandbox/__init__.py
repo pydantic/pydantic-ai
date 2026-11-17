@@ -65,8 +65,8 @@ class _Sandbox:
 
     provider: SandboxProvider
     ref: WorkspaceRef
-    env: dict[str, str] = field(default_factory=dict[str, str])
-    """What `request_env` gave in this CLAI session, added to every command; asked again after a restart."""
+    env: dict[str, str] = field(default_factory=dict[str, str], repr=False)
+    """What `request_env` gave while this session holds the sandbox, added to every command; kept out of `repr`."""
     backend: SandboxBackend | None = None
     deleted: bool = False
 
@@ -156,7 +156,10 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         if saved is None:  # Deleted in `/keys` since the picker showed it.
             return f'The user did not give {name}.'
         self.plugin.sandbox(ref).env[name] = saved.get_secret_value()
-        return f'{name} is set for every command started from now on. Restart a server started before it.'
+        return (
+            f'{name} is set for every command started from now on, until CLAI restarts; ask again if a command '
+            'then finds it missing. Restart a server started before it.'
+        )
 
     def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         conversation = self.plugin.host.conversation
@@ -187,10 +190,8 @@ class _EnvWorkspace(WrapperWorkspace):
         timeout: float | None = None,
         cwd: str | None = None,
     ) -> CommandResult:
-        if self._env:
-            # The caller's own `env` wins, so a tool that sets a variable on purpose keeps it.
-            env = {**self._env, **(env or {})}
-        return await super().run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
+        # The caller's own `env` wins, so a tool that sets a variable on purpose keeps it.
+        return await super().run(command, shell=shell, env={**self._env, **(env or {})}, timeout=timeout, cwd=cwd)
 
 
 class SandboxPlugin(Plugin):
