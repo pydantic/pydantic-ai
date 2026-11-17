@@ -576,11 +576,14 @@ def _request_part_kinds() -> set[type]:
     return {get_args(member)[0] for member in get_args(union)}
 
 
-def test_adapters_refuse_every_request_kind_a_pass_removes():
-    """Every request part kind a pass consumes or drops is one `_UnpreparedPart`, the adapters' one guard, refuses: a
-    model called directly, without `prepare_messages`, raises for it rather than sending something else. A
-    `SystemPromptPart` is the exception: every adapter maps one, and the `system_voice` pass consumes it only for
-    a model without mid-conversation system messages."""
+def test_unprepared_part_covers_every_request_kind_a_pass_removes():
+    """Every request part kind a pass consumes or drops is in `_UnpreparedPart`, the type the adapters' one guard
+    branch checks, except `SystemPromptPart`: every adapter maps one, and the `system_voice` pass consumes it only
+    for a model without mid-conversation system messages.
+
+    This checks the declaration, not each adapter's behavior. Being in `_UnpreparedPart` doesn't mean every path
+    raises: adapters still send a deprecated `RetryPromptPart` through `_sendable_request_parts`, and `FunctionModel`
+    estimates a `SpeechPart`'s tokens from its transcript."""
     request_kinds = _request_part_kinds()
     assert {kind for kind in REMOVED_KINDS if kind in request_kinds} - {SystemPromptPart} <= set(
         get_args(_UnpreparedPart)
