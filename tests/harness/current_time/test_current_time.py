@@ -47,9 +47,8 @@ class _HostZone(tzinfo):
         return "tzfile('/usr/share/zoneinfo/XST')"
 
 
-def _localized_strftime(*args: object) -> str:
-    """`datetime` formats `%A` through `time.strftime`, which follows `LC_TIME`: a German locale says `Freitag`."""
-    return 'Freitag'  # pragma: no cover
+def _german_strftime(format: str, t: object) -> str:
+    return format.replace('%A', 'Freitag')
 
 
 def _clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
@@ -128,7 +127,10 @@ Today's date is Saturday, 2026-01-03 (UTC).
     def test_the_weekday_ignores_the_process_locale(
         self, precision: Literal['date', 'hour'], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr('time.strftime', _localized_strftime)
+        # `datetime` formats `%A` by calling the `time.strftime` attribute, which follows `LC_TIME`; stand in for
+        # a German locale, which CI doesn't install, and check the stand-in is live.
+        monkeypatch.setattr('time.strftime', _german_strftime)
+        assert f'{datetime(2026, 1, 2):%A}' == datetime(2026, 1, 2).strftime('%A') == 'Freitag'
         instructions = CurrentTime[None](precision=precision).get_instructions()
         request = ModelRequest(parts=[], timestamp=datetime(2026, 1, 2, 12, tzinfo=UTC))
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[request])
