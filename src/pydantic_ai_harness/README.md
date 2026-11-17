@@ -282,6 +282,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 |---|---|---|
 | [Repair Tool Arguments](pydantic_ai_harness/repair_tool_arguments/) | Harness | Repair malformed JSON tool arguments before schema validation. |
 | [Guardrails](pydantic_ai_harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
+| [Goal](pydantic_ai_harness/goal/) | Harness | Require a caller-defined completion check before an unattended run ends |
 | [Prompt Injection Defender](pydantic_ai_harness/prompt_injection_defender/) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
 | [Artifact Scanning](pydantic_ai_harness/artifact_scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](pydantic_ai_harness/spend_limits/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |

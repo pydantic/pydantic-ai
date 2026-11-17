@@ -360,6 +360,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'FallbackCompaction': Anonymous('drives a fallback chain; several independent chains compose'),
     'InputGuardrail': Anonymous('several guards is the design'),
     'OutputGuardrail': Anonymous('several guards is the design'),
+    'Goal': Anonymous('several goals compose; every completion check must accept'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
     'StreamGuardrail': Anonymous('several guards is the design'),
     'ToolGuardrail': Anonymous('several guards is the design'),
