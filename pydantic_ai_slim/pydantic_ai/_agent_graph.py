@@ -3514,9 +3514,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Resolve the instructions and model settings again for an attempt at another model than the step's.
 
-        Capabilities, the agent and toolsets may tailor them to `ctx.model`, so what they resolved for the step's
-        model may not be what another model should be sent, like when `ModelFallback` moves the request on. Only the
-        instructions and model settings see the model serving the attempt as `ctx.model`; to everything else,
+        The agent and capabilities may tailor them to `ctx.model`, so what they resolved for the step's model may not
+        be what another model should be sent, like when `ModelFallback` moves the request on. The toolsets'
+        instructions are the step's (see `_resolve_step_instructions`). Only the instructions and model settings see
+        the model serving the attempt as `ctx.model`; to everything else,
         `RunContext.model` stays the step's model. A `before_model_request` hook's changes to the settings still
         apply on top, and instruction parts a hook changed are kept as the hook left them. History records what
         the attempt was sent, so the accepted attempt's instructions and settings are the ones in history.
