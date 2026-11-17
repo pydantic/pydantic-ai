@@ -2,7 +2,7 @@
 
 from pydantic_ai_harness.peers._capability import Peers
 from pydantic_ai_harness.peers._inbox import LocalPeerInbox
-from pydantic_ai_harness.peers._message import read_peer_message
+from pydantic_ai_harness.peers._message import PeerMessagePart, read_peer_message
 from pydantic_ai_harness.peers._network import InMemoryPeerNetwork
 from pydantic_ai_harness.peers._types import (
     MAX_MESSAGE_BYTES,
@@ -27,6 +27,7 @@ __all__ = [
     'PeerInbox',
     'PeerInfo',
     'PeerMessage',
+    'PeerMessagePart',
     'PeerNetwork',
     'PeerSender',
     'PeerStatus',
