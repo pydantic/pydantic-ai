@@ -697,11 +697,23 @@ _POINTER_SCHEMA = '{"type": "object", "properties": {"a": {"type": "string"}, "b
         (_POINTER_SCHEMA, 'properties.b.$ref: Extra inputs are not permitted'),
         ('{"$ref": "#"}', '$ref: Extra inputs are not permitted'),
         (
+            '{"type": "object", "required": ["a", "a"]}',
+            "`StructuredDict` got an invalid JSON schema: ['a', 'a'] has non-unique elements",
+        ),
+        (
             '{"type": "object", "properties": {"a": {"pattern": "a"}}}',
             'properties.a.pattern: Extra inputs are not permitted',
         ),
     ],
-    ids=['not-a-dict', 'not-an-object', 'defs', 'pointer', 'top-level-ref', 'unsupported-keyword'],
+    ids=[
+        'not-a-dict',
+        'not-an-object',
+        'defs',
+        'pointer',
+        'top-level-ref',
+        'invalid-for-metaschema',
+        'unsupported-keyword',
+    ],
 )
 @requires_jsonschema
 async def test_unusable_output_schema_rejected_before_budget_is_spent(schema: str, error: str) -> None:

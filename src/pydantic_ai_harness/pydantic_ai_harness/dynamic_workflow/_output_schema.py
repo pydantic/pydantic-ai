@@ -9,6 +9,7 @@ from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import TypedDict
 
 from pydantic_ai import StructuredDict
+from pydantic_ai.exceptions import UserError
 
 _MAX_ERRORS = 10
 _MAX_SCHEMA_VALUES = 1_000
@@ -100,4 +101,8 @@ def output_schema_type(schema: object) -> type[JsonSchemaValue]:
         raise ValueError(reasons) from exc
     if parsed.get('type') != 'object':
         raise ValueError('type: must be "object"')
-    return StructuredDict(_OUTPUT_SCHEMA_ADAPTER.dump_python(parsed), validate=True)
+    try:
+        return StructuredDict(_OUTPUT_SCHEMA_ADAPTER.dump_python(parsed), validate=True)
+    except UserError as exc:
+        # The JSON Schema metaschema also rejects values the keyword types allow, such as duplicate `required` names.
+        raise ValueError(str(exc)) from exc
