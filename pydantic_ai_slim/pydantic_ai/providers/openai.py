@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
@@ -87,6 +88,10 @@ class OpenAIProvider(_OpenAISDKProvider):
         return merge_profile(
             profile,
             OpenAIModelProfile(
+                # The OpenAI API answers HEIC, AVIF, BMP and TIFF images with a 400 that lists JPEG, PNG, GIF and
+                # WebP (checked live with `gpt-5-mini` on Chat Completions and Responses, 2026-11-04). Set here
+                # rather than in `openai_model_profile`, which OpenAI-compatible servers that read more types share.
+                supported_image_media_types=KNOWN_IMAGE_MEDIA_TYPES,
                 # Fine-tuned models keep the conservative string-bound behavior.
                 json_schema_transformer=(
                     OpenAIJsonSchemaTransformer if model_name.startswith('ft:') else _OpenAIJsonSchemaTransformer
@@ -160,6 +165,12 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
                 # https://developers.openai.com/api/docs/guides/reasoning
                 supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # GPT-6 rejects function tools on Chat Completions while reasoning is on, asking for
+                # `/v1/responses` or `reasoning_effort='none'` (verified live on gpt-6-luna, gpt-6-sol,
+                # gpt-6.1-terra, gpt-6-astra and gpt-6.1-sol, 2026-11). `OpenAIChatModel` raises a
+                # `ModelRequestRejectedError` before sending. Set here rather than in `openai_model_profile` because the
+                # restriction is unverified on the OpenAI-compatible endpoints that share it.
+                openai_chat_function_tools_require_reasoning_off=model_name.startswith(_GPT_6_MODEL_PREFIXES),
                 # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.

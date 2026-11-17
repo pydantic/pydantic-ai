@@ -58,6 +58,7 @@ from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     FilePart,
     FinishReason,
@@ -596,6 +597,8 @@ async def _seed_request_items(
                 | ToolAvailabilityDeltaPart()
                 | CapabilityLoadDeltaPart()
                 | ModelSettingsDeltaPart()
+                # Rendered into the parts below by `wrap_seeded_system_prompts` before seeding.
+                | CapabilityPart()
             ):
                 # System prompts are seeded through session instructions, and tool-availability news
                 # from a prior standard run is stale here: the session advertises its own tools.

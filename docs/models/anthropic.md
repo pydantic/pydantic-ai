@@ -92,6 +92,10 @@ client construction.
 
 The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client, including for an `AsyncAnthropicBedrock` or `AsyncAnthropicVertex` client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
 
+## Image input {#image-input}
+
+Claude reads JPEG, PNG, GIF and WebP images, and an `image/jpg` file is sent as `image/jpeg`, the spelling the API accepts. An image of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance). `AnthropicModel` also takes PDF and plain-text documents, and no audio or video.
+
 ## Model settings
 
 You can customize model behavior using [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]:
@@ -1008,6 +1012,6 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` and `20260318` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, unless [citations route them to direct calls](#web-tool-callers), which only happens on the Anthropic API, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
 
-If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
+If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic answers a history-derived container with an HTTP 404 `not_found_error` saying the container wasn't found, or with an HTTP 500, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
 
 Set [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] explicitly when container continuity is required. An explicitly configured container is never replaced automatically; Anthropic's original error is raised instead.

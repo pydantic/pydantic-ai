@@ -223,8 +223,9 @@ receipt, so `CI Review` cannot stand in for douwebot even though both can use th
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
 A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-zai` for OpenCode on the GLM Coding Plan. Reviews from before the Coding Plan replaced DeepInfra carry `engine=opencode-deepinfra`, which the gate still reads.
 
-`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews,
-inline-comment changes and review-thread resolution with a read-only token, including on forks. Its completion wakes
+`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews
+and inline-comment changes with a read-only token, including on forks. GitHub Actions has no
+review-thread trigger, so resolving an optional finding's thread updates the status on the next wake-up. Its completion wakes
 `PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
 which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each
@@ -504,6 +505,11 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
 
+gh-aw labels the issues it opens itself `agentic-workflows`: the `[aw] Detection Runs` tracker and the
+`agentics-maintenance.yml` activity report. Its issue cleanup operation closes only issues with that label.
+gh-aw v1.2.1 hardcodes that name and has no setting for it.
+The repository's own automation, such as the provider-health controller, uses `area:agentic-workflows`.
+
 ## OpenCode threat detection
 
 gh-aw runs threat detection only on its Copilot, Claude and Codex engines.
@@ -675,7 +681,7 @@ before their branch receives the provider migration. Update the branch from
 configuration blocks the run; the provider-incident rules below say which runs open an incident for it.
 
 The controller keeps one assigned operational incident for a matching failure
-scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
+scope and marks it with both `area:agentic-workflows` and `pydanty:meta`. Leave both labels
 in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow from
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
