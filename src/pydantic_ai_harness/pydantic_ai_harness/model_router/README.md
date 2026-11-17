@@ -110,7 +110,7 @@ Each routing decision emits a `model_router.select` span on the parent run's tra
 | `model_router.run_step` | Logical request step being routed. |
 | `model_router.error.type` | Exception class when the router request failed, whether the default handled it or, for a `UserError`, it propagated. |
 
-The router run is instrumented with the parent run's instrumentation settings, from `Agent.instrument_all()`, `agent.instrument`, or an `Instrumentation` capability, so its `invoke_agent` and model request spans nest under `model_router.select` when the parent run is traced and are not emitted when it is not. The internal agent name `model_router` also lets Logfire group its requests, token use, cost, and latency separately from the main agent.
+The router run is instrumented with the parent run's instrumentation settings, from `Agent.instrument_all()`, `agent.instrument`, or an `Instrumentation` capability, so its `invoke_agent` and model request spans nest under `model_router.select` when the parent run is traced and are not emitted when it is not. Inside a durable engine worker, such as a Temporal activity, the run's capabilities are not available, so the router run follows the worker's own instrumentation. The internal agent name `model_router` also lets Logfire group its requests, token use, cost, and latency separately from the main agent.
 
 ## Composition and execution constraints
 
