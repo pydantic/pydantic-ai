@@ -210,10 +210,11 @@ Never fetch labels individually or pass raw label API responses.
 Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
 A bug fix takes `bug:unreleased` in place of `bug` when no release shipped the defect. Remove `bug` if the PR carries it.
 Release notes leave `bug:unreleased` PRs out, because no user saw the bug.
-To check, find the commit that introduced the defect, and fetch the tags of `pydantic/pydantic-ai`.
-Then run `git tag --contains <sha> --list 'v[0-9]*'`. Ignore pre-release tags such as `v2.0.0b7`.
-When no other tag remains, no release shipped the defect.
-When you cannot identify that commit, use `bug`.
+To check, find the commit that introduced the defect and every backport of it, such as a copy on `v1`.
+Fetch the tags of `pydantic/pydantic-ai`, then run `git tag --contains <sha> --list 'v[0-9]*'` on each of those commits.
+Ignore pre-release tags such as `v2.0.0b7`.
+When every output is then empty, no release shipped the defect.
+When you cannot identify the introducing commit, use `bug`.
 A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug` or `bug:unreleased`.
 `.github/workflows/package-label.yml` fails such a PR when it lacks `chore` or carries `bug`.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
