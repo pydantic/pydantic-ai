@@ -124,7 +124,7 @@ class _CommandOutput(Generic[AgentDepsT]):
             await self.ctx.emit(CommandOutputEvent(text=tail))
         clears = await self._clears()
         size = await self.job.size(self.job.output_path)
-        total_lines = None if clears else await _count_lines(self.job)
+        line_count = None if clears else await _count_lines(self.job)
         # Counted again afterwards: a clear that began meanwhile leaves a size and count from two different logs.
         cleared = clears > 0 or await self._clears() != clears
         await self.ctx.emit(
@@ -135,7 +135,7 @@ class _CommandOutput(Generic[AgentDepsT]):
                 exit_code=(await self.job.status())[1],
                 truncated=cleared or size > self.offset,
                 # An emptied log no longer holds the earlier lines, so their count is unknown.
-                total_lines=None if cleared else total_lines,
+                line_count=None if cleared else line_count,
             )
         )
 

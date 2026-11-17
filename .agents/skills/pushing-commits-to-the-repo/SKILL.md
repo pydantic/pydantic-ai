@@ -36,20 +36,23 @@ Set the light model's effort from the PR's complexity.
 
 | Size label | Needs |
 |---|---|
-| S | CI green and a clean douwebot approval. An obviously trivial S PR needs CI green only. |
-| M, L, XL | CI green and a clean douwebot approval. |
+| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green and `PR Review Checks` passed only. |
+| M, L, XL | CI green, `PR Review Checks` passed, and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
 Until a size label exists, do not claim the trivial-S exception.
-Clean means douwebot `APPROVE` on the current head, with no douwebot comments on that head.
-Address every douwebot comment, including non-blocking comments.
+Clean means douwebot's latest non-dismissed completed verdict on the current head is `APPROVE`.
+It also means no douwebot findings on that head except settled optional findings.
+A settled optional finding is an inline comment on that approval that starts with `Optional:` and whose review thread is resolved.
+Blocking findings and review-body findings block, resolved or not. An unresolved optional finding blocks.
+Address every douwebot comment, including `Optional:` comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
-Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode> -->` receipt.
-Legacy receipts omit `engine`.
+Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode|opencode-zai> -->` receipt.
+Legacy receipts omit `engine` or carry `engine=opencode-deepinfra`.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
 Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
@@ -57,6 +60,15 @@ A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
+On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until the head has a clean douwebot approval.
+Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
+If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
+
+`PR Review Checks` passed means its commit status reads `success` on the current head.
+[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
+A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
+Never apply `pr-review-checks:accepted` yourself.
+`PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
 
 ### Who merges
 
@@ -198,6 +210,21 @@ Never fetch labels individually or pass raw label API responses.
 Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
 A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.github/workflows/package-label.yml` fails it otherwise.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
+Choose the `area:` and `provider:` topic labels this way:
+
+- Apply one or two `area:` labels when the change touches a subsystem in the catalog. The repo's own agentic workflows and bots take `area:agentic-workflows`; other repository infrastructure (CI, tests, routine dependency updates, contributor docs and skills) takes none.
+  A change to a package's extras or version constraints takes `area:packaging`.
+  Choose the subsystem whose code changes, not the API a reporter called.
+  A Harness capability built on a core concept takes that concept's area.
+  An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`, which does not count toward the two.
+  A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment. The exception is `area:clai2-web-ui`, for a `pkg:clai2` change to its web UI.
+  `clai web` and `Agent.to_web()` live in `pydantic_ai_slim/pydantic_ai/` (`_cli/web.py`, `ui/_web/`), so a change to them is `pkg:core` and takes `area:web-chat-ui`.
+- Apply zero to two `provider:` labels, only when the behavior depends on a vendor endpoint. Leave them off when the change reproduces with `TestModel`.
+- Label a provider adapter's request or response mapping `area:models`. Label any other adapter change with the area of the feature it implements, such as `area:thinking` or `area:streaming`.
+- For an OpenAI-compatible vendor, apply `provider:<vendor>` when the catalog has one.
+  Add `provider:openai-compatible` when the change lands in the shared OpenAI classes, and apply it alone for a vendor without its own label or a custom `base_url`.
+  Never apply `provider:openai` to a compatible vendor.
+
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
 Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change or approves a cluster name under [PR clusters](#pr-clusters).
@@ -226,7 +253,7 @@ If creating or applying the label fails, apply neither. Tell the person driving 
 After the prefix, the title follows the root `AGENTS.md` convention.
 
 A `cluster:` label marks a time-bound work stream. It adds to the PR's topic labels and never replaces them.
-It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent ownership area.
+It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent subsystem.
 
 Detect clusters yourself. The people driving agents rarely name them, and a subagent does not know your sibling PRs.
 You usually notice a cluster because you started after another agent's work on the same theme, or because you coordinate with sibling PRs.
@@ -469,6 +496,16 @@ if the head changes, capture the new SHA and restart the loop.
    In every other case, ask the person driving you whether to start a separate worktree and task to fix it.
    Recommend yes.
 3. **Meet the merge bar on the captured SHA.**
+   - **`PR Review Checks`:** required for every PR. It starts on every push without a label, so watch it while CI runs.
+     Its verdict is a commit status on the PR head, not a check run: the `CI` run and
+     `commits/<sha>/check-runs` both miss it. Read it with
+     `gh api repos/pydantic/pydantic-ai/commits/<sha>/status --jq '.statuses[] | select(.context == "PR Review Checks")'`.
+     No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
+     When the status reads "Awaiting maintainer", the author lacks write access.
+     Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
+     A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
+     When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
      label, or on dispatch
@@ -487,7 +524,7 @@ if the head changes, capture the new SHA and restart the loop.
      that access, or when the diff does not change guarded paths, apply the `douwebot` label. Do not
      push or touch review threads while the label is present. Require the triggered run to succeed,
      and verify that the PR head still equals the captured SHA after the label is removed.
-     Require douwebot `APPROVE` on that SHA with no douwebot comments on that head.
+     Require a clean douwebot approval on that SHA, as the [Merge bar](#merge-bar) defines it.
      A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
 
    Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
@@ -500,7 +537,11 @@ if the head changes, capture the new SHA and restart the loop.
    a finding exactly as they bind your first commit, and a bot cannot approve a scope expansion —
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
-   Address every douwebot comment, including non-blocking comments, using the same evidence-based triage.
+   Address every douwebot comment, including `Optional:` comments, using the same evidence-based triage.
+   Address every `PR Review Checks` finding the same way, `medium` findings included.
+   Its findings sit inline, keyed `<!-- pr-review-checks finding=… -->`, or in its review body when GitHub rejected inline comments.
+   An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.
+   After you refute a `critical` or `high` finding, the status still fails. Ask a maintainer to apply `pr-review-checks:accepted` to the current head.
    For each comment:
    - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
      complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,

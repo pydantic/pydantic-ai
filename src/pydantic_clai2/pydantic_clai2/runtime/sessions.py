@@ -26,7 +26,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
-from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime.imported_sessions import (
@@ -69,6 +69,7 @@ class Sessions(Generic[DepsT, OutputT]):
         `tasks` is the process's task owner, which an imported session's sub-agents are saved to, open or not.
         """
         self.session = session
+        session.on_resumed = self.show_resumed
         self.store = store
         self.tasks = tasks
         self.context = context
@@ -131,7 +132,6 @@ class Sessions(Generic[DepsT, OutputT]):
                 unarchive=unarchive,
                 continuation=continuation,
             )
-        await self.show_resumed()
         return notice
 
     async def show_resumed(self) -> None:

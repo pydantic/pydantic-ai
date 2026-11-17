@@ -5,6 +5,7 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory, mkdtemp
 
 import keyring
 import pytest
@@ -42,6 +43,9 @@ class FakeGh:
     def hang_on_token(self) -> None:
         (self.state / 'token-hang').write_text('')
 
+    def hang_on_api(self) -> None:
+        (self.state / 'api-hang').write_text('')
+
     def calls(self) -> list[str]:
         path = self.state / 'calls'
         return path.read_text().splitlines() if path.exists() else []
@@ -74,6 +78,21 @@ def fresh_rich_styles() -> None:
     """Build styles afresh: Rich keeps a cached style's first escape codes, whatever colour system a later console uses."""
     Style.parse.cache_clear()
     Style._add.cache_clear()  # pyright: ignore[reportPrivateUsage] -- `Style + Style` caches its result here.
+
+
+@pytest.fixture(scope='session')
+def runtime_root() -> Iterator[Path]:
+    """Clean up after test-scoped OS monkeypatches have been restored."""
+    with TemporaryDirectory(prefix='c2-runtime-', dir='/tmp' if os.name == 'posix' else None) as root:
+        yield Path(root)
+
+
+@pytest.fixture(autouse=True)
+def runtime_directory(runtime_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep live-control sockets private, short, and outside the developer's real runtime directory."""
+    directory = Path(mkdtemp(prefix='r-', dir=runtime_root))
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(directory))
+    return directory
 
 
 @pytest.fixture(autouse=True)
@@ -120,6 +139,7 @@ def isolated_environment(
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
     # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    credential_store._warn_plaintext_fallback.cache_clear()  # pyright: ignore[reportPrivateUsage]
     credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
 
 

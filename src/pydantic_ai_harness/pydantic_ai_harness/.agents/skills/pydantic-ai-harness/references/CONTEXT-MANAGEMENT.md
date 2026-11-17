@@ -19,6 +19,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Some old tool results are still needed verbatim, others are dead weight | `RelevanceCompaction` (a judge model ranks each older step) |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
 | The model knows when a phase of work ends and should compact then | `CompactOnRequest` |
+| A fresh tool result is junk the model should stop re-reading | `PruneToolResults` |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -52,7 +53,8 @@ agent without a reason: both rewrite history.
   only when the window cannot be resolved. `TestModel` never resolves, so `max_fraction=0.9` means
   a 180,000-token trigger in tests: set `context_window=` there.
 - Token counts anchor on the last response's provider usage, then estimate the suffix with
-  `tokenizer=` or ~4 chars per token.
+  `tokenizer=` or a text estimate: ~4 chars per token for prose, more for non-ASCII text, base64
+  and compact JSON.
 - `keep_tokens=` is measured per message with provider usage too (`estimate_message_tokens`):
   responses count their `output_tokens`, including thinking returned without text.
 - A positive `keep_tokens` is a minimum, not a cap: `SlidingWindowCompaction` and
@@ -93,8 +95,8 @@ agent = Agent(
             tiers=[
                 ClampOversizedMessages(max_part_tokens=50_000),
                 DeduplicateFileReads(file_key=file_key),
-                ClearToolResults(max_tokens=1, keep_pairs=3),
-                SummarizingCompaction(max_messages=1, keep_messages=20),
+                ClearToolResults(keep_pairs=3),
+                SummarizingCompaction(keep_messages=20),
             ],
             target_fraction=0.8,
         )
@@ -102,10 +104,19 @@ agent = Agent(
 )
 ```
 
-Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction` but must still be valid,
-hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly one of
-`target_tokens` / `target_fraction` is required. Any object with
+Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction`, so tiers need none.
+On its own trigger, a tier raising a `skip_on` exception (default: `ModelAPIError`,
+`FallbackExceptionGroup`, `UnexpectedModelBehavior`) is skipped with a warning and a span with
+`compaction.skipped='tier_failed'` and `error.type`; other errors, and any on a direct `compact()`,
+propagate. `tiers` must be non-empty and exactly one of `target_tokens` / `target_fraction` is required. Any object with
 `async def compact(messages, ctx) -> list[ModelMessage]` (`CompactionStrategy`) can be a tier.
+Each tier's kept messages set a floor under `target_tokens`: its `keep_tokens`/`keep_messages` tail
+with the current turn, the first user message under `preserve_first_user_message`, and pins. A target
+below that floor can't be reached. The outermost chain then logs a warning on each attempt and sets
+`compaction.target_unreached`, `compaction.target_tokens` and `compaction.estimate` on its span when
+the history changes; a no-op has no span, only the warning. The logger is
+`pydantic_ai_harness.compaction._tiered_compaction`. Use `preserve_first_user_message=False` on tiers
+that may drop or summarize the first user message.
 
 ## The individual strategies
 
@@ -156,7 +167,7 @@ model with structured output, or a `FallbackModel` of both. Each older step (a r
 requests answering it) gets one judge request with two questions, `needed_verbatim` and
 `still_matters`. Steps are kept by `needed_verbatim` rank until the target (default half the
 trigger), the rest are reduced by `still_matters` rank (summarized when `summarizer` is a
-`SummarizingCompaction`, whose trigger is ignored, so `max_messages=1` works; otherwise tool
+`SummarizingCompaction`, whose trigger is ignored and can be omitted; otherwise tool
 results are cut to `truncated_result_chars`), and the remainder dropped. Steps holding a user prompt
 are never dropped. All judge requests of one compaction count as one request; judgements are cached
 per instance by task and step. Judge errors propagate: wrap in `FallbackCompaction`. As a
@@ -197,8 +208,8 @@ agent = Agent(
         FallbackCompaction(
             max_fraction=0.85,
             fallback_chain=[
-                SummarizingCompaction(max_messages=1, keep_tokens=20_000),
-                SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+                SummarizingCompaction(keep_tokens=20_000),
+                SlidingWindowCompaction(keep_tokens=20_000),
             ],
         )
     ],
@@ -213,7 +224,7 @@ request of the run, with `focus` forwarded through `with_focus` when the strateg
 Below `min_tokens`, after `max_per_run` accepted requests, or with one already scheduled, the tool
 return says why nothing happens. It orders itself after the automatic compaction capabilities and
 stands down when one already compacted that request. The span gets `compaction.model_requested`.
-The strategy's own trigger is required but bypassed. Under durable execution the strategy runs as
+The strategy's own trigger is bypassed and can be omitted. Under durable execution the strategy runs as
 the `compact` durable operation; the stable default `id='compact_on_request'` makes recovery work
 without configuration, and `id=None` breaks it. Under Temporal that operation is an activity
 without `tracer` or `capabilities`, so `RelevanceCompaction` or a `receipts=True` strategy fails.
@@ -227,7 +238,7 @@ agent = Agent(
     'test',
     capabilities=[
         CompactOnRequest(
-            SummarizingCompaction(max_messages=1, keep_messages=6),
+            SummarizingCompaction(keep_messages=6),
             min_tokens=30_000,
             max_per_run=2,
         )
@@ -235,16 +246,27 @@ agent = Agent(
 )
 ```
 
+### `PruneToolResults`
+
+`PruneToolResults(placeholder='[tool result pruned]')`: adds a `prune_tool_result(tool_call_id, summary)`
+tool. Once a call is accepted, the named result's content becomes `placeholder` plus the summary,
+persisted in history. Only results the latest response answered can be pruned; an unknown or older
+ID, a typed result `ClearToolResults` also keeps, or a summary not shorter than the result is
+refused in the tool return. Token triggers and `ReportContextUsage` anchor on the latest response's
+usage, which still counts the result until the next response. The span gets
+`compaction.model_requested`.
+
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
-never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped
-`SystemPromptPart(scope='request')` as limits approach: seen for that request only, kept in history. At
+never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped `LimitWarningPart`
+(an `InstructionCapabilityPart`; find it by type, its `kinds` field names the limits) as limits approach: seen for
+that request only, kept in history. At
 least one limit is required; `warn_on` may only name configured kinds (`'iterations'`,
 `'context_window'`, `'total_tokens'`).
 
 `ReportContextUsage(context_window=None, fallback_context_window=200_000, tokenizer=None)` emits a
-`ContextUsageEvent` (`used_tokens`, `window_tokens`, `fraction`, `resolved`) before each request.
+`ContextUsageMeasuredEvent` (`used_tokens`, `window_tokens`, `fraction`, `resolved`) before each request.
 `resolved=False` means the window is the fallback guess. The `on_usage=` callback is deprecated;
 subscribe to the event.
 
@@ -256,7 +278,7 @@ from pydantic_ai_harness import (
     SummarizingCompaction,
     WarnNearLimits,
 )
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 
 agent = Agent(
     'test',
@@ -268,12 +290,12 @@ agent = Agent(
 )
 
 
-@agent.on_event(ContextUsageEvent)
+@agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
 ```
 
-`WarnNearLimits` tells the model; to alert an operator, log from the `ContextUsageEvent` handler
+`WarnNearLimits` tells the model; to alert an operator, log from the `ContextUsageMeasuredEvent` handler
 (`if event.fraction > 0.8: logger.warning(...)`). Register `ReportContextUsage` after a compaction
 capability to see post-compaction usage, before it to see what triggered compaction.
 
@@ -281,6 +303,8 @@ capability to see post-compaction usage, before it to see what triggered compact
 
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a
   `ModelRequest` in history; every strategy preserves or re-injects it. `Planning` does not need it.
+  Pass `source='tool'` or `source='model'` for content the user didn't write, so it reaches the model
+  as `<pinned source="...">` data rather than as the user's words.
 - `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
   loaded: when they summarize or drop a load's record (a `load_capability` exchange, or the
   `CapabilityLoadDeltaPart` of a load from code), they record it again after the summary as a
@@ -295,7 +319,7 @@ capability to see post-compaction usage, before it to see what triggered compact
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
   strategy between runs (for a `/compact` command). It applies no trigger of its own.
 
-Every rewrite (clear, dedupe, clamp, summarize) busts the provider prompt cache from the edit
+Every rewrite (clear, prune, dedupe, clamp, summarize) busts the provider prompt cache from the edit
 point onward.
 
 ## ToolOutputLimits
@@ -309,7 +333,7 @@ then a `shape:` line for JSON and a head/tail excerpt; the model pages it with t
 substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`:
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
-With `FileSystem` on the agent and the default `WorkspaceStore()` (no `workspace=` of its own),
+With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
 `read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
 `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
 (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
@@ -358,14 +382,15 @@ Key parameters: `bands` (largest matching `over` wins; below the smallest passes
 `then` runs when the action cannot (store error, binary payload, failed summary call).
 
 Stores:
-- Default `WorkspaceStore()` writes under `.pydantic-ai-harness/tool-output/` in the run's
+- Default `WorkspaceOverflowStore()` writes under `.pydantic-ai-harness/tool-output/` in the run's
   workspace. If any band can spill and the run has no workspace, the run fails at start with
-  `UserError`. `WorkspaceStore(workspace=LocalWorkspaceBackend(...))` takes a backend, not the
+  `UserError`. `WorkspaceOverflowStore(workspace=LocalWorkspaceBackend(...))` takes a backend, not the
   `LocalWorkspace` capability. A read-only workspace falls back to `then`.
-- `LocalFileStore(base_dir=None, cleanup_after=None)` from `pydantic_ai_harness.tool_output_limits`, for runs without a workspace (host temp dir).
+- `LocalFileOverflowStore(base_dir=None, cleanup_after=None)` from `pydantic_ai_harness.tool_output_limits`, for runs without a workspace (host temp dir).
 - Anything implementing `OverflowStore` (`async write(key, data) -> handle`, `async read(handle)`).
 
-Gotchas: both `ToolReturn.return_value` and text `content` are reduced; `ModelRetry` and tool errors
+Gotchas: both `ToolReturn.return_value` and text `content` are reduced (a return value holding
+files keeps them; only the data beside them is reduced); `ModelRetry` and tool errors
 are never reduced, nor are core `load_capability` / `search_tools` returns. Keep
 `Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run. Under
 durable execution spill writes and built-in summaries are journaled, so a replay reuses the recorded
@@ -405,7 +430,7 @@ it can't tell a moved prefix from an expired cache.
 
 ## Media externalization (not a capability)
 
-`pydantic_ai_harness.media` holds content-addressed stores (`DiskMediaStore`, `SqliteMediaStore`,
+`pydantic_ai_harness.media` holds content-addressed stores (`FileMediaStore`, `SqliteMediaStore`,
 `S3MediaStore`, `MongoMediaStore` with the `mongodb` extra, `PostgresMediaStore` over a
 caller-owned `asyncpg` pool) and the `externalize_media` /
 `restore_media` walkers. `StepPersistence` stores use them automatically (`media_store='auto'`,
@@ -416,8 +441,8 @@ payloads live. Nothing here goes in `capabilities=[...]`.
 
 Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabilityMonitor`),
 `tool_output_limits.ToolOutputLimits` (not `overflowing_tool_output` / `OverflowingToolOutput`),
-`SlidingWindowCompaction` (not `SlidingWindow`), and `WarnNearLimits` (not `LimitWarner`). The
-old `context` module is `repo_context`.
+`SlidingWindowCompaction` (not `SlidingWindow`), `WarnNearLimits` (not `LimitWarner`), and
+`ContextUsageMeasuredEvent` (not `ContextUsageEvent`). The old `context` module is `repo_context`.
 
 ## See also
 

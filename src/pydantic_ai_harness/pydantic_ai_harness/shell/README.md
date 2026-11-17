@@ -5,7 +5,23 @@ managed background processes.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/shell/)
 
-![The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.](https://pydantic.dev/docs/ai/img/harness/shell.svg)
+```mermaid
+flowchart TB
+    accTitle: Shell: run commands in the workspace, with guardrails
+    accDescr: The model calls Shell tools, such as run_command and start_command, and gets results. Before a command runs, the capability checks the executable, shell operators and interactive commands. A passing command runs as a process in the workspace, with its working directory and environment, and one in denied_commands, such as rm by default, is rejected and the model gets a retry.
+    model(["model"])
+    shell["Shell()<br/>run_command,<br/>start_command"]:::capability
+    checks["checks the executable,<br/>shell operators and<br/>interactive commands"]:::capability
+    process["workspace process<br/>its working directory<br/>and environment"]:::external
+    rejected["denied_commands,<br/>such as rm by default:<br/>the model gets a retry"]:::blocked
+    model <-->|"tool call, result"| shell
+    shell -->|"before it runs"| checks
+    checks -->|"runs"| process
+    checks -.-x|"rejects"| rejected
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -159,6 +175,14 @@ of output past the limit before it is emptied. No telemetry spans are emitted
 for a clear: it shows as the notice in the log and, when it happens while a
 `shell` call waits, as `truncated=True` on its finished event.
 
+On a Windows workspace (`WindowsWorkspace`), `shell` and the background-command
+tools run PowerShell, and the `shell` tool's description tells the model so. A
+stop runs the job's `stop.ps1`, the stop command a `shell` result names: it ends
+the process tree with `taskkill` while the PID is still the job's, and records
+the exit code. `max_log_bytes` applies there too. `run_command` is not offered
+there, since it wraps commands in `sh`, so `persist_cwd` has no effect;
+`max_file_bytes` needs a POSIX workspace.
+
 ## Environment control
 
 A command gets the workspace's environment plus `Shell(env=...)`.
@@ -262,20 +286,20 @@ show output as it arrives without parsing the tool result:
 |---|---|---|
 | `CommandStartedEvent` | stream | `command`, `pid` |
 | `CommandOutputEvent` | stream | `text`: a chunk of the combined log, decoded incrementally |
-| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `total_lines` |
+| `CommandFinishedEvent` | stream | `pid`, `output_path`, `status_path`, `exit_code`, `truncated`, `line_count` |
 
 Output events are emitted while a foreground call waits: at most the first
 16,000 bytes of the log per call, in chunks of up to 4,096 bytes, polled every
 50 ms to 1 s. A background call emits only the started and finished events. `finished`
 means the tool stopped waiting, not that the command exited: `exit_code` is
 `None` while no status has been published, and `truncated` says the log held
-more than the events showed. `total_lines` counts logical lines in logs up to
+more than the events showed. `line_count` counts logical lines in logs up to
 1 MiB and is `None` for larger logs, which are not scanned. If `max_log_bytes`
 empties the log during the call, output events start again from its notice,
-`truncated` is true and `total_lines` is `None`. A cancelled call may emit no
+`truncated` is true and `line_count` is `None`. A cancelled call may emit no
 finished event. Events carry command text and command output, so treat them as
 untrusted when rendering. They add no telemetry spans; core already traces the
-tool call.
+tool call. `total_lines` is the deprecated name of `line_count`. It still reads, with a warning, and a payload saved under it still loads.
 
 ## Working directory
 
@@ -339,7 +363,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts) to raise it.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`, and runs its `shell` tool under [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/) and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/); the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts) to raise it.
 
 ## Further reading
 

@@ -12,6 +12,7 @@ from typing import TypeVar
 import anyio
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceRef, WorkspaceTimeoutError
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
@@ -211,6 +212,23 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
     return list(command)
 
 
+# Run as `sh -c EXEC_SCRIPT sh <argv>` by providers whose exec API leaves stdin open or reports a
+# program it cannot start as an error. `sh` resolves the program on `PATH` and exits 127 when it is
+# missing and 126 when it cannot run, as the protocol asks; `exec` keeps the argv literal and
+# replaces the shell with the program, with stdin at EOF. BusyBox and bash read a program named like
+# `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is resolved to its
+# path first. The command's `env` is the shell's own environment, and assigning a variable the
+# environment has changes what the program inherits, so the script assigns none on the usual path
+# and only a reserved name for a program named like an option.
+EXEC_SCRIPT = """case $1 in
+-*/*) PYDANTIC_AI_HARNESS_PROGRAM=./$1 ;;
+-*) PYDANTIC_AI_HARNESS_PROGRAM=$(command -v -- "$1") || { printf 'sh: %s: not found\\n' "$1" >&2; exit 127; } ;;
+*) exec "$@" </dev/null ;;
+esac
+shift
+exec "$PYDANTIC_AI_HARNESS_PROGRAM" "$@" </dev/null"""
+
+
 def check_env_types(env: Mapping[str, str] | None) -> None:
     """Raise `TypeError` unless `env` is `None` or maps strings to strings."""
     if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
@@ -233,6 +251,19 @@ def check_working_dir(value: str | None) -> None:
     """Raise `UserError` unless a provider's `working_dir` is an absolute POSIX path or `None`."""
     if value is not None and not posixpath.isabs(value):
         raise UserError(f'working_dir must be an absolute POSIX path or None, got {value!r}.')
+
+
+def check_path_authority(path_authority: Mapping[str, Authority] | None) -> None:
+    """Raise `UserError` for a `path_authority` key starting with `~`, which a sandbox or remote host doesn't expand.
+
+    `AuthorityWorkspace` refuses it too, but only when the run builds the workspace; this fails where it's written.
+    """
+    for path in path_authority or ():
+        if path.startswith('~'):
+            raise UserError(
+                f'`path_authority` paths are paths on the sandbox or host, so `~` is not expanded: got {path!r}. '
+                'Pass an absolute path, or one relative to the working directory.'
+            )
 
 
 def check_integer(name: str, value: int | None, *, minimum: int = 1, optional: bool = False) -> None:

@@ -58,7 +58,7 @@ jobs:
   at-claude:
     needs: get-pr-info
     if: needs.get-pr-info.outputs.is_fork != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: write
@@ -82,8 +82,8 @@ jobs:
 
       - run: make install
 
-      - name: Install bubblewrap
-        run: sudo apt-get install -y bubblewrap
+      - name: Install bubblewrap and socat
+        uses: ./.github/actions/install-subprocess-isolation-deps
 
       - uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         with:
@@ -96,7 +96,7 @@ jobs:
   at-claude-fork:
     needs: get-pr-info
     if: needs.get-pr-info.outputs.is_fork == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # Least privilege: on forks Claude may only read code and comment on this PR
     # (see the restricted --allowedTools below — no push / pr create), so this
@@ -167,8 +167,8 @@ jobs:
           HEAD_SHA: ${{ needs.get-pr-info.outputs.pr_head_sha }}
           AUTHOR_PERMISSION: ${{ needs.get-pr-info.outputs.pr_author_permission }}
 
-      - name: Install bubblewrap
-        run: sudo apt-get install -y bubblewrap
+      - name: Install bubblewrap and socat
+        uses: ./.github/actions/install-subprocess-isolation-deps
 
       # The action fetches the live `refs/pull/<n>/head`, which can move after
       # the check above ran on HEAD_SHA. This hook only lets local branches and

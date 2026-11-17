@@ -1,5 +1,7 @@
 """The `/set` menu, driven headless with scripted key presses."""
 
+from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -97,6 +99,258 @@ def test_flow_edits_resets_and_reports(tmp_path: Path) -> None:
     assert script.opened.count('choice') == 5
 
 
+@pytest.mark.parametrize('searchable', [True, False])
+@pytest.mark.parametrize('choices', [('true', 'false'), ('false', 'true')])
+def test_space_toggles_scrolled_setting_and_save_close_persists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    searchable: bool,
+    choices: tuple[str, str],
+) -> None:
+    context, applied = make_context(tmp_path)
+    source = SettingsSource(context)
+    rows: list[FieldRow] = [
+        replace(row, choices=choices) if row.key == 'run.code_mode' else row for row in source.rows()
+    ]
+    monkeypatch.setattr(source, 'rows', lambda: rows)
+    fields = FieldMenu(source, searchable=searchable)
+    index = next(i for i, row in enumerate(fields.rows) if row.key == 'run.code_mode')
+
+    def keys() -> Iterator[str]:
+        yield from ['down'] * index
+        for expected in (False, True, False):
+            assert context.settings.code_mode is expected
+            assert running.highlighted is not None and running.highlighted.value == 'run.code_mode'
+            # Check the painted viewport too: a stable cursor alone does not prove stable scrolling.
+            frame = capsys.readouterr().out.split('\x1b[H')[-1]
+            assert '> run.code_mode' in frame
+            assert '  model ' not in frame, 'the scrolled viewport must not jump to the top'
+            assert f'current  {str(expected).lower()}' in frame
+            yield ' '
+        assert context.settings.code_mode is True
+        yield 'end'
+        yield ' '
+        yield 'enter'
+
+    pressed = keys()
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    monkeypatch.setattr('termflow.tui.menu.terminal_size', lambda: (100, 10))
+    running = fields.build()
+    result = running.run()
+    assert result.item is not None and is_save_and_close(result.item)
+    assert context.store.load().code_mode is True
+    assert applied == ['run.code_mode'] * 3
+    assert fields.messages == ['Saved run.code_mode. Applied.'] * 3
+    assert 'true' in next(item.label for item in fields.items() if item.value == 'run.code_mode')
+
+
+@pytest.mark.parametrize('searchable', [True, False])
+@pytest.mark.parametrize('key', ['model', 'display.theme', 'display.spinner', 'display.tool_calls', 'updates.channel'])
+def test_space_cycles_declared_choices_and_wraps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, searchable: bool, key: str
+) -> None:
+    context, applied = make_context(tmp_path)
+    source = SettingsSource(context, keys=[key])
+    fields = FieldMenu(source, searchable=searchable)
+    row = fields.rows[0]
+    assert len(row.choices) > 1
+    assert source.apply(row, row.choices[-1]) == f'Saved {key}. Applied.'
+    applied.clear()
+
+    def keys() -> Iterator[str]:
+        yield ' '
+        assert source.current(row) == row.choices[0]
+        assert running.highlighted is not None and running.highlighted.value == key
+        yield ' '
+        assert source.current(row) == row.choices[1]
+        assert running.highlighted is not None and running.highlighted.value == key
+        yield 'end'
+        yield 'enter'
+
+    pressed = keys()
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    running = fields.build()
+    result = running.run()
+    assert result.item is not None and is_save_and_close(result.item)
+    reloaded, _ = make_context(tmp_path)
+    assert SettingsSource(reloaded, keys=[key]).current(row) == row.choices[1]
+    assert applied == [key, key]
+    assert fields.messages == [f'Saved {key}. Applied.'] * 2
+
+
+@pytest.mark.parametrize('current', [None, 'custom:model-not-in-the-catalog'])
+def test_space_starts_unlisted_values_at_the_first_choice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, current: str | None
+) -> None:
+    context, applied = make_context(tmp_path)
+    update: dict[str, str | None] = {'model': current}
+    context.settings = context.settings.model_copy(update=update)
+    source = SettingsSource(context, keys=['model'])
+    fields = FieldMenu(source)
+    row = fields.rows[0]
+    assert source.current(row) not in row.choices
+    pressed = iter([' ', 'end', 'enter'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    assert run_flow(fields) == ['Saved model. Applied.']
+    assert context.store.load().model == row.choices[0]
+    assert applied == ['model']
+
+
+def test_space_search_text_and_filtered_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context))
+    # The trailing Space belongs to the query. Enter ends search; Space then toggles the match.
+    pressed = iter(['/', *'run.code_mode', 'R', 'backspace', ' ', 'enter', ' ', 'escape', 'end', 'enter'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    assert run_flow(fields) == ['Saved run.code_mode. Applied.']
+    assert applied == ['run.code_mode']
+    assert context.store.load().code_mode is True
+
+
+def test_filtered_choice_cycles_keep_the_match_until_search_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context, applied = make_context(tmp_path)
+    source = SettingsSource(context)
+    fields = FieldMenu(source)
+    row = next(row for row in fields.rows if row.key == 'display.theme')
+    assert len(row.choices) > 2
+    assert row.choices[0] == 'default'
+
+    def keys() -> Iterator[str]:
+        yield from ['/', *'default', 'enter']
+        for expected in (*row.choices[1:], row.choices[0]):
+            yield ' '
+            assert source.current(row) == expected
+            assert running.highlighted is not None and running.highlighted.value == 'display.theme'
+        yield from ['escape', 'end', 'enter']
+
+    pressed = keys()
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    running = fields.build()
+    result = running.run()
+    assert result.item is not None and is_save_and_close(result.item)
+    assert context.store.load().theme == 'default'
+    assert applied == ['display.theme'] * len(row.choices)
+
+
+@pytest.mark.parametrize('clear', [True, False])
+def test_filtered_cycle_recomputes_matches_after_query_edit_or_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], clear: bool
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context, keys=['display.tool_output', 'run.speculative_code_mode']))
+
+    def keys() -> Iterator[str]:
+        yield from ['/', *'false', 'enter', ' ']
+        assert running.highlighted is not None and running.highlighted.value == 'display.tool_output'
+        assert context.settings.tool_output is True
+        frame = capsys.readouterr().out.split('\x1b[H')[-1]
+        assert 'search:' in frame and 'false' in frame
+        assert '> display.tool_output' in frame and 'run.speculative_code_mode' in frame
+        if clear:
+            yield from ['escape', '/']
+        else:
+            yield from ['/', *['backspace'] * len('false')]
+        yield from [*'false', 'enter']
+        assert running.highlighted is not None and running.highlighted.value == 'run.speculative_code_mode'
+        yield from ['escape', 'end', 'enter']
+
+    pressed = keys()
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    running = fields.build()
+    result = running.run()
+    assert result.item is not None and is_save_and_close(result.item)
+    assert context.store.load().tool_output is True
+    assert context.store.load().speculative_code_mode is False
+    assert applied == ['display.tool_output']
+
+
+@pytest.mark.parametrize('searchable', [True, False])
+def test_space_on_choice_free_field_keeps_enter_editing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, searchable: bool
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context), searchable=searchable)
+    pressed = iter(['down', ' ', 'enter', 'end', 'enter'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    script = Script(lists=[], choices=[], texts=[typed('42')])
+    runners = field_menu.Runners(run_text=script.run_text)
+    assert run_flow(fields, runners) == ['Saved run.request_limit. Applied.']
+    assert context.store.load().request_limit == 42
+    assert applied == ['run.request_limit']
+    assert script.opened == ['text']
+
+
+@pytest.mark.parametrize('searchable', [True, False])
+@pytest.mark.parametrize(
+    ('key', 'cycling'), [('display.thinking', True), ('display.tool_calls', True), ('run.request_limit', False)]
+)
+def test_space_hint_requires_multiple_choices(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    searchable: bool,
+    key: str,
+    cycling: bool,
+) -> None:
+    context, _ = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context, keys=[key]), searchable=searchable)
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: 'escape')
+    fields.build().run()
+    assert ('Space cycle' in capsys.readouterr().out) is cycling
+
+
+def test_choice_free_search_keeps_type_to_filter_and_literal_space(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context, keys=['run.request_limit', 'display.shell_lines']))
+    pressed = iter([*'shell', 'enter', 'R', *'shell ', 'escape'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    result = fields.build().run()
+    assert result.item is not None and result.item.value == 'display.shell_lines'
+    assert fields.build(1).run() == fields.reset_marker(object(), result.item)
+    capsys.readouterr()
+    assert fields.build().run().cancelled
+    output = capsys.readouterr().out
+    assert '(no matches)' in output, 'Space is query text, not a hotkey, in a choice-free list'
+    assert 'Space cycle' not in output and '/ search' not in output
+    assert 'type to filter' in output
+    assert applied == []
+    assert context.store.overrides() == {}
+
+
+@pytest.mark.parametrize('asynchronous', [True, False])
+@pytest.mark.parametrize('key', ['run.code_mode', 'display.theme'])
+async def test_space_does_not_bypass_choice_row_actions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], asynchronous: bool, key: str
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context, keys=[key]))
+    pressed = iter([' ', 'enter', 'end', 'enter'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    calls: list[str] = []
+
+    def action() -> list[str]:
+        calls.append('action')
+        return ['Action ran.']
+
+    async def async_action() -> list[str]:
+        return action()
+
+    if asynchronous:
+        messages = await run_flow_async(fields, submenus={key: async_action})
+    else:
+        messages = run_flow(fields, submenus={key: action})
+    assert messages == ['Action ran.']
+    assert calls == ['action']
+    assert applied == []
+    assert context.store.overrides() == {}
+    assert 'Space cycle' not in capsys.readouterr().out
+
+
 def test_flow_stops_on_cancel(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     script = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
@@ -184,6 +438,22 @@ class _Stored:
 
     def reset(self, row: FieldRow) -> str:
         raise NotImplementedError
+
+
+@pytest.mark.parametrize('searchable', [True, False])
+def test_space_does_not_save_a_single_choice(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], searchable: bool
+) -> None:
+    source = _Stored('one')
+    rows: list[FieldRow] = [FieldRow(key='root', description='', default='', choices=('one',))]
+    monkeypatch.setattr(source, 'rows', lambda: rows)
+    fields = FieldMenu(source, searchable=searchable)
+    pressed = iter([' ', 'escape'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    assert fields.build().run().cancelled
+    assert fields.messages == []
+    assert source.value == 'one'
+    assert 'Space cycle' not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(('value', 'initial'), [('src', 'src'), ('', ''), ('evil\x1b[2J', '')])

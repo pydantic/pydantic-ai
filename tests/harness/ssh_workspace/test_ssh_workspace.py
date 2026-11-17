@@ -25,7 +25,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox
+from pydantic_ai_harness.bubblewrap_sandbox import BubblewrappedWorkspace
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend, _backend as ssh_backend
 from pydantic_ai_harness.ssh_workspace._backend import _STOP  # pyright: ignore[reportPrivateUsage]
@@ -237,7 +237,7 @@ async def test_a_long_quote_heavy_shell_command_starts(tools: FakeRemoteTools, t
     """
     remote = SSHWorkspace[None]('box', working_dir=str(tmp_path))
     output = await call_tool(
-        [BubblewrapSandbox[None](remote) if sandboxed else remote, Shell[None](tools=['shell'])],
+        [BubblewrappedWorkspace[None](remote) if sandboxed else remote, Shell[None](tools=['shell'])],
         'shell',
         {'command': ': ' + "'a' " * 15_000 + '\necho started'},
     )
@@ -427,3 +427,27 @@ async def test_agent_spec_builds_a_read_only_ssh_workspace(tools: FakeRemoteTool
 
     assert isinstance(result.workspace, ReadOnlyWorkspace)
     assert await result.workspace.working_dir() == str(tools.home.resolve())
+
+
+async def test_authority_reaches_the_runs_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    capability = SSHWorkspace(
+        'box', working_dir=str(tmp_path), read_only=True, authority='none', path_authority={'docs': 'user'}
+    )
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
+
+    @agent.tool
+    async def probe(ctx: RunContext[object]) -> str:
+        return f'{await ctx.workspace.authority_of("AGENTS.md")} {await ctx.workspace.authority_of("docs/a.md")}'
+
+    result = await agent.run('go')
+
+    assert result.output == '{"probe":"none user"}'
+    assert result.workspace.authority == 'none'
+    assert result.workspace.read_only
+    # The ref is the host's, so a later run attaches to it as before.
+    assert result.workspace.ref == WorkspaceRef(provider='ssh', id=f'box:{tmp_path}')
+
+
+def test_a_home_relative_path_authority_fails_at_construction(tools: FakeRemoteTools) -> None:
+    with pytest.raises(UserError, match='`~` is not expanded'):
+        SSHWorkspace('box', path_authority={'~/.config/app': 'operator'})

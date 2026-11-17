@@ -28,6 +28,9 @@ For any code change:
 - Adding a retry, fallback or error-handling field to a capability that takes a
   pluggable dependency: `capability-authoring.md` "Policy Lives In The Pluggable
   Component"
+- Adding an immediately dispatched event that a listener can stop:
+  `capability-authoring.md` "A Listener Stops An Immediate Event With
+  `cancel()` Or `veto()`"
 - Deciding what a capability emits to OpenTelemetry, or documenting that it
   emits nothing: `capability-authoring.md` "Telemetry"
 - `src/pydantic_ai_harness/README.md`, `docs/harness/` pages, or capability READMEs: `docs-conventions.md`
