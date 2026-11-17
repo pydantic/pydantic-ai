@@ -50,7 +50,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
-| `/sandbox [e2b\|boxd\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
+| `/sandbox [e2b\|boxd\|daytona\|modal\|render\|sprites\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -2842,43 +2842,50 @@ no agent telemetry spans.
 
 ### Cloud sandboxes: `/sandbox`
 
-Run `/sandbox e2b` or `/sandbox boxd` in a new conversation, before its first
-prompt. CLAI copies this checkout (the branch, its unpushed commits, and uncommitted files) into a
-new cloud sandbox, and every command and file edit of the conversation runs there. `/resume` and
-`/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where the conversation runs.
-To work on this machine again, run `/new`.
+Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `modal`, `render`, or `sprites`) in a new
+conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
+uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
+there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+the conversation runs. To work on this machine again, run `/new`.
 
-A sandbox stays until you run `/sandbox delete`, even when you leave its
-conversation. One that times out is paused, not deleted, so delete it when you are done. If CLAI stops while
-copying the checkout in, the conversation keeps its half-copied sandbox; `/sandbox delete` deletes it. A fork or copy of
-the conversation uses the same sandbox, and stops working once it is deleted.
+A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If CLAI stops
+while copying the checkout in, the conversation keeps its half-copied sandbox; `/sandbox delete` deletes
+it. A fork or copy of the conversation uses the same sandbox, and stops working once it is deleted.
 
-| Provider | Install | Sign in |
-|---|---|---|
-| `e2b` | `uv tool install 'pydantic-clai2[e2b]'` | `E2B_API_KEY` in `/keys` |
-| `boxd` | `uv tool install 'pydantic-clai2[boxd]'` | `BOXD_API_KEY` in `/keys` |
+`git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull requests.
+Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
+Without a `gh` login, the sandbox has no GitHub access.
 
-`git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull
-requests. The token never enters the sandbox: the provider's network proxy, outside it, adds the
-token to requests for `github.com`, `api.github.com`, and `uploads.github.com`, and the sandbox
-holds only a stand-in. We use the proxy because it is the one way to give the agent GitHub access
-without handing it the token, so CLAI offers only providers whose proxy can do this. Kubernetes,
-Render, Sprites, smol, and Docker sandboxes have no such proxy. Daytona's can, but is not offered
-until it is tested. Modal's is experimental, so it is not offered.
+| Provider | Install extra | Keys | Where your GitHub token is | Who can read it | Keys the agent asks for (`request_env`) |
+|---|---|---|---|---|---|
+| `e2b` | `pydantic-clai2[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own | kept with the sandbox |
+| `boxd` | `pydantic-clai2[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below | kept with the machine; only a machine made with a `gh` login takes one |
+| `daytona` | `pydantic-clai2[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | members of your organization who can manage its secrets | until CLAI exits |
+| `modal` | `pydantic-clai2[modal]` | Modal's own login: `modal token new` | in the sandbox | anything run in the sandbox | until CLAI exits |
+| `render` | `pydantic-clai2[render]` | `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` | in the sandbox | anything run in the sandbox | until CLAI exits, sent to Render with each command |
+| `sprites` | `pydantic-clai2[sprites]` | `SPRITE_TOKEN` | in the Sprite | anything run in the Sprite | until CLAI exits, sent to Sprites in each command's URL |
 
-The provider holds the token only while the sandbox exists, and deleting the sandbox deletes it.
-Each sandbox gets the token `gh` has when you run `/sandbox`.
+Install a provider with `uv tool install 'pydantic-clai2[PROVIDER]'`, and add its keys in `/keys`.
+`/sandbox PROVIDER` says what is missing.
 
-| Provider | Where the token is kept | Who else can use it |
-|---|---|---|
-| `e2b` | the sandbox's network rules; a paused sandbox keeps them | anyone with an API key for your E2B team can read them; use a team of your own |
-| `boxd` | a private secret made for the machine | no one else in the organization |
+**Through the provider's proxy** (`e2b`, `boxd`, `daytona`): the token never enters the sandbox. The
+provider's network proxy, outside it, adds the token to requests for `github.com`, `api.github.com`, and
+`uploads.github.com`, and the sandbox's `GH_TOKEN` holds only a stand-in. Use one of these if the agent
+must not have your token.
+
+**In the sandbox** (`modal`, `render`, `sprites`): these have no proxy that can add it, so CLAI saves the
+token in the sandbox's home folder for `git` and `gh`. Anything run there, the agent included, can read
+it, and it goes when the sandbox does.
+
+How long a sandbox lasts differs. An `e2b` sandbox that times out is paused, and Daytona stops an idle
+one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
+24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
+time limit and sleeps while idle.
 
 With `boxd`, a command in the sandbox can still learn the token. boxd puts the real token
 anywhere in a request to GitHub, the body included, so a command can save it in a GitHub file or
 issue and read it back ([boxd's docs](https://docs.boxd.sh/guides/env-secrets.md)). `e2b` only
-adds the token as a request header, so this can't happen there. Use `e2b` if the agent must not
-learn your token.
+adds the token as a request header, so this can't happen there.
 
 A server started in a `boxd` machine is also public: boxd gives every machine an HTTPS address
 that forwards to ports such as 8000 and 3000, and has no setting to turn it off or require a
@@ -2886,15 +2893,14 @@ login ([boxd's docs](https://docs.boxd.sh/guides/https)). The address holds the 
 name, so it can't be guessed, but anyone who learns it can reach the server. `e2b` sandboxes
 answer only requests that carry the sandbox's access token.
 
-Without a `gh` login, the sandbox has no GitHub access.
-
 When a command needs another key, such as `ANTHROPIC_API_KEY` for a script, the agent asks
 for it by name, and CLAI shows the `/keys` picker: pick a saved key or type a new one, which
 is saved in `/keys`. CLAI sets it as an environment variable in the sandbox, so the agent
-carries on in the same turn without seeing the value. Unlike the GitHub token, this key is in
-the sandbox, and anything run there can read it. It reaches every command started afterwards;
-a server started before it needs a restart. With `boxd`, only a machine made with a `gh` login
-can take one. The agent asks only in the terminal, not in the web UI.
+carries on in the same turn without seeing the value. This key is in the sandbox, and anything
+run there can read it. It reaches every command started afterwards; a server started before it
+needs a restart. The table says how long it lasts: a sandbox reopened after CLAI exits no longer
+has one that lasts until CLAI exits, so the agent asks again. The agent asks only in the terminal,
+not in the web UI.
 
 ### Several sessions in the web UI
 

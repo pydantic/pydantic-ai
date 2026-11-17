@@ -43,6 +43,7 @@ class BoxdProvider:
     name: str = 'boxd'
     title: str = 'boxd'
     working_dir: str = '/home/boxd/workspace'
+    token_in_sandbox: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, boxd.AsyncBoxd]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'boxd.AsyncBoxd'], init=False, compare=False, repr=False
     )

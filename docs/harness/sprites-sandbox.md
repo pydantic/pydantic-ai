@@ -213,7 +213,7 @@ Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists un
 | `client` | A `sprites.AsyncSpritesClient` to share across runs on one event loop, or to set its base URL or timeout. Default: `None`, a client each run opens from `SPRITE_TOKEN` and closes when it ends. You close a client you pass; `SpritesSandbox` never does. |
 | `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
-| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. Add a variable to a `SpritesSandboxBackend`'s `env` to give it to that backend's later commands. |
 
 Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 

@@ -485,6 +485,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     def ref(self) -> WorkspaceRef | None:
         return self._ref
 
+    @property
+    def env(self) -> dict[str, str]:
+        """The variables every command gets, under the command's own; add one to give it to later commands."""
+        return self._env
+
     async def get_sandbox(self) -> AsyncSprite:
         """Return the typed `sprites.AsyncSprite`, for Sprites features the workspace API does not cover.
 

@@ -10,6 +10,9 @@ import importlib.machinery
 import io
 import itertools
 import json
+import os
+import shlex
+import stat
 import subprocess
 import sys
 import uuid
@@ -37,7 +40,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import (
+    CommandResult,
+    LocalWorkspaceBackend,
+    SupportsFilesystem,
+    WorkspaceCommand,
+    WorkspaceRef,
+)
 from pydantic_clai2 import Session
 from pydantic_clai2.builtin_plugins import sandbox
 from pydantic_clai2.builtin_plugins.sandbox import SandboxPlugin, history_sandbox
@@ -45,11 +54,22 @@ from pydantic_clai2.builtin_plugins.sandbox.providers import (
     GITHUB_HOSTS,
     GitHubCredential,
     boxd as boxd_provider,
+    daytona as daytona_provider,
     e2b as e2b_provider,
+    modal as modal_provider,
+    render as render_provider,
+    sprites as sprites_provider,
 )
-from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV
+from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
 from pydantic_clai2.builtin_plugins.sandbox.providers.e2b import E2BProvider
-from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, github_clone_url, seed, snapshot
+from pydantic_clai2.builtin_plugins.sandbox.seed import (
+    SandboxBackend,
+    Snapshot,
+    clone_script,
+    github_clone_url,
+    seed,
+    snapshot,
+)
 from pydantic_clai2.config.api_keys import load_keys, save_key
 from pydantic_clai2.plugins import (
     ConversationChanged,
@@ -68,7 +88,11 @@ if TYPE_CHECKING:
     from boxd import Machine, Secret
 
     from tests.harness.boxd_sandbox.fake_boxd import FakeBoxd, FakeClient
+    from tests.harness.daytona_sandbox.fake_daytona import FakeDaytona, FakeSandbox as FakeDaytonaSandbox
     from tests.harness.e2b_sandbox.fake_e2b import FakeE2B
+    from tests.harness.modal_sandbox.fake_modal import FakeModal
+    from tests.harness.render_sandbox.workspace_helpers import WorkspaceHarness
+    from tests.harness.sprites_sandbox.fake_sprites import SpriteTransport
 
 CLONE_URL = 'https://github.com/owner/repo.git'
 
@@ -99,6 +123,7 @@ class FakeProvider:
     name: str = 'fake'
     title: str = 'Fake'
     working_dir: str = '/home/user/workspace'
+    token_in_sandbox: bool = False
     requirement: str | None = None
     created: list[GitHubCredential | None] = field(default_factory=list[GitHubCredential | None])
     reopened: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
@@ -427,7 +452,15 @@ class TestCommand:
         assert list(plugin.complete(['fake', ''])) == []
 
     def test_complete_offers_the_shipped_providers(self, checkout: Path) -> None:
-        assert list(plugin_of(load(checkout)).complete([])) == ['e2b', 'boxd', 'delete']
+        assert list(plugin_of(load(checkout)).complete([])) == [
+            'e2b',
+            'boxd',
+            'daytona',
+            'modal',
+            'render',
+            'sprites',
+            'delete',
+        ]
 
     @pytest.mark.parametrize('gap', ['no gh', 'no login', 'token refused'])
     async def test_without_a_github_login(
@@ -1161,3 +1194,535 @@ class TestBoxd:
         assert account.secrets == {}
         assert all(machine.status == 'destroyed' for machine in fake.machines.values())
         assert all(client.closed for client in account.clients)
+
+
+@pytest.mark.parametrize('gh_token', [None, 'stand-in'])
+def test_the_credential_helper(tmp_path: Path, gh_token: str | None) -> None:
+    """A proxy provider's stand-in in `GH_TOKEN` wins; without one, git reads the token saved in the sandbox."""
+    [line] = [line for line in clone_script(Snapshot()).splitlines() if '.helper ' in line]
+    helper = shlex.split(line)[-1].removeprefix('!')
+    home = tmp_path / 'sandbox-home'
+    (home / '.config/clai').mkdir(parents=True)
+    (home / '.config/clai/github-token').write_text('gho_saved', encoding='utf-8')
+    env = {'HOME': str(home), 'PATH': os.environ['PATH'], **({} if gh_token is None else {'GH_TOKEN': gh_token})}
+    result = subprocess.run(['sh', '-c', f'{helper} get'], env=env, capture_output=True, text=True, check=True)
+    assert result.stdout == f'username=x-access-token\npassword={gh_token or "gho_saved"}\n'
+
+
+async def test_a_provider_that_puts_the_token_in_the_sandbox_says_so(checkout: Path, provider: FakeProvider) -> None:
+    provider.token_in_sandbox = True
+    loaded = load(checkout)
+    message = await plugin_of(loaded).command(['fake'])
+    assert (
+        'The token is saved in the sandbox, where anything run there can read it, until the sandbox is deleted.'
+        in message
+    )
+    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
+    session = Session(agent, deps=None, plugins=list(loaded.capabilities), workspace=checkout)
+    session.replace_messages(loaded.host.conversation.messages)
+    result = await session.prompt('there')
+    [request] = [message for message in result.new_messages() if isinstance(message, ModelRequest)]
+    assert (
+        'signed in to GitHub as the user, with a token saved in the sandbox, which anything run there can read; '
+        'leave GH_TOKEN unset. Never run `gh auth login`.'
+    ) in (request.instructions or '')
+
+
+GITHUB = GitHubCredential(login='Ada', token='gho_x')
+
+SIGNED_IN = {
+    '.config/clai/github-token': ('gho_x', 0o600),
+    '.config/gh/hosts.yml': ('github.com:\n    oauth_token: gho_x\n    user: Ada\n    git_protocol: https\n', 0o600),
+}
+
+
+def signed_in(home: Path) -> dict[str, tuple[str, int]]:
+    """The GitHub login `give_github_login` wrote under `home`, with each file's mode."""
+    assert stat.S_IMODE((home / '.config/clai').stat().st_mode) == 0o700
+    return {
+        name: ((home / name).read_text(encoding='utf-8'), stat.S_IMODE((home / name).stat().st_mode))
+        for name in SIGNED_IN
+        if (home / name).exists()
+    }
+
+
+def not_installed(name: str) -> None:
+    return None
+
+
+@dataclass
+class CommandOnlyBackend:
+    """A sandbox that only runs commands, with no file API, as some providers offer."""
+
+    commands: FakeSandboxBackend
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return self.commands.ref
+
+    async def working_dir(self) -> str:
+        return await self.commands.working_dir()
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        return await self.commands.run(command, shell=shell, env=env, timeout=timeout)
+
+
+async def test_a_sandbox_that_only_runs_commands(checkout: Path, provider: FakeProvider, tmp_path: Path) -> None:
+    """Seeding and the in-sandbox GitHub login write their files with shell commands when there is no file API."""
+    home = tmp_path / 'sandbox-home'
+    home.mkdir()
+    ref, _ = await provider.create(github=None)
+    copy = provider.folder(ref)
+    env = {**SANDBOX_ENV, 'GIT_CONFIG_GLOBAL': f'{copy}.gitconfig', 'GIT_CONFIG_NOSYSTEM': '1', 'HOME': str(home)}
+    backend = CommandOnlyBackend(FakeSandboxBackend(ref, copy, env=env))
+    assert not isinstance(backend, SupportsFilesystem)
+
+    await seed(backend, await to_thread.run_sync(snapshot, checkout))
+    assert git(copy, 'rev-parse', 'HEAD') == git(checkout, 'rev-parse', 'HEAD')
+    assert git(copy, 'status', '--porcelain') == ' M README.md\n?? untracked.txt'
+
+    await give_github_login(backend, GITHUB)
+    assert signed_in(home) == SIGNED_IN
+
+
+@dataclass
+class FakeDaytonaSecrets:
+    """Daytona's organization secrets, which the harness's Daytona fake leaves out."""
+
+    secrets: dict[str, tuple[str, str, list[str]]] = field(default_factory=dict[str, tuple[str, str, list[str]]])
+    """Each secret's name, value, and hosts, by id."""
+    numbers: Iterator[int] = field(default_factory=lambda: itertools.count(1))
+
+    async def create(self, params: object) -> object:
+        from types import SimpleNamespace
+
+        number = next(self.numbers)
+        name, value, hosts = getattr(params, 'name'), getattr(params, 'value'), getattr(params, 'hosts')
+        self.secrets[f'sec-{number}'] = (name, value, hosts)
+        return SimpleNamespace(id=f'sec-{number}', name=name, placeholder=f'dtn_secret_{number}', hosts=hosts)
+
+    async def delete(self, secret_id: str) -> None:
+        import daytona
+
+        if self.secrets.pop(secret_id, None) is None:
+            raise daytona.DaytonaNotFoundError(f'no secret: {secret_id}')
+
+
+@pytest.fixture
+def fake_daytona(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[tuple[FakeDaytona, FakeDaytonaSecrets]]':
+    """The harness's Daytona fake, whose commands run here, with secrets and labels added."""
+    import daytona
+
+    from tests.harness.daytona_sandbox.fake_daytona import FakeClient, FakeDaytona
+
+    fake = FakeDaytona()
+    fake.host_root = tmp_path.resolve()
+    account = FakeDaytonaSecrets()
+    clients: list[FakeClient] = []
+
+    def client(config: object = None) -> FakeClient:
+        made = fake.client(config)
+        clients.append(made)
+        made.secret = account  # type: ignore[attr-defined]
+        create = made.create
+
+        async def create_with_labels(
+            params: 'daytona.CreateSandboxFromSnapshotParams', *, timeout: float = 60
+        ) -> 'FakeDaytonaSandbox':
+            sandbox = await create(params, timeout=timeout)
+            sandbox.labels = dict(params.labels or {})  # type: ignore[attr-defined]
+
+            async def set_labels(labels: dict[str, str]) -> dict[str, str]:
+                sandbox.labels = dict(labels)  # type: ignore[attr-defined]
+                return labels
+
+            sandbox.set_labels = set_labels  # type: ignore[attr-defined]
+            return sandbox
+
+        made.create = create_with_labels  # type: ignore[method-assign]
+        return made
+
+    monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend.daytona', daytona)
+    monkeypatch.setattr(daytona, 'AsyncDaytona', client)
+    monkeypatch.delenv(daytona_provider.KEY_NAME, raising=False)
+    yield fake, account
+    assert all(made.closed for made in clients)
+
+
+@pytest.mark.skipif(find_spec('daytona') is None, reason='daytona not installed')
+class TestDaytona:
+    """Daytona, through the SDK fake the harness's own Daytona tests use; the swap itself was proven live."""
+
+    def test_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(daytona_provider.KEY_NAME, raising=False)
+        provider = daytona_provider.DaytonaProvider()
+        assert provider.missing() == (
+            'Add your Daytona API key in /keys as DAYTONA_API_KEY. Make one at https://app.daytona.io/dashboard/keys.'
+        )
+        save_key(name='DAYTONA_API_KEY', value='dtn_key')
+        assert provider.missing() is None
+        monkeypatch.setattr(daytona_provider, 'find_spec', not_installed)
+        assert provider.missing() == (
+            "Daytona support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[daytona]'."
+        )
+
+    async def test_create_reopen_delete(
+        self,
+        fake_daytona: 'tuple[FakeDaytona, FakeDaytonaSecrets]',
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        fake, account = fake_daytona
+        monkeypatch.setattr(uuid, 'uuid4', lambda: uuid.UUID(int=0))
+        # Daytona sets `GH_TOKEN` to the secret's stand-in; the fake's commands run here, so this stands in for that.
+        monkeypatch.setenv('GH_TOKEN', 'dtn_secret_1')
+        provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        secret = 'CLAI_GITHUB_' + '0' * 32
+        assert account.secrets == {'sec-1': (secret, 'gho_x', list(GITHUB_HOSTS))}
+        [params] = fake.create_params
+        # Only the secret's name reaches the sandbox; Daytona's proxy holds the token.
+        assert params.env_vars == SANDBOX_ENV
+        assert params.secrets == {'GH_TOKEN': secret}
+        [made] = fake.sandboxes
+        assert made.labels == {'created-by': 'pydantic-ai', 'clai-github-secret': 'sec-1'}  # type: ignore[attr-defined]
+        assert ref == backend.ref == WorkspaceRef(provider='daytona', id='sb-1')
+        reopened = provider.reopen(ref)
+        assert reopened.ref == ref
+        # A key the agent asks for reaches the commands run after it.
+        await provider.set_env(reopened, 'API_KEY', 'sk-1')
+        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.close(backend)  # Closing again has nothing left to close.
+        # Deleting the sandbox deletes its secret, so the token ends with it.
+        await provider.delete(ref)
+        assert account.secrets == {}
+        # Deleting again finds neither.
+        fake.purge(made)
+        await provider.delete(ref)
+        # Without a GitHub login there is no secret to make.
+        ref, backend = await provider.create(github=None)
+        assert account.secrets == {}
+        assert fake.create_params[-1].secrets is None
+        await provider.close(backend)
+        await provider.delete(ref)
+
+    async def test_a_secret_deleted_already_is_fine(
+        self,
+        fake_daytona: 'tuple[FakeDaytona, FakeDaytonaSecrets]',
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        _, account = fake_daytona
+        monkeypatch.setenv('GH_TOKEN', 'dtn_secret_1')
+        provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        await provider.close(backend)
+        account.secrets.clear()
+        await provider.delete(ref)
+
+    @pytest.mark.parametrize(
+        'failure', ['sandbox refused', 'sandbox refused without a login', 'stand-in is the token', 'no stand-in']
+    )
+    async def test_a_failed_create_leaves_nothing_behind(
+        self,
+        fake_daytona: 'tuple[FakeDaytona, FakeDaytonaSecrets]',
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        failure: str,
+    ) -> None:
+        import daytona
+
+        fake, account = fake_daytona
+        if failure.startswith('sandbox refused'):
+            fake.create_error = daytona.DaytonaError('quota exceeded')
+            raised: type[Exception] = daytona.DaytonaError
+        else:
+            # Daytona put the token itself in the sandbox, or nothing, instead of a stand-in.
+            if failure == 'stand-in is the token':
+                monkeypatch.setenv('GH_TOKEN', 'gho_x')
+            else:
+                monkeypatch.delenv('GH_TOKEN', raising=False)
+            raised = RuntimeError
+        provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
+        with pytest.raises(raised):
+            await provider.create(github=None if failure.endswith('without a login') else GITHUB)
+        assert account.secrets == {}
+        assert all(sandbox.state != 'started' for sandbox in fake.sandboxes)
+
+
+@pytest.fixture
+def fake_modal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[FakeModal]':
+    """The harness's Modal fake as `modal`, whose commands run here."""
+    from tests.harness.modal_sandbox.fake_modal import FakeModal
+
+    control = FakeModal()
+    control.host_root = tmp_path.resolve()
+    control.module.__spec__ = importlib.machinery.ModuleSpec('modal', None)
+    monkeypatch.setitem(sys.modules, 'modal', control.module)
+    yield control
+    for made in control.sandboxes:
+        made.terminate()
+
+
+@pytest.mark.skipif(find_spec('modal') is None, reason='modal not installed')
+class TestModal:
+    """Modal, through the SDK fake the harness's own Modal tests use."""
+
+    def test_missing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        config = tmp_path / 'modal.toml'
+        monkeypatch.setenv('MODAL_CONFIG_PATH', str(config))
+        monkeypatch.delenv('MODAL_TOKEN_ID', raising=False)
+        monkeypatch.delenv('MODAL_TOKEN_SECRET', raising=False)
+        provider = modal_provider.ModalProvider()
+        assert provider.missing() == 'Sign in to Modal first: run uvx modal token new, then try again.'
+        monkeypatch.setenv('MODAL_TOKEN_ID', 'ak-1')
+        assert provider.missing() is not None
+        monkeypatch.setenv('MODAL_TOKEN_SECRET', 'as-1')
+        assert provider.missing() is None
+        monkeypatch.delenv('MODAL_TOKEN_ID')
+        config.write_text('[default]\n', encoding='utf-8')
+        assert provider.missing() is None
+        monkeypatch.setattr(modal_provider, 'find_spec', not_installed)
+        assert provider.missing() == (
+            "Modal support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[modal]'."
+        )
+
+    async def test_create_reopen_delete(self, fake_modal: 'FakeModal', tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()  # Modal makes the sandbox's working folder itself.
+        provider = modal_provider.ModalProvider(working_dir=str(workspace))
+        ref, backend = await provider.create(github=GITHUB)
+        assert ref == backend.ref == WorkspaceRef(provider='modal', id='sb-owned')
+        [kwargs] = fake_modal.create_kwargs
+        # Modal's longest lifetime, and no idle timeout, which would end the sandbox rather than pause it.
+        assert (kwargs['timeout'], kwargs['idle_timeout']) == (86_400, None)
+        assert kwargs['env'] == SANDBOX_ENV
+        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
+        [made] = fake_modal.sandboxes
+        # The token went by the file API, never in a command.
+        assert not any('gho_x' in ' '.join(call.argv) for call in made.exec_calls)
+        reopened = provider.reopen(ref)
+        await provider.set_env(reopened, 'API_KEY', 'sk-1')
+        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.delete(ref)
+        assert made.shutting_down
+        ref, _ = await provider.create(github=None)
+        assert ref.id == 'sb-owned-2'
+
+    @pytest.mark.parametrize('home', ['none', 'a file'])
+    async def test_a_failed_create_leaves_nothing_behind(
+        self, fake_modal: 'FakeModal', tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: str
+    ) -> None:
+        # No home folder to sign in under, or one where the login's folders cannot be made: the sandbox goes.
+        if home == 'none':
+            monkeypatch.setenv('HOME', '')
+            raised = 'no home folder'
+        else:
+            (tmp_path / 'file').touch()
+            monkeypatch.setenv('HOME', str(tmp_path / 'file'))
+            raised = r'^Could not sign the sandbox in to GitHub: mkdir: .*'
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        with pytest.raises(RuntimeError, match=raised):
+            await modal_provider.ModalProvider(working_dir=str(workspace)).create(github=GITHUB)
+        [made] = fake_modal.sandboxes
+        assert made.shutting_down
+        fake_modal.create_error = OSError('Modal is down')
+        with pytest.raises(OSError, match='Modal is down'):
+            await modal_provider.ModalProvider(working_dir=str(workspace)).create(github=GITHUB)
+
+
+@pytest.fixture
+def fake_render(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[WorkspaceHarness]':
+    """The harness's Render fake, whose commands run here; every client CLAI makes is wired to it."""
+    import render
+
+    from tests.harness.render_sandbox.workspace_helpers import client_is_closed, make_workspace_harness
+
+    harness = make_workspace_harness(monkeypatch, tmp_path)
+    made: list[render.RenderAsync] = []
+    real = render.RenderAsync
+
+    def client(*, token: str | None, owner_id: str | None) -> render.RenderAsync:
+        assert (token, owner_id) == ('rnd_key', 'tea-1')
+        opened = real(token=token, owner_id=owner_id)
+        harness.install(opened)
+        made.append(opened)
+        return opened
+
+    monkeypatch.setattr(render, 'RenderAsync', client)
+    monkeypatch.delenv(render_provider.KEY_NAME, raising=False)
+    monkeypatch.delenv(render_provider.WORKSPACE_KEY_NAME, raising=False)
+    yield harness
+    assert all(client_is_closed(opened) for opened in made)
+
+
+@pytest.mark.skipif(find_spec('render') is None, reason='render not installed')
+class TestRender:
+    """Render, through the SDK fake the harness's own Render tests use."""
+
+    def test_missing(self, fake_render: 'WorkspaceHarness', monkeypatch: pytest.MonkeyPatch) -> None:
+        provider = render_provider.RenderProvider()
+        message = (
+            'Add your Render API key in /keys as RENDER_API_KEY, and the tea-... ID of a workspace with sandboxes '
+            'as RENDER_WORKSPACE_ID. Make a key as https://render.com/docs/api#1-create-an-api-key says.'
+        )
+        assert provider.missing() == message
+        save_key(name='RENDER_API_KEY', value='rnd_key')
+        assert provider.missing() == message
+        monkeypatch.setenv('RENDER_WORKSPACE_ID', 'tea-1')
+        assert provider.missing() is None
+        monkeypatch.setattr(render_provider, 'find_spec', not_installed)
+        assert provider.missing() == (
+            "Render support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[render]'."
+        )
+
+    async def test_create_reopen_delete(
+        self, fake_render: 'WorkspaceHarness', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        save_key(name='RENDER_API_KEY', value='rnd_key')
+        save_key(name='RENDER_WORKSPACE_ID', value='tea-1')
+        provider = render_provider.RenderProvider(working_dir=str(tmp_path / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        assert ref == backend.ref == WorkspaceRef(provider='render', id='sb-1')
+        # Render's longest lifetime.
+        assert fake_render.create_calls['sb-1'].timeout_seconds == 86_400
+        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
+        assert not any('gho_x' in str(command) for command in fake_render.commands)
+        reopened = provider.reopen(ref)
+        await provider.set_env(reopened, 'API_KEY', 'sk-1')
+        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.close(backend)  # Closing again has nothing left to close.
+        await provider.delete(ref)
+        assert fake_render.terminated == ['sb-1']
+        ref, backend = await provider.create(github=None)
+        await provider.close(backend)
+
+    async def test_a_failed_create_leaves_nothing_behind(
+        self, fake_render: 'WorkspaceHarness', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        save_key(name='RENDER_API_KEY', value='rnd_key')
+        save_key(name='RENDER_WORKSPACE_ID', value='tea-1')
+        monkeypatch.setenv('HOME', 'relative')
+        provider = render_provider.RenderProvider(working_dir=str(tmp_path / 'workspace'))
+        with pytest.raises(RuntimeError, match='no home folder'):
+            await provider.create(github=GITHUB)
+        assert fake_render.terminated == ['sb-1']
+        fake_render.create_error = OSError('Render is down')
+        with pytest.raises(OSError, match='Render is down'):
+            await provider.create(github=GITHUB)
+        assert fake_render.created == ['sb-1']
+
+
+@pytest.fixture
+async def fake_sprites(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'AsyncIterator[SpriteTransport]':
+    """The harness's Sprites fake, as the harness's Sprites tests set it up, whose commands run here."""
+    import sprites
+    from sprites import AsyncSprite, AsyncSpritesClient
+    from sprites.async_filesystem import AsyncSpritePath
+    from sprites.types import FileStat
+
+    from pydantic_ai_harness.sprites_sandbox._backend import _LookupCache  # pyright: ignore[reportPrivateUsage]
+    from tests.harness.sprites_sandbox.fake_sprites import SpriteTransport
+
+    transport = SpriteTransport(tmp_path)
+    monkeypatch.delenv(sprites_provider.KEY_NAME, raising=False)
+    monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._HANDSHAKE_RETRY_DELAYS', (0.0, 0.0))
+    monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._lookups', _LookupCache())
+    monkeypatch.setattr('sprites.websocket.connect', transport.connect)
+    monkeypatch.setattr(sprites, 'AsyncSpritesClient', transport.client)
+
+    async def get(client: AsyncSpritesClient, name: str) -> AsyncSprite:
+        return await transport.get(client, name)
+
+    async def create(client: AsyncSpritesClient, name: str, *, runtime: str | None) -> AsyncSprite:
+        return await transport.create(client, name, runtime=runtime)
+
+    async def close(client: AsyncSpritesClient) -> None:
+        await transport.close(client)
+
+    async def destroy(client: AsyncSpritesClient, name: str) -> None:
+        await transport.destroy(client, name)
+
+    async def fs_stat(path: AsyncSpritePath) -> FileStat:
+        return await to_thread.run_sync(transport.fs_stat, path)
+
+    async def fs_write(path: AsyncSpritePath, data: bytes, mode: int = 0o644, mkdir_parents: bool = True) -> None:
+        await to_thread.run_sync(transport.fs_write, path, data, mode)
+
+    monkeypatch.setattr(AsyncSpritesClient, 'get_sprite', get)
+    monkeypatch.setattr(AsyncSpritesClient, 'create_sprite', create)
+    monkeypatch.setattr(AsyncSpritesClient, 'aclose', close)
+    monkeypatch.setattr(AsyncSpritesClient, 'destroy_sprite', destroy)
+    monkeypatch.setattr(AsyncSpritePath, 'stat', fs_stat)
+    monkeypatch.setattr(AsyncSpritePath, 'write_bytes', fs_write)
+    yield transport
+    # Each exec's thread posts its last frame to this loop, so it must finish while the loop runs.
+    for socket in transport.execs:
+        await to_thread.run_sync(socket.thread.join, 10)
+    assert transport.close_calls == len(transport.clients)
+
+
+@pytest.mark.skipif(find_spec('sprites') is None, reason='sprites-py not installed')
+class TestSprites:
+    """Sprites, through the SDK fake the harness's own Sprites tests use."""
+
+    def test_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(sprites_provider.KEY_NAME, raising=False)
+        provider = sprites_provider.SpritesProvider()
+        assert provider.missing() == (
+            'Add your Sprites token in /keys as SPRITE_TOKEN. Make one at https://sprites.dev/account.'
+        )
+        monkeypatch.setenv('SPRITE_TOKEN', 'spr-1')
+        assert provider.missing() is None
+        monkeypatch.setattr(sprites_provider, 'find_spec', not_installed)
+        assert provider.missing() == (
+            "Sprites support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[sprites]'."
+        )
+
+    async def test_create_reopen_delete(self, fake_sprites: 'SpriteTransport', tmp_path: Path) -> None:
+        save_key(name='SPRITE_TOKEN', value='spr-1')
+        provider = sprites_provider.SpritesProvider(working_dir=str(tmp_path / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        [name] = fake_sprites.created
+        assert ref == backend.ref == WorkspaceRef(provider='sprites', id=name)
+        assert {client.token for client in fake_sprites.clients} == {'spr-1'}
+        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
+        # The token went by the filesystem API, never in an exec URL.
+        assert not any('gho_x' in socket.query_url for socket in fake_sprites.execs)
+        reopened = provider.reopen(ref)
+        await provider.set_env(reopened, 'API_KEY', 'sk-1')
+        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.close(backend)  # Closing again has nothing left to close.
+        await provider.delete(ref)
+        assert fake_sprites.names == set()
+        ref, backend = await provider.create(github=None)
+        await provider.close(backend)
+        await provider.delete(ref)
+
+    async def test_a_failed_create_leaves_nothing_behind(
+        self, fake_sprites: 'SpriteTransport', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        save_key(name='SPRITE_TOKEN', value='spr-1')
+        monkeypatch.setenv('HOME', 'relative')
+        provider = sprites_provider.SpritesProvider(working_dir=str(tmp_path / 'workspace'))
+        with pytest.raises(RuntimeError, match='no home folder'):
+            await provider.create(github=GITHUB)
+        assert len(fake_sprites.created) == 1 and fake_sprites.names == set()
+        fake_sprites.create_error = OSError('Sprites is down')
+        with pytest.raises(OSError, match='Sprites is down'):
+            await provider.create(github=GITHUB)

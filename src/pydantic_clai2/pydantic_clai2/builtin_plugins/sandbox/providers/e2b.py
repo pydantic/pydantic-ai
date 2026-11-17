@@ -39,6 +39,7 @@ class E2BProvider:
     name: str = 'e2b'
     title: str = 'E2B'
     working_dir: str = '/home/user/workspace'
+    token_in_sandbox: bool = False
 
     def missing(self) -> str | None:
         if find_spec('e2b') is None:

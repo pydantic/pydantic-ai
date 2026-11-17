@@ -981,6 +981,13 @@ class TestSpritesSandbox:
         result = await SpritesSandboxBackend().run(['env'], env={'-i': 'option-like'})
         assert {'SPRITE_OWN=kept', '-i=option-like'} <= set(result.stdout.splitlines())
 
+    async def test_a_variable_added_to_env_reaches_later_commands(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend(env={'BASE': 'base'})
+        await backend.run(['true'])
+        backend.env['ADDED'] = 'added'
+        result = await backend.run('printf "$BASE $ADDED"', shell=True)
+        assert result.stdout == 'base added'
+
     @pytest.mark.parametrize(
         'command,env',
         [

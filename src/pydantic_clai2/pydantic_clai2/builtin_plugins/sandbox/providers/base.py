@@ -1,13 +1,14 @@
-"""What every `/sandbox` provider implements, and the GitHub credential they all give their proxy."""
+"""What every `/sandbox` provider implements, and the GitHub credential it gives the sandbox's `git` and `gh`."""
 
 import base64
 import os
+import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_clai2.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai.workspaces import Workspace, WorkspaceRef
+from pydantic_clai2.builtin_plugins.sandbox.seed import GITHUB_TOKEN_FILE, SandboxBackend
 from pydantic_clai2.config.api_keys import load_keys
 
 GITHUB_HOSTS = ('github.com', 'api.github.com', 'uploads.github.com')
@@ -19,7 +20,7 @@ SANDBOX_ENV: Mapping[str, str] = {'GIT_TERMINAL_PROMPT': '0'}
 
 @dataclass(frozen=True, kw_only=True)
 class GitHubCredential:
-    """The user's `gh` login, which the provider's proxy adds to requests for `GITHUB_HOSTS` while the sandbox lives."""
+    """The user's `gh` login, which the sandbox's `git` and `gh` act as while the sandbox lives."""
 
     login: str
     token: str = field(repr=False)
@@ -40,7 +41,7 @@ class GitHubCredential:
 
 
 class SandboxProvider(Protocol):
-    """A cloud sandbox service whose proxy, outside the sandbox, holds the GitHub token for the sandbox's requests."""
+    """A cloud sandbox service that `/sandbox` can make, reopen, and delete sandboxes on."""
 
     @property
     def name(self) -> str:
@@ -57,6 +58,11 @@ class SandboxProvider(Protocol):
         """Where the checkout goes in the sandbox."""
         ...
 
+    @property
+    def token_in_sandbox(self) -> bool:
+        """Whether the GitHub token is written into the sandbox, as it is where no proxy can sign requests."""
+        ...
+
     def missing(self) -> str | None:
         """What to do before a sandbox can be made, such as a key to add; `None` when nothing is missing."""
         ...
@@ -64,9 +70,10 @@ class SandboxProvider(Protocol):
     async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
         """A new, running sandbox whose commands get `SANDBOX_ENV`, and its reference.
 
-        With `github`, the provider's proxy gets the token for this sandbox only, and the sandbox's `GH_TOKEN`
-        holds a stand-in the proxy replaces, so `git` and `gh` act as `github.login`. A `create` that raises,
-        or is cancelled, first deletes whatever it made, as no caller has its reference to delete it later.
+        With `github`, `git` and `gh` there act as `github.login`. A provider whose proxy can sign requests gets the
+        token for this sandbox only, and the sandbox's `GH_TOKEN` holds a stand-in the proxy replaces; any other
+        writes the token into the sandbox (`give_github_login`). A `create` that raises, or is cancelled, first
+        deletes whatever it made, as no caller has its reference to delete it later.
         """
         ...
 
@@ -75,7 +82,10 @@ class SandboxProvider(Protocol):
         ...
 
     async def set_env(self, backend: SandboxBackend, name: str, value: str) -> None:
-        """Give every command started in the sandbox from now on the variable `name`, kept with the sandbox.
+        """Give every command started in the sandbox from now on the variable `name`.
+
+        It is kept with the sandbox where the provider can keep it there, as E2B and boxd can; otherwise it lasts
+        for this CLAI session, and a sandbox reopened later has it no more.
 
         A command that sets `name` itself keeps its own value; a process already running keeps the
         environment it started with. `RuntimeError` says why this sandbox cannot take it.
@@ -95,3 +105,33 @@ def saved_key(name: str) -> str | None:
     """The key saved in `/keys` as `name`, else the environment variable `name`."""
     saved = load_keys().get(name)
     return saved.get_secret_value() if saved is not None else os.environ.get(name) or None
+
+
+async def give_github_login(backend: SandboxBackend, github: GitHubCredential) -> None:
+    """Sign the sandbox's `git` and `gh` in as `github.login` by writing the token into the sandbox's home.
+
+    Without a proxy to hold it, the token must be in the sandbox, so anything run there can read it. It goes
+    through the backend's file API, kept off command lines a provider may log or send in a URL. A backend
+    with only commands gets it base64-encoded in a command, as `Workspace` writes files there.
+    """
+    home = (await backend.run(['sh', '-c', 'printf %s "$HOME"'])).stdout
+    if not posixpath.isabs(home):
+        raise RuntimeError('the sandbox has no home folder for the GitHub login')
+    token = posixpath.join(home, GITHUB_TOKEN_FILE)
+    # `gh` reads its login from here when `GH_TOKEN` is unset.
+    hosts = posixpath.join(home, '.config/gh/hosts.yml')
+    # Folders only their user can enter, made before the files, so no other user can read a file as it is written.
+    await _check(backend, ['mkdir', '-p', '-m', '700', posixpath.dirname(token), posixpath.dirname(hosts)])
+    files = Workspace(backend)
+    await files.write_bytes(token, github.token.encode())
+    await files.write_bytes(
+        hosts,
+        f'github.com:\n    oauth_token: {github.token}\n    user: {github.login}\n    git_protocol: https\n'.encode(),
+    )
+    await _check(backend, ['chmod', '600', token, hosts])
+
+
+async def _check(backend: SandboxBackend, argv: list[str]) -> None:
+    result = await backend.run(argv)
+    if result.exit_code != 0:
+        raise RuntimeError(f'Could not sign the sandbox in to GitHub: {(result.stderr or result.stdout).strip()}')

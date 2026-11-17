@@ -183,6 +183,12 @@ class TestRun:
         await backend.run(['env'], env={'FOO': 'bar'})
         assert fake_modal.sandboxes[0].exec_calls[-1].env == {'FOO': 'bar'}
 
+    async def test_a_variable_added_to_env_reaches_later_commands(self, fake_modal: FakeModal) -> None:
+        backend = await started(env={'A': '1'})
+        backend.env['B'] = '2'
+        await backend.run(['env'])
+        assert fake_modal.sandboxes[0].exec_calls[-1].env == {'A': '1', 'B': '2'}
+
     async def test_working_dir_and_env_apply_to_every_command_of_an_attached_sandbox(
         self, fake_modal: FakeModal
     ) -> None:

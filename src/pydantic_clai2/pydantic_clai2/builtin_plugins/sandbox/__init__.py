@@ -1,8 +1,8 @@
 """`/sandbox PROVIDER`: run a new conversation in a cloud sandbox holding a copy of this checkout.
 
 The sandbox gets the branch, its unpushed commits, and the uncommitted files (`seed`). Its `git` and `gh`
-act as the user's `gh` login: the provider's proxy adds the token to requests for GitHub, so the token never
-enters the sandbox. A conversation stays where its first turn ran: its history refers to files there.
+act as the user's `gh` login. Where the provider's proxy can add the token to requests for GitHub, the token
+never enters the sandbox; elsewhere it is written into the sandbox. A conversation stays where its first turn ran: its history refers to files there.
 
 The conversation's history records its sandbox: `/sandbox` saves an exchange whose response names it
 (`ModelResponse.workspace_ref`), as every later response does. Each run is handed that reference by Pydantic
@@ -99,8 +99,8 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
-            'only once they are pushed. git and gh are signed in to GitHub as the user through a proxy outside the '
-            'sandbox, so GH_TOKEN holds a stand-in the proxy replaces. Never run `gh auth login`.'
+            f'only once they are pushed. git and gh are signed in to GitHub as the user{_HOW_SIGNED_IN[provider.token_in_sandbox]}. '
+            'Never run `gh auth login`.'
         )
 
     def get_toolset(self) -> FunctionToolset[None] | None:
@@ -281,8 +281,14 @@ class SandboxPlugin(Plugin):
                 await sandbox.close()
 
 
+_HOW_SIGNED_IN = {
+    False: ' through a proxy outside the sandbox, so GH_TOKEN holds a stand-in the proxy replaces',
+    True: ', with a token saved in the sandbox, which anything run there can read; leave GH_TOKEN unset',
+}
+"""How the instructions say the sandbox is signed in, by `SandboxProvider.token_in_sandbox`."""
+
 _SET_BY_CLAI = frozenset({'GH_TOKEN', *SANDBOX_ENV})
-"""What `request_env` refuses: `GH_TOKEN` holds the stand-in GitHub's proxy replaces, and a key there would take its place."""
+"""What `request_env` refuses: `GH_TOKEN` is CLAI's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
 
 
 async def _in_sandbox(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefinition | None:
@@ -345,7 +351,11 @@ def _started(
     else:
         lines.append(
             f'git and gh there act as @{github.login}, on every repository that login reaches. '
-            f"{provider.title}'s proxy, outside the sandbox, holds the token until the sandbox is deleted."
+            + (
+                'The token is saved in the sandbox, where anything run there can read it, until the sandbox is deleted.'
+                if provider.token_in_sandbox
+                else f"{provider.title}'s proxy, outside the sandbox, holds the token until the sandbox is deleted."
+            )
         )
         if checkout.clone_url is None and checkout.head is not None:
             lines.append('origin is not on GitHub, so pushing it needs credentials the sandbox does not have.')

@@ -1,8 +1,8 @@
 """Copy the local checkout into a new sandbox: its branch, its commits, and its uncommitted changes.
 
 `snapshot` reads the checkout without changing it: the uncommitted files go into a commit made with a
-temporary index, which no branch points to. `seed` clones a GitHub checkout in the sandbox, through the
-proxy that holds the token, then sends only the commits that clone lacks, in a Git bundle; any other
+temporary index, which no branch points to. `seed` clones a GitHub checkout in the sandbox, signed in as
+the user, then sends only the commits that clone lacks, in a Git bundle; any other
 checkout travels whole. It then rebuilds the same branch and files in the sandbox.
 """
 
@@ -18,19 +18,21 @@ from typing import Protocol
 
 from anyio import to_thread
 
-from pydantic_ai.workspaces import SupportsCommands, SupportsFilesystem, WorkspaceBackend
+from pydantic_ai.workspaces import SupportsCommands, Workspace, WorkspaceBackend
 
 _SEED_REFS = 'refs/clai-seed/'
 """Where `_bundle` names the commit it bundles, one ref per call, so concurrent snapshots of linked worktrees never share one."""
 _GITHUB = re.compile(
     r'^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?$'
 )
+GITHUB_TOKEN_FILE = '.config/clai/github-token'
+"""Where, under the sandbox's home, a provider without a proxy to sign requests puts the GitHub token."""
 _SEED_TIMEOUT = 900.0
 """Seconds the sandbox may take to clone and rebuild the checkout; a large repository clones slowly."""
 
 
-class SandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Protocol):
-    """A sandbox's workspace: it runs commands and reads and writes files, so `seed` can copy into it."""
+class SandboxBackend(WorkspaceBackend, SupportsCommands, Protocol):
+    """A sandbox's workspace: it runs commands. Files go through `Workspace`, which uses the shell when it has no file API."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -166,12 +168,16 @@ def clone_script(snapshot: Snapshot) -> str:
     q = shlex.quote
     lines = [
         'set -eu',
-        # SSH remotes carry no credential the proxy can set; HTTPS ones do.
+        # The GitHub login signs HTTPS requests only; SSH ones would need a key the sandbox does not have.
         'git config --global url.https://github.com/.insteadOf git@github.com:',
         'git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/',
-        # git sends `GH_TOKEN`'s stand-in; the provider's proxy replaces it or the whole header.
+        # A proxy provider sets `GH_TOKEN` to a stand-in its proxy replaces, or replaces the whole header; any other
+        # leaves `GH_TOKEN` unset and has written the token to `GITHUB_TOKEN_FILE`.
         'git config --global credential.https://github.com.helper '
-        + shlex.quote('!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'),
+        + shlex.quote(
+            '!f() { echo username=x-access-token; '
+            f'echo "password=${{GH_TOKEN:-$(cat "$HOME/{GITHUB_TOKEN_FILE}" 2>/dev/null)}}"; }}; f'
+        ),
     ]
     if snapshot.author_name:
         lines.append(f'git config --global user.name {q(snapshot.author_name)}')
@@ -226,7 +232,7 @@ async def seed(backend: SandboxBackend, snapshot: Snapshot) -> None:
         # Checked against the clone, not `origin`'s refs here, which may name commits GitHub no longer has.
         bundle = await to_thread.run_sync(_bundle, snapshot.root, snapshot.work, have)
     if bundle is not None:
-        await backend.write_bytes(_bundle_path(bundle[0]), bundle[1])
+        await Workspace(backend).write_bytes(_bundle_path(bundle[0]), bundle[1])
     await _run(backend, checkout_script(snapshot, bundled=bundle[0] if bundle is not None else None))
 
 

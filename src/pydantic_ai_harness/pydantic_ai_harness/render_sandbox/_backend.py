@@ -136,6 +136,11 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         """The sandbox's identity: `None` until a fresh one is created, then set for good."""
         return self._ref
 
+    @property
+    def env(self) -> dict[str, str]:
+        """The variables every command gets, under the command's own; add one to give it to later commands."""
+        return self._env
+
     def _operation(self) -> AbstractAsyncContextManager[RenderAsync]:
         # Without a caller-supplied client, each top-level operation opens its own and closes it when
         # done, so a backend dropped by a durable task or another event loop leaves no pool behind.

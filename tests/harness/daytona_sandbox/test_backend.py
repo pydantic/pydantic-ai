@@ -197,6 +197,12 @@ class TestCommands:
         await backend.run(['true'], env={'B': '3'})
         assert _unmarked(fake_daytona.sandboxes[0].process_command) == f'{_WRAPPER} env -- A=1 B=3 true'
 
+    async def test_a_variable_added_to_env_reaches_later_commands(self, fake_daytona: FakeDaytona) -> None:
+        backend = await started(env={'A': '1'})
+        backend.env['B'] = '2'
+        await backend.run(['true'])
+        assert _unmarked(fake_daytona.sandboxes[0].process_command) == f'{_WRAPPER} env -- A=1 B=2 true'
+
     async def test_env_names_that_are_not_shell_identifiers_reach_the_command(
         self, fake_daytona: FakeDaytona, tmp_path: Path
     ) -> None:
