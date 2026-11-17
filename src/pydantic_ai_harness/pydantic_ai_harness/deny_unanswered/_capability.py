@@ -61,7 +61,11 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
         approvals: dict[str, bool | DeferredToolApprovalResult] = {
             part.tool_call_id: ToolDenied(self.message) for part in requests.approvals
         }
-        questions = [call.tool_call_id for call in requests.calls if call.tool_name == TOOL_NAME]
+        questions = [
+            call.tool_call_id
+            for call in requests.calls
+            if call.tool_name == TOOL_NAME and requests.kind(call.tool_call_id) == 'question'
+        ]
         if not approvals and not questions:
             return None
         return DeferredToolResults(

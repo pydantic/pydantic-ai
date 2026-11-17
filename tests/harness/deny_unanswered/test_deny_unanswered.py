@@ -113,6 +113,22 @@ class TestDenyUnanswered:
         assert [call.tool_call_id for call in result.output.calls] == ['j1']
         assert result.output.approvals == []
 
+    async def test_leaves_external_call_named_like_ask_user_deferred(self):
+        """A tool named `ask_user_question` that defers without `kind='question'` is not treated as a question."""
+        agent = Agent(
+            call_then_echo('ask_user_question', {}, 'q1', 'unreached'),
+            capabilities=[DenyUnanswered()],
+            output_type=[str, DeferredToolRequests],
+        )
+
+        @agent.tool_plain
+        def ask_user_question() -> str:
+            raise CallDeferred
+
+        result = await agent.run('go')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_call_id for call in result.output.calls] == ['q1']
+
     async def test_without_capability_calls_stay_deferred(self):
         """Without `DenyUnanswered` the run pauses on `DeferredToolRequests` and the caller's approval runs the tool."""
         ran: list[int] = []
