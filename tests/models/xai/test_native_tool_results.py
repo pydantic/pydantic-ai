@@ -92,14 +92,14 @@ def _tool_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # The recorded follow-up answers, which quote rows only the search result held.
 FOLLOW_UP_OUTPUTS: dict[bool, str] = {
     False: """\
-1. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026
-2. [Python 3.14.8](/downloads/release/python-3148/) Sept. 30, 2026
-3. [Python 3.14.7](/downloads/release/python-3147/) Aug. 5, 2026\
+Python 3.15.2 Oct. 25, 2026
+Python 3.15.1 Oct. 21, 2026
+Python 3.15.0 Oct. 9, 2026\
 """,
     True: """\
-1. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026 [Download](/downloads/release/python-3150/) [Release notes](https://docs.python.org/release/3.15.0/whatsnew/changelog.html)
-2. [Python 3.14.8](/downloads/release/python-3148/) Sept. 30, 2026 [Download](/downloads/release/python-3148/) [Release notes](https://docs.python.org/release/3.14.8/whatsnew/changelog.html)
-3. [Python 3.14.7](/downloads/release/python-3147/) Aug. 5, 2026 [Download](/downloads/release/python-3147/) [Release notes](https://docs.python.org/release/3.14.7/whatsnew/changelog.html)\
+1. [Python 3.15.2](/downloads/release/python-3152/) Oct. 25, 2026 [Download](/downloads/release/python-3152/) [Release notes](https://docs.python.org/release/3.15.2/whatsnew/changelog.html)
+2. [Python 3.15.1](/downloads/release/python-3151/) Oct. 21, 2026 [Download](/downloads/release/python-3151/) [Release notes](https://docs.python.org/release/3.15.1/whatsnew/changelog.html)
+3. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026 [Download](/downloads/release/python-3150/) [Release notes](https://docs.python.org/release/3.15.0/whatsnew/changelog.html)\
 """,
 }
 
