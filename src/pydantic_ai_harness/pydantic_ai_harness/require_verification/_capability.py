@@ -11,12 +11,13 @@ from typing import Any
 
 from pydantic_ai import CallToolsNode, DeferredToolRequests, PendingModelResponse, RunContext
 from pydantic_ai._capability_parts import check_operator_text
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
+from pydantic_ai.capabilities import AbstractCapability, AgentNode, CapabilityOrdering, NodeResult
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.messages import InstructionCapabilityPart, OperatorSource, OperatorText, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai_harness.file_system._tool_kinds import EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_ai_harness.require_verification._events import CompletionUnverifiedEvent
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from pydantic_graph import End
 
 DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
@@ -30,8 +31,9 @@ DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
 DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
     r'(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?:\S*/)?python3?\s+-m\s+)?(?:\S*/)?'
     r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check)\b',
-    r'(?:npm|pnpm|yarn|bun)(?:\s+-\S+(?:\s+[^-\s]\S*)?|\s+workspace\s+\S+)*\s+(?:run\s+)?'
-    r'(?:test|lint|typecheck|check|build)\b',
+    r'(?:npm|pnpm|yarn|bun)'
+    r'(?:\s+(?>workspace\s+\S+|-\S+(?:\s+(?!(?:run|test|lint|typecheck|check|build|workspace)\b)[^-\s]\S*)?))*'
+    r'\s+(?:run\s+)?(?:test|lint|typecheck|check|build)\b',
     r'(?:npx\s+)?(?:\S*/)?(?:tsc|eslint|vitest|jest)\b',
     r'(?:cargo(?:\s+\+\S+)?|go|dotnet)\s+(?:test|build|check|clippy|vet)\b',
     r'(?:make|just)\s+(?:\S+\s+)*?(?:test|lint|typecheck|check|build)\w*\b',
@@ -46,6 +48,7 @@ DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
     r'\bgit\s+(?:apply|am|checkout|cherry-pick|merge|mv|pull|rebase|reset|restore|revert|rm|stash|switch)\b',
     r'(?<![\w-])(?:patch|mv|cp|rm|tee)\s',
     r'(?<![\w-])(?:ba|z|da)?sh\s+-\w*c\b',
+    r'(?<![\w-])(?:python3?\s+(?:-c|-)(?=\s|$)|(?:node|ruby|perl)\s+-e\b)',
     r'(?<![\d&>-])>>?(?!&|\s*/dev/null)',
 )
 """Regular expressions for the commands that count as edits, searched for anywhere outside quoted strings."""
@@ -53,6 +56,8 @@ DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
 _ASSIGNMENTS = re.compile(r'^(?:env\s+)?(?:\w+=\S*\s+)*')
 _MASKING = re.compile(r'[|&]')
 _STATEMENT_SEPARATOR = re.compile(r'[;\n]')
+_PROBE = re.compile(r'(?<!\S)(?:--version|--help|-h|--collect-only|--co)(?!\S)')
+_CHANGES_DIRECTORY = re.compile(r'(?<![\w-])(?:cd|pushd|popd)\b')
 _SHORT_CIRCUIT = re.compile(r'(?<![\w-])(?:exit|exec|return)\b')
 _FD_DUPLICATION = re.compile(r'(?<!\d)\d*[<>]&(?:\d+|-)')
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
@@ -121,7 +126,10 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
     _edit: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
     _edits: int = field(default=0, init=False, repr=False, compare=False)
     _started: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
-    _results: dict[str, bool] = field(default_factory=dict[str, bool], init=False, repr=False, compare=False)
+    _directory_changes: int = field(default=0, init=False, repr=False, compare=False)
+    _results: dict[tuple[int, str], bool] = field(
+        default_factory=dict[tuple[int, str], bool], init=False, repr=False, compare=False
+    )
     _attempts: int = field(default=0, init=False, repr=False, compare=False)
     _reported: bool = field(default=False, init=False, repr=False, compare=False)
 
@@ -134,6 +142,10 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         except re.error as error:
             raise ValueError(f'RequireVerification has an invalid command pattern: {error}') from error
         check_operator_text(self.instructions, what='`RequireVerification.instructions`')
+
+    def get_ordering(self) -> CapabilityOrdering:
+        """Run inside `ToolOutputLimits`, so results are read before it truncates, spills, or summarizes them."""
+        return CapabilityOrdering(wrapped_by=(ToolOutputLimits,))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> RequireVerification[AgentDepsT]:
         """Return a fresh instance, so runs don't share their edits, results, or attempts."""
@@ -168,15 +180,26 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             if not (isinstance(path, str) and any(fnmatch(path, pattern) for pattern in self.exempt_paths)):
                 self._mark_edit()
         elif (command := _command(tool_def, args)) is not None:
-            if any(pattern.search(_QUOTED.sub('', command)) for pattern in self._edit):
-                self._mark_edit()
-            # A verification that an edit in a parallel call may have raced, or no verification at all, records nothing.
-            elif edits_before == self._edits:
-                if (passed := _passed(result)) is None:
-                    self._results.pop(command, None)
-                else:
-                    self._results[command] = passed
+            self._record_command(command, edits_before, result)
         return result
+
+    def _record_command(self, command: str, edits_before: int | None, result: object) -> None:
+        unquoted = _QUOTED.sub('', command)
+        if any(pattern.search(unquoted) for pattern in self._edit):
+            self._mark_edit()
+            return
+        # With `Shell(persist_cwd=True)` the same command can run elsewhere later, so results are kept per
+        # directory context, and a later pass elsewhere cannot hide an earlier failure.
+        if _CHANGES_DIRECTORY.search(unquoted):
+            self._directory_changes += 1
+        # A verification that an edit in a parallel call may have raced, or no verification at all, records nothing.
+        if edits_before != self._edits:
+            return
+        key = (self._directory_changes, command)
+        if (passed := _passed(result)) is None:
+            self._results.pop(key, None)
+        else:
+            self._results[key] = passed
 
     async def after_node_run(
         self,
@@ -212,7 +235,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             ctx.tracer.start_span(
                 'completion unverified', attributes={'require_verification.attempts': self._attempts}
             ).end()
-            failed = [command for command, passed in self._results.items() if not passed]
+            failed = [command for (_, command), passed in self._results.items() if not passed]
             await ctx.emit(CompletionUnverifiedEvent(attempts=self._attempts, failed_commands=failed))
         return result
 
@@ -238,7 +261,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         steps = [_ASSIGNMENTS.sub('', step.strip(), count=1) for step in statements[-1].split('&&')]
         if any(_MASKING.search(step) for step in steps):
             return False
-        return any(pattern.match(step) for step in steps for pattern in self._verification)
+        return any(not _PROBE.search(step) and pattern.match(step) for step in steps for pattern in self._verification)
 
 
 def _command(tool_def: ToolDefinition, args: ValidatedToolArgs) -> str | None:

@@ -23,6 +23,7 @@ from pydantic_ai_harness import (
     RefineOutput,
     RequireVerification,
     Shell,
+    ToolOutputLimits,
 )
 from pydantic_ai_harness.require_verification import CompletionUnverifiedEvent, VerificationRequiredPart
 
@@ -169,6 +170,9 @@ class TestRequireVerification:
             'rm app.py',
             'bash -c "sed -i s/1/2/ app.py"',
             "sh -c 'echo 2 > app.py'",
+            "python -c \"open('app.py', 'w').write('2')\"",
+            "python3 - <<'EOF'\nopen('app.py', 'w').write('2')\nEOF",
+            'node -e \'require("fs").writeFileSync("app.py", "2")\'',
         ],
     )
     async def test_an_edit_command_makes_checks_stale(self, tmp_path: Path, command: str) -> None:
@@ -189,7 +193,7 @@ class TestRequireVerification:
         [
             'command -v rg >/dev/null',
             'ls > /dev/null 2>&1',
-            'python -c "def f() -> int: return 1"',
+            'echo x->y',
             "git log --format='%h > %s'",
         ],
     )
@@ -250,6 +254,10 @@ class TestRequireVerification:
             'pytest $(cat args)',
             'pytest `cat args`',
             ';',
+            'pytest --version',
+            'pyright --help',
+            'pytest --collect-only -q',
+            'ruff check -h',
             'echo "ok && pytest"',
             'git commit -m "fix parser; pytest passes"',
         ],
@@ -395,6 +403,34 @@ class TestRequireVerification:
         [(instructions, _)] = _redirects(result.new_messages())
         assert 'not piped' in instructions
 
+    async def test_a_pass_in_another_directory_does_not_hide_a_failure(self, tmp_path: Path) -> None:
+        outputs = iter(['[exit code: 1]', '(no output)', '(no output)'])
+        agent = _agent(
+            tmp_path,
+            _write(),
+            _run('pytest -q'),
+            _run('cd other'),
+            _run('pytest -q'),
+            'Done.',
+            capability=RequireVerification(max_attempts=1),
+            outputs=lambda command: next(outputs),
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert _attempts(result.new_messages()) == [1]
+
+    async def test_reads_the_result_before_tool_output_limits_rewrite_it(self, tmp_path: Path) -> None:
+        output = 'passed\n' * 5_000
+        agent = _agent(
+            tmp_path, _write(), _run('pytest -q'), 'Done.', outputs=lambda command: output, extra=[ToolOutputLimits()]
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert result.output == 'Done.'
+        assert _redirects(result.new_messages()) == []
+
     async def test_attempts_are_bounded_and_the_unverified_end_is_reported(self, tmp_path: Path) -> None:
         events, hooks = _unverified()
         agent = _agent(
@@ -527,7 +563,13 @@ class TestRequireVerification:
 
     async def test_repetitive_commands_are_neither_edits_nor_checks(self, tmp_path: Path) -> None:
         # Inputs that made unanchored patterns rescan every suffix; kept small, as regression cases.
-        commands = ['echo ' + 'sed ' * 200, 'echo ' + 'sed -sed ' * 100, 'make ' + 'x ' * 400, 'echo ' + '1' * 400]
+        commands = [
+            'echo ' + 'sed ' * 200,
+            'echo ' + 'sed -sed ' * 100,
+            'make ' + 'x ' * 400,
+            'echo ' + '1' * 400,
+            'npm ' + '-x workspace workspace ' * 30 + 'nope',
+        ]
         agent = _agent(tmp_path, *[_run(command) for command in commands], 'Done.')
 
         result = await agent.run('Look around')
