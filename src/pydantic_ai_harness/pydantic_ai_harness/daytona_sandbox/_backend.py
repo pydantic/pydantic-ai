@@ -522,7 +522,6 @@ class DaytonaSandboxBackend(
                 DaytonaDesktop(self._attached_computer_use), self._start_display, scope=self._display_scope
             )
         )
-        self._env = dict(env or {})
         self._secrets = dict(secrets) if secrets is not None else None
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
