@@ -38,6 +38,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelOverloadedError,
     ModelRequest,
+    ModelRequestRejectedError,
     ModelResponse,
     ModelRetry,
     NativeToolCallPart,
@@ -90,6 +91,7 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import (
@@ -6963,16 +6965,18 @@ _EXTRA_BODY_BUDGET_THINKING = (
 
 
 @pytest.mark.parametrize(
-    ('settings', 'rejected'),
+    ('settings', 'rejected', 'error'),
     [
         pytest.param(
             {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             _TYPED_BUDGET_THINKING,
+            UserError,
             id='anthropic_thinking',
         ),
         pytest.param(
             {'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
             _EXTRA_BODY_BUDGET_THINKING,
+            ModelRequestRejectedError,
             id='extra_body',
         ),
         pytest.param(
@@ -6981,17 +6985,23 @@ _EXTRA_BODY_BUDGET_THINKING = (
                 'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
             },
             _EXTRA_BODY_BUDGET_THINKING,
+            ModelRequestRejectedError,
             id='extra_body_over_adaptive',
         ),
     ],
 )
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5'])
 async def test_anthropic_opus_47_rejects_budget_thinking(
-    allow_model_requests: None, model_name: str, settings: AnthropicModelSettings, rejected: str
+    allow_model_requests: None,
+    model_name: str,
+    settings: AnthropicModelSettings,
+    rejected: str,
+    error: type[UserError | ModelRequestRejectedError],
 ):
     """Claude Opus 4.7 and later reject budget-based thinking with a 400, so we raise before sending.
 
-    See https://platform.claude.com/docs/en/build-with-claude/extended-thinking.
+    `extra_body` thinking raises that 400's category, so `FallbackModel` falls back on it as on the 400; the typed
+    setting keeps raising `UserError`. See https://platform.claude.com/docs/en/build-with-claude/extended-thinking.
     """
     mock_client = MockAnthropic.create_mock(
         completion_message(
@@ -7001,7 +7011,7 @@ async def test_anthropic_opus_47_rejects_budget_thinking(
     )
     m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
 
-    with pytest.raises(UserError) as exc_info:
+    with pytest.raises(error) as exc_info:
         await Agent(m).run('What is 2+2?')
     assert str(exc_info.value) == (
         f"'{model_name}' does not support {rejected}. "
@@ -7022,6 +7032,29 @@ async def test_anthropic_opus_47_rejects_budget_thinking(
         'claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
     )
     assert (await Agent(allowed).run('What is 2+2?')).output == '4'
+
+
+async def test_anthropic_extra_body_budget_thinking_rejection_falls_back(allow_model_requests: None) -> None:
+    """`FallbackModel` falls back on the guard's error by default, as it does on the API's 400.
+
+    A unit test: the guard fires before any request, so there is nothing to record.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='unused', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+        )
+    )
+    primary = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings={'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
+    )
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+
+    result = await Agent(FallbackModel(primary, backup)).run('What is 2+2?')
+
+    assert result.output == 'from backup'
+    assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])

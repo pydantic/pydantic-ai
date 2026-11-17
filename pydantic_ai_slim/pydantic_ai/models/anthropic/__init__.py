@@ -21,7 +21,7 @@ from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinki
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ...capabilities.abstract import AbstractCapability
-from ...exceptions import UserError
+from ...exceptions import ModelRequestRejectedError, UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -1616,14 +1616,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = _effective_thinking(model_settings, model_settings.get('anthropic_thinking') or OMIT)
         if isinstance(thinking, Omit) or thinking.get('type') != 'enabled':
             return
-        setting = (
-            "`extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`, which overrides `anthropic_thinking`"
-            if _extra_body_thinking(model_settings) is not None
-            else "`anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`"
-        )
-        raise UserError(
-            f'{self.model_name!r} does not support {setting}. '
-            "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+        remedy = "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+        if _extra_body_thinking(model_settings) is None:
+            raise UserError(
+                f"{self.model_name!r} does not support `anthropic_thinking={{'type': 'enabled', 'budget_tokens': ...}}`. "
+                f'{remedy}'
+            )
+        # The API returns a 400 for this, so raise that 400's category: `FallbackModel` and `except ModelAPIError`
+        # handle it as they handle the 400. The typed setting keeps raising `UserError` for backward compatibility.
+        raise ModelRequestRejectedError(
+            self.model_name,
+            f"{self.model_name!r} does not support `extra_body={{'thinking': {{'type': 'enabled', 'budget_tokens': ...}}}}`, "
+            f'which overrides `anthropic_thinking`. {remedy}',
         )
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
