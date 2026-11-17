@@ -353,8 +353,8 @@ sign-ins and tabs instead of creating a `'new'` context. It requires a CDP endpo
 to the agent, never an everyday browser, and set `allowed_domains` for untrusted pages. Only
 `http(s)`, `about:blank` and error-page tabs are adopted: any other tab (the browser's start page,
 extension pages, `file:`, `data:`, `blob:`) is left out whatever the policy; for a tracked tab that
-moves to one, the call that finds it returns an error naming the page and the agent stops using that
-tab, which stays open in the browser. Loaded tabs and frames must pass the egress policy, and new service-worker
+moves to one, the call that finds it returns an error naming the page by its scheme and host only, and
+the agent stops using that tab, which stays open in the browser. Loaded tabs and frames must pass the egress policy, and new service-worker
 registrations are refused; downloads follow the browser's settings.
 Playwright routes service-worker requests through the guards unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass

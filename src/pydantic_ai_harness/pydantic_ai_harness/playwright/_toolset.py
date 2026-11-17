@@ -835,6 +835,10 @@ _CREDENTIAL_VALUE = re.compile(
 )
 
 
+_OFF_WEB_PAGE_ORIGIN = re.compile(r'^([^:/?#]*:(?://[^/?#]*)?|).*', re.DOTALL)
+"""Keeps a URL's scheme and authority, and drops everything after them."""
+
+
 def _without_credentials(url: str) -> str:
     """Return `url` with userinfo removed and credential parameter values redacted.
 
@@ -1284,8 +1288,10 @@ class PlaywrightBrowserSession:
         The tab is neither navigated nor closed: in the default context it can be the
         profile owner's, so it stays open in the browser, unwired and unlisted, the way
         attaching leaves such a tab out. The active tab moves to another tracked one, or
-        to a new blank tab when none is left, so the next call works. When opening that
-        tab fails, the next call tries again rather than falling back to the dropped tab.
+        to a new blank tab when none is left, so the next call works. The blank tab opens
+        whenever the active pointer names a tab the session no longer tracks, so an open
+        that failed is retried on the next call rather than handing the dropped tab back,
+        whatever URL it shows by then.
         """
         left = [page for page in self.pages if self._is_off_web(page.url)]
         for page in left:
@@ -1302,14 +1308,12 @@ class PlaywrightBrowserSession:
                 page.remove_listener(event, handler)
             # The same bookkeeping as a tab that closed.
             self._on_page_closed(page)
-        if not self.pages and self.page is not None and self._is_off_web(self.page.url):
-            # The active pointer still names the dropped tab, from this call or one whose open failed.
+        if self.page is not None and self.page not in self.pages:
+            # The tab was dropped by this call or by one whose open failed, or it was the last one and closed.
             await self._bounded(self.open_tab())
         if not left:
             return
-        raise BrowserUnavailableError(
-            self._off_web_tab_message(', '.join(_without_credentials(page.url) for page in left))
-        )
+        raise BrowserUnavailableError(self._off_web_tab_message([page.url for page in left]))
 
     async def _validate_default_context_pages(self, pages: Sequence[_Page]) -> None:
         """Check loaded documents before listeners or tools can expose their contents.
@@ -1348,7 +1352,7 @@ class PlaywrightBrowserSession:
             return
         if top_level and self._is_off_web(frame.url):
             # Reached when the URL arrived during the wait above: the next call leaves the tab out.
-            raise BrowserUnavailableError(self._off_web_tab_message(_without_credentials(frame.url)))
+            raise BrowserUnavailableError(self._off_web_tab_message([frame.url]))
         document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
         if (reason := await self.decide(document)) is None:
             return
@@ -1427,10 +1431,15 @@ class PlaywrightBrowserSession:
         self.page = pages[0]
 
     @staticmethod
-    def _off_web_tab_message(urls: str) -> str:
-        """The error for a default-context tab found showing a page outside the web."""
+    def _off_web_tab_message(urls: Sequence[str]) -> str:
+        """The error for a default-context tab found showing a page outside the web.
+
+        Each page is named by its scheme and authority only: the rest of such a URL can
+        be the document itself, such as a `data:` URL's content or a `file:` path.
+        """
+        pages = ', '.join(_without_credentials(_OFF_WEB_PAGE_ORIGIN.sub(r'\1', url, count=1)) for url in urls)
         return (
-            f'A tab in the default CDP context is showing a page the agent cannot read: {urls}. The agent '
+            f'A tab in the default CDP context is showing a page the agent cannot read ({pages}). The agent '
             'stops using that tab, which stays open in the browser. Retry the call.'
         )
 

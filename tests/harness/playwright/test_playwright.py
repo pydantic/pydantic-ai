@@ -2566,10 +2566,20 @@ class TestPlaywrightBrowserLifecycle:
         assert browser is not None and len(browser.contexts[0].pages) == 9
         assert not start.closed and not start.handlers
 
+    @pytest.mark.parametrize(
+        ('url', 'named'),
+        [
+            ('chrome://version/', 'chrome://version'),
+            # The rest of the URL is the document, or a path on the host: only the scheme reaches the model.
+            ('data:text/html,<h1>PRIVATE_CONTENT</h1>', 'data:'),
+            ('file:///home/owner/PRIVATE_CONTENT.pdf', 'file://'),
+        ],
+        ids=['browser_page', 'data', 'file'],
+    )
     @pytest.mark.parametrize('tabs', [1, 2], ids=['last_tab', 'another_tab_left'])
     @pytest.mark.parametrize('policy', _POLICIES_FOR_BROWSER_PAGES)
     async def test_default_context_stops_using_an_active_tab_that_moved_off_the_web(
-        self, monkeypatch: pytest.MonkeyPatch, policy: EgressPolicy, tabs: int
+        self, monkeypatch: pytest.MonkeyPatch, policy: EgressPolicy, tabs: int, url: str, named: str
     ) -> None:
         page = _FakePage(url='https://example.com/', body='Allowed content')
         cm = _install_fake_driver(monkeypatch, page)
@@ -2578,9 +2588,9 @@ class TestPlaywrightBrowserLifecycle:
         async with session:
             tools = PlaywrightBrowserToolset[None](session=session)
             assert await tools.get_text() == 'Allowed content'
-            page.url = 'chrome://version/'
+            page.url = url
             result = await tools.get_text()
-            assert 'showing a page the agent cannot read: chrome://version/' in result
+            assert f'showing a page the agent cannot read ({named}).' in result and 'PRIVATE_CONTENT' not in result
             assert 'The agent stops using that tab, which stays open in the browser' in result
             assert 'blocked by the browser policy' not in result
             # The next call works: on the other tab, or on a blank one opened because none was left.
@@ -2590,7 +2600,7 @@ class TestPlaywrightBrowserLifecycle:
             context = browser.contexts[0]
             assert len(context.pages) == 2 and session.pages == [context.pages[1]]
         assert not page.closed and page.goto_calls == [] and not any(page.handlers.values())
-        assert page.url == 'chrome://version/'
+        assert page.url == url
 
     async def test_default_context_never_falls_back_to_a_dropped_tab_when_the_blank_tab_fails(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2616,7 +2626,8 @@ class TestPlaywrightBrowserLifecycle:
             page.url = 'chrome://version/'
             failed = await tools.get_text()
             assert 'has been closed' in failed and 'PROFILE_STATE' not in failed
-            # The dropped tab is the only page the session ever had, and the next call still does not use it.
+            # Back on the web by the next call, the dropped tab is still not used: the session stopped tracking it.
+            page.url = 'https://example.com/'
             assert await tools.get_text() == 'Hello body'
             assert attempts == 2 and session.page is not page
         assert not page.closed and page.goto_calls == [] and not any(page.handlers.values())
@@ -2637,7 +2648,7 @@ class TestPlaywrightBrowserLifecycle:
             shop.emit('popup', receipt)
             assert session.pages[-1] is receipt and receipt.handlers
             refused = await tools.tabs()
-            assert 'showing a page the agent cannot read: blob:https://example.com/receipt' in refused
+            assert 'showing a page the agent cannot read (blob:).' in refused
             listed = await tools.tabs()
             assert 'RECEIPT' not in listed and 'blob:' not in listed
             assert listed.startswith('0 (active): Shop -- https://example.com/') and '1: ' in listed
