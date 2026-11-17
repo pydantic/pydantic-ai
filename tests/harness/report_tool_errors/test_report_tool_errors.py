@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, DeferredToolRequests, ModelRetry
+from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -20,7 +20,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness import ReportToolErrors
+from pydantic_ai_harness import ReportToolErrors, ToolGuardrail
+from pydantic_ai_harness.guardrails import GuardrailResult, ToolResultInfo
 
 
 def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
@@ -89,15 +90,15 @@ class TestReportToolErrors:
         assert [outcome for _, _, outcome in _tool_results(result.all_messages())] == ['failed', 'failed', 'failed']
 
     def test_format_error_replaces_the_text(self) -> None:
-        def hide_internals(call: ToolCallPart, error: Exception) -> str:
-            return f'{call.tool_name} failed ({type(error).__name__})'
+        def hide_internals(tool_name: str, error: Exception) -> str:
+            return f'{tool_name} failed ({type(error).__name__})'
 
         result = _agent(_scripted([_divide('c1', 0)]), ReportToolErrors(format_error=hide_internals)).run_sync('go')
         assert _tool_results(result.all_messages()) == snapshot([('c1', 'divide failed (ZeroDivisionError)', 'failed')])
 
     def test_the_last_listed_instance_formats_the_error(self) -> None:
-        first = ReportToolErrors[None](format_error=lambda call, error: 'first')
-        last = ReportToolErrors[None](format_error=lambda call, error: 'last')
+        first = ReportToolErrors[None](format_error=lambda tool_name, error: 'first')
+        last = ReportToolErrors[None](format_error=lambda tool_name, error: 'last')
         result = _agent(_scripted([_divide('c1', 0)]), first, last).run_sync('go')
         assert _tool_results(result.all_messages()) == snapshot([('c1', 'last', 'failed')])
 
@@ -114,6 +115,17 @@ class TestReportToolErrors:
     def test_tool_failed_keeps_its_message(self) -> None:
         result = _agent(_scripted([ToolCallPart('refuse', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
         assert _tool_results(result.all_messages()) == snapshot([('c1', 'not today', 'failed')])
+
+    def test_tool_guardrail_result_guard_screens_the_reported_text(self) -> None:
+        def redact(ctx: RunContext[None], result: ToolResultInfo) -> GuardrailResult:
+            return GuardrailResult.replace(str(result.result).replace('by zero', '[redacted]'))
+
+        result = _agent(
+            _scripted([_divide('c1', 0)]), ReportToolErrors(), ToolGuardrail[None](result_guard=redact)
+        ).run_sync('go')
+        assert _tool_results(result.all_messages()) == snapshot(
+            [('c1', '`divide` raised ZeroDivisionError: division [redacted]', 'failed')]
+        )
 
     def test_approval_required_still_defers(self) -> None:
         result = _agent(_scripted([ToolCallPart('guarded', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')

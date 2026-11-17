@@ -868,8 +868,8 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
 
 ## ReportToolErrors
 
-In `on_tool_execute_error`, turns an exception a function tool raised into `ToolFailed`, so the model
-gets a failed tool result (`outcome='failed'`) and the run continues.
+Wraps the agent's toolset and turns an exception a function tool raises into `ToolFailed`, as if the
+tool raised it, so the model gets a failed tool result (`outcome='failed'`) and the run continues.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -899,13 +899,13 @@ print([part.content for part in parts if isinstance(part, ToolReturnPart)])
 #> ['`divide` raised ZeroDivisionError: division by zero']
 ```
 
-- `format_error(call, error) -> str` replaces the text, for example to hide internals.
+- `format_error(tool_name, error) -> str` replaces the text, for example to hide internals.
 - No limit of its own and the tool stays available; `UsageLimits` stop a model that keeps failing.
-- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution` keep their
-  meaning, and a tool that exhausts its `retries` still raises `UnexpectedModelBehavior` (`Coder`
-  reports those instead). Output tools and argument validation aren't affected.
-- Hooks run from the last capability listed to the first; with several `ReportToolErrors`, the last
-  listed formats the error. Emits no spans; core's tool span records the failure.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass
+  through, and a tool that exhausts its `retries` still raises `UnexpectedModelBehavior` (`Coder` reports
+  those instead). Output tools and argument validation aren't affected.
+- A `ToolGuardrail` `result_guard` screens the reported text; `on_tool_execute_error` hooks see a failed
+  call, not the exception. With several, the last listed formats the error. Emits no spans.
 
 ## RefineOutput
 

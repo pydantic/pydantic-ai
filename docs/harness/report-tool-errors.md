@@ -35,26 +35,27 @@ The failed call gets a tool result with `outcome='failed'` that names the tool, 
 `divide` raised ZeroDivisionError: division by zero
 ```
 
-To hide internals such as file paths or hostnames, pass `format_error`, which builds the text from the failed [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and the exception:
+To hide internals such as file paths or hostnames, pass `format_error`, which builds the text from the tool name and the exception:
 
 ```python
-from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness import ReportToolErrors
 
 
-def hide_internals(call: ToolCallPart, error: Exception) -> str:
-    return f'`{call.tool_name}` failed with {type(error).__name__}.'
+def hide_internals(tool_name: str, error: Exception) -> str:
+    return f'`{tool_name}` failed with {type(error).__name__}.'
 
 
 report = ReportToolErrors(format_error=hide_internals)
 ```
 
-## What it leaves alone
+## How it works
+
+`ReportToolErrors` wraps the agent's toolset and turns an exception from a tool into a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], as if the tool had raised it, so the rest of the agent treats the call like any other failed call:
 
 - The tool stays available and nothing counts the failures: the model decides whether to call it again. [`UsageLimits`](../agent.md#usage-limits), such as `request_limit`, stop a model that keeps calling a failing tool.
-- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred` and `SkipToolExecution` keep their usual meaning, since core doesn't pass them to `on_tool_execute_error`.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution` and `RunCancelled` pass through unchanged.
 - A tool that raises `ModelRetry` more often than its `retries` allow still ends the run with `UnexpectedModelBehavior`, so a tool's retry limit keeps working. [Coder](coder.md) reports those to the model instead.
-- Output tools and argument validation errors aren't affected.
+- Every function tool is covered, including MCP tools and tools other capabilities add. Output tools and argument validation errors aren't.
 
 To get the fail-fast behavior back, leave `ReportToolErrors` out of `capabilities`.
 
@@ -64,8 +65,9 @@ To get the fail-fast behavior back, leave `ReportToolErrors` out of `capabilitie
 
 ## Composition
 
-- Core runs `on_tool_execute_error` hooks from the last capability in `capabilities` to the first, passing each the error the one before it raised. A capability listed after `ReportToolErrors` can handle an error first. One listed before it gets the `ToolFailed`.
-- `ReportToolErrors` passes on a `ToolFailed`, `ModelRetry`, `ApprovalRequired`, `CallDeferred` or `SkipToolExecution` that an earlier hook raised, so with several on one agent, the last one listed formats the error.
+- A [Tool Guardrails](guardrails.md) `result_guard` screens the reported text like any failed tool result, so it can redact what the exception message reveals.
+- Capabilities' `on_tool_execute_error` hooks don't see the exception: they see a failed call, as for a tool that raised `ToolFailed`.
+- Several `ReportToolErrors` on one agent: the last one listed wraps the tools most closely, so it formats the error.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/report_tool_errors/).
 

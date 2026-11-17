@@ -6,36 +6,36 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     SkipToolExecution,
     ToolFailed,
-    UnexpectedModelBehavior,
 )
-from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 
 __all__ = ['ReportToolErrors']
 
-_PASS_THROUGH = (ToolFailed, ModelRetry, ApprovalRequired, CallDeferred, SkipToolExecution)
-"""Signals an `on_tool_execute_error` hook that ran before this one may raise, which keep their meaning."""
+_PASS_THROUGH = (ModelRetry, ToolFailed, ApprovalRequired, CallDeferred, SkipToolExecution, RunCancelled)
+"""Exceptions with their own meaning to core, which a tool raises on purpose or core already reports."""
 
 
-def _describe(call: ToolCallPart, error: Exception) -> str:
-    return f'`{call.tool_name}` raised {type(error).__name__}: {error}'
+def _describe(tool_name: str, error: Exception) -> str:
+    return f'`{tool_name}` raised {type(error).__name__}: {error}'
 
 
 @dataclass
 class ReportToolErrors(AbstractCapability[AgentDepsT]):
     """Report an exception a tool raises to the model as a failed tool result, so the run continues.
 
-    The model sees the tool name, the exception type and its message, and decides whether to call the tool again,
-    try another way, or give up. There is no limit of its own: the run's `UsageLimits` bound a model that keeps
-    calling a failing tool. `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred` and `SkipToolExecution`
-    keep their usual meaning, and a tool that runs out of retries still ends the run.
+    The exception becomes a `ToolFailed`, as if the tool had raised one itself. The model sees the tool name, the
+    exception type and its message, and decides whether to call the tool again, try another way, or give up. There
+    is no limit of its own: the run's `UsageLimits` bound a model that keeps calling a failing tool. `ModelRetry`,
+    `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution` and `RunCancelled` keep their usual meaning.
 
     ```python
     from pydantic_ai import Agent
@@ -45,24 +45,26 @@ class ReportToolErrors(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    format_error: Callable[[ToolCallPart, Exception], str] = _describe
-    """Build the text the model sees from the failed call and the exception, for example to hide internals.
+    format_error: Callable[[str, Exception], str] = _describe
+    """Build the text the model sees from the tool name and the exception, for example to hide internals.
 
     The default names the tool, the exception type and its message.
     """
 
-    async def on_tool_execute_error(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
-        error: Exception,
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        return _ReportErrorsToolset(toolset, self.format_error)
+
+
+@dataclass
+class _ReportErrorsToolset(WrapperToolset[AgentDepsT]):
+    format_error: Callable[[str, Exception], str]
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        """Raise `ToolFailed` with the formatted error, unless it is a signal or the tool ran out of retries."""
-        if isinstance(error, _PASS_THROUGH) or (
-            isinstance(error, UnexpectedModelBehavior) and isinstance(error.__cause__, ModelRetry)
-        ):
-            raise error
-        raise ToolFailed(self.format_error(call, error)) from error
+        try:
+            return await super().call_tool(name, tool_args, ctx, tool)
+        except _PASS_THROUGH:
+            raise
+        except Exception as error:
+            raise ToolFailed(self.format_error(name, error)) from error
