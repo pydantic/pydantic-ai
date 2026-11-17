@@ -10,6 +10,7 @@ the tests assert the request bodies the model sent, which a cassette matcher wou
 from __future__ import annotations as _annotations
 
 import json
+import os
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -66,6 +67,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic._threads import may_use_thread, thread_digest
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
+    from pydantic_ai.providers.gateway import gateway_provider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -189,18 +191,14 @@ async def test_create_then_continue(allow_model_requests: None, stream: bool):
     assert all(_BETA in betas for betas in api.betas)
 
 
-@pytest.mark.vcr
-@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
-async def test_create_then_continue_live(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture, stream: bool
-):
-    """Anthropic accepts a create request and then a continue request sent through `Agent`, streamed or not.
+async def _check_create_then_continue(model: AnthropicModel, request_capture: RequestCapture, stream: bool) -> None:
+    """Send a create request and then a continue request through `Agent`, and check what each sent and recorded.
 
-    Recorded against the live API, unlike the tests above. The continue request sends only the new prompt, with the
-    first response's ID in `thread` and without `system` or `tools`, and its response records the same fingerprint.
+    The continue request sends only the new prompt, with the first response's ID in `thread` and without `system` or
+    `tools`, and its response records the same fingerprint.
     """
     agent = Agent(
-        anthropic_model('claude-fable-5-2', capture=True),
+        model,
         instructions='Reply with one word.',
         tools=[get_weather],
         model_settings=AnthropicModelSettings(max_tokens=512, anthropic_thread=True),
@@ -224,6 +222,36 @@ async def test_create_then_continue_live(
     second_details = second_response.provider_details or {}
     assert second_details['thread_fingerprint'] == first_details['thread_fingerprint']
     assert second_response.history_digest is not None
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+async def test_create_then_continue_live(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture, stream: bool
+):
+    """Anthropic accepts a create request and then a continue request sent through `Agent`, streamed or not.
+
+    Recorded against the live API, unlike the tests above.
+    """
+    await _check_create_then_continue(anthropic_model('claude-fable-5-2', capture=True), request_capture, stream)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+async def test_create_then_continue_live_through_the_gateway(
+    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture, stream: bool
+):
+    """Pydantic AI Gateway forwards the threads beta and a create request and then a continue request, streamed or not.
+
+    Recorded through the live gateway, like `test_create_then_continue_live` against the Claude API.
+    """
+    provider = gateway_provider(
+        'anthropic',
+        api_key=gateway_api_key or 'test-api-key',
+        base_url=os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.info/proxy'),
+        http_client=request_capture.client,
+    )
+    await _check_create_then_continue(AnthropicModel('claude-fable-5-2', provider=provider), request_capture, stream)
 
 
 @pytest.mark.parametrize('stream', [False, True])
