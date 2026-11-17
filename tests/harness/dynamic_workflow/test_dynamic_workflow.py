@@ -829,10 +829,10 @@ async def test_output_not_matching_the_schema_is_retried() -> None:
         [
             [
                 {
-                    'type': 'value_error',
+                    'type': 'json_schema',
                     'loc': [],
                     'msg': """\
-Value error, $.count: True is not of type 'integer'
+$.count: True is not of type 'integer'
 $.score: 'x' is not of type 'number'
 $.ok: 1 is not of type 'boolean'
 $.note: 3 is not of type 'string', 'null'

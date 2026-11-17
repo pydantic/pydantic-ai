@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cas
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler, JsonValue
 from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import core_schema
+from pydantic_core import PydanticCustomError, core_schema
 from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
@@ -492,10 +492,14 @@ def _json_refs(node: JsonValue) -> Iterator[str]:
 
 
 def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    """A function that returns a value matching `json_schema` unchanged, and raises `ValueError` listing why one doesn't."""
+    """A function that returns a value matching `json_schema` unchanged, and raises a validation error listing why one doesn't.
+
+    The schema is checked and validated against using the JSON Schema draft its `$schema` names, or 2020-12 without one.
+    """
     try:
         from jsonschema import Draft202012Validator
         from jsonschema.exceptions import SchemaError
+        from jsonschema.validators import validator_for
         from referencing import Registry, Resource
         from referencing.exceptions import Unresolvable
         from referencing.jsonschema import DRAFT202012
@@ -504,8 +508,9 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
             '`StructuredDict(validate=True)` requires the `jsonschema` package. '
             'Install it with `pip install "pydantic-ai-slim[jsonschema]"`.'
         ) from e
+    validator_class = validator_for(json_schema, default=Draft202012Validator)
     try:
-        Draft202012Validator.check_schema(json_schema)
+        validator_class.check_schema(json_schema)
     except SchemaError as e:
         raise exceptions.UserError(f'`StructuredDict` got an invalid JSON schema: {e.message}') from e
     # An empty registry resolves references within the schema only, so a remote `$ref` is never fetched.
@@ -519,15 +524,15 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
             raise exceptions.UserError(
                 f'`StructuredDict(validate=True)` only resolves references within the schema, and {ref!r} is not one.'
             ) from e
-    schema_validator = Draft202012Validator(json_schema, registry=registry)
+    schema_validator = validator_class(json_schema, registry=registry)
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
         errors = itertools.islice(
-            schema_validator.iter_errors(value),  # pyright: ignore[reportUnknownMemberType]
+            schema_validator.iter_errors(value),
             _MAX_JSON_SCHEMA_ERRORS,
         )
         if messages := [f'{error.json_path}: {error.message}' for error in errors]:
-            raise ValueError('\n'.join(messages))
+            raise PydanticCustomError('json_schema', '{errors}', {'errors': '\n'.join(messages)})
         return value
 
     return validate

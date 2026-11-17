@@ -3131,10 +3131,10 @@ def test_structured_dict_validate_retries_output_not_matching_the_schema():
         [
             [
                 {
-                    'type': 'value_error',
+                    'type': 'json_schema',
                     'loc': [],
                     'msg': """\
-Value error, $.age: -1 is less than the minimum of 0
+$.age: -1 is less than the minimum of 0
 $: 'name' is a required property
 $: Additional properties are not allowed ('nickname' was unexpected)\
 """,
@@ -3177,6 +3177,22 @@ def test_structured_dict_validate_resolves_local_refs_and_rejects_others(monkeyp
     for ref in ['http://127.0.0.1:9/schema.json', '#/$defs/Missing']:
         with pytest.raises(UserError, match=re.escape(f'only resolves references within the schema, and {ref!r}')):
             StructuredDict({'type': 'object', 'properties': {'a': {'$ref': ref}}}, validate=True)
+
+
+@requires_jsonschema
+def test_structured_dict_validate_uses_the_draft_the_schema_names():
+    PairDict = StructuredDict(
+        {
+            '$schema': 'http://json-schema.org/draft-07/schema#',
+            'type': 'object',
+            'properties': {'pair': {'type': 'array', 'items': [{'type': 'string'}, {'type': 'integer'}]}},
+        },
+        validate=True,
+    )
+    adapter = TypeAdapter(PairDict)
+    assert adapter.validate_python({'pair': ['a', 1]}) == {'pair': ['a', 1]}
+    with pytest.raises(ValidationError, match=re.escape("$.pair[1]: 'b' is not of type 'integer'")):
+        adapter.validate_python({'pair': ['a', 'b']})
 
 
 @requires_jsonschema
