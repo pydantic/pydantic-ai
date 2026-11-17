@@ -1173,6 +1173,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_clai2.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
+| `sandbox` | `pydantic_clai2.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a cloud sandbox whose provider's proxy holds your GitHub token; see [Cloud sandboxes](docs/reference.md#cloud-sandboxes-sandbox) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
