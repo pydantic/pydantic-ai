@@ -319,8 +319,10 @@ Playwright leaves the browser's download and emulation settings as they are.
 Playwright routes service-worker requests through the request guards, including
 those of workers registered before attachment, unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before
-attachment bypass the guards, and a page loaded before attachment can still
-register a worker until it navigates.
+attachment bypass the guards, and so does a new WebSocket opened through the
+browser's own `WebSocket` constructor if script that ran before attachment kept
+a reference to it. A page loaded before attachment can still register a worker
+until it navigates.
 
 ### Provisioning a browser per run
 

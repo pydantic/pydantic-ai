@@ -358,7 +358,8 @@ tab, which stays open in the browser. Loaded tabs and frames must pass the egres
 registrations are refused; downloads follow the browser's settings.
 Playwright routes service-worker requests through the guards unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass
-them, and a page loaded before attachment can register a worker until it navigates.
+them, as does a new WebSocket opened through the native `WebSocket` constructor that script running
+before attachment kept, and a page loaded before attachment can register a worker until it navigates.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,

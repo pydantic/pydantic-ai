@@ -265,7 +265,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     settings. Requests from workers registered before attachment go through the
     guards too, unless `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` turns off
     Playwright's worker routing, and a document loaded before attachment can still
-    register one until it navigates.
+    register one until it navigates. Script that ran before attachment can also
+    keep the native `WebSocket` constructor, and a socket it opens through it
+    bypasses the guards.
     """
 
     id: str | None = 'playwright_browser'
