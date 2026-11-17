@@ -1,5 +1,0 @@
-{
-  "against": "v2.68.0",
-  "reason": "Adds `tool_call_ids_are_response_scoped` (#13128) and the `supports_compaction_on_demand`, `compaction_instructions` and `compaction_result_readable` defaults (#11581) to `DEFAULT_PROFILE`; every existing entry is unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11581"
-}

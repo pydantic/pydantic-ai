@@ -71,6 +71,7 @@ from pydantic_ai_harness.compaction._shared import (
     is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
+    require_trigger,
     resolve_token_trigger,
     split_legacy_memory,
     validate_token_trigger,
@@ -787,8 +788,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     id: str | None = 'summarizing_compaction'
 
     def __post_init__(self) -> None:
-        if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
-            raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
@@ -1026,6 +1025,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         receipt_message = ModelRequest(parts=[make_receipt_part(text)])
         anchor = deduped.index(summary_message)
         return [*deduped[: anchor + 1], receipt_message, *deduped[anchor + 1 :]]
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject a registration without a trigger."""
+        require_trigger('SummarizingCompaction', self.max_messages, self.max_tokens, self.max_fraction)
 
     async def before_model_request(
         self,

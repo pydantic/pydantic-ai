@@ -20,7 +20,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.github import SETUP
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.gh_cli import INSTALL, GhLogin, GhToken, gh_command, gh_host, gh_token, start_login
+from pydantic_clai2.gh_cli import INSTALL, GhLogin, GhToken, gh_command, gh_host, gh_token, gh_user, start_login
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus import dialogs
@@ -192,6 +192,13 @@ async def test_gh_token_ignores_token_variables(monkeypatch: pytest.MonkeyPatch,
     assert await token(None) == 'gho_switched'
 
 
+def test_gh_user(fake_gh: FakeGh) -> None:
+    assert gh_user('github.com') is None
+    fake_gh.sign_in()
+    assert gh_user('github.com') == 'octocat'
+    assert fake_gh.calls()[-1] == 'api --hostname github.com user --jq .login'
+
+
 @pytest.mark.parametrize(
     ('url', 'host'),
     [(GITHUB_MCP_URL, 'github.com'), (GHE, 'octocorp.ghe.com'), ('https://mcp.example.com/github', 'mcp.example.com')],
@@ -207,6 +214,14 @@ def test_gh_command_finds_gh_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyP
     executable.write_text('#!/bin/sh\n')
     executable.chmod(0o755)
     assert gh_command() == [str(executable)]
+
+
+def test_a_stalled_gh_api_fails_instead_of_hanging(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:
+    monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.3)
+    fake_gh.sign_in()
+    fake_gh.hang_on_api()
+    with pytest.raises(UserError, match=r'^GitHub did not answer gh within 0\.3 seconds\.$'):
+        gh_user('github.com')
 
 
 def test_a_stalled_gh_auth_token_fails_instead_of_hanging(monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh) -> None:

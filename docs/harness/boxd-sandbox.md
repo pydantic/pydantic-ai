@@ -124,7 +124,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs `BOXD_API_KEY` too. Pass `workspace='new'` to start a fresh machine even when the message history names one.
 
-`org`, `snapshot`, `vcpu`, and `auto_suspend_timeout` only shape a new machine; `working_dir` and `env` apply to every command, including after you reattach. A new machine gets `working_dir` created for it; on an attached machine it must already exist, or commands fail with `WorkspaceError`.
+`org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, and `secrets` only shape a new machine; `working_dir` and `env` apply to every command, including after you reattach. A new machine gets `working_dir` created for it; on an attached machine it must already exist, or commands fail with `WorkspaceError`.
 
 A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from the environment, not the machine, and a later operation opens a new one. A `client=` you passed is never closed.
 
@@ -189,6 +189,40 @@ async def run_in_prepared_machine() -> str:
 
 The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
 
+## Keep a token out of the machine
+
+Pass `secrets` to give a new machine boxd secrets by name. If a secret is tied to domains, the machine gets only a placeholder starting with `bxds_`, and boxd swaps in the real value as requests leave for those domains. Create the secret first, since boxd won't create a machine that names a missing one:
+
+```python {test="skip"}
+import boxd
+
+from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
+
+
+async def set_github_secret(token: str) -> None:  # a fine-grained GitHub token, as below
+    async with boxd.AsyncBoxd() as client:
+        await client.secrets.set(
+            'GH_TOKEN',
+            token,
+            scope='private-unattached',  # your own, reaching only machines whose spec names it
+            domains=['github.com', 'api.github.com', 'uploads.github.com'],
+        )
+
+
+sandbox = BoxdSandbox(secrets=['GH_TOKEN'])
+```
+
+`gh` then works as the token's owner, while `echo $GH_TOKEN` in the machine prints the placeholder. For `git push`, have git send the placeholder as its password:
+
+```bash
+git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+```
+
+- Only HTTPS requests get the real value. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- boxd swaps the value into the whole request, body included, so a command can still write the real token into something GitHub stores, such as an issue or a gist, and read it back. Use a fine-grained token that reaches only the repositories the agent works on and can't create gists, not your `gh auth token`.
+- boxd turns the real value back into the placeholder in responses, but may miss an encoded copy. List only hosts that never send request headers back.
+- An attached machine keeps the secrets it was created with. Calling `secrets.set` again swaps the value right away, and the placeholder stays the same.
+
 ## Clean up
 
 Pydantic AI never stops or deletes the machine. boxd suspends, and later hibernates, a machine that has had no network activity for as long as your organization's defaults say (set `auto_suspend_timeout=` in seconds to change suspending for new machines, or `0` to turn it off). `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines an idle-destroy or delete-after timer; `boxd machine get` shows a machine's timers. Delete it with the ref you stored:
@@ -247,6 +281,9 @@ Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the 
 | `auto_suspend_timeout` | Seconds without network activity before boxd suspends a new machine; `0` disables it. Default: `None`, the organization's default. A command wakes a suspended machine. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the machine's own (`/home/boxd`, where commands run as non-root `boxd`); set a project directory, or use relative paths for portable code. Created on a new machine; on an attached machine it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the machine. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
 
 boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 
