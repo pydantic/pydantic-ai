@@ -1,6 +1,7 @@
 """The opt-in ripgrep-backed `list_files` and `grep` tools."""
 
 import os
+import shlex
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -332,6 +333,19 @@ class TestGrep:
         finally:
             locked.chmod(0o644)
             locked_dir.chmod(0o755)
+
+    @pytest.mark.skipif(os.name == 'nt', reason='a POSIX shell script stands in for `rg`')
+    async def test_unreadable_path_is_read_up_to_its_error(self, workspace: Path) -> None:
+        # The reason follows the last `: `; the path keeps any `: ` before it, unless `rg` names an
+        # entry under the path that failed.
+        lines = [
+            'rg: a: b.py: Permission denied (os error 13)',
+            'rg: locked: IO error for operation on locked/c: d.py: Permission denied (os error 13)',
+        ]
+        fake = fake_rg(workspace, f"#!/bin/sh\nprintf '%s\\n' {shlex.join(lines)} >&2\nexit 2\n")
+        assert await toolset(workspace).grep('import', workspace=fake) == (
+            'No matches found.\n[2 paths could not be read (Permission denied): a: b.py, locked]'
+        )
 
     @pytest.mark.skipif(os.name == 'nt', reason='POSIX symlinks')
     async def test_symlink_outside_root_is_dropped(
