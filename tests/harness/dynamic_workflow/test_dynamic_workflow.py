@@ -6,7 +6,7 @@ import asyncio
 import functools
 import importlib.util
 import re
-import sys
+from importlib.machinery import ModuleSpec
 from typing import Any
 
 import pytest
@@ -565,7 +565,12 @@ finding = await researcher(task='x', output_schema={
 
 
 def test_allow_output_schema_requires_jsonschema(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, 'jsonschema', None)
+    find_spec = importlib.util.find_spec
+
+    def find_spec_without_jsonschema(name: str, package: str | None = None) -> ModuleSpec | None:
+        return None if name == 'jsonschema' else find_spec(name, package)
+
+    monkeypatch.setattr(importlib.util, 'find_spec', find_spec_without_jsonschema)
     with pytest.raises(
         UserError,
         match=re.escape('`WorkflowAgent(allow_output_schema=True)` validates outputs with the `jsonschema` package'),
