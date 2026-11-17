@@ -6,6 +6,8 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
+import re
+import string
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -225,21 +227,81 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
     return []
 
 
+_LATIN_OR_CYRILLIC = re.compile(r'[\u00c0-\u024f\u0400-\u04ff]')
+"""Accented Latin and Cyrillic letters, which tokenize denser than other non-ASCII text."""
+
+_ASTRAL = re.compile(r'[\U00010000-\U0010ffff]')
+"""Code points outside the BMP (emoji, CJK Extension B and later): about three tokens each."""
+
+_ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
+"""A base64 or base64url-like run, counted only when it mixes digits and both cases.
+
+That rules out paths and identifiers, and leaves lowercase hex (hashes, UUIDs) at the prose rate.
+"""
+
+
+def _dense_surcharge(text: str) -> float:
+    """Tokens *text* costs beyond `CHARS_PER_TOKEN`, for content that tokenizes denser than English prose.
+
+    Rates are set at or above cl100k_base counts for Latin, Cyrillic, Greek, Arabic, CJK, base64 and
+    JSON: an overcount compacts a little early, an undercount sends a request the provider rejects.
+    cl100k_base spends more than the one-token rate on Hebrew and Thai (up to ~1.15 tokens per
+    character), Indic scripts (1.3 to 1.5), Georgian, Armenian and Myanmar (~2) and Ethiopic (~2.3,
+    on o200k_base too). o200k_base spends under 0.5 on most of these, so charging cl100k_base's rate
+    would overcount newer tokenizers several times over; a `tokenizer` measures them exactly.
+
+    - Accented Latin and Cyrillic cost 1.5 characters per token (Cyrillic measures ~2), code points
+      outside the BMP three tokens each, and other non-ASCII characters a token each.
+    - Encoded runs cost 1.25 characters per token (random base64 measures ~1.4).
+    - Of the rest, the baseline covers a 12% share of JSON punctuation and an 8% share of digits, which
+      prose and code stay under; each one beyond that costs ~1.25 and 0.5 tokens. Charging the surplus
+      rather than switching on a density threshold means appended prose never lowers the estimate: the
+      surplus shrinks by at most 0.14 tokens per added character, against the baseline's 0.25. Text
+      under 32 characters skips this, so a reference like `See file 1a2b3c.` stays at the baseline.
+    """
+    baseline = 1 / CHARS_PER_TOKEN
+    ascii_chars = len(text) if text.isascii() else len(text.encode('ascii', 'ignore'))
+    non_ascii = len(text) - ascii_chars
+    latin_or_cyrillic = len(text) - len(_LATIN_OR_CYRILLIC.sub('', text)) if non_ascii else 0
+    astral = len(text) - len(_ASTRAL.sub('', text)) if non_ascii else 0
+    runs = [
+        run
+        for run in _ENCODED_RUN.findall(text)
+        if any(c.isdigit() for c in run) and any(c.isupper() for c in run) and any(c.islower() for c in run)
+    ]
+    encoded = sum(map(len, runs))
+    surcharge = (
+        latin_or_cyrillic * (1 / 1.5 - baseline)
+        + astral * (3 - baseline)
+        + (non_ascii - latin_or_cyrillic - astral) * (1 - baseline)
+        + encoded * (1 / 1.25 - baseline)
+    )
+    if len(text) < 32:
+        return surcharge
+    plain = len(text) - encoded
+    punctuation = sum(text.count(c) for c in '{}[],:"')
+    digits = sum(text.count(c) - sum(run.count(c) for run in runs) for c in string.digits)
+    return (
+        surcharge
+        + max(0, punctuation - 0.12 * plain) * (1.25 - baseline)
+        + max(0, digits - 0.08 * plain) * (0.5 - baseline)
+    )
+
+
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
     """Approximate the token count of a single string.
 
-    Uses *tokenizer* when given, otherwise the ~4 characters-per-token heuristic.
+    Uses *tokenizer* when given, otherwise ~4 characters per token, priced up for non-ASCII
+    scripts, base64-like runs and compact JSON (see the compaction docs' Triggers section).
     """
-    if tokenizer is not None:
-        return tokenizer(text)
-    return len(text) // CHARS_PER_TOKEN
+    return _count_segments([text], tokenizer)
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
+    """Token count of text segments: per segment with *tokenizer* or the text estimate, truncated once over the sum."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
+    return int(sum(len(s) / CHARS_PER_TOKEN + _dense_surcharge(s) for s in segments))
 
 
 def estimate_token_count(
@@ -251,7 +313,8 @@ def estimate_token_count(
     Args:
         messages: Messages to count tokens for.
         tokenizer: Optional callable that returns the token count for a string.
-            When `None`, falls back to a ~4 characters-per-token heuristic.
+            When `None`, uses ~4 characters per token, priced up for non-ASCII scripts,
+            base64-like runs and compact JSON (see the compaction docs' Triggers section).
     """
     return _count_segments(_collect_text(messages), tokenizer)
 
@@ -271,13 +334,13 @@ def estimate_context_tokens(
     that response. A response whose usage sums several model requests re-counts the context of each,
     so it anchors on the input tokens of the one that measures the context instead: the first
     request of a Google long decode, the last sampling pass of an Anthropic response that reported
-    its passes. Only the messages after the anchor are estimated with the character
-    heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
-    covers; when the instructions changed since the anchor, the estimate swaps the old set for
-    the new one rather than adding the new set on top. Tool schemas named by availability
-    deltas after the anchor are estimated from the pending request parameters. This is what makes the estimate robust where the pure heuristic
-    is not: token-dense content (minified JSON, base64, non-Latin scripts) and the tool
-    definitions the heuristic cannot see at all are both inside the provider's number.
+    its passes. Only the messages after the anchor are estimated with *tokenizer* or ~4
+    characters per token, priced up for non-ASCII scripts, base64-like runs and compact JSON,
+    without re-counting instructions, which the anchor already covers; when the instructions
+    changed since the anchor, the estimate swaps the old set for the new one rather than adding
+    the new set on top. Tool schemas named by availability deltas after the anchor are estimated
+    from the pending request parameters. The tool definitions the heuristic cannot see, and the
+    exact count of token-dense content before the anchor, are both inside the provider's number.
 
     Without provider usage, the history's message text falls back to `estimate_token_count`,
     while schemas named by availability deltas are still estimated from the pending request
@@ -320,14 +383,15 @@ def estimate_message_tokens(
 ) -> list[int]:
     """Tokens each message adds to a request, measured with provider-reported usage where the history has it.
 
-    The text estimate (`tokenizer`, or ~4 characters per token) misses what a provider counts but
-    does not return as text, such as thinking kept as an empty part with a signature, and it
-    underestimates token-dense content. Usage measures both. A response counts at least its
-    `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
-    earlier one is exactly what the earlier response and the requests after it added, so those
-    messages share that difference in proportion to their estimates. Where the history did not grow
-    between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last. A response
+    The text estimate (`tokenizer`, or ~4 characters per token priced up for dense text) misses
+    what a provider counts but does not return as text, such as thinking kept as an empty part
+    with a signature, and only approximates token-dense content. Usage measures both. A response
+    counts at least its `output_tokens`. Between two responses that carry usage, the later
+    `input_tokens` minus the earlier one is exactly what the earlier response and the requests
+    after it added, so those messages share that difference in proportion to their estimates.
+    Where the history did not grow between two such responses, as across a compaction, the
+    difference measures nothing and the estimates stand; so do messages before the first such
+    response and after the last. A response
     whose usage sums several model requests enters the difference with its input tokens as
     `context_input_tokens` reads them, since its summed `input_tokens` re-count each request's context.
     An Anthropic last pass also read that response's own earlier passes, so the difference credits
@@ -630,7 +694,7 @@ async def compact_with_span(
         messages: The pre-compaction messages, measured for the `*_before` attributes.
         compact: Zero-argument async callable returning the compacted message list.
         tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
-            uses the same ~4 characters-per-token heuristic as `estimate_token_count`.
+            uses the same text estimate as `estimate_token_count`.
         model_requested: Whether the model asked for this compaction, recorded as
             `compaction.model_requested` (set only when `True`).
         background: What became of a background compaction, recorded as `compaction.background`
@@ -1175,24 +1239,32 @@ def rebuild_with_cleared(
     so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
+    contents = dict.fromkeys(clear_return_ids, placeholder)
     return [
-        _clear_returns(message, clear_return_ids, placeholder)
+        _clear_returns(message, contents)
         if isinstance(message, ModelRequest)
         else _clear_inputs(message, clear_input_ids)
         for message in messages
     ]
 
 
-def _clear_returns(message: ModelRequest, clear_return_ids: set[str], placeholder: str) -> ModelRequest:
-    """*message* with the returns in *clear_return_ids* blanked, or *message* itself when none changes."""
+def replace_returns(messages: Sequence[ModelMessage], contents: Mapping[str, str]) -> list[ModelMessage]:
+    """Return *messages* with each tool result in *contents*, keyed by tool call ID, replaced by its content.
+
+    Like `rebuild_with_cleared`, but with a replacement per result, and the tool calls left as they are.
+    """
+    return [_clear_returns(message, contents) if isinstance(message, ModelRequest) else message for message in messages]
+
+
+def _clear_returns(message: ModelRequest, contents: Mapping[str, str]) -> ModelRequest:
+    """*message* with the returns in *contents* replaced, or *message* itself when none changes."""
     request_parts: list[ModelRequestPart] = []
     changed = False
     for part in message.parts:
+        content = contents.get(part.tool_call_id) if isinstance(part, ToolReturnPart) else None
         cleared = (
-            cleared_return(part, placeholder)
-            if isinstance(part, ToolReturnPart)
-            and part.tool_call_id in clear_return_ids
-            and str(part.content) != placeholder
+            cleared_return(part, content)
+            if isinstance(part, ToolReturnPart) and content is not None and str(part.content) != content
             else None
         )
         if cleared is not None:

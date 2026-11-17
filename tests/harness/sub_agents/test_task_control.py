@@ -1,6 +1,7 @@
 """`SubAgents(task_control=TaskControl())`: background tasks, task-control tools, questions, events, remote agents.
 
-Every scenario runs real agent runs on `FunctionModel`/`TestModel`, in process.
+Scenarios run real agent runs on `FunctionModel`/`TestModel`, in process, except where a test needs a hand-built
+history.
 """
 
 from __future__ import annotations
@@ -55,11 +56,13 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness.sub_agents import (
+    MAX_EVENT_TEXT_CHARS,
     AgentCreatedEvent,
     DelegationReports,
+    DelegationSnapshot,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
@@ -759,6 +762,237 @@ class TestSubAgentsTaskControl:
         task_id = task_id_in(returns[1])
         assert returns[2] == f"- {task_id} (researcher, running, background, resumable): '{'x' * 80}...'"
 
+    async def test_check_task_shows_a_running_task_without_its_result(self) -> None:
+        gate = Gate()
+        working = ModelResponse(parts=[TextPart('Looking into it.'), ToolCallPart('pause', {})])
+        slow = Agent(scripted(working, text('final answer')), tools=[gate.pause])
+
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await gate.entered.wait()
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            gate.opened.set()
+            return text('Waiting.')
+
+        def check_again(messages: list[ModelMessage]) -> ModelResponse:
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[0]))
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Slow.', background=True),
+                check,
+                release,
+                check_again,
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(slow))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        returns = tool_returns(result.all_messages())
+        task_id = task_id_in(returns[0])
+        running = returns[1].splitlines()
+        assert running[0].startswith(f'Task {task_id} (researcher) has been running for ')
+        assert running[0].endswith('s, with 1 model request.')
+        assert running[1:] == ['Recent tool calls: pause({})', "Latest text, not its final result: 'Looking into it.'"]
+        assert 'final answer' not in returns[1]
+        assert returns[2].startswith(f'Task {task_id} (researcher) finished (ok) after ')
+        assert returns[2].endswith('s. Its report is delivered separately.')
+        assert 'final answer' not in returns[2]
+
+    async def test_check_task_on_a_finished_foreground_task(self) -> None:
+        def check(messages: list[ModelMessage]) -> ModelResponse:
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Find x.'), check, echo_last_return),
+            capabilities=[controlled()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('s. Its result went to the call that started it.')
+        assert 'child output' not in result.output
+
+    async def test_check_task_on_a_task_with_no_response_yet(self) -> None:
+        started, opened = anyio.Event(), anyio.Event()
+
+        async def blocked(messages: list[ModelMessage]) -> ModelResponse:
+            started.set()
+            await opened.wait()
+            return text('done')
+
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await started.wait()
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Slow.', background=True),
+                check,
+                release,
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(Agent(scripted(blocked))))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        checked = tool_returns(result.all_messages())[1]
+        assert '\n' not in checked
+        assert checked.endswith('s, with 0 model requests.')
+
+    async def test_check_task_on_a_resumed_task_shows_only_its_new_run(self) -> None:
+        started, opened = anyio.Event(), anyio.Event()
+
+        async def blocked(messages: list[ModelMessage]) -> ModelResponse:
+            started.set()
+            await opened.wait()
+            return text('second answer')
+
+        def resume(messages: list[ModelMessage]) -> ModelResponse:
+            task_id = task_id_in(tool_returns(messages)[-1])
+            return call('delegate_task', agent_name='researcher', task='Again.', resume=task_id, background=True)
+
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await started.wait()
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='First.'),
+                resume,
+                check,
+                release,
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(Agent(scripted(text('first answer'), blocked))))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        checked = tool_returns(result.all_messages())[2]
+        assert checked.endswith('s, with 0 model requests.')
+        assert 'first answer' not in checked
+
+    @pytest.mark.parametrize(
+        ('output', 'latest_text'),
+        # Text next to an output tool call is not the result, but it streams as one when text output is allowed.
+        [('text', None), ('tool', 'Done looking.'), ('text_or_tool', None)],
+    )
+    async def test_a_snapshot_never_shows_a_result_its_listeners_are_processing(
+        self, output: str, latest_text: str | None
+    ) -> None:
+        snapshots: list[DelegationSnapshot] = []
+        owners: list[DelegationTasks] = []
+
+        @dataclass
+        class Redactor(AbstractCapability[object]):
+            @on_event(TaskCompletedEvent)
+            async def redact(self, ctx: RunContext[object], event: TaskCompletedEvent) -> None:
+                owner = DelegationTasks.current()
+                assert owner is not None
+                owners.append(owner)
+                snapshots.append(owner.snapshot(event.task_id))
+                event.output = '[redacted]'
+
+        @dataclass
+        class Answer:
+            answer: str
+
+        finishing = ModelResponse(parts=[TextPart('Done looking.'), ToolCallPart('final_result', {'answer': 'secret'})])
+        child_agent: Agent[None, Answer] | Agent[None, str] | Agent[None, str | Answer] = (
+            Agent(scripted(text('secret')))
+            if output == 'text'
+            else Agent(scripted(finishing), output_type=Answer)
+            if output == 'tool'
+            else Agent(scripted(finishing), output_type=[str, Answer])
+        )
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Find it.'), echo_last_return),
+            capabilities=[controlled(researcher(child_agent)), Redactor()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        [snapshot] = snapshots
+        assert snapshot.usage is not None
+        assert (snapshot.status, snapshot.usage.requests) == ('running', 1)
+        assert (snapshot.latest_text, snapshot.recent_tool_calls) == (latest_text, [])
+        assert result.output.endswith('[redacted]')
+        # A settled task's history is in its file, not in the owner's view of the run.
+        assert owners[0].snapshot(snapshot.task_id).usage is None
+
+    async def test_check_task_on_a_durable_task_shows_no_activity(self) -> None:
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('slow')), tools=[gate.pause])
+
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await gate.entered.wait()
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            gate.opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Slow.', background=True),
+                check,
+                release,
+                text('Done.'),
+            ),
+            name='durable',
+            capabilities=[controlled(researcher(slow)), TemporalLikeDurability()],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        checked = tool_returns(result.all_messages())[1]
+        assert checked.endswith(
+            's. No activity is visible: it runs elsewhere, or has not made its first model request yet.'
+        )
+
+    async def test_a_snapshot_is_bounded(self) -> None:
+        """Bounds that need a hand-built history: several runs, more tool calls than are kept, and long text."""
+        task = DelegationTask(
+            id='t',
+            agent_name='researcher',
+            prompt='Go.',
+            conversation_id='c',
+            pending_question='?' * 5000,
+            run_id='current',
+            messages=[
+                ModelResponse(parts=[TextPart('earlier run')], usage=RequestUsage(input_tokens=99), run_id='earlier'),
+                ModelResponse(
+                    parts=[ToolCallPart(f'tool{i}', {'arg': 'x' * 100}) for i in range(7)],
+                    usage=RequestUsage(input_tokens=10, output_tokens=2),
+                    run_id='current',
+                ),
+                ModelResponse(
+                    parts=[TextPart('y' * 5000)], usage=RequestUsage(input_tokens=20, output_tokens=3), run_id='current'
+                ),
+            ],
+        )
+        owner = DelegationTasks()
+        owner.records[task.id] = task
+        unseen = owner.snapshot(task.id)
+        assert (unseen.usage, unseen.recent_tool_calls, unseen.latest_text) == (None, [], None)
+        owner.follow(task, frozenset())
+        snapshot = owner.snapshot(task.id)
+        assert snapshot.usage is not None
+        assert snapshot.usage == RunUsage(requests=2, tool_calls=7, input_tokens=30, output_tokens=5)
+        assert [call.tool_name for call in snapshot.recent_tool_calls] == [f'tool{i}' for i in range(2, 7)]
+        assert snapshot.recent_tool_calls[0].args == f'{{"arg":"{"x" * 72}...'
+        assert snapshot.latest_text == 'y' * MAX_EVENT_TEXT_CHARS
+        assert snapshot.pending_question == '?' * MAX_EVENT_TEXT_CHARS
+        assert snapshot.status == 'running'
+
     async def test_list_tasks_is_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr('pydantic_ai_harness.sub_agents._toolset._MAX_LISTED_TASKS', 3)
 
@@ -1274,6 +1508,36 @@ class TestRemoteSubAgents:
         assert seen[-1] == 'Hurry.'
         assert result.output.endswith('(ok):\nsecond')
         assert len(recorder.of(TaskResumedEvent)) == 1
+
+    async def test_check_task_on_a_remote_task_shows_no_activity(self) -> None:
+        transport = InMemoryTransport()
+        gate = Gate()
+        remote = Agent(scripted(call('pause'), text('done')), name='remote', tools=[gate.pause])
+        worker = SubAgentWorker(agents={'remote': remote}, transport=transport, deps=None)
+
+        async def check(messages: list[ModelMessage]) -> ModelResponse:
+            await gate.entered.wait()
+            return call('check_task', task_id=task_id_in(tool_returns(messages)[-1]))
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            gate.opened.set()
+            return text('Waiting.')
+
+        parent, _ = remote_parent(
+            transport,
+            call('delegate_task', agent_name='remote', task='Work.', background=True),
+            check,
+            release,
+            text('Done.'),
+        )
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                result = await parent.run('Go.')
+        checked = tool_returns(result.all_messages())[1]
+        assert checked.endswith(
+            's. No activity is visible: it runs elsewhere, or has not made its first model request yet.'
+        )
+        assert ', with ' not in checked
 
     async def test_a_remote_task_can_be_cancelled_softly_or_by_force(self) -> None:
         transport = InMemoryTransport()
@@ -2493,12 +2757,15 @@ class TestTaskControlEdges:
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert not cancelled.forced
 
-    async def test_list_tasks_shows_a_preview_of_a_long_question(self) -> None:
+    async def test_list_and_check_task_show_a_preview_of_a_long_question(self) -> None:
         question = 'Which? ' * 40
         asker = Agent(scripted(call('ask_parent', question=question), lambda messages: text('ok')))
 
         def listing(messages: list[ModelMessage]) -> ModelResponse:
-            return call('list_tasks')
+            task_id = task_id_in(tool_returns(messages)[0])
+            return ModelResponse(
+                parts=[ToolCallPart('list_tasks', {}), ToolCallPart('check_task', {'task_id': task_id})]
+            )
 
         def answer(messages: list[ModelMessage]) -> ModelResponse:
             return call('answer_task', task_id=task_id_in(tool_returns(messages)[0]), answer='this')
@@ -2515,9 +2782,11 @@ class TestTaskControlEdges:
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
-        waiting = tool_returns(result.all_messages())[1].splitlines()[1]
+        returns = tool_returns(result.all_messages())
         # The question itself came whole as its own message.
-        assert waiting == f'  Waiting for an answer to: {question[:80] + "..."!r}'
+        assert returns[1].splitlines()[1] == f'  Waiting for an answer to: {question[:80] + "..."!r}'
+        assert returns[2].splitlines()[-1] == f'Waiting for an answer to: {question[:80] + "..."!r}'
+        assert 'ask_parent' not in returns[2]
         assert any(question in text_ for text_ in task_texts(result.all_messages()))
 
     def test_a_toolset_without_the_capability_refuses_what_needs_it(self) -> None:

@@ -1105,7 +1105,7 @@ class HeldWriteWorkspace:
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        return None
+        return None  # pragma: no cover
 
     async def working_dir(self) -> str:
         return '/work'
@@ -1150,35 +1150,59 @@ class HeldWriteWorkspace:
 class TestConcurrentChanges:
     """Calls changing one file take turns, so none is computed from content another is about to replace."""
 
-    async def test_parallel_edit_calls_to_one_file_both_land(self) -> None:
-        """Two `edit_file` calls in one model response, as a model batching its edits sends them."""
-        workspace = HeldWriteWorkspace({'/work/a.py': b'import old\nold()\n'}, held='/work/a.py')
+    @pytest.mark.parametrize(
+        ('calls', 'expected'),
+        [
+            pytest.param(
+                [
+                    ToolCallPart('create_directory', {'path': 'pkg/sub'}),
+                    ToolCallPart('write_file', {'path': 'pkg/sub/a.py', 'content': 'import old\n'}),
+                ],
+                'import old\n',
+                id='write-into-new-directory',
+            ),
+            pytest.param(
+                [
+                    ToolCallPart('write_file', {'path': 'pkg/sub/a.py', 'content': 'import old\n'}),
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'old', 'new_text': 'new'}),
+                ],
+                'import new\n',
+                id='edit-new-file',
+            ),
+            pytest.param(
+                [
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'old', 'new_text': 'new'}),
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'new', 'new_text': 'newer'}),
+                ],
+                'import newer\n',
+                id='edit-edited-text',
+            ),
+        ],
+    )
+    async def test_changes_in_one_response_run_in_order(
+        self, tmp_path: Path, calls: list[ToolCallPart], expected: str
+    ) -> None:
+        """Each change depends on the one sent before it in the same response."""
+        if calls[0].tool_name == 'edit_file':
+            (tmp_path / 'pkg/sub').mkdir(parents=True)
+            (tmp_path / 'pkg/sub/a.py').write_text('import old\n')
+        elif calls[0].tool_name == 'write_file':
+            (tmp_path / 'pkg/sub').mkdir(parents=True)
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) > 1:
                 return ModelResponse(parts=[TextPart('done')])
-            return ModelResponse(
-                parts=[
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'import old', 'new_text': 'import new'}),
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old()', 'new_text': 'new()'}),
-                ]
-            )
+            return ModelResponse(parts=calls)
 
-        async def release_after_the_other_edit_stops() -> None:
-            await workspace.writing.wait()
-            # The other edit either finishes or waits its turn before the held write goes ahead.
-            await anyio.wait_all_tasks_blocked()
-            workspace.release.set()
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem[object](content_hashes=False)],
+        )
+        messages = (await agent.run('change the file')).all_messages()
 
-        agent = Agent(FunctionModel(respond), capabilities=[FileSystem()])
-        messages: list[ModelMessage] = []
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(release_after_the_other_edit_stops)
-            messages = (await agent.run('Rename old to new', workspace=workspace)).all_messages()
-
-        returns = [part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
-        assert len(returns) == 2 and all(str(content).startswith('Edited a.py.') for content in returns)
-        assert workspace.files['/work/a.py'] == b'import new\nnew()\n'
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert [part.tool_name for part in returns] == [call.tool_name for call in calls]
+        assert (tmp_path / 'pkg/sub/a.py').read_text() == expected
 
     async def test_write_into_a_directory_created_in_the_same_response(self, tmp_path: Path) -> None:
         """Changing calls run in the order the model sent them, so a write finds the directory created before it."""

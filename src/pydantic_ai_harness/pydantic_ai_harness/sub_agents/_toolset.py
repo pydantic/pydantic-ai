@@ -99,8 +99,10 @@ from pydantic_ai_harness.sub_agents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
     DelegationReports,
+    DelegationSnapshot,
     DelegationTask,
     DelegationTasks,
+    preview,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,8 +150,7 @@ _MODEL_ARG = 'model'
 """Name of the delegate tool's model-selection argument, shared by the function
 signature and the schema rewrite that shapes it to the configured menu."""
 _MAX_LISTED_TASKS = 50
-_PREVIEW_CHARS = 80
-CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'cancel_task'})
+CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task'})
 """The tools `SubAgents(task_control=...)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 
@@ -479,15 +480,34 @@ def _task_line(owner: DelegationTasks, record: DelegationTask) -> str:
     if record.parent_id != DelegationTasks.child_id():
         details.append(f'started by task {record.parent_id}')
     details.append('resumable' if record.resumable and not record.user_stopped else 'not resumable')
-    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {_preview(record.prompt)!r}'
+    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {preview(record.prompt)!r}'
     if (question := owner.pending_question(record.id)) is not None:
         # The question came whole as its own message; this is a reminder of which one it is.
-        line += f'\n  Waiting for an answer to: {_preview(question[1])!r}'
+        line += f'\n  Waiting for an answer to: {preview(question[1])!r}'
     return line
 
 
-def _preview(text: str) -> str:
-    return text if len(text) <= _PREVIEW_CHARS else f'{text[:_PREVIEW_CHARS]}...'
+def _snapshot_text(snapshot: DelegationSnapshot, *, background: bool) -> str:
+    task, elapsed = f'Task {snapshot.task_id} ({snapshot.agent_name})', f'{snapshot.elapsed_seconds:.0f}s'
+    if snapshot.status != 'running':
+        result = 'Its report is delivered separately.' if background else 'Its result went to the call that started it.'
+        return f'{task} finished ({snapshot.outcome}) after {elapsed}. {result}'
+    if snapshot.usage is None:
+        lines = [
+            f'{task} has been running for {elapsed}. No activity is visible: '
+            'it runs elsewhere, or has not made its first model request yet.'
+        ]
+    else:
+        requests = snapshot.usage.requests
+        lines = [f'{task} has been running for {elapsed}, with {requests} model request{"s" if requests != 1 else ""}.']
+    if snapshot.recent_tool_calls:
+        calls = ', '.join(f'{call.tool_name}({call.args})' for call in snapshot.recent_tool_calls)
+        lines.append(f'Recent tool calls: {calls}')
+    if snapshot.latest_text is not None:
+        lines.append(f'Latest text, not its final result: {snapshot.latest_text!r}')
+    if snapshot.pending_question is not None:
+        lines.append(f'Waiting for an answer to: {preview(snapshot.pending_question)!r}')
+    return '\n'.join(lines)
 
 
 class SubAgentToolset(FunctionToolset[AgentDepsT]):
@@ -583,6 +603,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         )
         if task_control is not None:
             self.add_function(self.list_tasks, prepare=self._prepare_control, metadata={'temporal': False})
+            self.add_function(self.check_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.message_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.answer_task, prepare=self._prepare_control, metadata={'temporal': False})
             self.add_function(self.cancel_task, prepare=self._prepare_control, metadata={'temporal': False})
@@ -1158,6 +1179,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             lines.append(f'({" and ".join(omitted)} not shown.)')
         return '\n'.join(lines)
 
+    async def check_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:
+        """See what a task you started is doing now, without waiting for it. Its report still arrives on its own.
+
+        Args:
+            ctx: The run context.
+            task_id: The task's ID.
+        """
+        owner = self._owner()
+        record = self._visible(ctx, owner, task_id)
+        return _snapshot_text(owner.snapshot(record.id), background=record.background)
+
     async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> object:
         """Send a message to a task you started, to steer it.
 
@@ -1575,17 +1607,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner: DelegationTasks | None,
         record: DelegationTask | None,
     ) -> None:
+        # Installed only for a record, and a record exists only under the owner that `current` returns.
+        assert owner is not None and record is not None
+        record.messages = child_ctx.messages
+        tools = child_ctx.tool_manager.tools if child_ctx.tool_manager is not None else None
+        owner.follow(record, frozenset(name for name, tool in (tools or {}).items() if tool.tool_def.kind == 'output'))
+
         async def observed() -> AsyncIterable[AgentStreamEvent]:
             async for event in events:
-                # Installed only for a record, and a record exists only under the owner that `current` returns.
-                if owner is not None and record is not None:  # pragma: no branch
-                    record.messages = child_ctx.messages
-                    # The model streaming this request, so an observer can show the child's context usage.
-                    model = child_ctx.model
-                    await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
-                    if self._forward_events:
-                        progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
-                        await owner.publish(record, progress, observe=False)
+                record.messages = child_ctx.messages
+                # The model streaming this request, so an observer can show the child's context usage.
+                model = child_ctx.model
+                await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
+                if self._forward_events:
+                    progress = TaskProgressEvent(task_id=record.id, agent_name=record.agent_name, event=event)
+                    await owner.publish(record, progress, observe=False)
                 yield event
 
         if self._event_stream_handler is not None:
