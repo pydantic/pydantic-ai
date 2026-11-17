@@ -77,7 +77,9 @@ class HatchetRunContext(DurableRunContext[AgentDepsT]):
         for key, value in serialized.items():
             if isinstance(value, set | frozenset):
                 items = cast('set[str]', value)
-                serialized[key] = sorted(replacements.get(item, item) for item in items)
+                if key.endswith('capability_ids'):
+                    items = {replacements.get(item, item) for item in items}
+                serialized[key] = sorted(items)
         return serialized
 
     @classmethod

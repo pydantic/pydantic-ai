@@ -424,8 +424,10 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         config = self._event_stream
         topic = self._run_topic()
         if config is not None and topic is not None:
+            # Only the exception type: a consumer may show the stream to end users, and the message can carry a
+            # provider's error body or a tool's internals. The durable task's own result has the full error.
             await publish_event(
-                self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', error=f'{type(error).__name__}: {error}'
+                self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', error=type(error).__name__
             )
 
     def stream_agent_events(
@@ -488,7 +490,14 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
         await self._durability._publish_terminal_event(ctx, result)  # pyright: ignore[reportPrivateUsage]
         return result
 
-    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
-        """End subscribers' iteration when the run fails, as no result event will: a topic outlives its runs."""
-        await self._durability._publish_terminal_error(ctx, error)  # pyright: ignore[reportPrivateUsage]
-        raise error
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        """End subscribers' iteration when the run fails, as no result event will: a topic outlives its runs.
+
+        Wrapping the run sees a failure from any capability's hook, including an `after_run` that raises, which
+        `on_run_error` doesn't.
+        """
+        try:
+            return await handler()
+        except Exception as error:
+            await self._durability._publish_terminal_error(ctx, error)  # pyright: ignore[reportPrivateUsage]
+            raise

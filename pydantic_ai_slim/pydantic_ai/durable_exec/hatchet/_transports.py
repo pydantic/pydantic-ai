@@ -94,9 +94,9 @@ class _JSONTransport(ParameterTransport[ParamsT, TaskInput], Generic[ParamsT, Wi
     def dump(self, params: ParamsT) -> TaskInput:
         wire, deps = self.to_wire(params)
         payload = cast(JsonValue, _adapter(self.wire_type).dump_python(wire, mode='json'))
-        # Tool definitions name their capability by its key too, so the run's synthetic keys are replaced throughout.
+        # Tool definitions name their capability by its key too, so the run's synthetic keys are replaced there.
         if (ctx := _params_run_context(params)) is not None and (replacements := stable_capability_ids(ctx)):
-            payload = _replace_strings(payload, replacements)
+            payload = _replace_capability_ids(payload, replacements)
         return TaskInput(params=payload, deps=self._runtime.dump_deps(deps))
 
     def load(self, payload: TaskInput, *, runtime: object) -> ParamsT:
@@ -115,14 +115,21 @@ def _params_run_context(params: object) -> RunContext[Any] | None:
     return cast('RunContext[Any]', ctx) if isinstance(ctx, RunContext) else None
 
 
-def _replace_strings(value: JsonValue, replacements: dict[str, str]) -> JsonValue:
-    if isinstance(value, str):
-        return replacements.get(value, value)
+def _replace_capability_ids(value: JsonValue, replacements: dict[str, str]) -> JsonValue:
+    """Replace synthetic capability keys in the fields that hold one, leaving every other value as the caller wrote it."""
     if isinstance(value, list):
-        return [_replace_strings(item, replacements) for item in value]
+        return [_replace_capability_ids(item, replacements) for item in value]
     if isinstance(value, dict):
-        return {key: _replace_strings(item, replacements) for key, item in value.items()}
+        return {key: _replace_field(key, item, replacements) for key, item in value.items()}
     return value
+
+
+def _replace_field(key: str, value: JsonValue, replacements: dict[str, str]) -> JsonValue:
+    if key == 'capability_id' and isinstance(value, str):
+        return replacements.get(value, value)
+    if key.endswith('capability_ids') and isinstance(value, list):
+        return [replacements.get(item, item) if isinstance(item, str) else item for item in value]
+    return _replace_capability_ids(value, replacements)
 
 
 @dataclass(kw_only=True)

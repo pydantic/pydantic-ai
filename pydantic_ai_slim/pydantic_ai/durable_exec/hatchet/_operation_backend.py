@@ -229,16 +229,17 @@ class _RetryableModelError(Exception):
     """A retryable model error, raised from its task with the error encoded so the durable task can rebuild it."""
 
 
-_INVALID_NAME_CHARACTERS = re.compile(r'[^a-zA-Z0-9.\-_]')
+_ESCAPED_NAME_CHARACTERS = re.compile(r'[^a-zA-Z0-9._]')
 
 
 def hatchet_task_name(name: str) -> str:
     """Escape each character Hatchet doesn't allow in a task name, like the `<agent>` toolset ID's brackets.
 
-    Hatchet names may only contain letters, digits, `.`, `-` and `_`. The escape is deterministic, so a task keeps its name across
-    deploys, and `_x<hex>_` can't be confused with an allowed character.
+    Hatchet names may only contain letters, digits, `.`, `-` and `_`. Each other character becomes `-<hex>-`, and
+    `-` itself is escaped too, so two different names never escape to the same task name. The escape is
+    deterministic, so a task keeps its name across deploys.
     """
-    return _INVALID_NAME_CHARACTERS.sub(lambda match: f'_x{ord(match.group()):x}_', name)
+    return _ESCAPED_NAME_CHARACTERS.sub(lambda match: f'-{ord(match.group()):x}-', name)
 
 
 class HatchetOperationNamer(DurableOperationNamer):

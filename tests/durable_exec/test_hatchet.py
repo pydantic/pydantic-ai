@@ -31,9 +31,11 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
 
 from ..conftest import try_import
 
@@ -48,6 +50,14 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='hatchet-sdk not installed'),
     pytest.mark.xdist_group(name='hatchet'),
 ]
+
+
+EMBEDDED_ENGINE_VERSION = 'v0.114.2'
+"""The engine release the tests run against, pinned so CI doesn't pick up a new release on its own.
+
+Pinning also skips the SDK's lookup of the latest release, which leaks the redirect response it reads
+(`ResourceWarning: Implicitly cleaning up <HTTPError 302: 'Found'>` on Python 3.14+).
+"""
 
 
 class Prompt(BaseModel):
@@ -106,6 +116,8 @@ class App:
     run_failing_model: Standalone[Prompt, dict[str, str]]
     run_inline_tool: Standalone[Prompt, dict[str, bool]]
     inline_tool_contexts: list[str]
+    after_run_durability: HatchetDurability[Any]
+    run_after_run_failing: Standalone[Prompt, dict[str, str]]
 
 
 def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
@@ -171,6 +183,24 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         await inline_agent.run(input.prompt)
         return {'ran': True}
 
+    # A capability whose `after_run` raises fails the run after it produced a result.
+    class FailingAfterRun(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            raise RuntimeError('after_run failed')
+
+    after_run_durability = HatchetDurability[Any](hatchet, event_stream=True)
+    after_run_agent = Agent(
+        TestModel(), name='after_run_failing', capabilities=[after_run_durability, FailingAfterRun()]
+    )
+
+    @hatchet.durable_task(name='pydantic_ai_test_after_run_failing', input_validator=Prompt)
+    async def run_after_run_failing(input: Prompt, ctx: DurableContext) -> dict[str, str]:
+        try:
+            await after_run_agent.run(input.prompt)
+        except RuntimeError as error:
+            return {'error': str(error)}
+        raise AssertionError('the after_run error was not raised')  # pragma: no cover
+
     app = App(
         hatchet=hatchet,
         calls=calls,
@@ -182,6 +212,8 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         run_failing_model=run_failing_model,
         run_inline_tool=run_inline_tool,
         inline_tool_contexts=inline_tool_contexts,
+        after_run_durability=after_run_durability,
+        run_after_run_failing=run_after_run_failing,
     )
     workflows: list[Any] = [
         run_weather,
@@ -192,6 +224,8 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         *failing_durability.workflows,
         run_inline_tool,
         *inline_durability.workflows,
+        run_after_run_failing,
+        *after_run_durability.workflows,
     ]
     return app, workflows
 
@@ -205,7 +239,8 @@ def app(tmp_path_factory: pytest.TempPathFactory) -> Iterator[App]:
     data_dir = tmp_path_factory.mktemp('hatchet') / 'postgres'
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv('SERVER_DEFAULT_TENANT_ENTITLEMENT_DURABLE_STREAMS', 'true')
-        hatchet = Hatchet.from_embedded(ClientConfig(embedded=EmbeddedHatchetConfig(postgres_data_dir=str(data_dir))))
+        embedded_config = EmbeddedHatchetConfig(version=EMBEDDED_ENGINE_VERSION, postgres_data_dir=str(data_dir))
+        hatchet = Hatchet.from_embedded(ClientConfig(embedded=embedded_config))
     app, workflows = _build_app(hatchet)
     # The worker installs its own signal handlers; put pytest's back once it's done.
     handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
@@ -269,8 +304,8 @@ async def test_agent_run_in_durable_task(app: App):
 async def test_child_tasks_are_registered(app: App):
     """Every operation is a task with a valid Hatchet name; the agent's own `<agent>` toolset ID is escaped."""
     assert sorted(task.name for task in app.durability.workflows) == [
-        'weather__function_toolset___x3c_agent_x3e_.call_tool',
-        'weather__function_toolset___x3c_agent_x3e_.validate_args',
+        'weather__function_toolset__-3c-agent-3e-.call_tool',
+        'weather__function_toolset__-3c-agent-3e-.validate_args',
         'weather__model.cancel_suspended_response',
         'weather__model.compact_messages',
         'weather__model.count_tokens',
@@ -343,7 +378,20 @@ async def test_event_stream_of_failed_run(app: App):
         events = app.failing_durability.stream_agent_events(ref.workflow_run_id)
         assert [event async for event in events] == []
     assert events.result is None
-    assert events.error == "ModelHTTPError: status_code: 400, model_name: rejecting, body: {'error': 'bad request'}"
+    # Only the type: the stream may reach end users, and the message can carry the provider's error body.
+    assert events.error == 'ModelHTTPError'
+
+
+async def test_event_stream_ends_when_after_run_fails(app: App):
+    """A capability's `after_run` failing the run still ends the subscription, though no `on_run_error` runs."""
+    ref = await app.run_after_run_failing.aio_run(Prompt(prompt='hi'), wait_for_result=False)
+    with anyio.fail_after(30):
+        assert await ref.aio_result() == {'error': 'after_run failed'}
+    with anyio.fail_after(10):
+        events = app.after_run_durability.stream_agent_events(ref.workflow_run_id)
+        published = [type(event).__name__ async for event in events]
+    assert 'AgentRunResultEvent' not in published
+    assert events.error == 'RuntimeError'
 
 
 async def test_non_durable_tool_runs_in_the_durable_task(app: App):
@@ -362,8 +410,14 @@ async def test_outside_durable_task_is_transparent(app: App):
 def test_hatchet_task_name_escapes_invalid_characters():
     """Hatchet names allow letters, digits, `.`, `-` and `_`; everything else is escaped deterministically."""
     assert hatchet_task_name('my agent__function_toolset__<agent>.call_tool') == (
-        'my_x20_agent__function_toolset___x3c_agent_x3e_.call_tool'
+        'my-20-agent__function_toolset__-3c-agent-3e-.call_tool'
     )
+
+
+def test_hatchet_task_names_never_collide():
+    """`-` introduces an escape and is escaped itself, so different names never become the same task name."""
+    names = ['toolset__a/b', 'toolset__a-2f-b', 'toolset__a_x2f_b', 'toolset__a-b']
+    assert len({hatchet_task_name(name) for name in names}) == len(names)
 
 
 def test_invalid_task_config(app: App):
