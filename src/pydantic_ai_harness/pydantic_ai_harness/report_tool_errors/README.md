@@ -81,7 +81,7 @@ To get the fail-fast behavior back, leave `ReportToolErrors` out of `capabilitie
 ## Composition
 
 - A [Tool Guardrails](../guardrails/) `result_guard` screens the reported text like any failed tool result, so it can redact what the exception message reveals.
-- Capabilities' `on_tool_execute_error` hooks don't see the exception: they see a failed call, as for a tool that raised `ToolFailed`.
+- `on_tool_execute_error` hooks aren't called for an exception `ReportToolErrors` reports, whatever order the capabilities are listed in, so a capability that logs or recovers in that hook no longer sees it. Narrow `exceptions` to leave those types to the hook.
 - Several `ReportToolErrors` on one agent: the last one listed wraps the tools most closely, so it formats the error.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/report_tool_errors/).

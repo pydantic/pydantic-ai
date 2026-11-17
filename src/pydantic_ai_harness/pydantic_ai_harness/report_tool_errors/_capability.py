@@ -99,5 +99,6 @@ class _ReportErrorsToolset(WrapperToolset[AgentDepsT]):
         except _PASS_THROUGH:
             raise
         except self.report.exceptions as error:
-            info = ToolErrorInfo(name=name, args=tool_args, tool_call_id=ctx.tool_call_id or '', error=error)
+            assert ctx.tool_call_id is not None
+            info = ToolErrorInfo(name=name, args=tool_args, tool_call_id=ctx.tool_call_id, error=error)
             raise ToolFailed(self.report.format_error(ctx, info)) from error

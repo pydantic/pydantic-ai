@@ -906,8 +906,9 @@ print([part.content for part in parts if isinstance(part, ToolReturnPart)])
 - `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass
   through; `UsageLimitExceeded` and `UserError` still end the run, and so does a tool that exhausts its
   `retries` (`Coder` reports those instead). Output tools and argument validation aren't affected.
-- A `ToolGuardrail` `result_guard` screens the reported text; `on_tool_execute_error` hooks see a failed
-  call, not the exception. With several, the last listed formats the error. Emits no spans.
+- A `ToolGuardrail` `result_guard` screens the reported text. `on_tool_execute_error` hooks aren't called
+  for a reported exception, in any order; narrow `exceptions` to leave a type to such a hook. With several,
+  the last listed formats the error. Emits no spans.
 
 ## RefineOutput
 

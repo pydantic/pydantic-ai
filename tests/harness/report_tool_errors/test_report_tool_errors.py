@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     ToolFailed,
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import ReportToolErrors, ToolGuardrail
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolResultInfo
 from pydantic_ai_harness.report_tool_errors import ToolErrorInfo
@@ -154,6 +156,32 @@ class TestReportToolErrors:
         assert _tool_results(result.all_messages()) == snapshot(
             [('c1', '`divide` raised ZeroDivisionError: division [redacted]', 'failed')]
         )
+
+    def test_error_hooks_are_not_called_for_a_reported_exception(self) -> None:
+        seen: list[str] = []
+
+        class RecordErrors(AbstractCapability[None]):
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                error: Exception,
+            ) -> Any:
+                seen.append(type(error).__name__)
+                raise error
+
+        for capabilities in ([RecordErrors(), ReportToolErrors[None]()], [ReportToolErrors[None](), RecordErrors()]):
+            result = _agent(_scripted([_divide('c1', 0)]), *capabilities).run_sync('go')
+            assert [outcome for _, _, outcome in _tool_results(result.all_messages())] == ['failed']
+        assert seen == []
+
+        narrowed = ReportToolErrors[None](exceptions=(TimeoutError,))
+        with pytest.raises(ZeroDivisionError):
+            _agent(_scripted([_divide('c1', 0)]), narrowed, RecordErrors()).run_sync('go')
+        assert seen == ['ZeroDivisionError']
 
     def test_approval_required_still_defers(self) -> None:
         result = _agent(_scripted([ToolCallPart('guarded', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
