@@ -2865,6 +2865,47 @@ def test_native_tool_flat_form_schema_requires_kind():
         Agent.from_spec(spec)
 
 
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.usefixtures('restore_native_tool_types')
+def test_native_tool_flat_form_schema_custom_kind():
+    """A native tool type defined after import is in the schema, and its flat form loads as that type."""
+
+    @dataclass(kw_only=True)
+    class WidgetTool(AbstractNativeTool):
+        kind: str = 'widget'
+        size: int = 0
+
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'widget', 'size': 3}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [WidgetTool(size=3)]
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.usefixtures('restore_native_tool_types')
+def test_native_tool_flat_form_schema_subclass_keeping_a_built_in_kind():
+    """A subclass that keeps a built-in `kind` replaces that tool in the schema and the loader, so its fields load."""
+
+    @dataclass(kw_only=True)
+    class RegionalWebSearchTool(WebSearchTool):
+        region: str = 'eu'
+
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'web_search', 'region': 'us'}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [RegionalWebSearchTool(region='us')]
+
+
+@pytest.mark.usefixtures('native_tool_type_without_schema')
+def test_native_tool_flat_form_loads_built_in_tools_beside_a_type_without_a_schema():
+    """A registered native tool type pydantic can't build a schema for leaves the built-in flat forms loading."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'web_search'}}]}
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [WebSearchTool()]
+
+
 def test_slotted_native_tool_class(tmp_path: Path):
     """`@dataclass(slots=True)` recreates the class; the recreated class registers and loads under its kind."""
     with patch.dict(NATIVE_TOOL_TYPES):
@@ -2920,6 +2961,22 @@ def test_from_file_json(tmp_path: str):
     spec = AgentSpec.from_file(spec_path)
     assert spec.model == 'test'
     assert spec.name == 'my-agent'
+
+
+def test_from_file_json_with_utf8_bom(tmp_path: Path):
+    spec_path = tmp_path / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "café"}', encoding='utf-8-sig')
+    spec = AgentSpec.from_file(spec_path)
+    assert spec.name == 'café'
+
+
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    spec_path = tmp_path / 'agent.json'
+    spec_path.write_bytes(content)
+    with pytest.raises(UnicodeDecodeError):
+        AgentSpec.from_file(spec_path)
 
 
 def test_from_file_with_schema_field(tmp_path: str):
