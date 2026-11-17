@@ -72,7 +72,7 @@ docs-drift
 douwebot	reviews the PR that gets labeled and removes the label at the end
 douwebot:review-agent-config	One-head, one-run maintainer request to review protected agent-config changes.
 duplicate	This issue or pull request already exists
-feature	New feature request, or PR implementing a feature (enhancement)
+feature	New feature request, or PR implementing a feature
 feedback wanted
 final-review	Run the CI Review agent on this PR's head
 flake	A flaky test on main; the issue is the claim on its fix

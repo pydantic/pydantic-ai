@@ -56,7 +56,7 @@ assertion leakage on early exit. Do not run and report the existing suite.
 ## Deduplication — mandatory BEFORE filing an issue
 
 Open issues were prefetched before the sandbox started. First narrow the local
-corpus to streaming-labelled issues. This covers both prior
+corpus to issues labelled `area:streaming`. This covers both prior
 `[streaming-resilience-sweep]` findings and human-filed streaming issues:
 
 ```
