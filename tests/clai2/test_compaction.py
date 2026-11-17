@@ -63,6 +63,7 @@ from pydantic_clai2.plugins import (
     load_plugin,
 )
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.runtime.session import local_workspace_provider
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs
 from tests.clai2.menu_script import Script, pick, typed
@@ -374,7 +375,7 @@ async def test_compact_keeps_naming_a_workspace_other_than_this_machine(strategy
         return transcript.messages
 
     # This machine's folder: saved as compacted, as the session works in its own folder anyway.
-    local = await compact(WorkspaceRef(provider='local', id='/repo'))
+    local = await compact(WorkspaceRef(provider=local_workspace_provider(), id='/repo'))
     assert all(isinstance(message, ModelRequest) for message in local)
     # A sandbox: still named after the compacted history, so the next turn runs there.
     sandbox = WorkspaceRef(provider='e2b', id='sbx-1')
