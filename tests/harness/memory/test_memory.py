@@ -618,13 +618,13 @@ class TestWriteMemory:
     async def test_edit_crlf_file_with_old_text_from_snapshot(self) -> None:
         capability = Memory[None]()
         toolset = MemoryToolset(capability)
-        await toolset.write_memory(_ctx('seed'), '- likes pip\r\n- uses Linux\r\n- tabs')
+        await _seed(capability.store, 'main/MEMORY.md', '- likes pip\r\n- uses Linux\r\n- tabs\r\n')
 
         await toolset.write_memory(_ctx('edit'), '- likes uv\n- uses macOS', old_text='- likes pip\n- uses Linux')
 
         memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
         assert memory_file is not None
-        assert memory_file.content == '- likes uv\r\n- uses macOS\r\n- tabs\n'
+        assert memory_file.content == '- likes uv\r\n- uses macOS\r\n- tabs\r\n'
 
     async def test_subfile_normalization_empty_append_and_invalid_name(self) -> None:
         capability = Memory[None]()
