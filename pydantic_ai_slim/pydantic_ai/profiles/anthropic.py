@@ -160,7 +160,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model takes `temperature` only at `1`, `top_p` only from `0.95`, and no `top_k` while it thinks.
     Default: `False`.
 
-    Set for every Claude model: the others are rejected with a 400. See
+    Set for every Claude model, which rejects any other `temperature`, a lower `top_p`, or a `top_k` with a 400
+    while thinking. See
     [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility).
     """
 
