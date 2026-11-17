@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai.capabilities import WrapRunHandler, WrapToolExecuteHandler
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.tool_manager import ToolManager
 
 
 _INSTRUCTIONS = """\
@@ -126,6 +127,17 @@ def _completed(outcome: _Outcome) -> _Completion:
     if isinstance(outcome, BaseException):
         raise outcome
     return outcome
+
+
+def _raise_if_retries_exhausted(tool_manager: ToolManager[Any], completion: _Completion) -> None:
+    """Raise if a retry would take the tool past its `max_retries`, which ends the run as for a sequential call."""
+    assert tool_manager.ctx is not None  # Set once the run has started.
+    if tool_manager.ctx.retries.get(completion.tool_name, 0) >= completion.max_retries:
+        raise UnexpectedModelBehavior(
+            f'Tool {completion.tool_name!r} exceeded max retries count of {completion.max_retries}. '
+            'Consider raising the retry limit, or see the docs on tool retries: '
+            'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
+        ) from completion.retry
 
 
 _SignalledError = (
@@ -443,12 +455,13 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             # A pause ends the run without another model request, so no later step would take a result that
             # arrives after it: wait for every live task here. The end-of-run drain records their results
             # after a deferred-tool pause, and leaves them queued at a `PendingModelResponse` pause.
-            # An error ends the run at once, so the run's task group cancels the tasks still live.
-            arrived = [_completed(outcome) for outcome in self._arrived()]
+            # An error, or a retry past the tool's budget, ends the run at once, so the run's task group cancels
+            # the tasks still live.
+            arrived = [self._completed_at_pause(ctx, outcome) for outcome in self._arrived()]
             while self._live:
-                arrived.append(_completed(await self._outcomes.receive()))
+                arrived.append(self._completed_at_pause(ctx, await self._outcomes.receive()))
             # A task sends its outcome before it stops counting as live, so several can still be buffered here.
-            arrived.extend(_completed(outcome) for outcome in self._arrived())
+            arrived.extend(self._completed_at_pause(ctx, outcome) for outcome in self._arrived())
             self._requeue_in_dispatch_order(ctx, arrived)
             # No later node will settle them, so a retry that exhausts its budget ends the run here.
             self._settle(ctx)
@@ -477,6 +490,13 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     def _enqueue(self, ctx: RunContext[AgentDepsT], completion: _Completion) -> None:
         if (enqueue_id := ctx.enqueue(*completion.content)) is not None:
             self._queued[enqueue_id] = completion
+
+    def _completed_at_pause(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> _Completion:
+        completion = _completed(outcome)
+        if completion.retry is not None:
+            assert ctx.tool_manager is not None  # Set once the run has started.
+            _raise_if_retries_exhausted(ctx.tool_manager, completion)
+        return completion
 
     def _requeue_in_dispatch_order(self, ctx: RunContext[AgentDepsT], arrived: list[_Completion]) -> None:
         """Queue the results no request has carried yet in the order their calls were dispatched.
@@ -507,12 +527,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         unsettled, self._unsettled = self._unsettled, []
         for completion in unsettled:
             if completion.retry is not None:
-                if tool_manager.ctx.retries.get(completion.tool_name, 0) >= completion.max_retries:
-                    raise UnexpectedModelBehavior(
-                        f'Tool {completion.tool_name!r} exceeded max retries count of {completion.max_retries}. '
-                        'Consider raising the retry limit, or see the docs on tool retries: '
-                        'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
-                    ) from completion.retry
+                _raise_if_retries_exhausted(tool_manager, completion)
                 tool_manager.failed_tools.add(completion.tool_name)
             elif completion.succeeded:
                 tool_manager.succeeded_tools.add(completion.tool_name)

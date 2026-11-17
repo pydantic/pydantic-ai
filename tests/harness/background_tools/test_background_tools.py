@@ -1490,11 +1490,24 @@ ends with &lt;/pyai:tool_result
         assert _follow_up_seen(resumed_with, 'slow value')
 
     async def test_retry_exhausted_before_a_deferred_pause_ends_the_run(self) -> None:
-        guard = _ExecuteHookGuard[object](stage='before', error_factory=lambda: ModelRetry('try again'))
+        """A retry past the tool's budget ends the run at once, without waiting for the other live tasks."""
+
+        @dataclass
+        class GuardOne(AbstractCapability[object]):
+            async def before_tool_execute(
+                self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+            ) -> dict[str, Any]:
+                if call.tool_name == 'guarded':
+                    raise ModelRetry('try again')
+                return args
+
+        guard = GuardOne()
+        never = asyncio.Event()
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
                 parts=[
+                    ToolCallPart(tool_name='stuck', args='{}'),
                     ToolCallPart(tool_name='guarded', args='{}'),
                     ToolCallPart(tool_name='needs_approval', args='{}'),
                 ]
@@ -1511,13 +1524,18 @@ ends with &lt;/pyai:tool_result
             # The guard rejects every call.
             return 'unreachable'  # pragma: no cover
 
+        @agent.tool_plain(metadata={'background': True})
+        async def stuck() -> str:
+            await never.wait()
+            return 'never'  # pragma: no cover
+
         @agent.tool_plain(requires_approval=True)
         def needs_approval() -> str:
             # Never approved in this test.
             return 'approved'  # pragma: no cover
 
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'guarded' exceeded max retries count of 0"):
-            await agent.run('go')
+            await asyncio.wait_for(agent.run('go'), timeout=5)
 
     async def test_error_finished_before_a_deferred_pause_still_ends_the_run(self) -> None:
         failed = asyncio.Event()
