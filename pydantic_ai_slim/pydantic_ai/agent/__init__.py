@@ -3116,6 +3116,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -3139,6 +3140,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -3162,6 +3164,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3226,6 +3229,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3254,6 +3260,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -3283,6 +3290,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -3306,6 +3314,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -3329,6 +3338,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3394,6 +3404,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3420,6 +3433,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )

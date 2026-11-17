@@ -397,6 +397,11 @@ Returning `False` for a function tool runs it inside the calling task run instea
 rejected for MCP and dynamic tools. The harness `FileSystem` write tools opt out this way, so their file-change
 requests reach listeners in the parent task.
 
+An async function tool with the engine-neutral [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) also
+runs inside the calling task run, whatever the resolver returns for it. Registration only sees `durable` set on
+the tool itself, so for a tool opted out by a `prepare` function or `PrepareTools` instead, have the resolver
+return `False` or the toolset's options.
+
 ## Execution limits
 
 - **JSON inputs and results:** Dependencies, messages, model settings, metadata, tool arguments, events, and
