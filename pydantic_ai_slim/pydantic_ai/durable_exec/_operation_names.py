@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import KW_ONLY, dataclass
-from typing import Protocol
-
-from typing_extensions import assert_never
+from typing import Protocol, assert_never
 
 from ._operation import (
     CapabilityOperationId,
@@ -11,6 +9,7 @@ from ._operation import (
     EventStreamHandlerId,
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
+    ModelCountTokensId,
     ModelRequestId,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
@@ -74,6 +73,8 @@ class JournalOperationNamer(DurableOperationNamer):
                 return f'{self._agent_name}__model.cancel_suspended_response{self._model_suffix(model_id)}'
             case ModelCompactMessagesId(model_id=model_id):
                 return f'{self._agent_name}__model.compact_messages{self._model_suffix(model_id)}'
+            case ModelCountTokensId(model_id=model_id):
+                return f'{self._agent_name}__model.count_tokens{self._model_suffix(model_id)}'
             case EventStreamHandlerId():
                 return f'{self._agent_name}__event_stream_handler'
             case ToolsetGetToolsId(toolset_kind=kind, toolset_id=toolset_id):

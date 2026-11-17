@@ -19,6 +19,7 @@ from pydantic_ai import (
     RunUsage,
     UsageLimits,
 )
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -53,9 +54,10 @@ search_agent = Agent[Deps, FlightDetails | NoFlightFound](
     output_type=FlightDetails | NoFlightFound,
     deps_type=Deps,
     retries=4,
-    system_prompt=(
+    instructions=(
         'Your job is to find the cheapest flight for the user on the given date. '
     ),
+    capabilities=[Caching()],
 )
 
 
@@ -63,7 +65,8 @@ search_agent = Agent[Deps, FlightDetails | NoFlightFound](
 extraction_agent = Agent(
     'openai:gpt-5.2',
     output_type=list[FlightDetails],
-    system_prompt='Extract all the flight details from the given text.',
+    instructions='Extract all the flight details from the given text.',
+    capabilities=[Caching()],
 )
 
 
@@ -115,12 +118,13 @@ class Failed(BaseModel):
 seat_preference_agent = Agent[object, SeatPreference | Failed](
     'openai:gpt-5.2',
     output_type=SeatPreference | Failed,
-    system_prompt=(
+    instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
         'Row 1 is the front row and has extra leg room. '
         'Rows 14, and 20 also have extra leg room. '
     ),
+    capabilities=[Caching()],
 )
 
 

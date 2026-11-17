@@ -1,0 +1,5 @@
+{
+  "against": "v2.62.0",
+  "reason": "Intentional default change: `CodeMode.dynamic_catalog` now defaults to `True`, so revealed tools are appended instead of rewriting the cached prompt. `dynamic_catalog=False` restores the previous behavior.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11358"
+}

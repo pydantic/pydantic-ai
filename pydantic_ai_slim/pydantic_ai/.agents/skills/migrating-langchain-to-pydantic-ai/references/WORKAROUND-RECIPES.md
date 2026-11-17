@@ -45,7 +45,7 @@ Do not leave a row at "redesign" or "not 1:1." Select the most native mechanism 
 | tool-based structured response | `ToolOutput` | output adapter |
 | `return_direct=True` | named output function wrapped in `ToolOutput` | explicit application route |
 | HITL tool approval | deferred tools plus authenticated pending-action store | durable workflow |
-| checkpoint/replay | `DBOSAgent`, `TemporalAgent`, `PrefectAgent`, Restate, Kitaru, or another selected durable runtime | application workflow |
+| checkpoint/replay | `DBOSAgent`, `TemporalAgent`, `PrefectAgent`, Restate, or another selected durable runtime | application workflow |
 | graph state and reducers | typed application state or `pydantic_graph`; branch-local results plus explicit reducer | orchestration layer |
 | complete execution with events | `run(event_stream_handler=...)`, `run_stream_events()`, or `iter()` | event adapter |
 | per-run request/tool limits | `UsageLimits` and shared `RunUsage` | application budget service |
@@ -167,9 +167,9 @@ On resume, authenticate first and atomically claim a pending or safely expired `
 
 A disposable SQLite development spike exercised this adapter across a fresh service instance, including foreign-principal rejection and a simulated crash after the tool. The tool was attempted twice after recovery but its unique business idempotency key produced one durable effect. This is design evidence, not target-project validation or a claim that arbitrary external APIs are exactly once; keep the outcome `unverified` until the selected store passes the same probe.
 
-For long waits and process recovery, put the loop in a durable runtime. Pydantic AI supplies wrappers such as `DBOSAgent`, `TemporalAgent`, and `PrefectAgent`; Restate and Kitaru also provide integrations. A disposable two-process DBOS development spike with a stable agent name and workflow ID returned the persisted first result without repeating the model call. This narrows the candidate design but does not change the target outcome from `unverified`. For DBOS, decorate non-deterministic or I/O tool functions with `@DBOS.step`; they are not automatically durable merely because the agent is wrapped.
+For long waits and process recovery, put the loop in a durable runtime. Pydantic AI supplies wrappers such as `DBOSAgent`, `TemporalAgent`, and `PrefectAgent`; Restate also provides an integration. A disposable two-process DBOS development spike with a stable agent name and workflow ID returned the persisted first result without repeating the model call. This narrows the candidate design but does not change the target outcome from `unverified`. For DBOS, decorate non-deterministic or I/O tool functions with `@DBOS.step`; they are not automatically durable merely because the agent is wrapped.
 
-Run real process-kill/restart tests against the selected production backend after claim, before the effect, after an unknown effect outcome, and before completion persistence. Prove expired-lease recovery, stale-worker fencing, cached-result replay, and the manual-reconciliation path. Keep stable agent/toolset IDs, serializable dependencies, and explicit workflow signals/events for approval. Do not generalize DBOS evidence to Temporal, Prefect, Restate, Kitaru, or a different database.
+Run real process-kill/restart tests against the selected production backend after claim, before the effect, after an unknown effect outcome, and before completion persistence. Prove expired-lease recovery, stale-worker fencing, cached-result replay, and the manual-reconciliation path. Keep stable agent/toolset IDs, serializable dependencies, and explicit workflow signals/events for approval. Do not generalize DBOS evidence to Temporal, Prefect, Restate, or a different database.
 
 ## Workflow state, fan-out, and reducers
 
@@ -195,8 +195,8 @@ Probe token/tool/final ordering, co-emitted output and tools, consumer cancellat
 
 Use `UsageLimits` for Pydantic AI units and reuse one `RunUsage` object when several runs or child agents share a budget:
 
-```python {noqa="F704,F821"}
-# ruff: noqa: F704, F821
+```python {noqa="F704,F821,PLE1142"}
+# ruff: noqa: F704, F821, PLE1142
 from pydantic_ai import RunUsage, UsageLimits
 
 usage = RunUsage()

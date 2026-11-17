@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI agents in the AG-UI Dojo example app to see the AG-UI protocol in action, with tools, shared state and human-in-the-loop interactions."
+---
+
 # Agent User Interaction (AG-UI)
 
 Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) example app.
@@ -174,7 +178,7 @@ Demonstrates how to use the shared state between the UI and the agent.
 
 State sent to the agent is detected by a function based instruction. This then
 validates the data using a custom pydantic model before using to create the
-instructions for the agent to follow and send to the client using a AG-UI tool.
+instructions for the agent to follow and send to the client using an AG-UI tool.
 
 If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/shared_state>.
 

@@ -1,8 +1,8 @@
 """Tests for `RunContext.context_window_used`: the fraction of the model's context window in use.
 
 These use `FunctionModel` with explicit `usage` on each response so the expected ratio is exact:
-the property reads the most recent `ModelResponse`'s `total_tokens` against the model profile's
-`context_window`.
+the property reads the most recent `ModelResponse`'s input plus output tokens against the model
+profile's `context_window`.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -113,6 +114,36 @@ def test_context_window_used_uses_latest_response():
         ],
     )
     assert ctx.context_window_used == 0.4
+
+
+def test_context_window_used_counts_first_request_input_of_merged_response():
+    """A response a provider merged from several requests (Google long decode) counts its first request's input."""
+    # The first request read 300 tokens and wrote 400; the second re-read those 700 and wrote 100. Usage sums both.
+    response = ModelResponse(parts=[TextPart('long')], usage=RequestUsage(input_tokens=300 + 700, output_tokens=500))
+    mark_context_input_tokens(response, 300)
+    ctx = RunContext(
+        deps=None,
+        model=FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=ModelProfile(context_window=1000)),
+        usage=RunUsage(),
+        messages=[response],
+    )
+    assert ctx.context_window_used == 0.8
+
+
+def test_context_window_used_reads_first_request_input_saved_by_v2_56():
+    """History saved by v2.56.0 stamped a Google long decode's first request input under `initial_input_tokens`."""
+    response = ModelResponse(
+        parts=[TextPart('long')],
+        usage=RequestUsage(input_tokens=300 + 700, output_tokens=500),
+        metadata={'__pydantic_ai__': {'initial_input_tokens': 300}},
+    )
+    ctx = RunContext(
+        deps=None,
+        model=FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=ModelProfile(context_window=1000)),
+        usage=RunUsage(),
+        messages=[response],
+    )
+    assert ctx.context_window_used == 0.8
 
 
 def test_context_window_used_measures_fallback_model_against_smallest_candidate_window():

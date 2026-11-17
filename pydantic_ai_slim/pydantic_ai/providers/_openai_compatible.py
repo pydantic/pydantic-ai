@@ -1,4 +1,5 @@
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from typing import TypeAlias
 
 from openai import AsyncOpenAI
 
@@ -9,9 +10,16 @@ from pydantic_ai._http import (
 )
 from pydantic_ai.providers import Provider
 
+OpenAIAPIKey: TypeAlias = str | Callable[[], Awaitable[str]]
+"""An OpenAI API key, or an async callable that returns one, which the OpenAI SDK calls before each request."""
 
-class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
-    """Shared HTTP client lifecycle for providers backed by the OpenAI SDK."""
+
+class _OpenAISDKProvider(Provider[AsyncOpenAI]):
+    """Shared HTTP client lifecycle for providers backed by the OpenAI SDK.
+
+    For a service without a dedicated provider, use the public
+    [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
+    """
 
     def _get_http_client(
         self,
@@ -36,7 +44,7 @@ class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
         self,
         *,
         base_url: str | None,
-        api_key: str | None,
+        api_key: OpenAIAPIKey | None,
         http_client: AsyncHTTPClient | None,
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:
@@ -53,3 +61,8 @@ class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
 
     def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+
+# The name this base had before the public `pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider`,
+# kept for code that subclasses it.
+OpenAICompatibleProvider = _OpenAISDKProvider

@@ -1,0 +1,87 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "226"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 15000
+        messages:
+        - role: user
+          content:
+          - text: What is 17 * 23? Answer with just the number.
+            type: text
+        model: claude-sonnet-4-5
+        stream: false
+        thinking:
+          type: enabled
+          budget_tokens: 4096
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9edb579dcabfeb0a202b5a42cf2f9985-df5e4019437698b2-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-4-5-20250929
+        id: msg_011CfWk4XTetciJdcDHe8eSX
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: |-
+            17 * 23 = ?
+
+            I can calculate this step by step:
+            17 * 23 = 17 * 20 + 17 * 3
+            = 340 + 51
+            = 391
+          signature: >-
+            EtkCCpsBCBIYAipAOj7tKIR4DBGyYclh6aqaeaQT1kpKk8vSEK16OTX/Y0cmJrMcIa/rY9D+fc1VYeEX983z4VnyjP6aPr3UBZnvhDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB4f3r1QYSDL4JZxNJQYYctz0K2RoMdLGPGPQsqHXGqqVJIjDeSD2fEqBGYPRhqjwJ4/Z81xm88IObdisbouHIdT+5uuVsUjHPl0YCTTN6oKcSS98qayT6UPAjPqHwis2DlVo9rRw4qZ8Zzxy9isVntORAx3eVFxVnA6Pf250J6mllGPJSnaJgoyvvTvg98UyBdLV4BEz5tcKdie1bPQ/N2eJpQyof1ZJWQVQ6QvbA3RE5xOj4gh2qxQmVg8aIjjoHGAE=
+        - type: text
+          text: "391"
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 51
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 63
+          output_tokens_details:
+            thinking_tokens: 57
+          service_tier: standard
+          inference_geo: not_available
+        diagnostics: null
+  recorded_at: 2026-09-28T23:57:21.590616+00:00

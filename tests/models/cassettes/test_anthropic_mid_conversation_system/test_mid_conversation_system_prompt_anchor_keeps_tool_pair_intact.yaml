@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,138 +11,365 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '829'
+      - "770"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Look up the style guide, then review `def add(a, b): return a + b`.'
-          type: text
-        role: user
-      - content:
-        - id: call_1
-          input: {}
-          name: style_guide
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: Prefer explicit signatures.
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: "Look up the style guide, then review `def add(a, b): return a + b`."
             type: text
-          is_error: false
-          tool_use_id: call_1
-          type: tool_result
-        role: user
-      - content:
-        - text: From now on, every suggestion must include explicit type annotations.
-          type: text
-        role: system
-      model: claude-opus-4-8
-      stream: false
-      system: You are a code reviewer.
-      tool_choice:
-        type: auto
-      tools:
-      - description: Fetch the project style guide.
-        input_schema:
-          properties: {}
-          type: object
-        name: style_guide
-    uri: https://api.anthropic.com/v1/messages?beta=true
+        - role: assistant
+          content:
+          - id: call_1
+            type: tool_use
+            name: style_guide
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: call_1
+            type: tool_result
+            content:
+            - text: Prefer explicit signatures.
+              type: text
+            is_error: false
+        - role: system
+          content:
+          - text: From now on, every suggestion must include explicit type annotations.
+            type: text
+        model: claude-opus-5-5
+        stream: true
+        system: You are a code reviewer.
+        tool_choice:
+          type: auto
+        tools:
+        - name: style_guide
+          description: Fetch the project style guide.
+          input_schema:
+            type: object
+            properties: {}
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '2037'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=106
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-423749d571d8193b1afb0321f65e6659-87e092d34a4d47fb-01
+      - 00-48f2cf7d0d0ebb213ff4238c979f5b35-2ff7bfea57f3366e-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          Based on the style guide, which recommends explicit signatures, here's my review of your function:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgPGH63yrdK912ux5SNd7","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":445,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
 
-          ```python
-          def add(a, b):
-              return a + b
-          ```
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
 
-          **Review feedback:**
+        event: ping
+        data: {"type": "ping"}
 
-          The function is functionally correct, but it doesn't follow the project style guide's recommendation to **prefer explicit signatures**. Per the new requirement, every suggestion must include explicit type annotations.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}          }
 
-          **Suggested revision:**
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS2wYKEAgTGAI4AUIIdGhpbmtpbmcSDJ3RHa3qsTrqDMkIpxoMwdJTAZklE/wAGUcrIjDG+WLTh6VlRVIRy5Y3uWhZNGgVp60U0BawllFjgLITlMlUxoLGUz9gLNQcFdZPROAq+AVtHSwzWm4KFX4RnRkCOIHmOjG0UMfl+gig/xmjIhU/t0BShtYuu7Y3OR0bDHwSHdvFVTXCCJaDDJFsbCYcaF5bmnBy77o9JS6xay69JH6IUunwuBqp5N3VRSeaNmEcT/fTkY3ctwKme7NnSI31cAB/Gyx81J9FGQbZxcS81Ykn/CPqcUMUqceqFs4T7/gxkyTgKaRdG+54WqewF1O1YzIiN/8U/Z62EFESRJb7hmdcljDEPMNfeBlJwzAwWboOrUvotv+jpvVFtRkf58Gg48Z+DU/DFUqmPalrfDo77iornsqOFlU9oT3yU/LhIHnGQ0aL8P2YKZNfguxcF/t5/CHhr+H54MjL6cmKJOxBMSw3GkvYnARxr67iF/+okVX7qkw6oKbeN+R5RoR7+y2uvDA38/BBDXZYjbI7w8EAAc7jT01XmhKz3+zuIsO4XZWTJigdXdWjxx+ZPFqt67sPn4uMAWfHX9k+Lmyd/WuuNZOZJx81y2s91sVjm1IIOvmztahCRrd3rz+d7lN4yeE0bh8Gyda7MSIFiwA83WNxagb113jYM0eQvrP49/iMnvzsMWslW+C1ZBLWQV9QAnznLE33GnSPqVxFWrS7/xvp95O6FlmYmFtlPtSfheaCr4tDS+EL70SQcihzQY1JpFQVgpIBO9XF0V6knt8+iDWLkixTfQTqyGkJFx9wo1zuExlANWMcl4EkX9L7k97e/d3nCe1i51Pyi310ZTbHhi+00WX1irIPGJLs7W288KnZ/C3egS/2KxeX+bB6VEwwFzN/Y0PMy1qesJ7xmHObH/pqjzj1+EKeGH23RG+aFX4YmimPlNG9LKcpap8qzjnumsFJ53aUq2eYZMC2p3t9EREIA7ny4u+g9yczXaekly+nw5rB+lxw84kve5pjrFJY02VhWJkfmjw9l0j7Kgdv2Vh8TZ/UDJ8/mEysyb1XvT59wIm49pznq4yNAqvlMOQm8NxGxYDdxohaXRkKRLUHzRUBTvkNlCaqhJWk+4Q0GAE="}              }
 
-          ```python
-          def add(a: int, b: int) -> int:
-              return a + b
-          ```
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
 
-          **Notes:**
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
 
-          1. **Type annotations added** -- Parameters `a` and `b` are annotated as `int`, and the return type is `-> int`, making the signature explicit as the style guide prefers.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The function"}  }
 
-          2. **Consider your intended use case** -- If this function is meant to handle other numeric types (e.g., `float`) or support both, you may want a more general annotation. Two options:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" works"}   }
 
-             ```python
-             # For any numeric type
-             from numbers import Number
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", but it doesn't foll"}        }
 
-             def add(a: Number, b: Number) -> Number:
-                 return a + b
-             ```
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ow the style"}         }
 
-             ```python
-             # For int or float specifically
-             def add(a: int | float, b: int | float) -> int | float:
-                 return a + b
-             ```
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" guide. The gu"}               }
 
-          3. **Optional: add a docstring** -- For clarity, especially in a shared codebase:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ide says to **"} }
 
-             ```python
-             def add(a: int, b: int) -> int:
-                 """Return the sum of two integers."""
-                 return a + b
-             ```
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"prefer explicit signat"}              }
 
-          The core logic is fine--the main improvement is making the signature explicit with type annotations to comply with the style guide.
-        type: text
-      id: msg_011CdXE6mDkmvSJLhrXm2L5t
-      model: claude-opus-4-8
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 447
-        output_tokens: 492
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ures**, and right"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" now ne"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ither the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" parameters nor the return value"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have types.\n\n**Issues"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n\n1. **No type"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" annotations.** `a`"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", `b`"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and the return value have"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" no types, so the"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" signature doesn't say what"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the function accepts or returns"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n2. **One"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-line"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" defin"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ition.** Putting the body"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" on the same line as `def`"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is harder to read and ed"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"it. It's also disc"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ouraged by PEP "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"8.\n3. **No doc"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"string.** This"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is min"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"or for such"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a small function, but a"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" doc"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"string states"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" what"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it's meant to do."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**Suggested fix ("}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"wh"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ole numbers only"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"):"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n\n```python\ndef add("}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"a: int, b: int)"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" -> int:\n    \"\"\""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Return the sum of a"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and b.\"\"\"\n    return a"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + b\n```\n\n**If"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it should also acc"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ept decimals:**\n\n```"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"python\ndef add(a: float"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", b: float) -> float"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":\n    \"\"\"Return the s"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"um of a and b.\"\"\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n    return a + b\n```"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nWith"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"float`, the"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" type checker"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" still accepts whole numb"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ers, since `"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"int` counts as a `float"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"`.\n\n**If it needs"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to work with"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" other types too**, such as str"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ings,"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" lists or `Decimal"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"`, use a type variable so"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the in"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"puts and the"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" result"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" share"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the same type:\n\n```python"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\nfrom typing import TypeV"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ar\n\nT = TypeV"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ar(\"T\", int, float,"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" str)\n\ndef add(a:"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" T, b: T) ->"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" T:\n    \"\"\"Return the"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sum of a and b.\"\"\""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n    return a + b\n```"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**Verdict:**"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" The"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" logic is corre"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ct, but please"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" add type annotations to"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" match the style guide before merging"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". Pick the version that mat"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ches how `"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"add` is actually used."}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":445,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":568,"output_tokens_details":{"thinking_tokens":75}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-10-25T16:23:23.346804+00:00

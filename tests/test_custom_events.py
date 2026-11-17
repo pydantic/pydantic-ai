@@ -6,7 +6,7 @@ import asyncio
 import sys
 import textwrap
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CustomEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     TextPart,
     ToolReturnPart,
@@ -32,17 +33,21 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.run import AgentRunResultEvent
 
 from ._inline_snapshot import snapshot
+from .conftest import iter_message_parts
 
-pytestmark = pytest.mark.anyio
 
+def _tool_has_answered(messages: list[ModelMessage]) -> bool:
+    """Whether the tool call has already come back with something other than a retry.
 
-def _has_tool_return(messages: list[ModelMessage]) -> bool:
-    return any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    A retry is that call's own `ToolReturnPart` carrying `outcome='retried'`, so a plain
+    `isinstance` check reads one as an answer and stops the model calling the tool again.
+    """
+    return any(part.outcome != 'retried' for part in iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
 
 async def _tool_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-    """Stream a `progress` tool call on the first request, then final text."""
-    if not _has_tool_return(messages):
+    """Stream a `progress` tool call while the call is unanswered, then final text."""
+    if not _tool_has_answered(messages):
         yield {0: DeltaToolCall(name='progress', json_args='{}', tool_call_id='call_1')}
     else:
         yield 'done'
@@ -360,7 +365,7 @@ def test_duplicate_event_name_rejected():
     with pytest.raises(UserError, match="Duplicate custom event name 'upload_progress'"):
 
         @dataclass(kw_only=True)
-        class _ConflictingEvent(CustomEvent, name='upload_progress'):  # pyright: ignore[reportUnusedClass]
+        class _ConflictingEvent(CustomEvent, name='upload_progress'):
             pass
 
 
@@ -375,7 +380,7 @@ def test_reserved_name_rejected():
     with pytest.raises(UserError, match="Custom event name '__unknown__' is reserved"):
 
         @dataclass(kw_only=True)
-        class ReservedEvent(CustomEvent, name='__unknown__'):  # pyright: ignore[reportUnusedClass]
+        class ReservedEvent(CustomEvent, name='__unknown__'):
             pass
 
 
@@ -384,7 +389,7 @@ def test_envelope_field_shadowing_rejected():
     with pytest.raises(UserError, match='reserved for the event envelope: data'):
 
         @dataclass(kw_only=True)
-        class ShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class ShadowingEvent(CustomEvent):
             data: Any = None
 
 
@@ -436,13 +441,13 @@ def test_ui_attribute_shadowing_rejected():
     with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
-        class UiShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class UiShadowingEvent(CustomEvent):
             ui: str = ''  # pyright: ignore[reportIncompatibleVariableOverride]
 
     with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
-        class UiClassVarShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class UiClassVarShadowingEvent(CustomEvent):
             ui: ClassVar[bool] = False
 
 
@@ -495,7 +500,7 @@ def test_undecorated_base_with_fields_rejected():
     with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class LeafEvent(UndecoratedBase):  # pyright: ignore[reportUnusedClass]
+        class LeafEvent(UndecoratedBase):
             done: int = 0
 
 
@@ -1014,7 +1019,7 @@ async def test_iter_completed_or_buffered_plain_list_buffer():
     async def result() -> int:
         return 1
 
-    items = [item async for item in _iter_completed_or_buffered({asyncio.create_task(result())}, [])]
+    items = [item async for item in _iter_completed_or_buffered([asyncio.create_task(result())], [])]
     assert [item.result() for item in items if isinstance(item, asyncio.Task)] == [1]
 
 
@@ -1031,9 +1036,62 @@ async def test_iter_completed_or_buffered_drains_pre_buffered_events():
         return 1
 
     buffer = EventStreamBuffer([ProgressEvent(payload='pre-buffered')])
-    items = [item async for item in _iter_completed_or_buffered({asyncio.create_task(result())}, buffer)]
+    items = [item async for item in _iter_completed_or_buffered([asyncio.create_task(result())], buffer)]
     assert isinstance(items[0], ProgressEvent)
     assert [item.result() for item in items if isinstance(item, asyncio.Task)] == [1]
+
+
+@pytest.mark.parametrize('signalling', [False, True], ids=['plain-list-buffer', 'event-stream-buffer'])
+async def test_iter_completed_or_buffered_yields_same_wakeup_completions_in_call_order(
+    signalling: bool, monkeypatch: pytest.MonkeyPatch
+):
+    """Tasks that finish in one wakeup come out in call order, whatever order `asyncio.wait`'s `done` set iterates in.
+
+    A set of tasks iterates in an order that follows task identity, so a durable runtime replaying a run can see a
+    different order than the run that recorded it. The patched `asyncio.wait` hands `done` back in reverse call order,
+    one of the orders a plain set can produce. A task that finishes in a later wakeup still comes out after them,
+    even though it was called first.
+
+    Unit test: the plain-list branch isn't reachable through the public API, and a public run can't choose the
+    iteration order of the `done` set.
+    """
+    from pydantic_ai._run_context import EventStreamBuffer
+    from pydantic_ai._tool_execution import _iter_completed_or_buffered  # pyright: ignore[reportPrivateUsage]
+
+    real_wait = asyncio.wait
+
+    class ReversedDone(set[asyncio.Task[object]]):
+        def __iter__(self) -> Iterator[asyncio.Task[object]]:
+            return iter(sorted(super().__iter__(), key=lambda task: task.get_name(), reverse=True))
+
+    async def reversed_wait(
+        fs: Iterable[asyncio.Task[object]], *, timeout: float | None = None, return_when: str = asyncio.ALL_COMPLETED
+    ) -> tuple[set[asyncio.Task[object]], set[asyncio.Task[object]]]:
+        done, pending = await real_wait(fs, timeout=timeout, return_when=return_when)
+        return ReversedDone(done), pending
+
+    monkeypatch.setattr(asyncio, 'wait', reversed_wait)
+
+    release = asyncio.Event()
+
+    async def finishes_late() -> None:
+        await release.wait()
+
+    async def finishes_now() -> None:
+        pass
+
+    tasks = [
+        asyncio.create_task(finishes_late(), name='a'),
+        asyncio.create_task(finishes_now(), name='b'),
+        asyncio.create_task(finishes_now(), name='c'),
+    ]
+    buffer: list[AgentStreamEvent] = EventStreamBuffer() if signalling else []
+    yielded: list[str] = []
+    async for item in _iter_completed_or_buffered(tasks, buffer):
+        assert isinstance(item, asyncio.Task)
+        yielded.append(item.get_name())
+        release.set()
+    assert yielded == ['b', 'c', 'a']
 
 
 async def test_output_function_emission_is_delivered():

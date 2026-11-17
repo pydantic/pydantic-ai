@@ -1,3 +1,7 @@
+---
+description: "Use Z.AI (Zhipu AI) GLM models with Pydantic AI: install the zai optional group, set your API key, and enable thinking mode with preserved thinking."
+---
+
 # Z.AI
 
 ## Install
@@ -57,7 +61,7 @@ agent = Agent(
 ...
 ```
 
-`thinking=True` enables thinking and `thinking=False` disables it (except on GLM-5.3, which always reasons and ignores `thinking=False`). On GLM-5.2 and GLM-5.3, an explicit effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`) is forwarded to Z.AI as `reasoning_effort`; GLM-5.3 only accepts `low`/`high`/`max`, so the other levels map to the nearest one (`minimal` to `low`, `medium` to `high`, and `xhigh` to `max`). On other GLM models, which don't expose effort granularity, the effort levels all collapse to enabled. Omit the field to use each model's default behavior.
+`thinking=True` enables thinking and `thinking=False` disables it (except on GLM-5.3, which always reasons, so `thinking=False` keeps thinking on at its lowest effort, `low`). On GLM-5.2 and GLM-5.3, an explicit effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`) is forwarded to Z.AI as `reasoning_effort`; GLM-5.3 only accepts `low`/`high`/`max`, so the other levels map to the nearest one (`minimal` to `low`, `medium` to `high`, and `xhigh` to `max`). On other GLM models, which don't expose effort granularity, the effort levels all collapse to enabled. Omit the field to use each model's default behavior.
 
 ### Preserved thinking
 
@@ -100,3 +104,23 @@ agent = Agent(model)
 ```
 
 If you do not need a custom HTTP client, omit the `http_client=custom_http_client` argument.
+
+### Custom base URL
+
+`ZaiProvider` uses the international general API endpoint `https://api.z.ai/api/paas/v4` by default. To use a different endpoint, such as the one for the [GLM Coding Plan](https://docs.z.ai/devpack/overview) or the China-facing `https://open.bigmodel.cn/api/paas/v4`, pass a custom `base_url`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.zai import ZaiModel
+from pydantic_ai.providers.zai import ZaiProvider
+
+model = ZaiModel(
+    'glm-5',
+    provider=ZaiProvider(
+        api_key='your-api-key',
+        base_url='https://api.z.ai/api/coding/paas/v4',  # GLM Coding Plan
+    ),
+)
+agent = Agent(model)
+...
+```
