@@ -95,8 +95,27 @@ A `PermissionRule` matches a call when every field it sets matches:
 When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order, so a broad allow rule cannot override a deny rule.
 
 - **`'allow'`** runs the call without the `'read-only'` mode asking. A command that matches `ask_commands` still asks in `'auto'` and `'read-only'`: remove a pattern from `ask_commands` to let it run.
-- **`'ask'`** holds the call like the mode does, with the rule's `reason` for the person deciding. A call to a tool that neither writes files nor runs commands is held with a plain `ApprovalRequired`, like `requires_approval=True`, with the rule's `reason` in its metadata. `ask_permissions` leaves it for the next handler.
-- **`'deny'`** refuses the call without running it, even when it was approved, for example by another capability's approval. The model gets a tool result with `outcome='denied'` saying a permission rule refused it, with the rule's `reason`.
+- **`'ask'`** holds the call like the mode does. A file write or command goes to `ask_permissions` with the rule's `reason`. A call to any other tool is held with a plain `ApprovalRequired`, like `requires_approval=True`, with the rule's `reason` in its metadata. `ask_permissions` does not ask about it and leaves it for the next handler, so add one, as shown below.
+- **`'deny'`** refuses the call without running it, even when it was approved, for example by another capability's approval. The model gets a tool result with `outcome='denied'` saying a permission rule refused it, with the rule's `reason`. A call that needs approval for another reason, such as `requires_approval=True`, is put to the person before the rule refuses it.
+
+A second handler answers the asks `ask_permissions` leaves, after it in the capabilities list:
+
+```python
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+
+
+async def approve_other_calls(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+    return DeferredToolResults(
+        approvals={
+            call.tool_call_id: input(f'Run {call.tool_name}({call.args_as_dict()})? [y/N] ') == 'y'
+            for call in requests.approvals
+        }
+    )
+
+
+other_calls = HandleDeferredToolCalls(handler=approve_other_calls)
+```
 
 A `command` rule only matches tools that declare a shell command argument (see [Which calls are checked](#which-calls-are-checked)), and judges a compound command by each of its simple commands, split at `;`, `&&`, `||`, `|`, and `&`:
 
