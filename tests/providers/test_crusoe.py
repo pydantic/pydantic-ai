@@ -10,7 +10,10 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 
@@ -98,7 +101,7 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('openai/gpt-oss-120b')
     harmony_mock.assert_called_with('gpt-oss-120b')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
 
     # Test moonshotai provider
     moonshotai_profile = provider.model_profile('moonshotai/Kimi-K2.6')
@@ -110,6 +113,13 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     zai_profile = provider.model_profile('zai/GLM-5.2')
     zai_mock.assert_called_with('glm-5.2')
     assert zai_profile is not None
+
+    # Crusoe serves GLM-5.3 under the `zai-org` vendor, which gets the GLM profile and its GLM-5.3 schema fix
+    glm_profile = provider.model_profile('zai-org/GLM-5.3')
+    zai_mock.assert_called_with('glm-5.3')
+    assert glm_profile is not None
+    assert glm_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert glm_profile.get('thinking_always_enabled') is True
 
     # Test unknown vendor
     unknown_profile = provider.model_profile('unknown-vendor/unknown-model')

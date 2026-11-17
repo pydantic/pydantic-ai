@@ -24,6 +24,9 @@ settings = OpenAIRealtimeModelSettings(
 model = OpenAIRealtimeModel('{{ openai:realtime.name }}', settings=settings)
 ```
 
+ElevenLabs Agents and OpenAI GPT-Live own turn-taking server-side, so they ignore a `TurnDetection`'s
+knobs, and `turn_detection=False` raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
+
 Use provider-specific settings only when the shared controls are insufficient:
 `openai_turn_detection`, `xai_turn_detection`, and `google_vad` fully override `turn_detection`.
 Their accepted values, defaults, and limitations are documented on the
@@ -50,7 +53,8 @@ async def send_turns(session: RealtimeSession, image: BinaryImage) -> None:
 ```
 
 Images are context-only by default. Asking for a response to an image requires a model that supports
-manual turn control.
+manual turn control, except on OpenAI GPT-Live, which takes an image only with `respond=True` (see
+[Images](audio.md#images)).
 
 Do not call `create_response()` after `send('...')`: the text turn already asks for a response, so
 the pair asks twice and can make the model say the same thing twice.
@@ -59,6 +63,45 @@ When a reply is already in flight, OpenAI-protocol providers queue the text turn
 as does Gemini 2.5. Gemini 3.1 instead interrupts the reply in flight, emits a
 [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent], records
 the partial reply as interrupted, and answers the new text turn.
+
+## System prompts
+
+A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] sent mid-session is a note from your
+application rather than something the user said: that a caller has been verified, say, or what a
+background check found. Send it with `respond=False` to inform the model's next replies without asking
+for one now, or with the default `respond=True` to have the model act on it right away:
+
+```python
+from pydantic_ai import SystemPromptPart
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def caller_verified(session: RealtimeSession) -> None:
+    await session.send(
+        SystemPromptPart('The caller has been verified as the account holder, Jamie. Address them by name.'),
+        respond=False,
+    )
+```
+
+Each provider gets it on the channel it has for the operator's own text, so the model weighs it as
+instructions and doesn't later credit the user with it. The model profile's
+[`supports_system_messages`][pydantic_ai.realtime.RealtimeModelProfile.supports_system_messages] flag says
+whether that channel is a system message the model heeds; where it's `False`, the prompt goes out `<system>`-tagged.
+Override it with `profile=` for a model whose support differs from its provider's:
+
+| Provider | Delivered as |
+| --- | --- |
+| [OpenAI](openai.md) `gpt-realtime`, [Azure](azure.md) (including Voice Live) | A `system` message |
+| [OpenAI](openai.md#typed-text-runs-the-backend) GPT-Live | A note to the voice model, `<system>`-tagged; with `respond=True`, also a developer message to the backend, which is run on it |
+| [Gemini Live](gemini.md) | `<system>`-tagged user text, not completing the turn unless `respond=True` |
+| [xAI](xai.md), [Eleven Realtime](elevenlabs.md) | `<system>`-tagged user text (their models don't heed a `system` message) |
+| [ElevenLabs Agents](elevenlabs.md) | A `contextual_update`, `<system>`-tagged; with `respond=True`, `<system>`-tagged user text, as a contextual update never gets a reply |
+
+History records it as the `SystemPromptPart` it is, in a [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+of its own, so a standard run continuing the conversation sends it as a mid-conversation system prompt (see
+[message history](../message-history.md)). As there, only send a system prompt you wrote: text from a tool, a
+document, or the user doesn't earn the operator's authority by being wrapped in one.
+[`enqueue()`](tools.md#enqueuing-prompts) delivers system prompts the same way, once the model is idle.
 
 ## Muting the microphone
 
@@ -109,8 +152,9 @@ doing nothing when the previous reply was heard in full, since the speech-start 
 on ordinary user turns. A reply that has not reached its first audio chunk is still stopped, so
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
-(xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. The events still
+(xAI) the response is cancelled without sending the provider a truncation point (history still
+records where playback stopped), and when the provider interrupts
+itself without reporting speech onset (Gemini, ElevenLabs Agents) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
@@ -119,11 +163,11 @@ playback position to attribute, and the flag stands down in favour of the manual
 
 As an alternative, handle barge-in yourself. The signals: providers whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
-(OpenAI, Azure OpenAI, and xAI) emit
+(OpenAI gpt-realtime, Azure OpenAI, xAI, and Eleven Realtime) emit
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
-Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] when it
-interrupts model output instead. Read the flag rather than waiting on an event a provider never
-sends.
+Gemini and ElevenLabs Agents emit [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent]
+when they interrupt model output instead, and OpenAI GPT-Live reports neither. Read the flag rather than
+waiting on an event a provider never sends.
 
 While playback keeps the single device-paced iterator, staying in control of the trigger costs one
 line: the session still tracks the playback position for you, as
@@ -196,9 +240,10 @@ unplayed audio before interrupting, and flush buffered playback yourself — `in
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) there is a third buffer between those two: the
 provider generates audio well ahead of playback and keeps streaming what it already produced, so
-stopping the model is not enough to stop the voice. `interrupt()` drops that outbound buffer too,
-which is what actually ends the turn for the listener. The browser still owns its own playback buffer
-and should flush it on barge-in, as above.
+stopping the model is not enough to stop the voice. On gpt-realtime and Azure OpenAI, `interrupt()`
+drops that outbound buffer too, which is what actually ends the turn for the listener. GPT-Live
+handles barge-in itself and doesn't support `interrupt()`. The browser still owns its own playback
+buffer and should flush it on barge-in, as above.
 
 History records a known cutoff on
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] and marks the
@@ -206,11 +251,23 @@ response state as interrupted. When this history is sent to a text model, Pydant
 interruption note to the prepared request without modifying stored history.
 
 Models generate audio several times faster than it plays, so the reply the user speaks over has
-usually finished generating already. History is append-only, so that reply keeps its full
-transcript and `complete` state. The barge-in still truncates the provider's copy where playback
-stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
-`handle_barge_in=True`), the session truncates the reply actually being played, and any reply
-generated after it, which the user never heard, at 0.
+usually finished generating already. With `played_bytes` (or `handle_barge_in=True`), on a model whose
+profile sets `supports_output_truncation`, the session still truncates the provider's copy of that reply
+where playback stopped. Any reply generated after it, which the user never heard, is truncated at 0. The
+model then doesn't take either as heard. On a model without output truncation (xAI), the provider keeps
+its whole copy, so the model may take a reply as heard in full, but history still records the cut.
+
+History records each of those replies the same way as one cut off while it was being generated: as
+interrupted, with `interrupted_at_ms` on the speech part that was cut. A message you already have is never
+edited: a later snapshot holds an interrupted copy at the same position (see
+[History](history.md#transcription-and-history-edge-cases)). The transcript stays what the model
+generated, as most providers don't report which words were heard. ElevenLabs does, and with it the
+transcript becomes what was heard (see [ElevenLabs](elevenlabs.md#provider-specific-quirks)). The
+[readable interruption note](history.md#handing-off-to-a-text-agent) is what tells a later model where the
+listener stopped.
+
+With `played_ms`, the session can't tell which reply the position belongs to once it has finished, so a
+finished reply is neither truncated nor recorded as cut.
 
 ## Speaking first
 
@@ -284,8 +341,8 @@ async def main():
         await session.create_response()
 ```
 
-Gemini does not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
-[`UserError`][pydantic_ai.exceptions.UserError] before connecting.
+Gemini, ElevenLabs Agents, and OpenAI GPT-Live do not expose manual turn verbs through Pydantic AI;
+`turn_detection=False` raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
 
 ## Checking what the model supports
 
@@ -299,6 +356,7 @@ what a provider connection can do — not to be confused with
 | `supports_manual_turn_control` | `commit_audio()`, `clear_audio()`, and `create_response()` |
 | `supports_interruption` | `interrupt()` |
 | `supports_output_truncation` | `interrupt(played_ms=...)` |
+| `supports_system_messages` | Whether a [system prompt](#system-prompts) goes out on the provider's channel for the operator's own text, rather than `<system>`-tagged |
 
 Calling an unsupported method raises [`UserError`][pydantic_ai.exceptions.UserError] before a
 control message is sent. Current provider support is summarized on each provider page.

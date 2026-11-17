@@ -1,0 +1,44 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-opus-4-8/invoke
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "207"
+      content-type:
+      - application/json
+      host:
+      - bedrock-runtime.us-east-1.amazonaws.com
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content: Use code execution to compute 2**100.
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
+        anthropic_version: bedrock-2023-05-31
+  response:
+    status: 400
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "82"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        message: tool type 'code_execution_20260120' is not supported for this model
+  recorded_at: 2026-10-28T22:30:11.093610+00:00

@@ -46,7 +46,7 @@ def custom_effort_override(
     """The custom body path and value replacing native effort, including scalar ancestors."""
     if key == 'anthropic_effort':
         path = ('output_config', 'effort')
-    elif key == 'glm_reasoning_effort' or provider_of(settings_as) in ('openai-chat', 'openrouter', 'vllm'):
+    elif key == 'glm_reasoning_effort' or provider_of(settings_as) in ('openai-chat', 'openrouter', 'vllm', 'azure'):
         path = ('reasoning_effort',)
     else:
         path = ('reasoning', 'effort')

@@ -1,14 +1,20 @@
 version: 1
 interactions:
 - kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session: {}
+- kind: message
   direction: received
   at: 0.0
   data:
-    event_id: event_ETYI4SeEPFmVd1s8ccq1j
+    event_id: event_Ec0JQuaCACIi67S0Ezntn
     type: session.started
     session:
-      id: live_u1_ETYI3p3oN5MxHXS4UFdaMdUu5hWajOGp
-      expires_at: 1790719231
+      id: live_u0_Ec0JQp3oMlTpfEe88qpOZR0H58FnX9nT
+      expires_at: 1792733572
       model: gpt-live-1
       instructions: You are a voice assistant. Keep replies short and conversational.
         When the user asks for something you cannot answer from this conversation
@@ -39,53 +45,84 @@ interactions:
           allowed_server_events: []
 - kind: message
   direction: received
-  at: 0.312
+  at: 0.05
+  data:
+    event_id: event_Ec0JRx5WHDlYaMPjKP6Dz
+    type: session.updated
+    session:
+      id: live_u0_Ec0JQp3oMlTpfEe88qpOZR0H58FnX9nT
+      expires_at: 1792733572
+      model: gpt-live-1
+      instructions: You are a voice assistant. Keep replies short and conversational.
+        When the user asks for something you cannot answer from this conversation
+        alone, delegate the task and tell them you are looking it up.
+      audio:
+        output:
+          voice: marin
+      delegation:
+        type: responses
+        responses:
+          model: gpt-5.6-sol
+          instructions: Answer in a few words.
+          tools: []
+          tool_choice: auto
+      status: active
+      input:
+      - role: user
+        content:
+        - type: input_text
+          text: My name is Ada.
+      - role: assistant
+        content:
+        - type: output_text
+          text: Nice to meet you, Ada.
+      client:
+        data_channel:
+          allowed_client_events: []
+          allowed_server_events: []
+- kind: message
+  direction: received
+  at: 0.189
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 0.516
+  at: 0.388
   data:
     type: session.input_audio.append
-    audio: nwloESIXXRZCFPkRyA4XDhIQdRKDFSoYphfsFLQSURDo
+    audio: jwA5ApMDIANVAcD/9/48/y8APwD9//UAywDE/on+/v4I
 - kind: message
   direction: received
-  at: 0.714
-  data:
-    type: session.input_audio.append
-    audio: 0fRl9j34jvkU+1D7u/n4+Af6sPsg/lYBIwOiApQB+gAO
-- kind: message
-  direction: received
-  at: 0.832
+  at: 0.556
   data:
     type: session.output_audio.delta
-    delta: 7//w/+7/7f/w//D/7v/u/+//8P/v//D/8P/w//D/8P/x
+    delta: 7//w/+7/7f/w//D/7//u//D/8P/v//D/8P/v//D/8P/x
     start_ms: 200
     end_ms: 400
 - kind: message
   direction: received
-  at: 0.912
+  at: 0.587
   data:
     type: session.input_audio.append
-    audio: WAdlByoHkAboBTgFMgT5AtEBjgAZ/7r9dPwy+x76Kfks
+    audio: cgEwAe0AqQB3AD8A9f+l/0r/9P6z/m3+KP76/bL9Ov28
 - kind: message
   direction: received
-  at: 0.919
+  at: 0.71
   data:
     type: session.output_audio.delta
-    delta: AQABAAEAAQABAAEAAQABAAIAAgACAAEAAQABAAEAAQAB
+    delta: AQABAAEAAQABAAEAAQABAAIAAgABAAEAAQABAAEAAQAB
     start_ms: 400
     end_ms: 600
 - kind: message
   direction: received
-  at: 1.112
+  at: 0.786
   data:
     type: session.input_audio.append
-    audio: pe/C8G/xl/Fz8WjwXO8677ruu+0z7X3sE+xW7VHvfPFV
+    audio: NgAyACcACADJ/27//f57/vT9cf30/Hv8Dfyh+y77zPqB
 - kind: message
   direction: received
-  at: 1.118
+  at: 0.893
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -93,22 +130,27 @@ interactions:
     end_ms: 800
 - kind: message
   direction: received
-  at: 1.312
+  at: 0.987
   data:
     type: session.input_audio.append
-    audio: MvUM9gH3Afj++Pr5+PoA/Bf9Mf5B/1EAZAF5ApEDrQTG
+    audio: mAh6CZQKyAsLDTgOIg/bD4UQMRHuEbwSbhPME+ET5BPt
 - kind: message
   direction: received
-  at: 1.313
+  at: 1.151
   data:
-    type: session.input_transcript.delta
-    start_ms: 600
-    end_ms: 800
-    delta: Can
-    event_id: event_ETYI56TDVqhI0sF5diTld
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    start_ms: 800
+    end_ms: 1000
 - kind: message
   direction: received
-  at: 1.479
+  at: 1.188
+  data:
+    type: session.input_audio.append
+    audio: 5AesCngOTRH/ERAR4Q7xC/kJrwkdCucKCQyMDOILuwpH
+- kind: message
+  direction: received
+  at: 1.288
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -116,22 +158,22 @@ interactions:
     end_ms: 1200
 - kind: message
   direction: received
-  at: 1.481
+  at: 1.289
   data:
     type: session.input_transcript.delta
     start_ms: 800
     end_ms: 1000
-    delta: ' you'
-    event_id: event_ETYI56zLNF3Q6ultuTzeb
+    delta: Can you
+    event_id: event_Ec0JS9c9OsxCHw77honAI
 - kind: message
   direction: received
-  at: 1.513
+  at: 1.388
   data:
     type: session.input_audio.append
-    audio: DPZa9uP2xvc7+K/3Affa9/H5Jvs9/DT/MgEKAFH/PADj
+    audio: Dvnr+MH4hfhA+A741veA9yr38fbD9p32ivZ99lT2EvbH
 - kind: message
   direction: received
-  at: 1.679
+  at: 1.472
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -139,19 +181,13 @@ interactions:
     end_ms: 1400
 - kind: message
   direction: received
-  at: 1.715
+  at: 1.588
   data:
     type: session.input_audio.append
-    audio: fgBgAEMAJAAEAOT/xf+n/4n/av9O/zP/Ff/4/t7+xf6q
+    audio: O/k0+cf5VPpj+uz6pPuh+8X7TfxU/Ff8y/wK/T39tv3b
 - kind: message
   direction: received
-  at: 1.914
-  data:
-    type: session.input_audio.append
-    audio: OABCAEoATgBFADUAJAASAP3/7f/h/9f/0P/Q/9P/1v/i
-- kind: message
-  direction: received
-  at: 1.921
+  at: 1.77
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -159,7 +195,13 @@ interactions:
     end_ms: 1600
 - kind: message
   direction: received
-  at: 2.114
+  at: 1.791
+  data:
+    type: session.input_audio.append
+    audio: AQ1FDCcKRQdsBEICRAGQAY8CdgMXBLcEeQVtBpQHswia
+- kind: message
+  direction: received
+  at: 1.947
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -167,28 +209,22 @@ interactions:
     end_ms: 1800
 - kind: message
   direction: received
-  at: 2.115
-  data:
-    type: session.input_audio.append
-    audio: IPku+Sz5HvkJ+fz4/vgC+QX5Avnx+Nj4vfik+JX4iPh0
-- kind: message
-  direction: received
-  at: 2.115
+  at: 1.948
   data:
     type: session.input_transcript.delta
     start_ms: 1400
     end_ms: 1600
     delta: ' remind'
-    event_id: event_ETYI6ckGTKzQX5qD7MrDb
+    event_id: event_Ec0JSuFUAkUslp74onm4q
 - kind: message
   direction: received
-  at: 2.313
+  at: 1.988
   data:
     type: session.input_audio.append
-    audio: xfd890H3A/fI9pH2Tvbz9Y31NfXy9MD0nvSF9GP0SPQ/
+    audio: 6AMpBV8IkwuaDhIR/BGyESURVBAXD/QNaw1FDUcNkA3+
 - kind: message
   direction: received
-  at: 2.325
+  at: 2.129
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -196,22 +232,22 @@ interactions:
     end_ms: 2000
 - kind: message
   direction: received
-  at: 2.327
+  at: 2.131
   data:
     type: session.input_transcript.delta
     start_ms: 1600
     end_ms: 1800
     delta: ' me'
-    event_id: event_ETYI6xpdZUidEJzrrpseG
+    event_id: event_Ec0JTbQRQBJd7NBGasZM5
 - kind: message
   direction: received
-  at: 2.513
+  at: 2.188
   data:
     type: session.input_audio.append
-    audio: AAA3ADUA+v+p/3v/h//H/yoAhgCeAG4AKgD5/8v/jv9d
+    audio: 2QbFBtAGkwbHBaQEdQOJAhkC0gGfAbwBgAF2AF//b/5W
 - kind: message
   direction: received
-  at: 2.515
+  at: 2.399
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -219,16 +255,13 @@ interactions:
     end_ms: 2200
 - kind: message
   direction: received
-  at: 2.517
+  at: 2.4
   data:
-    type: session.input_transcript.delta
-    start_ms: 1800
-    end_ms: 2000
-    delta: ' what'
-    event_id: event_ETYI6Ojkn3I3AS5lw0Vm3
+    type: session.input_audio.append
+    audio: SP7R/mn/9/9tAIUARwABAMH/ef81//r+5/4K/zX/Wv98
 - kind: message
   direction: received
-  at: 2.673
+  at: 2.481
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -236,28 +269,22 @@ interactions:
     end_ms: 2400
 - kind: message
   direction: received
-  at: 2.677
+  at: 2.483
   data:
     type: session.input_transcript.delta
     start_ms: 2000
     end_ms: 2200
-    delta: ' my'
-    event_id: event_ETYI63vBkjJLQk5OlaOW2
+    delta: ' what my'
+    event_id: event_Ec0JTu6WdoPhGEb1fIWQx
 - kind: message
   direction: received
-  at: 2.711
+  at: 2.587
   data:
     type: session.input_audio.append
-    audio: pf9SAPsAgQH9AMH/Jf9LAM4BKQAx/gAB7gLp/z3/NgFS
+    audio: Nf8m/lICC/8C/QUCwwEh/Hn9vgMrAj/7Rf3EAcT7vvuI
 - kind: message
   direction: received
-  at: 2.915
-  data:
-    type: session.input_audio.append
-    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 2.974
+  at: 2.745
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -265,13 +292,13 @@ interactions:
     end_ms: 2600
 - kind: message
   direction: received
-  at: 3.114
+  at: 2.786
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 3.2
+  at: 2.901
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -279,233 +306,169 @@ interactions:
     end_ms: 2800
 - kind: message
   direction: received
-  at: 3.202
+  at: 2.903
   data:
     type: session.input_transcript.delta
     start_ms: 2400
     end_ms: 2600
     delta: ' name'
-    event_id: event_ETYI7jBFqWSJEmXsqABNz
+    event_id: event_Ec0JTcMabUyxjGoSxydL3
 - kind: message
   direction: received
-  at: 3.202
-  data:
-    type: session.output_transcript.delta
-    start_ms: 2400
-    end_ms: 2600
-    delta: You mentioned
-    event_id: event_ETYI75SoqpCdSwgiflg5N
-- kind: message
-  direction: received
-  at: 3.314
+  at: 2.987
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 3.392
+  at: 3.195
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.36
   data:
     type: session.output_audio.delta
-    delta: AOlA6MDnYOdg5+DngOhA6QDqQOog6gDqQOrg6qDrwOzA
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     start_ms: 2800
     end_ms: 3000
 - kind: message
   direction: received
-  at: 3.394
-  data:
-    type: session.input_transcript.delta
-    start_ms: 2600
-    end_ms: 2800
-    delta: ' is'
-    event_id: event_ETYI7vKDakWRjYEwZiUEb
-- kind: message
-  direction: received
-  at: 3.394
-  data:
-    type: session.output_transcript.delta
-    start_ms: 2600
-    end_ms: 2800
-    delta: ' your'
-    event_id: event_ETYI7LVIlpvIpuLQNgADV
-- kind: message
-  direction: received
-  at: 3.513
+  at: 3.388
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 3.605
+  at: 3.5
   data:
     type: session.output_audio.delta
-    delta: 7f+R/4v/mQDE/H4AS/8B/5QC1ACk/gT+T/+mAOH/cQCd
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     start_ms: 3000
     end_ms: 3200
 - kind: message
   direction: received
-  at: 3.606
+  at: 3.501
   data:
     type: session.input_transcript.delta
     start_ms: 2800
     end_ms: 3000
-    delta: '?'
-    event_id: event_ETYI7SFIzqE6L6jeZqN59
+    delta: ' is'
+    event_id: event_Ec0JUfimpBc2SmbCvhL4U
 - kind: message
   direction: received
-  at: 3.608
+  at: 3.503
   data:
     type: session.output_transcript.delta
     start_ms: 2800
     end_ms: 3000
-    delta: ' name'
-    event_id: event_ETYI7DqpF7kDdzG8QlWXP
+    delta: ' It''s Ada'
+    event_id: event_Ec0JU3R6GxBwR7oZ1yI2F
 - kind: message
   direction: received
-  at: 3.717
+  at: 3.588
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 3.792
+  at: 3.631
   data:
     type: session.output_audio.delta
-    delta: kPSA9QD3cPh4+aj64Pv8/B7+I/+VAHgCMATABfgGiAdg
+    delta: 5P/W/7L/N/9+//X/wP8LAIoAEQBiAK4AngCHAAkA2P/M
     start_ms: 3200
     end_ms: 3400
 - kind: message
   direction: received
-  at: 3.792
+  at: 3.633
   data:
     type: session.output_transcript.delta
     start_ms: 3000
     end_ms: 3200
-    delta: ' is'
-    event_id: event_ETYI8b7iHafinxpAAiM62
+    delta: .
+    event_id: event_Ec0JUFtD0eVUUQ5IdLBRx
 - kind: message
   direction: received
-  at: 3.912
+  at: 3.788
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 3.977
+  at: 3.892
   data:
     type: session.output_audio.delta
-    delta: cAegCEAJQAhwCAAIEAnQCUALsAvwC2ALgAvgCkAKgAoA
+    delta: kAGgAZ4BrAGyAZoBbAFGAToBPAEsATYBMgEkAQoB9ADr
     start_ms: 3400
     end_ms: 3600
 - kind: message
   direction: received
-  at: 3.996
-  data:
-    type: session.output_transcript.delta
-    start_ms: 3200
-    end_ms: 3400
-    delta: ' Ada.'
-    event_id: event_ETYI8ttQpZSL9fEBOOLQE
-- kind: message
-  direction: received
-  at: 4.112
-  data:
-    type: session.input_audio.append
-    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 4.173
+  at: 3.946
   data:
     type: session.output_audio.delta
-    delta: QwB//5j9mAX0/bz+aALQAMYBDP3jABQD0v/Q+0ADiAKM
+    delta: vP7M/qb+oP6w/rT+vP7K/uz+Fv9F/3n/i/+T/4P/fv93
     start_ms: 3600
     end_ms: 3800
 - kind: message
   direction: received
-  at: 4.316
+  at: 3.987
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 4.374
-  data:
-    type: session.output_audio.delta
-    delta: IPx4/OD8EP2A/Zj9xP0K/lL+XP6s/uD+U/+8/wAALQBH
-    start_ms: 3800
-    end_ms: 4000
-- kind: message
-  direction: received
-  at: 4.518
+  at: 4.189
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 4.532
+  at: 4.295
   data:
     type: session.output_audio.delta
-    delta: CQAKAAoACAAPAAwACwAMAAkABwAJAAwADAAKAAwADwAP
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     start_ms: 4000
     end_ms: 4200
 - kind: message
   direction: received
-  at: 4.711
+  at: 4.388
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.477
   data:
     type: session.output_audio.delta
-    delta: EAARABIAEAARABQAEwARABIAEwAUABMAFAAUABUAFQAV
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     start_ms: 4200
     end_ms: 4400
 - kind: message
   direction: received
-  at: 4.717
+  at: 4.597
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 4.913
-  data:
-    type: session.input_audio.append
-    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 4.917
+  at: 4.693
   data:
     type: session.output_audio.delta
-    delta: AAAAAAAAAAABAAAAAAAAAAEAAAABAAAAAQAAAAAAAAAA
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     start_ms: 4400
     end_ms: 4600
 - kind: message
   direction: received
-  at: 5.118
+  at: 4.787
   data:
     type: session.input_audio.append
     audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 - kind: message
   direction: received
-  at: 5.282
+  at: 4.897
   data:
     type: session.output_audio.delta
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-    start_ms: 4800
-    end_ms: 5000
-- kind: message
-  direction: received
-  at: 5.314
-  data:
-    type: session.input_audio.append
-    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-- kind: message
-  direction: received
-  at: 5.486
-  data:
-    type: session.output_audio.delta
-    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-    start_ms: 5000
-    end_ms: 5200
-- kind: message
-  direction: received
-  at: 5.515
-  data:
-    type: session.input_audio.append
-    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    start_ms: 4600
+    end_ms: 4800

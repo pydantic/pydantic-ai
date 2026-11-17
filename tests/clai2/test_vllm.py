@@ -3,13 +3,17 @@
 from pathlib import Path
 
 import httpx
+import httpx2
 import pytest
 from pydantic import SecretStr
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.vllm import VLLMProvider
 from pydantic_clai2.models import vllm
 from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
-from tests.clai2.menu_script import make_context
+from tests.clai2.menu_script import QUIET, make_context
 
 
 @pytest.mark.parametrize('token', ['', 'test-secret'])
@@ -114,7 +118,7 @@ async def test_provider_menu_connection(tmp_path: Path, monkeypatch: pytest.Monk
         return next(results)
 
     monkeypatch.setattr(vllm, 'connect', connect)
-    assert await open_add_model_menu(context) == 'Saved model. Applied.'
+    assert await open_add_model_menu(context, console=QUIET) == 'Saved model. Applied.'
 
 
 async def test_corrupt_connection_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,3 +158,80 @@ async def test_broken_manifest_recovery(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(vllm, 'load_codex_credentials', broken)
     monkeypatch.setattr(vllm, 'prompt_connection', prompt)
     assert await vllm.connect(context, []) == 'Connection cancelled.'
+
+
+COMPLETION = {
+    'id': 'chatcmpl-1',
+    'object': 'chat.completion',
+    'created': 0,
+    'model': 'my/model',
+    'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'hello'}, 'finish_reason': 'stop'}],
+}
+
+
+def gateway_model(
+    monkeypatch: pytest.MonkeyPatch, statuses: list[int], delays: list[float], headers: dict[str, str] | None = None
+) -> OpenAIChatModel:
+    """The saved vLLM model's client, answering with `statuses` in turn and recording backoff without sleeping."""
+    vllm.save_connection(vllm.Connection(url='http://localhost:8000', token=SecretStr('test-token')))
+    calculate = vllm.RetryingClient._calculate_retry_timeout  # pyright: ignore[reportPrivateUsage]
+
+    def no_wait(self: vllm.RetryingClient, *args: object, **kwargs: object) -> float:
+        delays.append(calculate(self, *args, **kwargs))  # pyright: ignore[reportArgumentType]
+        return 0
+
+    monkeypatch.setattr(vllm.RetryingClient, '_calculate_retry_timeout', no_wait)
+    replies = iter(statuses)
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        status = next(replies)
+        body = COMPLETION if status == 200 else {'error': f'http_{status}', 'detail': {'error': 'invalid_api_key'}}
+        return httpx2.Response(status, json=body, headers=headers)
+
+    client = vllm.model('vllm:my/model').client
+    assert isinstance(client, vllm.RetryingClient)
+    assert client.max_retries == vllm.MAX_RETRIES
+    mocked = client.with_options(http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)))
+    return OpenAIChatModel('my/model', provider=VLLMProvider(openai_client=mocked))
+
+
+@pytest.mark.usefixtures('allow_model_requests')
+async def test_gateway_403_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gateway 403 under load cannot be recorded on demand, so a mock transport plays the status sequence."""
+    delays: list[float] = []
+    model = gateway_model(monkeypatch, [403, 500, 200], delays)
+    assert (await Agent(model).run('hi')).output == 'hello'
+    assert len(delays) == 2
+    assert 0.375 <= delays[0] <= 0.5 < 0.75 <= delays[1] <= 1
+
+
+@pytest.mark.parametrize(('status', 'headers'), [(401, None), (403, {'x-should-retry': 'false'})])
+@pytest.mark.usefixtures('allow_model_requests')
+async def test_not_retried(monkeypatch: pytest.MonkeyPatch, status: int, headers: dict[str, str] | None) -> None:
+    """Mocked like the test above: a 401, or a 403 the server marks as final, fails on the first response."""
+    delays: list[float] = []
+    model = gateway_model(monkeypatch, [status], delays, headers)
+    with pytest.raises(ModelHTTPError) as error:
+        await Agent(model).run('hi')
+    assert error.value.status_code == status
+    assert delays == []
+
+
+@pytest.mark.usefixtures('allow_model_requests')
+async def test_403_retries_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mocked like the tests above: a key that keeps getting 403 fails after `MAX_RETRIES` retries."""
+    delays: list[float] = []
+    model = gateway_model(monkeypatch, [403] * (vllm.MAX_RETRIES + 1), delays)
+    with pytest.raises(ModelHTTPError) as error:
+        await Agent(model).run('hi')
+    assert error.value.status_code == 403
+    assert len(delays) == vllm.MAX_RETRIES
+
+
+async def test_provider_owns_its_http_client() -> None:
+    """Checks the client lifecycle, without sending a request."""
+    vllm.save_connection(vllm.Connection(url='http://localhost:8000'))
+    model = vllm.model('vllm:my/model')
+    async with model:
+        pass
+    assert model.client.is_closed()

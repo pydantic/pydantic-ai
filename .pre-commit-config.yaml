@@ -83,6 +83,16 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: complexity
+        name: Cognitive complexity
+        # `--staged` compares the index with `HEAD`, and during a merge with `MERGE_HEAD` too, so a run with
+        # `--all-files` still checks only what is staged. `--no-sync`: the hooks above already ran `uv run`,
+        # which syncs the `lint` group.
+        entry: uv
+        args: [run, --no-sync, scripts/check_complexity.py, --staged]
+        types: [python]
+        language: system
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv

@@ -8,7 +8,7 @@ failed or over-budget summary degrades to truncation. `compact_now` drives the c
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -20,11 +20,12 @@ from pydantic import (
     model_serializer,
 )
 
-from pydantic_ai import ModelResponse, RunContext
+from pydantic_ai import ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
+from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.compaction import (
-    ContextUsageEvent,
+    ContextUsageMeasuredEvent,
     FallbackCompaction,
     ReportContextUsage,
     SlidingWindowCompaction,
@@ -33,9 +34,10 @@ from pydantic_ai_harness.compaction import (
     estimate_message_tokens,
 )
 from pydantic_clai2.commands import Command
-from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+from pydantic_clai2.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
+from pydantic_clai2.runtime.session import local_workspace_provider
 from pydantic_clai2.ui.menus.field_menu import first_error, shown
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -68,6 +70,18 @@ class CompactionSettings(BaseModel):
     summarization_model: str | None = Field(
         default=None, description='Model that writes the summary. Unset uses the model running the conversation.'
     )
+    background_compaction: bool = Field(
+        default=False,
+        description='Experimental: write the summary in the background before the threshold and swap it in when '
+        'compaction is due. Only with `summarization`.',
+    )
+    background_start: float = Field(
+        default=0.85,
+        gt=0,
+        lt=1,
+        allow_inf_nan=False,
+        description='Experimental: with background compaction on, start the summary at this fraction of the threshold.',
+    )
 
     @model_serializer(mode='wrap')
     def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
@@ -75,6 +89,9 @@ class CompactionSettings(BaseModel):
         dumped: dict[str, JsonValue] = handler(self)
         return {key: value for key, value in dumped.items() if key in self.model_fields_set}
 
+
+BACKGROUND_COMPACTION_FEATURE = 'compaction-background'
+"""Builds without it would reject a saved `background_compaction` or `background_start`, so they drop both."""
 
 _TEXT_FIELDS = frozenset({'strategy', 'summarization_model'})
 """Settings typed as plain text; the others are typed as JSON numbers."""
@@ -108,6 +125,8 @@ class CompactionSource:
             row('protected_tokens', 'Protected tokens'),
             row('context_window', 'Context window'),
             row('summarization_model', 'Summarization model'),
+            row('background_compaction', 'Background compaction', ('true', 'false')),
+            row('background_start', 'Background start'),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -118,6 +137,8 @@ class CompactionSource:
             'protected_tokens': settings.protected_tokens,
             'context_window': settings.context_window,
             'summarization_model': settings.summarization_model,
+            'background_compaction': settings.background_compaction,
+            'background_start': settings.background_start,
         }
         return shown(values[row.key])
 
@@ -161,6 +182,7 @@ def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
         max_fraction=config.threshold,
         context_window=config.context_window,
         fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded),
+        background_start=config.background_start if config.background_compaction else None,
     )
 
 
@@ -171,8 +193,8 @@ class _ContextGauge(AbstractCapability[None]):
     status: Status
     threshold: float
 
-    @on_event(ContextUsageEvent)
-    async def _gauge(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
+    @on_event(ContextUsageMeasuredEvent)
+    async def _gauge(self, ctx: RunContext[None], event: ContextUsageMeasuredEvent) -> None:
         self.status.context_tokens = event.used_tokens
         # Without a response's reported usage, the reading counts characters and leaves out most tool
         # definitions, so a session's first request reads well under what the provider then reports.
@@ -189,6 +211,12 @@ class CompactionPlugin(Plugin[CompactionSettings]):
     Typed for `None` deps because `compact_now` runs the chain on a context with no deps;
     the strategies never read them, so the plugin works with any agent.
     """
+
+    @classmethod
+    def from_host(cls, host: PluginHost[None]) -> Self:
+        # Tags the settings, so a build without background compaction uses the defaults instead of failing to load.
+        requires = {key: [BACKGROUND_COMPACTION_FEATURE] for key in ('background_compaction', 'background_start')}
+        return cls(host, host.settings(CompactionSettings, requires=requires))
 
     def __init__(self, host: PluginHost[None], settings: CompactionSettings) -> None:
         super().__init__(host, settings)
@@ -215,9 +243,29 @@ class CompactionPlugin(Plugin[CompactionSettings]):
     def settings_menu(self) -> SettingsMenu:
         return SettingsMenu(source=CompactionSource(self.host))
 
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        await self._discard_left_behind()
+
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        await self._discard_left_behind()
+
+    async def _discard_left_behind(self) -> None:
+        """Drop the background summaries of conversations that may never run again.
+
+        Only the conversation shown and its running delegated tasks, each a conversation of its own
+        under the task's ID, can still use theirs; a conversation left with `/new` or `/resume` and a
+        finished task would keep theirs, with a copy of their history, until CLAI exits.
+        """
+        keep: set[str | None] = {self.host.conversation.conversation_id}
+        if (tasks := self.host.tasks) is not None:
+            keep.update(task.id for task in tasks.listing() if task.status == 'running')
+        for conversation_id in self.chain.background_conversations - keep:
+            await self.chain.discard_background_compaction(conversation_id)
+
     async def on_session_end(self, event: SessionEnd) -> None:
         self.host.status.context_window = None
         self.host.status.context_alert = False
+        await self.chain.aclose()
 
     async def _compact(self, args: list[str]) -> str:
         conversation = self.host.conversation
@@ -229,16 +277,46 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             raise ValueError('Choose a model first: /set model <Tab>')
         # Counted as the provider reported them, so thinking returned without text is not missed.
         tokens = sum(estimate_message_tokens(before))
-        # Cap the protected target at half the history: a conversation just over the protected tail
-        # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
-        # The kept messages can still exceed it by the whole message that crosses it.
-        tail = min(self.settings.protected_tokens, tokens // 2)
-        chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
-        after = await compact_now(
-            chain, before, model=model, focus=' '.join(args) or None, tracer=agent_instrumentation.tracer()
-        )
+        focus = ' '.join(args) or None
+        tracer = agent_instrumentation.tracer()
+        conversation_id = conversation.conversation_id
+        after: list[ModelMessage] | None = None
+        if focus is None:
+            after = await self.chain.take_background_compaction(
+                before, model=model, conversation_id=conversation_id, tracer=tracer
+            )
+        else:
+            # A summary written in the background has no focus, and the history is about to change.
+            await self.chain.discard_background_compaction(conversation_id)
+        if after is None:
+            # Cap the protected target at half the history: a conversation just over the protected tail
+            # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+            # The kept messages can still exceed it by the whole message that crosses it.
+            tail = min(self.settings.protected_tokens, tokens // 2)
+            chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
+            after = await compact_now(chain, before, model=model, focus=focus, tracer=tracer)
+        after = _keeping_workspace(before, after)
         saved = tokens - sum(estimate_message_tokens(after))
         if saved <= 0:
             return 'Nothing to compact: compacting would not make the conversation smaller.'
         await conversation.commit_messages(after)
         return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} of {tokens:,} tokens saved.'
+
+
+def _keeping_workspace(before: Sequence[ModelMessage], after: list[ModelMessage]) -> list[ModelMessage]:
+    """`after`, still naming the workspace `before` last worked in when compacting dropped every response naming it.
+
+    A run works in the workspace its history's latest response names, so a conversation in a `/sandbox` would
+    otherwise continue on this machine. The name goes on an empty response, as core records for a turn that ended
+    unanswered: providers send no message for it, so the model is not made to have said anything. A local folder
+    is left alone, as the session works in its own anyway.
+    """
+    ref = _latest_workspace(before)
+    if ref is None or ref.provider == local_workspace_provider() or _latest_workspace(after) == ref:
+        return after
+    return [*after, ModelResponse(parts=[], workspace_ref=ref)]
+
+
+def _latest_workspace(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    return response.workspace_ref if response is not None else None

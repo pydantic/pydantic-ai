@@ -1,0 +1,113 @@
+"""Publish structured douwebot findings from a trusted host, with a deterministic receipt."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+APPROVAL_BODY = 'No blocking findings.'
+DOUWEBOT_MARKER = re.compile(
+    r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40})(?: engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\Z'
+)
+# `opencode` is OpenCode on the OpenCode Go subscription; `opencode-zai` is its fallback on the GLM Coding Plan.
+# Nothing publishes `opencode-deepinfra` any more; it marks reviews DeepInfra served before the Coding Plan replaced it.
+ReviewEngine = Literal['claude', 'opencode', 'opencode-zai', 'opencode-deepinfra']
+REVIEW_ENGINES: dict[ReviewEngine, str] = {
+    'claude': 'Reviewer: Claude Code (claude-opus-5-5)',
+    'opencode': 'Reviewer: OpenCode (opencode-go/deepseek-v4.1-flash)',
+    'opencode-zai': 'Reviewer: OpenCode (zai-coding-plan/glm-5.3-flash)',
+    'opencode-deepinfra': 'Reviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)',
+}
+ReviewVerdict = Literal['APPROVE', 'REQUEST_CHANGES', 'INCOMPLETE']
+REVIEW_BODIES: dict[ReviewVerdict, str] = {
+    'APPROVE': APPROVAL_BODY,
+    'REQUEST_CHANGES': 'Blocking findings are recorded inline.',
+    'INCOMPLETE': 'Review incomplete.',
+}
+
+
+class Finding(BaseModel):
+    """One inline finding; GitHub validates the position against the pinned diff."""
+
+    path: str
+    line: int = Field(gt=0)
+    side: Literal['LEFT', 'RIGHT']
+    body: str = Field(min_length=1)
+
+
+class ReviewResult(BaseModel):
+    """Structured review judgment; source identity is supplied by the host."""
+
+    verdict: ReviewVerdict
+    comments: list[Finding]
+    discussion: str
+
+
+def publication(
+    result: ReviewResult, head: str, run_id: int, *, inline: bool = True, engine: ReviewEngine | None
+) -> str:
+    """Bind the formal review and all findings to this run and reviewed head."""
+    body = REVIEW_BODIES[result.verdict]
+    if result.verdict == 'REQUEST_CHANGES' and not inline:
+        body = 'Blocking findings are recorded below.'
+    if result.discussion:
+        body += '\n\n' + result.discussion
+    if not inline:
+        for comment in result.comments:
+            body += f'\n\n### `{comment.path}:{comment.line}` (`{comment.side}`)\n\n{comment.body}'
+    if engine is not None:
+        body += f'\n\n{REVIEW_ENGINES[engine]}'
+    engine_marker = f' engine={engine}' if engine is not None else ''
+    body += f'\n\n<!-- douwebot:review run={run_id} head={head}{engine_marker} -->'
+    payload: dict[str, object] = {
+        'commit_id': head,
+        'event': 'COMMENT' if result.verdict == 'INCOMPLETE' else result.verdict,
+        'body': body,
+        'comments': [comment.model_dump() for comment in result.comments] if inline else [],
+    }
+    return json.dumps(payload)
+
+
+def main() -> None:
+    """Read only host-bound repository/PR/head values, then publish through `gh`."""
+    env = os.environ
+    head = env['HEAD_SHA']
+    engine = env['REVIEW_ENGINE']
+    if engine != 'claude' and engine != 'opencode' and engine != 'opencode-zai':
+        raise ValueError('Unknown review engine')
+    endpoint = f'repos/{env["GITHUB_REPOSITORY"]}/pulls/{int(env["PR_NUMBER"])}'
+    result: ReviewResult | None = None
+    for inline in (True, False):
+        live = subprocess.run(
+            ['gh', 'api', endpoint, '--jq', r'"\(.state) at \(.head.sha)"'], check=True, capture_output=True, text=True
+        )
+        if live.stdout.strip() != f'open at {head}':
+            print('PR closed or moved while douwebot was reviewing; no review needed.')
+            return
+        if result is None:
+            result = ReviewResult.model_validate_json(env['REVIEW_RESULT'])
+        posted = subprocess.run(
+            ['gh', 'api', '--method', 'POST', '--input', '-', f'{endpoint}/reviews'],
+            input=publication(result, head, int(env['GITHUB_RUN_ID']), inline=inline, engine=engine),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if posted.returncode == 0:
+            return
+        if inline and result.comments and '(HTTP 422)' in posted.stderr:
+            print('GitHub rejected the inline review; retrying with findings in the review body.')
+            continue
+        print(posted.stdout, file=sys.stderr)
+        print(posted.stderr, file=sys.stderr)
+        posted.check_returncode()
+
+
+if __name__ == '__main__':
+    main()

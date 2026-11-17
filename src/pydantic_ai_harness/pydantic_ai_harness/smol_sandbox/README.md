@@ -6,21 +6,41 @@ Run your agent's commands and file edits in a [smolvm](https://github.com/smol-m
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Smol Sandbox: your agent's commands run in a local smolvm microVM
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command and gets results. Via ctx.workspace, the SmolSandbox capability hands the run a VM, a smolvm microVM on the same machine with its own kernel and filesystem, reached through smolmachines in your process. The VM has no network access by default, unless allow_internet_access=True.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        sandbox["SmolSandbox()<br/>hands the run a VM"]:::capability
+        vm["smolvm microVM<br/>own kernel and<br/>filesystem"]:::external
+    end
+    network["network access, unless<br/>allow_internet_access=True"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sandbox
+    sandbox <-->|"smolmachines,<br/>in your process"| vm
+    vm -.-x|"none by default"| network
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[smol,anthropic]"
+uv add "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[smol,anthropic]"
+pip install "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
-The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 smolmachines ships wheels for macOS on Apple silicon and for Linux on x86_64 and aarch64 (glibc 2.34 or newer). On Linux, the user running the agent needs read and write access to `/dev/kvm`. See [Platforms](#platforms).
 
@@ -62,7 +82,7 @@ For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
@@ -97,7 +117,7 @@ later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 
 Pass `workspace='new'` to boot a fresh VM even when the message history names one. `image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM, so a VM booted with network access keeps it when you reattach; `working_dir` and `env` apply to every command.
 
-A ref is trusted input: whoever passes one runs commands in that VM. `SmolSandbox` names the VMs it boots `pydantic-ai-` and 32 hex digits, and raises `ValueError` for a ref with any other id, so a ref can't reach the VMs other tools make under their own names, which may mount your files. The name isn't proof of origin, though: any process running as your OS user can boot a VM under such a name, and smolmachines can't report how an existing VM was configured, so only pass refs your application stored itself.
+Already have a `smol.Machine` or `smol.AsyncMachine` on this machine? Pass `workspace=SmolSandboxBackend(sandbox=machine)` to the run, with `SmolSandboxBackend` from `pydantic_ai_harness.smol_sandbox`, or `SmolSandboxBackend(ref=WorkspaceRef(provider='smol', id=...))` with the VM's name. The backend opens its own handle to the VM by its id, which on this machine is its name. `SmolSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the VM. See [Which VMs a run can use](#which-vms-a-run-can-use) for what each way accepts.
 
 VMs are persistent, so a ref also works from another process, which boots the VM again if it isn't running. But smolmachines doesn't flush a VM's disk when the process using it exits, so file changes since the VM booted can be lost. To keep them, stop the VM before the process exits:
 
@@ -189,6 +209,19 @@ The VM is the boundary: it has its own kernel and filesystem, nothing from this 
 - `image` is pulled by tag; pin a digest, such as `python:3.12-alpine@sha256:...`, to get the same image every time.
 - `cpus` and `memory_mb` cap a VM; its disk size is smolvm's default, and nothing limits how many VMs a process boots.
 
+### Which VMs a run can use
+
+Whoever passes a ref runs commands in the VM it names. smolmachines can open any VM of your OS user on this machine by name, including VMs other tools made with your folders mounted. So what's accepted depends on where the VM comes from:
+
+| Where the VM comes from | What's accepted |
+| --- | --- |
+| `SmolSandbox`: a ref in the message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` | Only VMs `SmolSandbox` booted, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError` before anything runs. |
+| `SmolSandboxBackend(sandbox=machine)` or `SmolSandboxBackend(ref=...)`, built by your code | Any VM on this machine, including one with mounts or network, because your code chose it. A Smol Cloud machine, like a VM deleted since, raises `WorkspaceUnavailableError`, unless a VM on this machine is named like its id. |
+
+- A run in a VM you passed in writes that VM's name into the message history. A later run given only that history raises `ValueError`; it doesn't open the VM or boot a new one. Pass the backend again, or `workspace='new'` for a fresh VM.
+- Durable execution rebuilds the workspace from its ref, so it only works with VMs `SmolSandbox` booted.
+- The name doesn't prove where a VM came from: any program running as your OS user can boot a VM with such a name, and smolmachines can't report how an existing VM was configured. Only pass refs your application stored itself, and don't build `SmolSandboxBackend(ref=...)` from user input.
+
 ## Configuration
 
 | Option | What it does |
@@ -199,6 +232,8 @@ The VM is the boundary: it has its own kernel and filesystem, nothing from this 
 | `allow_internet_access` | Whether a new VM has unrestricted outbound network access, from this machine's network. Default: `False`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the VM's own (`/` without an image). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Platforms
 

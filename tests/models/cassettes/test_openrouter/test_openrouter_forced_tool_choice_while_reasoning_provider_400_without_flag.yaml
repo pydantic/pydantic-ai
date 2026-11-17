@@ -1,0 +1,87 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "416"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: qwen/qwen3.8-flash
+        stream: false
+        messages:
+        - role: user
+          content: What's the weather in Zurich?
+        tool_choice: required
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties: {}
+            strict: true
+        - type: function
+          function:
+            name: final_result
+            description: ""
+            parameters:
+              type: object
+              properties: {}
+            strict: true
+  response:
+    status: 400
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        error:
+          message: Provider returned error
+          code: 400
+          metadata:
+            raw: |+
+              data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-90b95656-eb93-9431-a37f-86e8714852de"}
+
+            provider_name: Alibaba
+            is_byok: false
+            previous_errors:
+            - code: 400
+              message: Provider returned error
+              provider_name: Alibaba
+              raw: |+
+                data: {"error":{"code":"invalid_parameter_error","param":null,"message":"The tool_choice parameter does not support being set to required or object in thinking mode","type":"invalid_request_error"},"id":"chatcmpl-8cd3f4b4-3d36-4c0f-adcb-2b53264f4633"}
+
+        user_id: scrubbed
+  recorded_at: 2026-11-17T15:11:22.983216+00:00

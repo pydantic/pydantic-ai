@@ -96,7 +96,7 @@ async def compact_now(
         tracer: Tracer the `compact_messages` span is started on. Defaults to a no-op tracer,
             which records nothing.
         tokenizer: Tokenizer the span's before/after counts are measured with. Pass the one the
-            strategy was configured with, or the span reports the 4-characters heuristic for a
+            strategy was configured with, or the span reports the built-in text estimate for a
             run the in-run path measured differently. `CompactionStrategy` does not promise a
             `tokenizer` attribute, so it cannot be read off `strategy`.
 

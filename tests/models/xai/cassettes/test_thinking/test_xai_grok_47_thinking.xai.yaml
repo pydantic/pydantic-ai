@@ -1,0 +1,50 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What is 2+2?
+        role: ROLE_USER
+      model: grok-4.7
+    raw: !!binary |
+      ChIKDgoMV2hhdCBpcyAyKzI/EAESCGdyb2stNC43
+  response_sample:
+    json:
+      id: 77f06849-e26c-9d87-bd3e-c684ee87e09b
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: '4.'
+          role: ROLE_ASSISTANT
+          reasoning_content: This is a simple arithmetic question.
+          encrypted_content: So9lOpkUmfcwt3azjHCt8qJvzyIpvZIwUr/XAFTC1MBsjqLVHLWZ4rU+IFOnnf760HZLsIWZ/vXdtgoURnG6KSASvQ+5F9GkKiz+KToL1ghdHJO8izd1bwvND8wryo4ypForYDRmoNV3m7YrzgeBPieo2LcPkAZr3TN/vbTly3comMgZRnzToHKSdoM88sZGdx1hBKN/H0zAsCfJ0LKiEYSn84U7oQl7CDiUorx4S1eNptmYBgdnk5gIXCEg0waPh07m8tQJr1n+6NZ85o+yYsVn+aCiBMrqbTApPDJyxNiJYC5BI+s6JVNQPj54orRX3PKkgpZpAC2DJb4flEDrRtXg5iUGsSmDEgdv9THxhuZRz1twGFSOKzAQYStka3O726v5C4f3MrYyVn848zwLR7/XkZRsvukV4Ho4hSSGWg+L14sgNYS7FtKJap/3Bj+JolFrSsmPUdtzgJah+WGtmt48ig
+      created: '2026-10-20T21:50:38.598610289Z'
+      model: grok-4.7
+      system_fingerprint: fp_c60958d81f66f847
+      usage:
+        completion_tokens: 2
+        prompt_tokens: 1249
+        total_tokens: 1324
+        prompt_text_tokens: 1249
+        reasoning_tokens: 73
+        cached_prompt_text_tokens: 1152
+        cost_in_usd_ticks: '12200000'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_HIGH
+        temperature: 0.7
+        top_p: 0.95
+    raw: !!binary |
+      CiQ3N2YwNjg0OS1lMjZjLTlkODctYmQzZS1jNjg0ZWU4N2UwOWISkQQIAxqMBAoCNC4QAiIlVGhp
+      cyBpcyBhIHNpbXBsZSBhcml0aG1ldGljIHF1ZXN0aW9uLiraA1NvOWxPcGtVbWZjd3QzYXpqSEN0
+      OHFKdnp5SXB2Wkl3VXIvWEFGVEMxTUJzanFMVkhMV1o0clUrSUZPbm5mNzYwSFpMc0lXWi92WGR0
+      Z29VUm5HNktTQVN2USs1RjlHa0tpeitLVG9MMWdoZEhKTzhpemQxYnd2TkQ4d3J5bzR5cEZvcllE
+      Um1vTlYzbTdZcnpnZUJQaWVvMkxjUGtBWnIzVE4vdmJUbHkzY29tTWdaUm56VG9IS1Nkb004OHNa
+      R2R4MWhCS04vSDB6QXNDZkowTEtpRVlTbjg0VTdvUWw3Q0RpVW9yeDRTMWVOcHRtWUJnZG5rNWdJ
+      WENFZzB3YVBoMDdtOHRRSnIxbis2Tlo4NW8reVlzVm4rYUNpQk1ycWJUQXBQREp5eE5pSllDNUJJ
+      K3M2SlZOUVBqNTRvclJYM1BLa2dwWnBBQzJESmI0ZmxFRHJSdFhnNWlVR3NTbURFZ2R2OVRIeGh1
+      WlJ6MXR3R0ZTT0t6QVFZU3RrYTNPNzI2djVDNGYzTXJZeVZuODQ4endMUjcvWGtaUnN2dWtWNEhv
+      NGhTU0dXZytMMTRzZ05ZUzdGdEtKYXAvM0JqK0pvbEZyU3NtUFVkdHpnSmFoK1dHdG10NDhpZzgB
+      KgwIrsTf1gYQ8aK4nQIyCGdyb2stNC43OhNmcF9jNjA5NThkODFmNjZmODQ3ShwIAhDhCRisCiDh
+      CTBJOIAJWMDQ6AWQAeEJmAFUWhIQASADLTMzMz9NMzNzP3oCCAM=

@@ -15,9 +15,11 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_token_count,
     exceeds,
+    is_cleared_return,
     iter_tool_pairs,
     rebuild_with_cleared,
     record_compaction_reclaim,
+    require_trigger,
     resolve_token_trigger,
     validate_token_trigger,
 )
@@ -114,12 +116,11 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When `None`, uses a ~4 characters-per-token heuristic.
+    When `None`, uses the built-in text estimate, which counts dense text such as non-ASCII
+    scripts, base64 and compact JSON higher than prose.
     """
 
     def __post_init__(self) -> None:
-        if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
-            raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
@@ -155,6 +156,10 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             if reclaimed < self.min_clear_tokens:
                 return messages
         return cleared
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject a registration without a trigger."""
+        require_trigger('ClearToolResults', self.max_messages, self.max_tokens, self.max_fraction)
 
     async def before_model_request(
         self,
@@ -195,7 +200,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             return False
         for since_last_clear, message in enumerate(reversed(messages)):
             if isinstance(message, ModelRequest) and any(
-                type(part) is ToolReturnPart and str(part.content) == self.placeholder for part in message.parts
+                isinstance(part, ToolReturnPart) and is_cleared_return(part, self.placeholder) for part in message.parts
             ):
                 break
         else:

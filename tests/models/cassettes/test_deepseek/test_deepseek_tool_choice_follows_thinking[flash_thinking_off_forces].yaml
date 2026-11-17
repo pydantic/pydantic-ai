@@ -1,0 +1,89 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "404"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        messages:
+        - role: user
+          content: Say hi.
+        reasoning_effort: none
+        tool_choice: required
+        tools:
+        - type: function
+          function:
+            name: final_result
+            description: The final response which ends this conversation
+            parameters:
+              properties:
+                text:
+                  type: string
+              required:
+              - text
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        id: b4ab1140-7adb-4d56-b271-ee7f5ac521d5
+        object: chat.completion
+        created: 1792951689
+        model: deepseek-flash
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: ""
+            tool_calls:
+            - index: 0
+              id: call_00_pPsR3ZRsbR621iyw1kXu3211
+              type: function
+              function:
+                name: final_result
+                arguments: "{\"text\": \"Hi! 👋 How can I help you today?\"}"
+          logprobs: null
+          finish_reason: tool_calls
+        usage:
+          prompt_tokens: 278
+          completion_tokens: 41
+          total_tokens: 319
+          prompt_tokens_details:
+            cached_tokens: 0
+          prompt_cache_hit_tokens: 0
+          prompt_cache_miss_tokens: 278
+        system_fingerprint: e72d3c7f663d3e1383b00b3884cb4501
+  recorded_at: 2026-10-25T18:08:10.284751+00:00

@@ -29,6 +29,7 @@ from pydantic_ai.toolsets import (
     ToolsetTool,
     WrapperToolset,
 )
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from .wrapped_retry_toolsets import failing_toolset
 
@@ -106,6 +107,7 @@ CASES = [
 
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prepare_sees_retry_under_wrapper(case: Case):
     """A `prepare` that hides its tool after a failure sees the failure under any name-changing wrapper.
 
@@ -189,6 +191,7 @@ async def test_wrapped_tool_does_not_see_same_named_outside_tool(wrapper: str):
     assert all('p_fail' in names for names in visible)
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prepare_reading_exposed_name_keeps_working():
     """`ctx.retries` keys stay the names the model calls tools by, so code written against them keeps working."""
 
@@ -208,6 +211,7 @@ async def test_prepare_reading_exposed_name_keeps_working():
         assert result.output == 'No tools left.'
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_filter_inside_prefix_sees_output_tool_count():
     """A filter inside a wrapper still sees the counts of tools outside it, like the output tool's."""
 
@@ -303,6 +307,7 @@ def helpers_toolset() -> FunctionToolset[object]:
     return helpers
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_tool_body_under_prefix_lists_another_toolset_with_its_own_counts():
     """A wrapped tool's context, handed to an unrelated toolset, doesn't rename that toolset's tools."""
     helpers = helpers_toolset()
@@ -326,6 +331,7 @@ async def test_tool_body_under_prefix_lists_another_toolset_with_its_own_counts(
     assert result.output == 'helpers available: []'
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prepared_under_prefix_lists_another_toolset_with_its_own_counts():
     """A `.prepared()` callback inside a wrapper gets a context that lists an unrelated toolset correctly."""
     helpers = helpers_toolset()
@@ -345,6 +351,7 @@ async def test_prepared_under_prefix_lists_another_toolset_with_its_own_counts()
     assert visible == [['h'], ['fb_backup'], ['fb_backup'], ['fb_backup']]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_custom_get_tools_under_prefix_lists_another_toolset_under_the_prefix():
     """Documented limit: a custom toolset's own `get_tools` under a built-in wrapper receives the wrapper's layers.
 
@@ -372,6 +379,7 @@ async def test_custom_get_tools_under_prefix_lists_another_toolset_under_the_pre
     assert visible == [['h'], []]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_self_renaming_wrapped_tool_reads_count_of_tool_named_like_its_original():
     """Documented limit: `prepare` reads the count under the name the wrappers would give the tool's key.
 
@@ -445,6 +453,7 @@ RENAMER_CASES = [
 
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in RENAMER_CASES])
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_renaming_wrapper_that_pushes_no_layer_reads_count_of_tool_named_by_built_in_layers(case: RenamerCase):
     """Documented limit: only the built-in wrappers tell the leaf how they rename its tools.
 

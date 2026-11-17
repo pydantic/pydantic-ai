@@ -12,7 +12,7 @@ from pydantic_ai_harness.repo_context._inventory import AgentContextInventory, s
 
 
 class RepoContextToolset(FunctionToolset[AgentDepsT]):
-    """Exposes a single tool that reports where the repo's CE assets live."""
+    """Exposes a single tool that reports where the repo's coding-assistant assets live."""
 
     def __init__(
         self, asset_roots: Sequence[str], tool_name: str, *, workspace_dir: Path | None = None, id: str | None = None
