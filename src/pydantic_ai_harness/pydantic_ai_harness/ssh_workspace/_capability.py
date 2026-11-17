@@ -15,7 +15,7 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
     """Gives runs a [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) on a remote host over SSH, using your `ssh` client and its configuration.
 
     Commands run as the remote user, with that user's full authority on the host. Wrap it in
-    [`BubblewrapSandbox`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapSandbox] to sandbox them there.
+    [`BubblewrappedWorkspace`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrappedWorkspace] to confine them to the working directory there.
 
     ```python
     from pydantic_ai import Agent

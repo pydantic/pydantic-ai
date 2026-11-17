@@ -11,10 +11,11 @@ module stays usable without `pymongo` installed.
 
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.media._postgres import PostgresConnection, PostgresMediaStore, PostgresPool
 from pydantic_ai_harness.media._s3 import S3MediaStore
 from pydantic_ai_harness.media._store import (
-    DiskMediaStore,
+    FileMediaStore,
     KeyStrategy,
     MediaContext,
     MediaStore,
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.media._mongo import MongoMediaStore
 
 __all__ = [
-    'DiskMediaStore',
+    'FileMediaStore',
     'KeyStrategy',
     'MediaContext',
     'MediaStore',
@@ -52,6 +53,9 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
+    if name == 'DiskMediaStore':
+        warn_class_renamed(name, 'FileMediaStore', __name__)
+        return FileMediaStore
     if name == 'MongoMediaStore':
         from pydantic_ai_harness.media._mongo import MongoMediaStore
 

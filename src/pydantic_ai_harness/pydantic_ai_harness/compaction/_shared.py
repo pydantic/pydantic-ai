@@ -6,7 +6,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
@@ -17,6 +17,7 @@ from typing_extensions import TypeIs
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CompactionPart,
@@ -59,9 +60,11 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
     reset_receipt_scope,
 )
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness.file_system import READ_FILE_KIND
 
 if TYPE_CHECKING:
+    from opentelemetry.util.types import AttributeValue
+
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.tools import ToolDefinition
 
@@ -156,7 +159,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         return [tool_return_text(part)]
     elif isinstance(part, RetryFeedbackPart):
         # Retry feedback that answers no tool call. It is stored model-neutral and translated at
-        # request time into a system prompt or a `<validation_errors>`-fenced user prompt, so it
+        # request time into a system prompt or a `<pyai:validation_errors>`-fenced user prompt, so it
         # occupies the window like the parts above. `model_response()` rather than
         # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
         # and this renders it the way the model sees it.
@@ -459,6 +462,17 @@ def exceeds(
 # ---------------------------------------------------------------------------
 
 
+def require_trigger(
+    strategy: str, max_messages: int | None, max_tokens: int | None, max_fraction: float | None
+) -> None:
+    """Reject *strategy* registered on an agent without a trigger, where its request hook would never compact."""
+    if max_messages is None and max_tokens is None and max_fraction is None:
+        raise UserError(
+            f'`{strategy}` registered as a capability needs one of max_messages, max_tokens, or max_fraction. '
+            'Without a trigger it only runs when its `compact` is called, as a `TieredCompaction` tier does.'
+        )
+
+
 def validate_token_trigger(
     max_tokens: int | None,
     max_fraction: float | None,
@@ -571,6 +585,19 @@ _SPAN_NAME = 'compact_messages'
 goes in the `compaction.strategy` attribute rather than the span name to keep cardinality low."""
 
 
+_pending_span_attributes: ContextVar[dict[str, AttributeValue] | None] = ContextVar(
+    'pydantic_ai_harness.compaction.pending_span_attributes', default=None
+)
+"""Attributes a strategy records during `compact_with_span`'s compaction, set on the span it emits."""
+
+
+def record_span_attributes(attributes: Mapping[str, AttributeValue]) -> None:
+    """Record *attributes* for the enclosing `compact_with_span`'s span; a no-op outside one."""
+    pending = _pending_span_attributes.get()
+    if pending is not None:
+        pending.update(attributes)
+
+
 def _history_changed(before: list[ModelMessage], after: list[ModelMessage]) -> bool:
     """Return True if *after* differs from *before*.
 
@@ -612,10 +639,13 @@ async def compact_with_span(
             when there was one.
     """
     token = open_receipt_scope()
+    recorded_attributes: dict[str, AttributeValue] = {}
+    attributes_token = _pending_span_attributes.set(recorded_attributes)
     try:
         compacted = await compact()
         receipts = drain_receipts()
     finally:
+        _pending_span_attributes.reset(attributes_token)
         reset_receipt_scope(token)
     if not _history_changed(messages, compacted):
         return messages
@@ -636,6 +666,7 @@ async def compact_with_span(
                 span.set_attribute('compaction.model_requested', True)
             if background is not None:
                 span.set_attribute('compaction.background', background)
+            span.set_attributes(recorded_attributes)
             for receipt in receipts:
                 attributes = {
                     'compaction.receipt.strategy': receipt.strategy,
@@ -647,6 +678,28 @@ async def compact_with_span(
                     attributes['compaction.receipt.handle'] = receipt.handle
                 span.add_event(RECEIPT_EVENT_NAME, attributes)
     return compacted
+
+
+def record_failed_compaction(
+    ctx: RunContext[AgentDepsT],
+    *,
+    strategy: str,
+    skipped: str,
+    error: Exception,
+    messages: list[ModelMessage],
+    tokenizer: Callable[[str], int] | None = None,
+) -> None:
+    """Emit a `compact_messages` span recording a compaction attempt that raised *error* and was skipped."""
+    with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+        span.set_attributes(
+            {
+                'compaction.strategy': strategy,
+                'compaction.skipped': skipped,
+                'error.type': f'{type(error).__module__}.{type(error).__qualname__}',
+                'compaction.messages_before': len(messages),
+                'compaction.tokens_before': estimate_token_count(messages, tokenizer),
+            }
+        )
 
 
 async def compact_if_smaller(

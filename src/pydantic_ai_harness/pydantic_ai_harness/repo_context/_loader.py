@@ -167,8 +167,8 @@ def render_context_file(file: ContextFile, *, label: str) -> str:
     """Render one file as a labeled block.
 
     The file and its path come from the repository, so neither can end the block: the `<` of every
-    opening or closing `context-file` tag and of every framing tag core writes (`<system>`, `<context>`,
-    `<tool_result>` and the rest) is escaped as `&lt;`, and the label is attribute-escaped. Everything
+    opening or closing `context-file` tag and of every framing tag core writes (`<system>`, `<pyai:context>`,
+    `<pyai:tool_result>` and the rest) is escaped as `&lt;`, and the label is attribute-escaped. Everything
     else goes in as written.
 
     The closing tag sits on its own line, so the content's trailing line terminators go: keeping them

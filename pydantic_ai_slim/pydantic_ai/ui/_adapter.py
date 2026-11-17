@@ -247,20 +247,21 @@ def enqueued_messages_for_client(
     """
     kept: list[ModelMessage] = []
     for message in messages:
-        if isinstance(message, ModelRequest):
-            parts = [
-                part
-                for part in message.parts
-                if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
-                and (
-                    not isinstance(part, SystemPromptPart)
-                    or (manage_system_prompt == 'client' and part.scope != 'request')
-                )
-            ]
-            if not parts:
-                continue
-            if len(parts) != len(message.parts):
-                message = replace(message, parts=parts)
+        if not isinstance(message, ModelRequest):
+            kept.append(message)
+            continue
+        parts = [
+            part
+            for part in message.parts
+            if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
+            and (
+                not isinstance(part, SystemPromptPart) or (manage_system_prompt == 'client' and part.scope != 'request')
+            )
+        ]
+        if not parts:
+            continue
+        if len(parts) != len(message.parts):
+            message = replace(message, parts=parts)
         kept.append(message)
     return kept
 
@@ -599,25 +600,11 @@ def _take_new_turn(
     new_turn = client_messages[last_response + 1 :]
 
     history = list(message_history)
-    cut_at: int | None = None
     resubmitted_results: set[str] = set()
     ui_message_id = get_ui_message_id(new_turn[0]) if new_turn else None
-    if ui_message_id is not None:
-        cut_at = next(
-            (
-                i
-                for i, m in enumerate(history)
-                if isinstance(m, ModelRequest)
-                and get_ui_message_id(m) == ui_message_id
-                and any(isinstance(part, UserPromptPart) for part in m.parts)
-            ),
-            None,
-        )
+    cut_at = _resubmitted_request_index(history, ui_message_id)
     if cut_at is not None:
-        cut, history = history[cut_at], history[:cut_at]
-        if results := [part for part in cut.parts if _is_tool_result_part(part)]:
-            history.append(ModelRequest(parts=results))
-            resubmitted_results = {part.tool_call_id for part in results}
+        history, resubmitted_results = _cut_history(history, cut_at)
     elif regenerate:
         raise UserError(
             f'The message to regenerate ({ui_message_id!r}) is not in the stored conversation. Either the server never '
@@ -632,17 +619,8 @@ def _take_new_turn(
     dropped = 0
     for message in new_turn:
         assert isinstance(message, ModelRequest)
-        parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if isinstance(part, CapabilityLoadDeltaPart):
-                continue
-            if _is_tool_result_part(part):
-                if part.tool_call_id not in answerable:
-                    dropped += part.tool_call_id not in resubmitted_results
-                    continue
-                answerable.discard(part.tool_call_id)
-                pending.discard(part.tool_call_id)
-            parts.append(part)
+        parts, message_dropped = _answering_parts(message, answerable, pending, resubmitted_results)
+        dropped += message_dropped
         if len(parts) == len(message.parts):
             kept.append(message)
         elif parts:
@@ -650,6 +628,56 @@ def _take_new_turn(
     if dropped:
         warn_dropped_tool_results(dropped, stacklevel=5)
     return _ServerHeldTurn(history, _drop_compaction_parts(kept), cut_at, pending)
+
+
+def _resubmitted_request_index(history: Sequence[ModelMessage], ui_message_id: str | None) -> int | None:
+    """The index of the stored request with a user prompt that the message with `ui_message_id` resubmits, if any."""
+    if ui_message_id is None:
+        return None
+    return next(
+        (
+            i
+            for i, m in enumerate(history)
+            if isinstance(m, ModelRequest)
+            and get_ui_message_id(m) == ui_message_id
+            and any(isinstance(part, UserPromptPart) for part in m.parts)
+        ),
+        None,
+    )
+
+
+def _cut_history(history: list[ModelMessage], cut_at: int) -> tuple[list[ModelMessage], set[str]]:
+    """`history` cut before the resubmitted request at `cut_at`, and the call ids of the tool results it keeps from it.
+
+    The tool results the cut request carries, if any, stay as a request of their own at the end.
+    """
+    cut, history = history[cut_at], history[:cut_at]
+    if results := [part for part in cut.parts if _is_tool_result_part(part)]:
+        history.append(ModelRequest(parts=results))
+        return history, {part.tool_call_id for part in results}
+    return history, set()
+
+
+def _answering_parts(
+    message: ModelRequest, answerable: set[str], pending: set[str], resubmitted_results: set[str]
+) -> tuple[list[ModelRequestPart], int]:
+    """The parts of a new-turn `message` that `_take_new_turn` keeps, and how many tool results it drops with a warning.
+
+    Each kept tool result answers its call, so the call is discarded from `answerable` and `pending`.
+    """
+    parts: list[ModelRequestPart] = []
+    dropped = 0
+    for part in message.parts:
+        if isinstance(part, CapabilityLoadDeltaPart):
+            continue
+        if _is_tool_result_part(part):
+            if part.tool_call_id not in answerable:
+                dropped += part.tool_call_id not in resubmitted_results
+                continue
+            answerable.discard(part.tool_call_id)
+            pending.discard(part.tool_call_id)
+        parts.append(part)
+    return parts, dropped
 
 
 def _waiting_for_results(pending: set[str], waiting_on: DeferredToolRequests | None) -> set[str]:

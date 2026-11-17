@@ -16,8 +16,8 @@ from pydantic_clai2.plugins import (
     SessionCatalog,
     TaskCatalog,
 )
-from pydantic_clai2.plugins._user_waits import UserWaits
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.plugins.user_waits import UserWaits
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.status import Status
 

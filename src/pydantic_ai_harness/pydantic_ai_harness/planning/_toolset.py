@@ -5,16 +5,19 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic
 
+import anyio
 from pydantic import BaseModel
 
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolFuncContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
+from pydantic_ai_harness._run_capability import find_run_capability
 from pydantic_ai_harness.planning._events import (
     PlanCompletedEvent,
     PlanCreatedEvent,
@@ -383,20 +386,7 @@ async def resolve_run_store(
     caching it there, where it would leak into later runs. A toolset used outside such a tree
     keeps `capability`'s store.
     """
-    from pydantic_ai_harness.planning._capability import Planning
-
-    run_capability: Planning[AgentDepsT] | None = None
-
-    def select(candidate: AbstractCapability[AgentDepsT]) -> None:
-        nonlocal run_capability
-        # A wrapper such as `prefix_tools()` may be visited in place of the `Planning` it wraps.
-        while isinstance(candidate, WrapperCapability):
-            candidate = candidate.wrapped
-        if isinstance(candidate, Planning) and candidate.get_toolset() is toolset:
-            run_capability = candidate
-
-    if ctx.root_capability is not None:
-        ctx.root_capability.apply(select)
+    run_capability = find_run_capability(ctx, capability, toolset)
     if run_capability is None:
         return capability.resolve_store(ctx)
     if run_capability is capability:
@@ -540,20 +530,26 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     ) -> Any:
         """Run the tool, marking the plan a plan-changing tool returns so `Planning` can find it in the history.
 
-        With durable operations, the run's store is resolved once for the call, so each durable operation it
-        makes uses that store.
+        Plan tools write back changes built from an earlier read, so calls on this toolset take turns: two
+        running at once could each overwrite the other's change. With durable operations, the run's store is
+        resolved once for the call, so each durable operation it makes uses that store.
         """
-        if self._operations is None:
-            result = await super().call_tool(name, tool_args, ctx, tool)
-        else:
-            token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
-            try:
+        async with self._call_lock:
+            if self._operations is None:
                 result = await super().call_tool(name, tool_args, ctx, tool)
-            finally:
-                _TOOL_CALL_STORE.reset(token)
+            else:
+                token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
+                try:
+                    result = await super().call_tool(name, tool_args, ctx, tool)
+                finally:
+                    _TOOL_CALL_STORE.reset(token)
         if isinstance(result, _PlanReply):
             return ToolReturn(str(result), metadata={'origin': PLAN_ORIGIN, 'plan': result.plan})
         return result
+
+    @cached_property
+    def _call_lock(self) -> anyio.Lock:
+        return anyio.Lock(fast_acquire=True)
 
     def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
         """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.
