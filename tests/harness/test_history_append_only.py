@@ -165,9 +165,19 @@ def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
     return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
 
 
+_stale_notes: list[Path] = []
+"""The file `ReportStaleFiles`'s scenario changes between runs, set by its fixture."""
+
+
 def _report_stale_files(tmp_path: Path) -> list[AbstractCapability[Any]]:
     (tmp_path / 'notes.md').write_text('Sunny.\n')
+    _stale_notes[:] = [tmp_path / 'notes.md']
     return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+async def _change_notes() -> None:
+    """Change the file the model read from outside the run, so the second run's requests carry a notice."""
+    _stale_notes[0].write_text('Snowy.\n')
 
 
 def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
@@ -546,7 +556,8 @@ SCENARIOS: dict[str, Scenario] = {
         state_calls=(
             ('read_file', {'path': 'notes.md'}),
             ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
-        )
+        ),
+        between_runs=_change_notes,
     ),
     'RepoContext': Scenario(
         state_calls=(
@@ -629,6 +640,14 @@ ALLOWED: dict[str, Allowed] = {
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
+    'ReportStaleFiles': Allowed(
+        'Request-scoped stale-file notice: sent for one request, then left out. Anthropic clears it natively with '
+        '`clear_at`; elsewhere it is a request-only tail',
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),

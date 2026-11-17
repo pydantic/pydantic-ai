@@ -37,9 +37,9 @@ from tests.harness.file_system.test_windows_paths import DriveBackend
 Step = tuple[Callable[[], object] | None, ToolCallPart | str]
 """What happens in the workspace while the model answers a request, and the model's answer."""
 
-DELETED = 'These files you read were deleted from the workspace:'
+DELETED = 'These files you read or wrote were deleted from the workspace:'
 CHANGED = (
-    'These files changed in the workspace after you last read them, so what you saw of them is out of date. '
+    'These files changed in the workspace after you last read or wrote them, so what you saw of them is out of date. '
     'Read them again before relying on them or editing them:'
 )
 
@@ -151,7 +151,7 @@ class TestReportStaleFiles:
         )
         result = await agent.run('go')
         assert _notices(result.all_messages()) == snapshot(
-            [[], [], ['These files you read were deleted from the workspace:\n- `old.py`'], []]
+            [[], [], ['These files you read or wrote were deleted from the workspace:\n- `old.py`'], []]
         )
 
     async def test_unreadable_file_is_skipped_and_checked_again(self, tmp_path: Path) -> None:
@@ -269,10 +269,10 @@ class TestReportStaleFiles:
         assert _notices(result.all_messages())[-1] == snapshot(
             [
                 """\
-These files changed in the workspace after you last read them, so what you saw of them is out of date. Read them again before relying on them or editing them:
+These files changed in the workspace after you last read or wrote them, so what you saw of them is out of date. Read them again before relying on them or editing them:
 - `changed.txt`
 
-These files you read were deleted from the workspace:
+These files you read or wrote were deleted from the workspace:
 - `deleted.txt`
 - and 1 more\
 """

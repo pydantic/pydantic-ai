@@ -36,7 +36,7 @@ agent = Agent(
   [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts):
 
   ```text
-  These files changed in the workspace after you last read them, so what you saw of them is out of date. Read them again before relying on them or editing them:
+  These files changed in the workspace after you last read or wrote them, so what you saw of them is out of date. Read them again before relying on them or editing them:
   - `src/config.py`
   ```
 

@@ -26,10 +26,10 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 _CHANGED = (
-    'These files changed in the workspace after you last read them, so what you saw of them is out of date. '
+    'These files changed in the workspace after you last read or wrote them, so what you saw of them is out of date. '
     'Read them again before relying on them or editing them:'
 )
-_DELETED = 'These files you read were deleted from the workspace:'
+_DELETED = 'These files you read or wrote were deleted from the workspace:'
 
 _CONVERSATIONS_KEPT = 1024
 """How many conversations' observations an instance keeps, most recently used first."""

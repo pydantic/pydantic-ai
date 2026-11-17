@@ -30,7 +30,7 @@ agent = Agent(
 - Before each model request, it reads the recorded files through the run's [workspace](../workspace.md) (`ctx.workspace`), so it works the same on a local directory, a remote sandbox, or a filesystem-only workspace. A file whose bytes no longer match its record is named in a request-scoped `StaleFilesPart`, a [capability part](../capabilities/custom.md#capability-parts):
 
     ```text
-    These files changed in the workspace after you last read them, so what you saw of them is out of date. Read them again before relying on them or editing them:
+    These files changed in the workspace after you last read or wrote them, so what you saw of them is out of date. Read them again before relying on them or editing them:
     - `src/config.py`
     ```
 
