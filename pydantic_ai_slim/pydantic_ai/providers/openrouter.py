@@ -213,6 +213,9 @@ _FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES: dict[str, tuple[str
 }
 """Model-name prefixes, per upstream provider, of the OpenRouter routes that reject forcing a tool while reasoning.
 
+Every route listed here must reason by default: `OpenRouterProvider.model_profile` sets `thinking_enabled_by_default`
+for them.
+
 Live probes (2026-10-31, 2026-11-17) got a 400 for a forced `tool_choice` while Qwen3.8 Flash reasons: "The
 tool_choice parameter does not support being set to required or object in thinking mode". Alibaba, its only host on
 OpenRouter, returns it. OpenRouter's model list advertises `tool_choice` for the route, so it can't be used to find
@@ -332,8 +335,9 @@ class OpenRouterProvider(_OpenAISDKProvider):
             _FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES.get(provider, ())
         )
         if forcing_rejected_while_reasoning:
-            # These routes reason unless told not to (`reasoning.default_enabled` in OpenRouter's model list), so a
-            # request without a thinking setting counts as reasoning.
+            # Every route in the table reasons unless told not to (`reasoning.default_enabled` in OpenRouter's model
+            # list), so a request without a thinking setting counts as reasoning. A route that rejects forcing while
+            # reasoning but doesn't reason by default needs its own handling, not this table.
             profile = merge_profile(profile, ModelProfile(thinking_enabled_by_default=True))
         # OpenRouter rejects the change on every pro variant, such as `openai/gpt-6-astra-pro`.
         supports_mid_conversation_effort = model_name.lower().startswith(
