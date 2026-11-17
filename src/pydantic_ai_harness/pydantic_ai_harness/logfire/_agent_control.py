@@ -831,28 +831,35 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             f'agent runs as defined in code and nothing published in Logfire applies. {cause}'
         )
 
-    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Add applied-section baggage inside the base's once-per-run resolution context."""
+    def _resolve_for_run(self, ctx: RunContext[AgentDepsT]) -> ResolvedVariable[AgentConfig]:
+        """Reuse the resolution model selection made for this run, or resolve now when it was skipped."""
         handoff = self._selection_resolved.get()
         resolved = handoff.pop() if handoff else self._resolve(ctx)
         self._warn_if_unreadable(self._ensure_variable(ctx), resolved)
-        with resolved:
-            token = self._resolved.set(resolved)
-            try:
-                sections = ','.join(
-                    name
-                    for name in ('instructions', 'model', 'settings', 'tool_definitions')
-                    if getattr(resolved.value, name) is not None
-                )
-                if sections:
-                    with logfire.set_baggage(**{'logfire.managed.applied_sections': sections}):
-                        return await handler()
-                return await handler()
-            finally:
-                self._resolved.reset(token)
-                # Issues belong to the request that planned them. A run that failed between planning
-                # a section and reporting it leaves some here, and the next run plans its own.
-                self._planned_issues.set({})
+        return resolved
+
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        """Add applied-section baggage inside the base's once-per-run resolution context."""
+
+        async def with_applied_sections() -> AgentRunResult[Any]:
+            config = self._current_config()
+            assert config is not None
+            sections = ','.join(
+                name
+                for name in ('instructions', 'model', 'settings', 'tool_definitions')
+                if getattr(config, name) is not None
+            )
+            if sections:
+                with logfire.set_baggage(**{'logfire.managed.applied_sections': sections}):
+                    return await handler()
+            return await handler()
+
+        try:
+            return await super().wrap_run(ctx, handler=with_applied_sections)
+        finally:
+            # Issues belong to the request that planned them. A run that failed between planning
+            # a section and reporting it leaves some here, and the next run plans its own.
+            self._planned_issues.set({})
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
