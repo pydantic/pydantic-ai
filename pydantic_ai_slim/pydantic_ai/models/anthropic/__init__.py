@@ -1573,10 +1573,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
 
-        # Only the typed setting is checked. Budget thinking in `extra_body['thinking']` is sent as is: the API rejects
-        # it with a 400, which `FallbackModel` and `ModelFallback` fall back on. A check before sending would stop other
-        # callers: the agent runs this method for structured output outside the request `ModelFallback` watches, and
-        # `model_request_batch` returns a request's 400 in its place rather than failing the whole batch.
+        # This budget check reads only typed `anthropic_thinking`. Budget thinking in `extra_body['thinking']` is sent as
+        # is, and the API rejects it with a 400: a check here would stop `FallbackModel` and `ModelFallback` from
+        # falling back on that 400, and would fail whole batches.
         if (
             profile.get('anthropic_disallows_budget_thinking', False)
             and (anthropic_thinking := merged.get('anthropic_thinking'))

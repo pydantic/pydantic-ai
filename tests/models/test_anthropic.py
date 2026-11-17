@@ -6972,7 +6972,7 @@ async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: N
 
 
 async def test_anthropic_extra_body_budget_thinking_reaches_api(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Budget thinking in `extra_body['thinking']` is sent as is, and the API's 400 comes back as a `ModelHTTPError`.
 
@@ -6980,9 +6980,8 @@ async def test_anthropic_extra_body_budget_thinking_reaches_api(
     while a check before sending would stop `ModelFallback` with structured output, and fail a whole
     `model_request_batch` instead of returning the 400 in that request's place.
     """
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
-        m,
+        anthropic_model('claude-opus-4-7', capture=True),
         model_settings=AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}),
     )
 
@@ -7002,7 +7001,7 @@ async def test_anthropic_extra_body_budget_thinking_reaches_api(
             },
         )
     )
-    assert single_request_body(vcr)['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
+    assert request_capture.body('/v1/messages')['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
