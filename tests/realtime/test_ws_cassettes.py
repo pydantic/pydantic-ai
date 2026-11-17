@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
@@ -468,6 +469,47 @@ async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.Monk
     wrong_content = RealtimeCassette(interactions=[CassetteMessage(direction='sent', data={'type': 'client.expected'})])
     with pytest.raises(AssertionError, match='did not match cassette'):
         await ReplayWebSocket(wrong_content).send(json.dumps({'type': 'client.unexpected'}))
+    # A recorded send the run never makes, after the last inbound frame, which leaves nothing waiting on it.
+    trailing_send = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data={'type': 'client.expected'}),
+        ]
+    )
+    with pytest.raises(
+        AssertionError, match=re.escape("never made these recorded sends: [{'type': 'client.expected'}]")
+    ):
+        with patched_ws_connect('openai', trailing_send, 'replay'):
+            replay = trailing_send._replay  # pyright: ignore[reportPrivateUsage]
+            assert replay is not None
+            assert await replay.recv() == json.dumps({'type': 'server.event'})
+    # `realtime_ws_unsent_heartbeat` excuses a final `pong` or frame of the idle pump's audio, and no other send.
+    pong = {'type': 'pong', 'event_id': 1}
+    trailing_pong = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data=pong),
+        ]
+    )
+    with patched_ws_connect('openai', trailing_pong, 'replay', unsent_heartbeat=True):
+        replay = trailing_pong._replay  # pyright: ignore[reportPrivateUsage]
+        assert replay is not None
+        assert await replay.recv() == json.dumps({'type': 'server.event'})
+    audio = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+    expected = {'type': 'client.expected'}
+    replay = ReplayWebSocket(
+        RealtimeCassette(interactions=[CassetteMessage(direction='sent', data=frame) for frame in (pong, audio)])
+    )
+    assert replay.unsent() == [pong, audio]
+    # Without the pump, audio is the application's own microphone.
+    assert replay.unsent(excuse_final_heartbeat=True) == [pong, audio]
+    # Only the final heartbeat is excused.
+    replay.pumps_audio = True
+    assert replay.unsent(excuse_final_heartbeat=True) == [pong]
+    trailing_expected = RealtimeCassette(
+        interactions=[CassetteMessage(direction='sent', data=frame) for frame in (pong, expected)]
+    )
+    assert ReplayWebSocket(trailing_expected).unsent(excuse_final_heartbeat=True) == [pong, expected]
 
 
 _LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
@@ -496,7 +538,8 @@ async def test_replay_session_close_overtakes_unread_frames(monkeypatch: pytest.
     """Unit test: GPT-Live's `session.close` doesn't wait for a reader to take the frames recorded before it.
 
     The session sends it once it has stopped reading, and only reads the rest (up to `session.closed`)
-    after the send returns, so waiting for a reader would stall until the grace period ran out.
+    after the send returns, so waiting for a reader would stall until the grace period ran out. It stops its idle
+    pump first, so waiting for the pump would stall the same way.
     """
     monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
     close = {'type': 'session.close'}
@@ -512,6 +555,29 @@ async def test_replay_session_close_overtakes_unread_frames(monkeypatch: pytest.
     assert [json.loads(await replay.recv()) for _ in range(2)] == [{'type': 'server.event'}, {'type': 'session.closed'}]
     # The recording itself is left as it was recorded.
     assert cassette.interactions[1] == CassetteMessage(direction='sent', data=close)
+
+    # Nor for the idle audio recorded on the way to it, once the pump that would send it has stopped.
+    silence = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+    pumped = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='sent', data=silence),
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data=silence),
+            CassetteMessage(direction='sent', data=close),
+            CassetteMessage(direction='received', data={'type': 'session.closed'}),
+        ]
+    )
+    replay = ReplayWebSocket(pumped)
+    replay.pumps_audio = True
+    # While the pump runs, the close waits for it to send its recorded frame.
+    with pytest.raises(AssertionError, match='did not match cassette at position 0'):
+        await replay.send(json.dumps(close))
+    replay = ReplayWebSocket(pumped)
+    replay.pumps_audio = replay.pump_stopped = True
+    await replay.send(json.dumps(close))
+    assert [json.loads(await replay.recv()) for _ in range(2)] == [{'type': 'server.event'}, {'type': 'session.closed'}]
+    assert replay.unsent() == []
+    assert len(pumped.interactions) == 5
 
     # It never overtakes a close, nor turns into a send the recording doesn't have.
     stalled: list[list[RealtimeCassetteInteraction]] = [

@@ -11,7 +11,10 @@ model wants guaranteed to ride along.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
+from pydantic_ai._framework_frame import framework_frame_text
+from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -20,19 +23,33 @@ from pydantic_ai.messages import (
     TextContent,
     UserPromptPart,
 )
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._summary import is_summary_part
 
 _PIN_METADATA = 'pydantic-ai-harness.compaction.pin.v1'
-"""Model-invisible metadata identifying a pinned user-content item."""
+"""Model-invisible metadata identifying a pinned item: the whole metadata of a user pin, the `origin` of any other."""
+
+_PINNED_TAG = register_tag('pinned')
+
+PinSource = Literal['user', 'tool', 'model']
+"""Who wrote pinned content: the user, a tool, or the model."""
 
 
-def pin(content: str) -> UserPromptPart:
+def pin(content: str, *, source: PinSource = 'user') -> UserPromptPart:
     """Mark *content* so every shipped compaction strategy preserves it.
 
     The returned `UserPromptPart` can be placed in a `ModelRequest` in the run's message
-    history (e.g. by a capability or by the user); compaction keeps it verbatim.
+    history (e.g. by a capability or by the user); compaction keeps it verbatim. A `'user'` pin
+    reaches the model as the user's own words. Any other *source* is framed as
+    `<pinned source="...">` data, so the model doesn't read a tool's or its own text as the user's.
     """
-    return UserPromptPart(content=[TextContent(content, metadata=_PIN_METADATA)])
+    if source == 'user':
+        return UserPromptPart(content=[TextContent(content, metadata=_PIN_METADATA)])
+    text = wrap(_PINNED_TAG, content, source=source)
+    metadata = {'origin': _PIN_METADATA, 'source': source}
+    return UserPromptPart(
+        content=[framework_frame_text(text, metadata=metadata, author='tool' if source == 'tool' else None)]
+    )
 
 
 def is_pinned(part: object) -> bool:
@@ -40,7 +57,11 @@ def is_pinned(part: object) -> bool:
     return (
         isinstance(part, UserPromptPart)
         and not isinstance(part.content, str)
-        and any(isinstance(item, TextContent) and item.metadata == _PIN_METADATA for item in part.content)
+        and any(
+            isinstance(item, TextContent)
+            and (item.metadata == _PIN_METADATA or harness_origin(item.metadata) == _PIN_METADATA)
+            for item in part.content
+        )
     )
 
 

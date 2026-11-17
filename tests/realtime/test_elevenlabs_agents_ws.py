@@ -449,6 +449,9 @@ _SILENCE_AFTER_BARGE_IN = 8.0
 
 
 @pytest.mark.realtime_ws_hold_open
+@pytest.mark.realtime_ws_unsent_heartbeat(
+    reason='The session closes after reading the last recorded `ping` and before answering it with the recorded `pong`.'
+)
 async def test_barge_in_while_the_response_is_open_finalizes_the_truncated_reply(
     elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
     assets_path: Path,
