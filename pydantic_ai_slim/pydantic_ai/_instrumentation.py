@@ -532,14 +532,18 @@ def public_class_path(cls: type[AbstractCapability[Any]] | type[AbstractToolset[
     raise AssertionError(f'{cls!r} does not extend a public Pydantic AI class')  # pragma: no cover
 
 
-class ToolsetRecord(TypedDict, total=False):
-    """A toolset in the `pydantic_ai.toolsets` agent run span attribute, listed under its class."""
+class _ComponentRecord(TypedDict, total=False):
+    """What a toolset or capability record holds: its id, and its class when that isn't a public one."""
 
     id: str
     user_class: str
 
 
-class CapabilityRecord(ToolsetRecord, total=False):
+class ToolsetRecord(_ComponentRecord, total=False):
+    """A toolset in the `pydantic_ai.toolsets` agent run span attribute, listed under its class."""
+
+
+class CapabilityRecord(_ComponentRecord, total=False):
     """A capability in the `pydantic_ai.capabilities` agent run span attribute, listed under its class."""
 
     defer_loading: bool
@@ -548,8 +552,8 @@ class CapabilityRecord(ToolsetRecord, total=False):
 
 def _component_record(
     cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]], component_id: str | None, *, include_content: bool
-) -> ToolsetRecord:
-    record: ToolsetRecord = {}
+) -> _ComponentRecord:
+    record: _ComponentRecord = {}
     if component_id is not None:
         record['id'] = component_id
     if include_content and cls.__module__.partition('.')[0] not in _PUBLIC_PACKAGES:

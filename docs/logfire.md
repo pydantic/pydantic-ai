@@ -361,7 +361,7 @@ Agent run spans record what the run was made of: `pydantic_ai.capabilities` list
 }
 ```
 
-Tools registered on the agent itself (with `tools=` or [`@agent.tool`][pydantic_ai.agent.Agent.tool]) and output tools aren't listed, as the framework owns the toolsets that hold them; their tools are on the model request spans' tool definitions. Each toolset is listed once however many steps used it. Under [durable execution](durable_execution/overview.md), a `DynamicToolset` is listed as `pydantic_ai.toolsets.DynamicToolset` rather than as the toolsets it resolves to, since the engine resolves it outside the run's own toolset tree.
+Tools registered on the agent itself (with `tools=` or [`@agent.tool`][pydantic_ai.agent.Agent.tool]) and output tools aren't listed, as the framework owns the toolsets that hold them; their tools are on the model request spans' tool definitions. Toolsets that record identically are listed once, however many steps used them: that includes separate toolsets of one class with no recorded id, so the list's length isn't a toolset count. Under [durable execution](durable_execution/overview.md), a `DynamicToolset` is listed as `pydantic_ai.toolsets.DynamicToolset` rather than as the toolsets it resolves to, since the engine resolves it outside the run's own toolset tree.
 
 `active` says whether the capability was in force on any of the run's model requests or was loaded by the end of the run, which tells a [deferred capability](capabilities/on-demand.md) the model loaded from one it was offered and never loaded. Each model request span also lists the ids of the capabilities active on that step in `pydantic_ai.active_capabilities`.
 
