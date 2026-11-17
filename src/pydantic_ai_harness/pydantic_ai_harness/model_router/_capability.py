@@ -62,7 +62,8 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
 
     In `once` mode, the capability makes one router request and keeps that choice for the run.
     In `per_step` mode it routes before every logical model request. If the router request
-    raises, the declared `default` choice is used and the main run continues.
+    fails, the declared `default` choice is used and the main run continues; a `UserError`,
+    which means the request can never succeed as configured, propagates instead.
     """
 
     choices: Mapping[str, ModelChoice]
