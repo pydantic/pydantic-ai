@@ -7,7 +7,7 @@ copyright (c) 2026 Vstorm.
 
 from __future__ import annotations
 
-from pydantic_ai_harness._task_report import is_task_report
+from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, is_task_report
 from pydantic_ai_harness.sub_agents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgentFactory,
@@ -49,9 +49,11 @@ from pydantic_ai_harness.sub_agents._events import (
 from pydantic_ai_harness.sub_agents._models import ModelOption
 from pydantic_ai_harness.sub_agents._tasks import (
     DelegationReports,
+    DelegationSnapshot,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
+    DelegationToolCall,
     SavedTaskProblem,
     SavedTasks,
 )
@@ -82,10 +84,12 @@ __all__ = [
     'DelegationOutcome',
     'DelegationStartedEvent',
     'DelegationReports',
+    'DelegationSnapshot',
     'DelegationTask',
     'DelegationTaskEvent',
     'DelegationWorkspaceRequest',
     'DelegationTasks',
+    'DelegationToolCall',
     'DynamicAgentFactory',
     'DynamicAgentSpec',
     'DynamicAgents',
@@ -111,8 +115,10 @@ __all__ = [
     'TaskControl',
     'TaskFailedEvent',
     'TaskForceCancelRequestedEvent',
+    'TaskOutputPart',
     'TaskProgressEvent',
     'TaskQuestionAskedEvent',
+    'TaskQuestionPart',
     'TaskRequestEvent',
     'TaskResumedEvent',
     'TaskRetriedEvent',
