@@ -18,6 +18,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.minimax import minimax_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
@@ -191,6 +192,13 @@ class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithou
 class _BedrockGlm53JsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
     # GLM-5.3 stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas are inlined,
     # as `zai_model_profile` does. See https://github.com/pydantic/pydantic-ai/issues/10243.
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+
+class _BedrockMiniMaxJsonSchemaTransformer(BedrockJsonSchemaTransformer):
+    # MiniMax stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas are inlined,
+    # as `minimax_model_profile` does. See https://github.com/pydantic/pydantic-ai/issues/12077.
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
 
@@ -621,9 +629,9 @@ def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
-# MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
-# profile. OpenAI is handled separately because Converse support differs between its model families.
+# NVIDIA and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so these profile
+# fns build a `BedrockModelProfile` from scratch instead of composing with an upstream profile. OpenAI is
+# handled separately because Converse support differs between its model families.
 
 
 def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
@@ -644,11 +652,17 @@ def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MiniMax model used via Bedrock."""
     models_that_support_structured_output = ('minimax-m2',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return BedrockModelProfile(
-        supported_native_tools=frozenset(),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
+    family_profile = minimax_model_profile(model_name)
+    return merge_profile(
+        family_profile,
+        BedrockModelProfile(
+            supported_native_tools=frozenset(),
+            json_schema_transformer=(
+                _BedrockMiniMaxJsonSchemaTransformer if family_profile is not None else BedrockJsonSchemaTransformer
+            ),
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+        ),
     )
 
 
