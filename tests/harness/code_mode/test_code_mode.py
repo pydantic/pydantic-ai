@@ -2002,27 +2002,6 @@ class TestCodeMode:
         assert 'later' in tools
         assert tools['later'].tool_def.defer_loading is True
 
-    async def test_deferred_loading_tool_sandboxed_once_discovered(self) -> None:
-        """Once a deferred tool is discovered (`defer_loading=False`) it folds into `run_code`."""
-
-        def later(x: int) -> str:
-            """A discovered tool."""
-            return str(x)  # pragma: no cover - tool body is not invoked in this test
-
-        # `defer_loading=False` mimics the post-discovery state ToolSearchToolset hands back.
-        toolset = FunctionToolset[object](tools=[Tool(add), Tool(later, defer_loading=False)])
-        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(toolset)
-        assert isinstance(wrapper, CodeModeToolset)
-
-        ctx = build_run_context(None)
-        tools = await wrapper.get_tools(ctx)
-
-        description = tools['run_code'].tool_def.description
-        assert description is not None
-        assert 'async def add' in description
-        assert 'async def later' in description
-        assert 'later' not in tools
-
     async def test_framework_tool_kind_tool_not_sandboxed(self) -> None:
         """Framework control tools with `tool_kind` stay native even when CodeMode wraps all user tools."""
         td_loader = ToolDefinition(
@@ -3886,45 +3865,69 @@ class TestToolSearchIntegration:
         assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in description
 
     async def test_tool_search_toolset_discovered_tool_in_run_code(self) -> None:
-        """End-to-end: once `search_tools` has discovered the deferred tool, it folds into `run_code`."""
+        """End-to-end: once `search_tools` has discovered the deferred tool, it folds into `run_code`.
+
+        The model makes a real `search_tools` call rather than the test hand-building the
+        post-discovery state, so a change to how pydantic-ai records or reveals a discovery
+        shows up here.
+        """
 
         def later(x: int) -> str:
             """A deferred-loading tool."""
-            return str(x)  # pragma: no cover - tool body is not invoked in this test
+            return f'later {x}'
 
-        base = FunctionToolset[object](tools=[Tool(add), Tool(later, defer_loading=True)])
-        code_mode = CodeModeToolset(wrapped=ToolSearchToolset(wrapped=base), tool_selector='all')
+        seen_tools: list[set[str]] = []
+        seen_instructions: list[str | None] = []
 
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    ToolSearchReturnPart(
-                        content={'discovered_tools': [{'name': 'later'}]},
-                        tool_call_id='search-1',
-                    )
-                ]
-            )
-        ]
-        ctx = RunContext[object](
-            deps=None,
-            model=TestModel(),
-            usage=RunUsage(),
-            prompt=None,
-            messages=messages,
-            # The agent graph reconstructs `discovered_tool_names` from history each step;
-            # mirror that here since the test drives `get_tools` without a real run.
-            discovered_tool_names=parse_discovered_tools(messages),
-            run_step=1,
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_tools.append({td.name for td in info.function_tools})
+            seen_instructions.append(info.instructions)
+            step = sum(isinstance(m, ModelResponse) for m in messages)
+            if step == 0:
+                return ModelResponse(parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['later']})])
+            if step == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await later(x=1)'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(add), Tool(later, defer_loading=True)],
+            capabilities=[ToolSearch[object](), CodeMode[object](tools='all')],
         )
-        tools = await code_mode.get_tools(ctx)
+        result = await agent.run('find and call later')
 
-        description = tools['run_code'].tool_def.description
-        assert description is not None
-        assert 'async def add' in description
+        assert result.output == 'done'
+        assert seen_instructions[0] is not None
+        assert 'async def add' in seen_instructions[0]
+        assert 'async def later' not in seen_instructions[0]
         # The discovered tool keeps `defer_loading=True` (the author's intent), but it is
-        # revealed, so it folds into run_code and is no longer a separate native tool.
-        assert 'async def later' in description
-        assert 'later' not in tools
+        # revealed, so it folds into the run_code catalog and is no longer a separate native tool...
+        deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
+        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
+        assert deltas[0].content is not None and 'async def later' in deltas[0].content
+        assert 'later' not in seen_tools[1]
+        # ...and generated code can call it.
+        run_code_returns = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        ]
+        assert run_code_returns == ['later 1']
+
+    async def test_search_tool_def_fixture_matches_tool_search_toolset(self) -> None:
+        """`_search_tool_def` stands in for pydantic-ai's `search_tools`; fail if the real tool drifts from it.
+
+        The fixture lets the tests above and `TestDynamicCatalog` exercise CodeMode's routing
+        without a full `ToolSearchToolset`, so this pins the fields CodeMode keys on to what
+        the real toolset emits.
+        """
+        base = FunctionToolset[object](tools=[Tool(add, defer_loading=True)])
+        tools = await ToolSearchToolset(wrapped=base).get_tools(build_run_context(None))
+
+        real, fixture = tools[_SEARCH_TOOLS_NAME].tool_def, _search_tool_def()
+        assert (real.name, real.tool_kind) == (fixture.name, fixture.tool_kind)
 
     def test_code_mode_ordering(self) -> None:
         """CodeMode declares ordering: outermost position, wraps ToolSearch."""
@@ -4104,6 +4107,20 @@ class TestDynamicCatalog:
 
     # -- discovery announcement: local search path ------------------------
 
+    async def test_search_result_fixture_matches_tool_search_toolset(self) -> None:
+        """`_WEATHER_DISCOVERY` is what the real `search_tools` returns, so the hook tests below stay honest."""
+
+        def weather(city: str) -> str:
+            """Get the weather."""
+            return city  # pragma: no cover - only the search corpus matters
+
+        toolset = ToolSearchToolset(wrapped=FunctionToolset[object](tools=[Tool(weather, defer_loading=True)]))
+        ctx = build_run_context(None)
+        tools = await toolset.get_tools(ctx)
+
+        result = await toolset.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['weather']}, ctx, tools[_SEARCH_TOOLS_NAME])
+        assert result == _WEATHER_DISCOVERY
+
     async def test_announce_on_local_search_return(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
@@ -4112,7 +4129,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result={'discovered_tools': [{'name': 'weather'}]},
+            result=_WEATHER_DISCOVERY,
         )
 
         assert ctx.pending_messages is not None
@@ -4134,7 +4151,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result={'discovered_tools': [{'name': 'weather'}]},
+            result=_WEATHER_DISCOVERY,
         )
         assert ctx.pending_messages == []
 
@@ -4169,14 +4186,13 @@ class TestDynamicCatalog:
     async def test_no_duplicate_announcement_for_same_tool(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
-        result = {'discovered_tools': [{'name': 'weather'}]}
         for cid in ('c1', 'c2'):
             await cap.after_tool_execute(
                 ctx,
                 call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id=cid),
                 tool_def=_search_tool_def(),
                 args={},
-                result=result,
+                result=_WEATHER_DISCOVERY,
             )
         # Only the first discovery of `weather` announces.
         assert ctx.pending_messages is not None
@@ -4185,19 +4201,18 @@ class TestDynamicCatalog:
     async def test_announcement_in_visible_history_deduplicates_across_steps(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
-        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
         await cap.after_tool_execute(
             ctx,
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
         assert ctx.pending_messages is not None
         [announcement] = ctx.pending_messages[0].messages
         assert isinstance(announcement, ModelRequest)
         ctx.messages.extend(
-            [ModelRequest(parts=[ToolSearchReturnPart(content=result, tool_call_id='c1')]), announcement]
+            [ModelRequest(parts=[ToolSearchReturnPart(content=_WEATHER_DISCOVERY, tool_call_id='c1')]), announcement]
         )
         ctx.pending_messages.clear()
 
@@ -4207,7 +4222,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
 
         assert ctx.pending_messages == []
@@ -4215,20 +4230,19 @@ class TestDynamicCatalog:
     async def test_compaction_boundary_allows_announcement_again(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
-        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
         await cap.after_tool_execute(
             ctx,
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
         assert ctx.pending_messages is not None
         [announcement] = ctx.pending_messages[0].messages
         assert isinstance(announcement, ModelRequest)
         ctx.messages.extend(
             [
-                ModelRequest(parts=[ToolSearchReturnPart(content=result, tool_call_id='c1')]),
+                ModelRequest(parts=[ToolSearchReturnPart(content=_WEATHER_DISCOVERY, tool_call_id='c1')]),
                 announcement,
                 ModelResponse(parts=[CompactionPart()]),
             ]
@@ -4241,7 +4255,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
 
         assert len(ctx.pending_messages) == 1
@@ -4253,17 +4267,16 @@ class TestDynamicCatalog:
         """
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = await _discovery_ctx('weather')
-        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
         await cap.after_tool_execute(
             ctx,
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
         assert ctx.pending_messages is not None
         # A history processor omitted the announcement but kept the search return.
-        ctx.messages.append(ModelRequest(parts=[ToolSearchReturnPart(content=result, tool_call_id='c1')]))
+        ctx.messages.append(ModelRequest(parts=[ToolSearchReturnPart(content=_WEATHER_DISCOVERY, tool_call_id='c1')]))
         ctx.pending_messages.clear()
 
         await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
@@ -4272,7 +4285,7 @@ class TestDynamicCatalog:
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
             tool_def=_search_tool_def(),
             args={},
-            result=result,
+            result=_WEATHER_DISCOVERY,
         )
 
         assert len(ctx.pending_messages) == 1
@@ -4289,7 +4302,7 @@ class TestDynamicCatalog:
         ctx.messages.append(
             ModelRequest(
                 parts=[
-                    ToolSearchReturnPart(content=result, tool_call_id='c1'),
+                    ToolSearchReturnPart(content=_WEATHER_DISCOVERY, tool_call_id='c1'),
                     SystemPromptPart(
                         content=(
                             'New functions are now available inside `run_code`. Their signatures have been added '
@@ -4319,7 +4332,7 @@ class TestDynamicCatalog:
         ctx.messages.append(
             ModelRequest(
                 parts=[
-                    ToolSearchReturnPart(content=result, tool_call_id='c1'),
+                    ToolSearchReturnPart(content=_WEATHER_DISCOVERY, tool_call_id='c1'),
                     UserPromptPart(
                         content=(
                             'New functions are now available inside `run_code`. Their signatures have been added '
@@ -4641,12 +4654,15 @@ class TestDynamicCatalog:
             parts=[
                 NativeToolSearchReturnPart(
                     tool_name='tool_search',
-                    content={'discovered_tools': [{'name': 'weather'}]},
+                    content=_WEATHER_DISCOVERY,
                     tool_call_id='c1',
                 )
             ],
             usage=RequestUsage(input_tokens=1, output_tokens=1),
         )
+        # Native search parts come from provider responses, so pin the hand-built one to how
+        # pydantic-ai itself reads a native discovery.
+        assert parse_discovered_tools([response]) == {'weather'}
         await cap.after_model_request(ctx, request_context=None, response=response)  # pyright: ignore[reportArgumentType]
 
         assert ctx.pending_messages is not None
@@ -5501,6 +5517,7 @@ def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH
 
     Carries `tool_kind='tool-search'`, matching what pydantic-ai emits (since 1.95.0);
     CodeMode routes it native off `tool_kind`, not its name.
+    `test_search_tool_def_fixture_matches_tool_search_toolset` fails if the real tool drifts from it.
     """
 
     return ToolDefinition(
@@ -5509,6 +5526,13 @@ def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
         tool_kind='tool-search',
     )
+
+
+_WEATHER_DISCOVERY: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
+"""What `search_tools` returns when it discovers `weather`, for the dynamic-catalog announcement tests.
+
+`test_search_result_fixture_matches_tool_search_toolset` fails if the real `ToolSearchToolset` result drifts from it.
+"""
 
 
 class TestCodeModeOSAccessInTemporal:
