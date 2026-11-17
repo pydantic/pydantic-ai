@@ -33,10 +33,17 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import register_tag, wrap
-from pydantic_ai.messages import BaseToolReturnPart, ModelMessage, ModelResponse, is_retry, repair_messages
+from pydantic_ai.messages import (
+    BaseToolReturnPart,
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    is_retry,
+    repair_messages,
+)
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 
 # Private import: pydantic-ai has no public way to tell capability-contributed
@@ -44,6 +51,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -395,17 +403,26 @@ def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     return tool_def is not None and tool_def.capability_id is not None
 
 
-def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
-    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+def _tree_has(toolset: AbstractToolset[AgentDepsT], predicate: Callable[[AbstractToolset[AgentDepsT]], bool]) -> bool:
+    """Whether a toolset in `toolset`'s tree matches `predicate`."""
     found = False
 
     def visit(node: AbstractToolset[AgentDepsT]) -> None:
         nonlocal found
-        if isinstance(node, CapabilityOwnedToolset):
-            found = True
+        found = found or predicate(node)
 
     toolset.apply(visit)
     return found
+
+
+def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
+    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+    return _tree_has(toolset, lambda node: isinstance(node, CapabilityOwnedToolset))
+
+
+def _exposes(name: str, original: str) -> bool:
+    """Whether `name` is `original`, or `original` with a prefix a wrapper added."""
+    return name == original or name.endswith(f'_{original}')
 
 
 def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
@@ -1173,8 +1190,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         record = self._visible(ctx, owner, task_id)
         return _snapshot_text(owner.snapshot(record.id), background=record.background)
 
-    async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
-        """Send a message to a running task you started, to steer it. It reads the message at its next model request.
+    async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> object:
+        """Send a message to a task you started, to steer it.
+
+        A running task reads the message at its next model request. A finished task resumes with the message as
+        its next prompt, in the background if it ran there, as a delegate call with `resume` would.
 
         Args:
             ctx: The run context.
@@ -1188,10 +1208,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ctx.in_durable_context:
             raise ModelRetry(f'Task {task_id} runs in a durable unit of its own, which messages cannot reach.')
         if record.status != 'running':
-            raise ModelRetry(
-                f'Task {task_id} has finished ({record.outcome}), and messages only reach running tasks. '
-                'To continue it, delegate again with `resume`.'
-            )
+            return await self._resume_by_message(ctx, record, message)
         event = await self._announce(
             ctx, owner, record, TaskSteeredEvent(task_id=task_id, agent_name=record.agent_name, message=message)
         )
@@ -1203,6 +1220,34 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         elif not owner.steer(task_id, event.message):
             return f'Task {task_id} finished before the message reached it.'
         return f'Message sent to task {task_id}.'
+
+    async def _resume_by_message(self, ctx: RunContext[AgentDepsT], record: DelegationTask, message: str) -> object:
+        """Resume a finished task through the delegate tool, so the hooks, guards and approvals on it apply."""
+        tool_manager = ctx.tool_manager
+        assert tool_manager is not None, 'Tools run with the run step tool manager set'
+        # A wrapper such as `PrefixedToolset` may expose the delegate tool under another name: the one whose
+        # longest matching tool name of this toolset is the delegate tool's.
+        names = [
+            name
+            for name, tool in (tool_manager.tools or {}).items()
+            if max((own for own in self.tools if _exposes(name, own)), key=len, default=None) == self._tool_name
+            and _tree_has(tool.toolset, lambda node: node is self)
+        ]
+        resume = f'with `agent_name={record.agent_name!r}` and `resume={record.id!r}`.'
+        if len(names) != 1:
+            raise ModelRetry(f'To resume task {record.id}, call the delegate tool {resume}')
+        args = {'agent_name': record.agent_name, 'task': message, 'background': record.background, 'resume': record.id}
+        call = ToolCallPart(names[0], args, tool_call_id=f'{ctx.tool_call_id}-resume')
+        reserved = reserve_nested_call(ctx)
+        try:
+            result = await tool_manager.handle_call(call, wrap_validation_errors=False)
+        except (ApprovalRequired, CallDeferred):
+            raise ModelRetry(f'Resuming task {record.id} needs approval. Call `{names[0]}` {resume}') from None
+        finally:
+            ctx.usage.tool_calls -= reserved
+        if isinstance(result, ToolDenied):
+            return f'Task {record.id} was not resumed: {result.message}'
+        return result
 
     async def answer_task(self, ctx: RunContext[AgentDepsT], task_id: str, answer: str) -> str:
         """Answer the question a task you started is waiting on.

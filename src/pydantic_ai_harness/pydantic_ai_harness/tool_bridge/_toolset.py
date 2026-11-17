@@ -18,7 +18,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets._tool_search import keywords_search_fn
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS, reserve_nested_tool_call
+from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS, reserve_nested_call
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -191,7 +191,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             toolset=self.wrapped, root_capability=parent.root_capability, ctx=nested_ctx, tools=bridged
         )
         call = ToolCallPart(tool_name=name, args=args_json or '{}')
-        reserved = reserve_nested_tool_call(ctx)
+        reserved = reserve_nested_call(ctx)
         try:
             return await manager.handle_call(call, approved=ctx.tool_call_approved, wrap_validation_errors=False)
         except ValidationError as exc:
