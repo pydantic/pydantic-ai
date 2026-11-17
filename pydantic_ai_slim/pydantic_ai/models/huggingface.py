@@ -622,7 +622,7 @@ class _TopLogprob(TypedDict):
 
 class _TokenLogprob(TypedDict):
     token: str
-    logprob: float
+    logprob: float | None
     top_logprobs: list[_TopLogprob]
 
 
@@ -720,8 +720,9 @@ def _map_logprobs(
     """Convert Hugging Face logprobs to a serializable format.
 
     Shaped like the OpenAI and xAI mappings so `provider_details['logprobs']` is consistent across
-    providers. Hugging Face doesn't return the `bytes` field those two do, so it's omitted rather
-    than emitted as `None`.
+    providers, without their `bytes` field: the SDK types don't declare it, although some providers,
+    such as Novita, send it. A provider can leave a token's `logprob` out of a streamed chunk, as
+    Novita does, so it can be `None`.
     """
     return [
         {

@@ -12,7 +12,7 @@ from pydantic_ai import Agent
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsList, try_import
+from ..conftest import try_import
 
 with try_import() as imports_successful:
     from cassetter import Cassette
@@ -43,7 +43,28 @@ async def test_huggingface_logprobs(allow_model_requests: None, huggingface_api_
     assert (body['logprobs'], body['top_logprobs']) == (True, 2)
     provider_details = result.response.provider_details
     assert provider_details is not None
-    assert provider_details['logprobs'] == IsList(length=(1, ...))
+    assert provider_details['logprobs'] == snapshot(
+        [
+            {
+                'token': 'Paris',
+                'logprob': 0,
+                'top_logprobs': [{'token': 'Paris', 'logprob': 0}, {'token': 'Par', 'logprob': -17.142858505249023}],
+            },
+            {
+                'token': '.',
+                'logprob': -0.008023055270314217,
+                'top_logprobs': [
+                    {'token': '.', 'logprob': -0.008023055270314217},
+                    {'token': '<|eot_id|>', 'logprob': -4.82944917678833},
+                ],
+            },
+            {
+                'token': '<|eot_id|>',
+                'logprob': 0,
+                'top_logprobs': [{'token': '<|eot_id|>', 'logprob': 0}, {'token': ' ', 'logprob': -17.14285659790039}],
+            },
+        ]
+    )
 
 
 async def test_huggingface_logprobs_not_requested(allow_model_requests: None):
@@ -93,4 +114,13 @@ async def test_huggingface_logprobs_streaming(allow_model_requests: None, huggin
     assert (body['stream'], body['logprobs'], body['top_logprobs']) == (True, True, 2)
     provider_details = result.response.provider_details
     assert provider_details is not None
-    assert provider_details['logprobs'] == IsList(length=(1, ...))
+    # Novita leaves the token's `logprob` out of the streamed chunk, though the non-streamed response gives 0.
+    assert provider_details['logprobs'] == snapshot(
+        [
+            {
+                'token': 'Paris',
+                'logprob': None,
+                'top_logprobs': [{'token': 'Paris', 'logprob': 0}, {'token': 'Par', 'logprob': -17.142858505249023}],
+            }
+        ]
+    )
