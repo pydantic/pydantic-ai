@@ -50,6 +50,14 @@ class ReadMissingInHook(AbstractCapability[Any]):
         await ctx.workspace.read_text('missing.txt')
 
 
+class ReadInForRun(AbstractCapability[Any]):
+    """Reads the workspace while the run is prepared, before its steps begin."""
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        await ctx.workspace.exists('a.txt')
+        return self
+
+
 class AmnesiacWorkspaces(AbstractCapability[Any]):
     """Creates environments but can't reattach to the ones it created."""
 
@@ -103,9 +111,19 @@ class ScenarioAgents:
     local: Agent[None, str]
     amnesiac: Agent[None, str]
     uncaught: Agent[None, str]
+    prepare_reads: Agent[None, str]
 
     def all(self) -> list[Agent[None, str]]:
-        return [self.fresh, self.plain, self.read_only, self.explicit, self.local, self.amnesiac, self.uncaught]
+        return [
+            self.fresh,
+            self.plain,
+            self.read_only,
+            self.explicit,
+            self.local,
+            self.amnesiac,
+            self.uncaught,
+            self.prepare_reads,
+        ]
 
 
 def scenario_agents(
@@ -147,6 +165,9 @@ def scenario_agents(
         ),
         uncaught=Agent(
             TestModel(), name=f'{prefix}uncaught', capabilities=[ReadMissingInHook(), workspaces(), durability()]
+        ),
+        prepare_reads=Agent(
+            TestModel(), name=f'{prefix}prepare_reads', capabilities=[ReadInForRun(), workspaces(), durability()]
         ),
     )
 
@@ -289,9 +310,25 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
     return (await agents.uncaught.run('Nothing to do.')).output
 
 
+async def prepare_reads(agents: ScenarioAgents, arg: str | None, engine_id: str) -> str:
+    return (await agents.prepare_reads.run('Nothing to do.')).output
+
+
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
+    for scenario in (
+        fresh,
+        multi_turn,
+        two_agents,
+        run_id,
+        read_only,
+        explicit,
+        binary,
+        local,
+        amnesiac,
+        uncaught,
+        prepare_reads,
+    )
 }
 
 
@@ -388,6 +425,12 @@ async def check_local(run: Runner, agents: ScenarioAgents) -> None:
         shutil.rmtree(agents.local_dir, ignore_errors=True)
 
 
+async def check_prepare_reads(run: Runner, agents: ScenarioAgents) -> None:
+    """A workspace call made while the run is prepared reaches the run's backend, not a new one."""
+    await run('prepare_reads', None)
+    assert agents.provider.log == ['create:env-1']
+
+
 async def check_failure(name: str, type: str, fragment: str, run: Runner, agents: ScenarioAgents) -> None:
     """An error the run can't recover from fails the workflow or flow with that same error."""
     try:
@@ -422,6 +465,7 @@ CASES: dict[str, Check] = {
     'explicit_dead_ref': partial(
         check_explicit_rejected, 'dead_ref', 'WorkspaceUnavailableError', "environment 'expired' does not exist"
     ),
+    'prepare_reads': check_prepare_reads,
     'binary': check_binary,
     'local': check_local,
     'amnesiac': partial(check_failure, 'amnesiac', 'UserError', 'which the run just created'),

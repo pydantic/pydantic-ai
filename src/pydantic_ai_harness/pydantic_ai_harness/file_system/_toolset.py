@@ -15,7 +15,7 @@ import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Concatenate, ParamSpec, TypeVar
 
 import anyio
@@ -30,6 +30,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspacePaths,
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
 )
@@ -207,6 +208,8 @@ class _Bounds:
     """
     lacks_ripgrep: bool = False
     """Set once `rg` is found missing, so later searches skip the rg probe."""
+    ripgrep_checked: bool = False
+    """Whether a `'windows'` workspace was checked for `rg`, which it has no fallback for."""
 
 
 @dataclass
@@ -225,6 +228,30 @@ class _Scope:
     bounds: _Bounds
     given: WorkspaceBackend
     """The workspace as the call was given it, which may be a backend `workspace` wraps."""
+
+    @property
+    def paths(self) -> WorkspacePaths:
+        return self.workspace.paths
+
+    def relative(self, path: str, start: str) -> str:
+        """`path` relative to `start`, with `/` between its components whatever the workspace's separator."""
+        return _relative(self.paths, path, start)
+
+    def contains(self, root: str, path: str) -> bool:
+        return _contains(self.paths, root, path)
+
+    def absolute(self, cwd: str, path: str) -> str:
+        """The workspace path of a path a search printed relative to `cwd`."""
+        return self.paths.normpath(self.paths.join(cwd, path))
+
+
+def _relative(paths: WorkspacePaths, path: str, start: str) -> str:
+    return paths.relpath(path, start).replace(paths.sep, '/')
+
+
+def _is_filesystem_root(paths: WorkspacePaths, path: str) -> bool:
+    """Whether `path` is `/`, or a drive's root on Windows, which contains every path on it."""
+    return paths.dirname(path) == path
 
 
 def _directories_holding(glob: str, prefix: str) -> list[str]:
@@ -253,6 +280,22 @@ def _directories_holding(glob: str, prefix: str) -> list[str]:
         if not any(directory == k or directory.startswith(k + '/') for k in kept):
             kept.append(directory)
     return sorted(kept)
+
+
+async def _searches_in_workspace(scope: _Scope) -> bool:
+    """Whether searches run a command in the workspace: `rg`, or its POSIX fallback; otherwise files are walked.
+
+    Windows has no POSIX fallback, so there `rg` is looked for once, before the first search.
+    """
+    if not supports_commands(scope.workspace):
+        return False
+    if scope.workspace.platform == 'posix':
+        return True
+    if not scope.bounds.ripgrep_checked:
+        scope.bounds.ripgrep_checked = True
+        if (await scope.workspace.run(['rg', '--version'], timeout=SEARCH_TIMEOUT)).exit_code != 0:
+            _fall_back_from_ripgrep(scope)
+    return not scope.bounds.lacks_ripgrep
 
 
 def _fall_back_from_ripgrep(scope: _Scope) -> None:
@@ -347,14 +390,15 @@ def _glob_selects(include_glob: str | None, prefix: str, record: Record) -> bool
     )
 
 
-def _batch_permits(cwd: str, allowed: set[str], record: Record) -> bool:
+def _batch_permits(scope: _Scope, cwd: str, allowed: set[str], record: Record) -> bool:
     """Whether `FileSystemToolset._authorize_batch` added the path of `record` to `allowed`."""
-    return posixpath.normpath(posixpath.join(cwd, record.path)) in allowed
+    return scope.absolute(cwd, record.path) in allowed
 
 
-def _contains(root: str, path: str) -> bool:
-    """Whether the normalized absolute `path` is `root` or below it, compared as text."""
-    return path == root or path.startswith(root.rstrip('/') + '/')
+def _contains(paths: WorkspacePaths, root: str, path: str) -> bool:
+    """Whether the normalized absolute `path` is `root` or below it, compared as text, without case on Windows."""
+    root, path = paths.normcase(root), paths.normcase(path)
+    return path == root or path.startswith(root.rstrip(paths.sep) + paths.sep)
 
 
 def _is_hidden(relative: str) -> bool:
@@ -393,7 +437,7 @@ def _sort_key(path: str) -> list[str]:
     return path.split('/')
 
 
-def _model_safe_filename(filename: str | bytes, root: str) -> str:
+def _model_safe_filename(filename: str | bytes, root: str, *, paths: WorkspacePaths = posixpath) -> str:
     """Return the path relative to the workspace root.
 
     Paths not inside the root become `_OUTSIDE_WORKSPACE`; values that are
@@ -403,15 +447,15 @@ def _model_safe_filename(filename: str | bytes, root: str) -> str:
         raw = os.fsdecode(filename)
     except TypeError:
         return _NOT_A_PATH
-    if not posixpath.isabs(raw):
+    if not paths.isabs(raw):
         return raw
-    path = posixpath.normpath(raw)
-    if _contains(root, path):
-        return posixpath.relpath(path, root)
+    path = paths.normpath(raw)
+    if _contains(paths, root, path):
+        return _relative(paths, path, root)
     return _OUTSIDE_WORKSPACE
 
 
-def _sanitize_recoverable_error(error: BaseException, root: str) -> str:
+def _sanitize_recoverable_error(error: BaseException, root: str, *, paths: WorkspacePaths = posixpath) -> str:
     """Render a recoverable error without exposing absolute paths outside the root.
 
     Errors without an OS-supplied `filename` keep their original message.
@@ -421,7 +465,7 @@ def _sanitize_recoverable_error(error: BaseException, root: str) -> str:
     if not isinstance(error, OSError) or error.filename is None:
         return str(error)
 
-    filename = _model_safe_filename(error.filename, root)
+    filename = _model_safe_filename(error.filename, root, paths=paths)
     return f'[Errno {error.errno}] {error.strerror}: {filename!r}'
 
 
@@ -440,7 +484,7 @@ def _recoverable(
         except WorkspaceError as exc:
             raise_tool_failure(exc)
         except _RECOVERABLE_ERRORS as exc:
-            raise ModelRetry(_sanitize_recoverable_error(exc, scope.bounds.root)) from exc
+            raise ModelRetry(_sanitize_recoverable_error(exc, scope.bounds.root, paths=scope.paths)) from exc
         except OSError as exc:
             reason = _recoverable_reason(exc)
             if reason is None:
@@ -467,10 +511,10 @@ _DIFF_SOURCE_BYTES = 4 * MAX_DIFF_SOURCE_CHARS
 """Bytes that can hold `MAX_DIFF_SOURCE_CHARS` of UTF-8; a longer file is past the bound whatever it holds."""
 
 
-def _hidden_found(walked: Sequence[FileEntry], resolved: str, parts: Sequence[str]) -> int:
+def _hidden_found(scope: _Scope, walked: Sequence[FileEntry], resolved: str, parts: Sequence[str]) -> int:
     """The hidden entries of a walk below `resolved` that `parts` matches, or, with `**`, would descend into."""
     return sum(
-        _is_hidden(relative := posixpath.relpath(child.path, resolved))
+        _is_hidden(relative := scope.relative(child.path, resolved))
         and (child.is_dir and '**' in parts or glob_match(parts, relative.split('/')))
         for child in walked
     )
@@ -496,7 +540,9 @@ def root_spelling(root_dir: Path | None) -> str | None:
         return None
     spelling = workspace_path(root_dir)
     normalized = posixpath.normpath(spelling)
-    if not posixpath.isabs(normalized) and normalized != '.' and set(normalized.split('/')) != {'..'}:
+    # A Windows path such as `C:/repo` is absolute too; a POSIX workspace resolves it as relative and refuses it.
+    absolute = posixpath.isabs(normalized) or bool(PureWindowsPath(spelling).drive)
+    if not absolute and normalized != '.' and set(normalized.split('/')) != {'..'}:
         raise UserError(
             f'root_dir {spelling!r} is below the working directory, but root_dir must contain the working '
             'directory. To scope the tools to a subfolder, attach the workspace there, '
@@ -585,10 +631,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         }
         for name in FILE_SYSTEM_TOOL_NAMES:
             if name in self._tools:
-                # Approval must run in the workflow before the durable workspace write activity.
-                metadata = {'temporal': False} if name in {'write_file', 'edit_file', 'create_directory'} else None
+                changes = name in {'write_file', 'edit_file', 'create_directory'}
                 self.add_function(
-                    registrations[name], name=name, metadata=metadata, tool_kind=FILE_SYSTEM_TOOL_KINDS[name]
+                    registrations[name],
+                    name=name,
+                    # Approval must run in the workflow before the durable workspace write activity.
+                    metadata={'temporal': False} if changes else None,
+                    tool_kind=FILE_SYSTEM_TOOL_KINDS[name],
+                    # A change can depend on an earlier call in the same response, like a write into a new directory.
+                    sequential=changes,
                 )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -614,22 +665,25 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         facade = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
         if (bounds := self._bounds.get(facade)) is not None:
             return _Scope(facade, bounds, workspace)
-        cwd = posixpath.normpath(await facade.working_dir())
+        paths = facade.paths
+        cwd = paths.normpath(await facade.working_dir())
         if self._root_spelling is None:
-            root = cwd = cwd if cwd == '/' else await facade.realpath(cwd)
+            root = cwd = cwd if _is_filesystem_root(paths, cwd) else await facade.realpath(cwd)
         else:
             root = await facade.resolve(self._root_spelling)
-            if root != '/':
+            if not _is_filesystem_root(paths, root):
                 root = await facade.realpath(root)
                 # Compare like with like: a working directory reached through a symlink is still inside.
                 cwd = await facade.realpath(cwd)
-            if not _contains(root, cwd):
+            if not _contains(paths, root, cwd):
                 raise UserError(
                     f'The working directory {cwd!r} is outside root_dir {root!r}. '
                     f'To work in {root!r}, attach the workspace there, such as `LocalWorkspace({root!r})` on this '
                     'machine; otherwise set `root_dir` to a directory that contains the working directory.'
                 )
-        bounds = _Bounds(root=root, cwd=cwd, checks_realpath=root != '/' or bool(self._patterns))
+        bounds = _Bounds(
+            root=root, cwd=cwd, checks_realpath=not _is_filesystem_root(paths, root) or bool(self._patterns)
+        )
         self._bounds[facade] = bounds
         return _Scope(facade, bounds, workspace)
 
@@ -661,7 +715,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         path as written, so a symlink swapped in after this check is not caught.
         """
         resolved = await scope.workspace.resolve(path, base=scope.bounds.cwd)
-        if not _contains(scope.bounds.root, resolved):
+        if not scope.contains(scope.bounds.root, resolved):
             raise PermissionError(
                 f'`{resolved}` is outside {self._root_name(scope)}; the file tools only work inside it. '
                 f'Create or clone it inside {self._root_place(scope)}, or use a shell tool if you have one.'
@@ -669,7 +723,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if not scope.bounds.checks_realpath:
             return resolved, resolved
         real = await scope.workspace.realpath(resolved)
-        if not _contains(scope.bounds.root, real):
+        if not scope.contains(scope.bounds.root, real):
             # The link's target is not named: absolute paths outside the root stay out of tool results.
             raise PermissionError(
                 f'`{path}` leads outside {self._root_name(scope)} through a symlink; the file tools only work '
@@ -695,13 +749,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         and `find_files`, and entries are matched against the patterns by their
         root-relative spelling.
         """
-        if not _contains(scope.bounds.root, path):  # pragma: no cover -- walks and `rg` output stay below the root
+        if not scope.contains(scope.bounds.root, path):  # pragma: no cover -- walks and `rg` output stay below the root
             # Walks start inside the root and `rg` prints paths below its cwd; this guards a
             # backend or `rg` build that reports an entry elsewhere.
             return None
-        relative = posixpath.relpath(path, scope.bounds.root)
+        relative = scope.relative(path, scope.bounds.root)
         # The caller explicitly named `start`; only hidden components below it are omitted.
-        if (not include_hidden and _is_hidden(posixpath.relpath(path, start))) or not self._patterns.readable(relative):
+        if (not include_hidden and _is_hidden(scope.relative(path, start))) or not self._patterns.readable(relative):
             return None
         return relative
 
@@ -710,8 +764,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if not scope.bounds.checks_realpath:
             return True
         real = await scope.workspace.realpath(path)
-        return _contains(scope.bounds.root, real) and self._patterns.readable(
-            posixpath.relpath(real, scope.bounds.root)
+        return scope.contains(scope.bounds.root, real) and self._patterns.readable(
+            scope.relative(real, scope.bounds.root)
         )
 
     def _event_location(self, scope: _Scope, resolved: str) -> _EventLocation:
@@ -721,7 +775,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         workspace path, so a subscriber rooted elsewhere can rebuild the
         location instead of assuming the event came from its own root.
         """
-        return _EventLocation(path=_model_safe_filename(resolved, scope.bounds.root), root_dir=scope.bounds.root)
+        return _EventLocation(
+            path=_model_safe_filename(resolved, scope.bounds.root, paths=scope.paths), root_dir=scope.bounds.root
+        )
 
     async def _safe_resolve(self, scope: _Scope, path: str, *, write: bool = False, check_allowed: bool = True) -> str:
         """Resolve and access-check a path in one step.
@@ -741,9 +797,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """`_safe_resolve`, also returning the real path (the same spelling when real paths go unchecked)."""
         resolved, real = await self._resolve_path(scope, path)
         for spelling in dict.fromkeys((resolved, real)):
-            self._patterns.check(
-                posixpath.relpath(spelling, scope.bounds.root), write=write, check_allowed=check_allowed
-            )
+            self._patterns.check(scope.relative(spelling, scope.bounds.root), write=write, check_allowed=check_allowed)
         return resolved, real
 
     def _too_large_to_read(self, path: str, size: int) -> str:
@@ -833,8 +887,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         for child, real in sorted(resolved_dirs, key=lambda pair: pair[0].path != pair[1]):
             if (
                 real not in seen_dirs
-                and _contains(scope.bounds.root, real)
-                and not self._patterns.denied_by(posixpath.relpath(child.path, scope.bounds.root))
+                and scope.contains(scope.bounds.root, real)
+                and not self._patterns.denied_by(scope.relative(child.path, scope.bounds.root))
             ):
                 seen_dirs.add(real)
                 descended.append(child.path)
@@ -1052,11 +1106,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if entry is not None and entry.is_dir:
                 raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
 
-            parent = posixpath.dirname(resolved)
+            parent = scope.paths.dirname(resolved)
             try:
                 parent_entry = await scope.workspace.stat(parent)
             except FileNotFoundError as exc:
-                parent_rel = posixpath.relpath(parent, scope.bounds.root)
+                parent_rel = scope.relative(parent, scope.bounds.root)
                 raise FileNotFoundError(
                     f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
                 ) from exc
@@ -1303,7 +1357,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     async def _listing_line(self, scope: _Scope, entry: FileEntry) -> str | None:
         """How `list_directory` shows `entry`, or `None` when nothing is there to show."""
-        rel = posixpath.relpath(entry.path, scope.bounds.cwd)
+        rel = scope.relative(entry.path, scope.bounds.cwd)
         if entry.is_dir:
             return f'{rel}/'
         size = entry.size
@@ -1368,7 +1422,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         entry = await self._stat(scope, resolved)
         # Probe rg on the first call too: walking remote files is only for backends
         # without commands, or when the command path itself fails.
-        if entry is not None and supports_commands(scope.workspace):
+        if entry is not None and await _searches_in_workspace(scope):
             return await self._command_search_files(scope, ctx, entry, resolved, pattern, include_glob)
         if has_nested_quantifier(pattern, verbose=bool(compiled.flags & re.VERBOSE)):
             raise ValueError(
@@ -1391,7 +1445,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if text is None:
                 continue
             matches, capped = matching_lines(
-                text, compiled, posixpath.relpath(file.path, scope.bounds.cwd), self._max_search_results - len(results)
+                text, compiled, scope.relative(file.path, scope.bounds.cwd), self._max_search_results - len(results)
             )
             results.extend(matches)
             if capped:
@@ -1427,7 +1481,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         walked, walk_cut = await self._walk(scope, resolved, include_hidden=include_hidden)
         # Hidden directories are pruned; count their directory entry, not unseen descendants.
         hidden_count = (
-            0 if include_hidden else sum(_is_hidden(posixpath.relpath(child.path, resolved)) for child in walked)
+            0 if include_hidden else sum(_is_hidden(scope.relative(child.path, resolved)) for child in walked)
         )
         return [child for child in walked if not child.is_dir], walk_cut, hidden_count
 
@@ -1452,7 +1506,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if not await self._readable_entry(scope, file.path):
             return None
         if file.size is not None and file.size > _MAX_SEARCH_FILE_BYTES:
-            skipped.append(posixpath.relpath(file.path, scope.bounds.cwd))
+            skipped.append(scope.relative(file.path, scope.bounds.cwd))
             return None
         try:
             raw = await scope.workspace.read_bytes(file.path)
@@ -1461,7 +1515,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise
         except (WorkspaceError, OSError):
             # A single inaccessible file should not hide matches in the rest of the tree.
-            skipped.append(posixpath.relpath(file.path, scope.bounds.cwd))
+            skipped.append(scope.relative(file.path, scope.bounds.cwd))
             return None
         if is_binary(raw):
             return None
@@ -1476,10 +1530,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         pattern: str,
         include_glob: str | None,
     ) -> str:
-        cwd = resolved if entry.is_dir else posixpath.dirname(resolved)
-        target = '.' if entry.is_dir else posixpath.basename(resolved)
+        cwd = resolved if entry.is_dir else scope.paths.dirname(resolved)
+        target = '.' if entry.is_dir else scope.paths.basename(resolved)
         prepare, permitted = self._batch_authorizer(scope, cwd)
-        prefix = posixpath.relpath(cwd, scope.bounds.root)
+        prefix = scope.relative(cwd, scope.bounds.root)
         include_hidden = bool(include_glob and _explicit_hidden(include_glob))
         # `rg --glob` anchors a glob with a `/` in it and its `*` stops at `/`, so `src/*.py` would
         # miss `src/pkg/m.py`. Such a glob is matched with `fnmatch` below instead, as without `rg`,
@@ -1495,7 +1549,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         ):
             # `rg` searches only the directories the glob's matches are in, so matches elsewhere cannot
             # fill its output cap. They are targets, not a `--glob`, which would override ignore files.
-            targets = [d for d in directories if await self._stat(scope, posixpath.join(cwd, d)) is not None]
+            targets = [d for d in directories if await self._stat(scope, scope.paths.join(cwd, d)) is not None]
 
         try:
             if scope.bounds.lacks_ripgrep:
@@ -1585,7 +1639,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         by_reason: dict[str, list[str | None]] = {}
         for entry in unreadable:
-            path = posixpath.normpath(posixpath.join(cwd, entry.path))
+            path = scope.absolute(cwd, entry.path)
             by_reason.setdefault(entry.reason, []).append(self._walk_entry(scope, path, cwd, include_hidden=True))
         for reason, paths in by_reason.items():
             named = [path for path in paths if path is not None]
@@ -1659,7 +1713,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         path: str = '.',
         files_only: bool = False,
     ) -> str:
-        if posixpath.isabs(pattern):
+        if scope.paths.isabs(pattern):
             raise ValueError(f'Pattern {pattern!r} must be relative to the search path, not absolute.')
         parts, directories_only = glob_parts(pattern)
 
@@ -1675,12 +1729,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         include_hidden = _explicit_hidden(pattern)
         walked, walk_cut = await self._walk(scope, resolved, max_depth=max_depth, include_hidden=include_hidden)
         # Report only the entries observed: the walk prunes hidden subdirectories.
-        hidden_count = 0 if include_hidden else _hidden_found(walked, resolved, parts)
+        hidden_count = 0 if include_hidden else _hidden_found(scope, walked, resolved, parts)
         found = [
             child
             for child in walked
             if (not child.is_dir if files_only else child.is_dir or not directories_only)
-            and glob_match(parts, posixpath.relpath(child.path, resolved).split('/'))
+            and glob_match(parts, scope.relative(child.path, resolved).split('/'))
         ]
 
         matches: list[str] = []
@@ -1691,7 +1745,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if len(matches) >= self._max_find_results:
                 capped = True
                 break
-            rel = posixpath.relpath(match.path, scope.bounds.cwd)
+            rel = scope.relative(match.path, scope.bounds.cwd)
             suffix = '/' if match.is_dir else ''
             matches.append(f'{rel}{suffix}')
 
@@ -1737,8 +1791,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def _list_files(
         self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str = '.', *, glob: str | None
     ) -> str:
-        if not supports_commands(scope.workspace):
-            # Read-only and filesystem-only workspaces refuse `rg`; walk the files instead.
+        if not await _searches_in_workspace(scope):
+            # Read-only and filesystem-only workspaces refuse `rg`, and Windows ones may lack it; walk the files instead.
             pattern = '**' if glob is None else glob if '/' in glob else f'**/{glob}'
             return await self._find_files(scope, ctx, pattern, path=path, files_only=True)
         resolved = await self._safe_resolve(scope, path, check_allowed=False)
@@ -1881,8 +1935,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str:
         if not 0 <= context <= 20:
             raise ValueError('context must be between 0 and 20.')
-        if not supports_commands(scope.workspace):
-            # Read-only and filesystem-only workspaces refuse `rg`; read the files instead.
+        if not await _searches_in_workspace(scope):
+            # Read-only and filesystem-only workspaces refuse `rg`, and Windows ones may lack it; read the files instead.
             if file_type is not None:
                 raise ValueError(_FILE_TYPE_NEEDS_RIPGREP)
             if context:
@@ -1900,7 +1954,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if entry.is_dir:
             cwd, target = resolved, '.'
         else:
-            cwd, target = posixpath.dirname(resolved), posixpath.join('.', posixpath.basename(resolved))
+            cwd, target = scope.paths.dirname(resolved), posixpath.join('.', scope.paths.basename(resolved))
         prepare, permitted = self._batch_authorizer(scope, cwd)
         include_hidden = bool(glob and _explicit_hidden(glob))
         hidden_flag = _ripgrep_hidden(glob)
@@ -1967,21 +2021,21 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> tuple[Callable[[list[Record]], Awaitable[None]], Callable[[Record], bool]]:
         allowed: set[str] = set()
         prepare = functools.partial(self._authorize_batch, scope, cwd, allowed)
-        return prepare, functools.partial(_batch_permits, cwd, allowed)
+        return prepare, functools.partial(_batch_permits, scope, cwd, allowed)
 
     async def _authorize_batch(self, scope: _Scope, cwd: str, allowed: set[str], records: list[Record]) -> None:
         """Add to `allowed` the paths of `records` whose real path, where checked, is inside the root and readable."""
-        paths = list(dict.fromkeys(posixpath.normpath(posixpath.join(cwd, record.path)) for record in records))
+        paths = list(dict.fromkeys(scope.absolute(cwd, record.path) for record in records))
         if not scope.bounds.checks_realpath:
             allowed.update(paths)
             return
         if all(record.real_path is not None for record in records):
             allowed.update(
-                posixpath.normpath(posixpath.join(cwd, record.path))
+                scope.absolute(cwd, record.path)
                 for record in records
                 if record.real_path is not None
-                and _contains(scope.bounds.root, record.real_path)
-                and self._patterns.readable(posixpath.relpath(record.real_path, scope.bounds.root))
+                and scope.contains(scope.bounds.root, record.real_path)
+                and self._patterns.readable(scope.relative(record.real_path, scope.bounds.root))
             )
             return
         # Resolve all candidates in the workspace in one command; never trust a lexical
@@ -1992,12 +2046,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             allowed.update(
                 path
                 for path, real in zip(chunk, realpaths)
-                if _contains(scope.bounds.root, real)
-                and self._patterns.readable(posixpath.relpath(real, scope.bounds.root))
+                if scope.contains(scope.bounds.root, real)
+                and self._patterns.readable(scope.relative(real, scope.bounds.root))
             )
 
     async def _real_paths(self, scope: _Scope, paths: list[str]) -> list[str]:
         """The real path of each of `paths`, resolved in the workspace in one command."""
+        if scope.workspace.platform == 'windows':
+            # A `'windows'` workspace is this machine, where each resolves natively, with no shell script.
+            return [await scope.workspace.realpath(path) for path in paths]
         result = await scope.workspace.run(
             "sh -c 'for file do "
             + realpath_snippet('exit 2')
@@ -2052,7 +2109,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         include_hidden: bool = False,
         permitted: Callable[[Record], bool] | None = None,
     ) -> str | None:
-        path = posixpath.normpath(posixpath.join(cwd, record.path))
+        path = scope.absolute(cwd, record.path)
         if not (permitted(record) if permitted is not None else await self._readable_entry(scope, path)):
             return None
         return self._ripgrep_entry(scope, cwd, record, include_hidden=include_hidden)
@@ -2075,10 +2132,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Hidden entries are kept only when the caller explicitly names a dotfile.
         """
-        target = posixpath.normpath(posixpath.join(cwd, record.path))
+        target = scope.absolute(cwd, record.path)
         if self._walk_entry(scope, target, cwd, include_hidden=include_hidden) is None:
             return None
-        return posixpath.relpath(target, scope.bounds.cwd)
+        return scope.relative(target, scope.bounds.cwd)
 
     def _match_line(self, scope: _Scope, cwd: str, record: Record, *, include_hidden: bool = False) -> str | None:
         """Rebuild ripgrep's `path:line:text` (match) or `path-line-text` (context) line for an authorized path."""
@@ -2106,12 +2163,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     async def _nearest_existing_is_dir(self, scope: _Scope, path: str) -> bool:
         """Whether the closest existing ancestor of `path` (or the filesystem root) is a directory."""
-        current = posixpath.dirname(path)
+        current = scope.paths.dirname(path)
         while True:
             try:
                 return (await scope.workspace.stat(current)).is_dir
             except FileNotFoundError:
-                parent = posixpath.dirname(current)
+                parent = scope.paths.dirname(current)
                 if parent == current:  # pragma: no cover -- the workspace root always exists
                     return True
                 current = parent
@@ -2198,7 +2255,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 parts.append(f'hash: {bytes_hash(raw)}')
 
         if (target := await self._symlink_target(scope, resolved)) is not None:
-            parts.append(f'symlink_target: {_model_safe_filename(target, scope.bounds.root)}')
+            parts.append(f'symlink_target: {_model_safe_filename(target, scope.bounds.root, paths=scope.paths)}')
 
         return '\n'.join(parts)
 
@@ -2207,9 +2264,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         The workspace filesystem API follows symlinks and has no way to report
         one, so this asks `readlink` inside the workspace; a workspace that
-        cannot run commands reports no symlink.
+        cannot run commands, or has no `readlink` (Windows), reports no symlink.
         """
-        if not supports_commands(scope.workspace):
+        if not supports_commands(scope.workspace) or scope.workspace.platform == 'windows':
             return None
         result = await scope.workspace.run(['readlink', resolved], timeout=_READLINK_TIMEOUT)
         if result.exit_code != 0:
