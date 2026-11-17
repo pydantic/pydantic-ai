@@ -37,7 +37,7 @@ class GoalVerifier(Protocol[AgentDepsT]):
 
 @dataclass(kw_only=True)
 class Goal(AbstractCapability[AgentDepsT]):
-    """Keep a headless run working until its verifier accepts the final output.
+    """State a run's goal and, with a verifier, keep it working until the verifier accepts the final output.
 
     Rejections consume the agent's output retry budget. Configure
     `Agent(retries={'output': ...})` to bound continuation; usage limits still apply.
@@ -46,11 +46,11 @@ class Goal(AbstractCapability[AgentDepsT]):
     goal: str
     """The objective and any constraints the model should work toward."""
 
-    verify: GoalVerifier[AgentDepsT]
-    """Completion check, called only for complete output in headless mode."""
+    verify: GoalVerifier[AgentDepsT] | None = None
+    """Completion check, called for complete output only. `None` adds the goal instructions without enforcing them."""
 
     headless: bool = True
-    """Set to `False` to allow interactive questions without enforcing completion."""
+    """Tell the model nobody is available to answer questions. Set to `False` for interactive runs."""
 
     id: str | None = 'goal'
     """Stable capability ID, so its instructions are addressable and its verifier is a durable operation.
@@ -91,7 +91,7 @@ class Goal(AbstractCapability[AgentDepsT]):
         output: object,
     ) -> object:
         """Reject incomplete final answers using the runtime's retry machinery."""
-        if not self.headless or ctx.partial_output:
+        if self.verify is None or ctx.partial_output:
             return output
         with ctx.tracer.start_as_current_span(
             'goal.verify',
@@ -108,14 +108,15 @@ class Goal(AbstractCapability[AgentDepsT]):
                     if gap is not None:
                         span.set_attribute('goal.gap', gap)
         if gap is not None:
+            unattended = 'Nobody is available to answer questions. ' if self.headless else ''
             raise ModelRetry(
-                f'Goal not met: {self.goal}\nWhat remains: {gap}\n'
-                'Nobody is available to answer questions. Continue within the supplied constraints; '
-                'do not bypass approvals or fabricate success.'
+                f'Goal not met: {self.goal}\nWhat remains: {gap}\n{unattended}'
+                'Continue within the supplied constraints; do not bypass approvals or fabricate success.'
             )
         return output
 
     @durable_operation('verify')
     async def _verify(self, ctx: RunContext[AgentDepsT], output: object) -> str | None:
         """Run the verifier, as a durable operation inside a workflow or flow."""
+        assert self.verify is not None
         return await self.verify(ctx, output)

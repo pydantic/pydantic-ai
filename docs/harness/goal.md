@@ -13,7 +13,7 @@ Keep an unattended agent working until a caller-defined completion check accepts
 
 ## Define completion
 
-Supply an explicit `goal` and an async `verify(ctx, output)` callable. The verifier returns `None` to accept the output, or a nonempty string describing what remains. It receives the processed output unchanged, including structured outputs, and can inspect dependencies and message history through `RunContext`.
+Supply an explicit `goal` and an async `verify(ctx, output)` callable. Without `verify`, `Goal` only adds the goal instructions and never vetoes an answer. The verifier returns `None` to accept the output, or a nonempty string describing what remains. It receives the processed output unchanged, including structured outputs, and can inspect dependencies and message history through `RunContext`.
 
 Output functions run before this check. A rejection can call them again on a later attempt. Keep output functions and verifiers read-only or idempotent; perform irreversible commits only after `agent.run()` returns an accepted result. `Goal` does not roll back tool calls or output-function side effects.
 
@@ -108,7 +108,7 @@ The instructions ask the model to make reasonable decisions, but do not authoriz
 
 ## Interactive runs and composition
 
-Set `headless=False` to retain the goal instructions without running the verifier. This lets an interactive run ask a question and return control to its user. Mode is explicit; `Goal` does not infer it from the terminal or interface.
+`headless` (the default) tells the model, in the instructions and in each retry message, that nobody is available to answer questions. Set `headless=False` for an interactive run; a `verify` callable is still enforced. To let an interactive run ask a question and return control to its user, leave `verify` unset. Mode is explicit; `Goal` does not infer it from the terminal or interface.
 
 Each `Goal` has the default `id` `'goal'`. Two sharing an `id` are one goal stated twice when they agree, and a `UserError` when they differ. To enforce several goals, give each its own `id`: each contributes its own instructions and completion check, and every check must accept. A capability instance keeps no per-run retry counter and can be reused across runs. Callable verifiers are not serializable in agent specifications.
 
@@ -118,6 +118,8 @@ Use `run()` or `run_sync()` when rejected output must stay private. Partial stre
 
 `Goal` evaluates processed output with outermost ordering inside instrumentation, like `OutputGuardrail`. Other output-changing capabilities at the same ordering position can still run after it; arrange their ordering so verification sees the output you intend to accept. This capability does not replace verification tools, task planning, or a live trajectory judge: those can produce evidence or steer work before completion.
 
+[`OutputGuardrail`](guardrails.md) can also send output back with `GuardrailResult.retry(...)`. Pick `Goal` when the check is about a goal: it states the goal and the headless rules in the instructions, names the goal in each retry message, and runs the check as a durable operation. Pick `OutputGuardrail` for block, redact, or retry policies that don't depend on a goal.
+
 ## Telemetry
 
-Each completion check emits a `goal.verify` span through `ctx.tracer`. `goal.met` records whether the check accepted. `goal.description` and, for a rejection, `goal.gap` are recorded only when `trace_include_content` is enabled. With `trace_include_content`, the span also records verifier exceptions; otherwise they are left to the enclosing run span, which withholds their messages. Interactive runs and partial outputs emit no goal spans. Core instrumentation already records the resulting model requests and retry flow.
+Each completion check emits a `goal.verify` span through `ctx.tracer`. `goal.met` records whether the check accepted. `goal.description` and, for a rejection, `goal.gap` are recorded only when `trace_include_content` is enabled. With `trace_include_content`, the span also records verifier exceptions; otherwise they are left to the enclosing run span, which withholds their messages. A `Goal` without `verify` and partial outputs emit no goal spans. Core instrumentation already records the resulting model requests and retry flow.

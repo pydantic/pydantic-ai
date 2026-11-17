@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import OutputContext
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.goal import Goal
 from tests.harness._recording_durability import RecordingDurability
 
@@ -23,22 +24,26 @@ async def complete(ctx: RunContext[object], output: object) -> str | None:
     return None if output == 'done' else 'Produce the completed work.'
 
 
+def question_then_done(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Which file?' if len(messages) == 1 else 'done')])
+
+
 class Result(BaseModel):
     done: bool
 
 
-def _traced_context(include_content: bool) -> tuple[RunContext[None], InMemorySpanExporter]:
+def _instrumented(include_content: bool) -> tuple[Instrumentation, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    ctx = RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        tracer=provider.get_tracer('test'),
-        trace_include_content=include_content,
-    )
-    return ctx, exporter
+    settings = InstrumentationSettings(tracer_provider=provider, include_content=include_content)
+    return Instrumentation(settings=settings), exporter
+
+
+def _goal_spans(exporter: InMemorySpanExporter) -> list[ReadableSpan]:
+    spans = [span for span in exporter.get_finished_spans() if span.name == 'goal.verify']
+    assert all(span.parent is not None for span in spans)
+    return spans
 
 
 class TestGoal:
@@ -55,7 +60,10 @@ class TestGoal:
                 return ModelResponse(parts=[TextPart('Should I continue?')])
             (feedback,) = messages[-1].parts
             assert isinstance(feedback, UserPromptPart)
-            assert 'Goal not met: Finish the work\nWhat remains: Produce the completed work.' in str(feedback.content)
+            assert (
+                'Goal not met: Finish the work\nWhat remains: Produce the completed work.\n'
+                'Nobody is available to answer questions.'
+            ) in str(feedback.content)
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(FunctionModel(respond), capabilities=[Goal(goal='Finish the work', verify=complete)])
@@ -87,14 +95,28 @@ class TestGoal:
         with pytest.raises(UsageLimitExceeded):
             await agent.run('Start', usage_limits=UsageLimits(request_limit=1))
 
-    async def test_interactive_skips_verifier(self) -> None:
-        async def fail(ctx: RunContext[object], output: object) -> None:
-            pytest.fail('Interactive runs must not enforce completion')  # pragma: no cover
-
-        goal = Goal(goal='Finish', verify=fail, headless=False)
+    async def test_without_verifier_only_instructs(self) -> None:
+        goal = Goal(goal='Finish', headless=False)
         assert goal.get_instructions() == 'Your goal is:\nFinish'
         agent = Agent(TestModel(custom_output_text='Which file?'), capabilities=[goal])
         assert (await agent.run('Start')).output == 'Which file?'
+
+    async def test_interactive_verifier_omits_the_unattended_note(self) -> None:
+        feedback: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.instructions == 'Your goal is:\nFinish'
+            if len(messages) > 1:
+                (part,) = messages[-1].parts
+                assert isinstance(part, UserPromptPart)
+                feedback.append(str(part.content))
+            return question_then_done(messages, info)
+
+        agent = Agent(FunctionModel(respond), capabilities=[Goal(goal='Finish', verify=complete, headless=False)])
+        assert (await agent.run('Start')).output == 'done'
+        (retry,) = feedback
+        assert 'What remains: Produce the completed work.\nContinue within the supplied constraints' in retry
+        assert 'Nobody' not in retry
 
     async def test_typed_output_and_dependencies(self) -> None:
         async def verify(ctx: RunContext[str], output: object) -> str | None:
@@ -149,37 +171,32 @@ class TestGoal:
             Goal(goal=goal, verify=complete)
 
     @pytest.mark.parametrize('include_content', [False, True])
-    @pytest.mark.parametrize('accepted', [False, True])
-    async def test_telemetry(self, *, include_content: bool, accepted: bool) -> None:
-        ctx, exporter = _traced_context(include_content)
-        goal = Goal(goal='Finish', verify=complete)
-        output_context = OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
-        if accepted:
-            assert await goal.after_output_process(ctx, output_context=output_context, output='done') == 'done'
-        else:
-            with pytest.raises(ModelRetry):
-                await goal.after_output_process(ctx, output_context=output_context, output='question')
-        (span,) = exporter.get_finished_spans()
-        assert span.name == 'goal.verify'
-        expected: dict[str, str | bool] = {'goal.met': accepted}
-        if include_content:
-            expected['goal.description'] = 'Finish'
-            if not accepted:
-                expected['goal.gap'] = 'Produce the completed work.'
-        assert dict(span.attributes or {}) == expected
+    async def test_telemetry(self, include_content: bool) -> None:
+        instrumentation, exporter = _instrumented(include_content)
+        agent = Agent(
+            FunctionModel(question_then_done),
+            capabilities=[instrumentation, Goal(goal='Finish', verify=complete)],
+        )
+        assert (await agent.run('Start')).output == 'done'
+        rejected, accepted = (dict(span.attributes or {}) for span in _goal_spans(exporter))
+        content = {'goal.description': 'Finish'} if include_content else {}
+        gap = {'goal.gap': 'Produce the completed work.'} if include_content else {}
+        assert rejected == {'goal.met': False, **content, **gap}
+        assert accepted == {'goal.met': True, **content}
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_verifier_error_telemetry_follows_content_setting(self, include_content: bool) -> None:
-        async def fail(ctx: RunContext[None], output: object) -> None:
+        async def fail(ctx: RunContext[object], output: object) -> None:
             raise ValueError(f'Evidence unavailable for {output}')
 
-        ctx, exporter = _traced_context(include_content)
-        output_context = OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
+        instrumentation, exporter = _instrumented(include_content)
+        agent = Agent(
+            TestModel(custom_output_text='secret'),
+            capabilities=[instrumentation, Goal(goal='Finish', verify=fail)],
+        )
         with pytest.raises(ValueError):
-            await Goal(goal='Finish', verify=fail).after_output_process(
-                ctx, output_context=output_context, output='secret'
-            )
-        (span,) = exporter.get_finished_spans()
+            await agent.run('Start')
+        (span,) = _goal_spans(exporter)
         if include_content:
             assert span.status.description == 'ValueError: Evidence unavailable for secret'
             assert [event.name for event in span.events] == ['exception']
@@ -187,11 +204,20 @@ class TestGoal:
             assert span.status.description is None
             assert span.events == ()
 
-    async def test_partial_output_is_not_verified(self) -> None:
-        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), partial_output=True)
-        goal = Goal(goal='Finish', verify=complete)
-        output_context = OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
-        assert await goal.after_output_process(ctx, output_context=output_context, output='partial') == 'partial'
+    async def test_partial_streamed_output_is_not_verified(self) -> None:
+        checked: list[object] = []
+
+        async def verify(ctx: RunContext[object], output: object) -> None:
+            checked.append(output)
+
+        agent = Agent(
+            TestModel(custom_output_text='the work is done'),
+            capabilities=[Goal(goal='Finish', verify=verify)],
+        )
+        async with agent.run_stream('Start') as result:
+            streamed = [output async for output in result.stream_output(debounce_by=None)]
+        assert len(streamed) > 1
+        assert checked == ['the work is done']
 
     async def test_verification_dispatches_as_a_durable_operation(self) -> None:
         agent = Agent(

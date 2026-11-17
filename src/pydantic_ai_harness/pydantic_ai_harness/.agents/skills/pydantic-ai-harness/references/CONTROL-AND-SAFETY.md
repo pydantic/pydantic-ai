@@ -896,8 +896,8 @@ print(agent.run_sync('Explain the change').output)
 
 ## Goal
 
-States the run's goal in the instructions and, in headless mode (the default), calls your async
-`verify(ctx, output)` on every final output. Return `None` to accept or a nonempty string saying
+States the run's goal in the instructions and, when you pass an async `verify(ctx, output)`, calls it
+on every final output. Return `None` to accept or a nonempty string saying
 what remains; a rejection raises `ModelRetry` with the goal and the gap, so the model keeps working
 in the same conversation. No per-run state, not serializable to an agent spec.
 
@@ -919,7 +919,9 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
 - Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent
   inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
 - Output functions run before the check and can run again after a rejection, so keep them idempotent.
-- `headless=False` keeps the instructions but never vetoes, so interactive runs can stop to ask.
+- Without `verify`, `Goal` only adds the goal instructions. `headless=False` drops the
+  nobody-is-available text for interactive runs; a `verify` is still enforced.
+- Pick `OutputGuardrail` instead for block/redact/retry policies that don't depend on a goal.
 - Default `id='goal'`: two that disagree under one `id` raise, so give each extra `Goal` its own `id`.
   `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect.
 - Emits a `goal.verify` span (`goal.met`; `goal.description`/`goal.gap` with `trace_include_content`).
