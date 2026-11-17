@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable
+from copy import copy
 from dataclasses import replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import anyio
+import anyio.lowlevel
 import pytest
 from inline_snapshot import snapshot
 
@@ -65,6 +69,7 @@ from pydantic_ai_harness.planning._toolset import (
     status_icon,
     validate_hierarchy,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import IsStr, RequestCapture, try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
@@ -157,6 +162,124 @@ async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
     await agent.run('plan')
 
     assert sequential and set(sequential.values()) == {expected}
+
+
+class YieldingPlanStore(InMemoryPlanStore):
+    """Yields to the event loop after each read, as a store doing real I/O does."""
+
+    async def get_items(self) -> list[PlanItem]:
+        items = await super().get_items()
+        await anyio.lowlevel.checkpoint()
+        return items
+
+
+async def test_parallel_plan_edits_keep_every_change() -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('set_dependency', {'task_id': 'c', 'depends_on_id': 'a'}),
+                    ToolCallPart('set_dependency', {'task_id': 'c', 'depends_on_id': 'b'}),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    store = YieldingPlanStore()
+    await store.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
+    agent = Agent(FunctionModel(model), capabilities=[Planning(store=store, enable_subtasks=True)])
+
+    await agent.run('Make c wait for a and b.')
+
+    assert [item.depends_on for item in await store.get_items() if item.id == 'c'] == [['a', 'b']]
+
+
+async def test_concurrent_runs_on_one_store_keep_every_change() -> None:
+    both_requested = anyio.Event()
+    requests = 0
+
+    def model_depending_on(depends_on_id: str) -> FunctionModel:
+        async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            if len(messages) == 1:
+                # Both runs call their plan tool in step, rather than however far apart their runs started.
+                requests += 1
+                if requests == 2:
+                    both_requested.set()
+                await both_requested.wait()
+                return ModelResponse(
+                    parts=[ToolCallPart('set_dependency', {'task_id': 'c', 'depends_on_id': depends_on_id})]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        return FunctionModel(model)
+
+    store = YieldingPlanStore()
+    await store.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
+    agent = Agent(capabilities=[Planning(store=store, enable_subtasks=True)])
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(partial(agent.run, 'wait for a', model=model_depending_on('a')))
+            tg.start_soon(partial(agent.run, 'wait for b', model=model_depending_on('b')))
+
+    assert [sorted(item.depends_on) for item in await store.get_items() if item.id == 'c'] == [['a', 'b']]
+
+
+async def test_worker_tree_calls_from_one_run_take_turns_across_store_objects() -> None:
+    """A worker's resolver may build a new store object for each call, all over the same plan."""
+    backing = YieldingPlanStore()
+    await backing.set_items([PlanItem(id=id_, content=f'Step {id_}') for id_ in 'abc'])
+    # A shallow copy is a new store object over the same items.
+    planning = Planning[None](store_resolver=lambda ctx: copy(backing), enable_subtasks=True)
+    toolset = planning.get_toolset()
+    assert not callable(toolset) and isinstance(toolset, PlanningToolset)
+    ctx = _run_ctx(planning)
+    ctx.run_id = 'run-1'
+    tool = (await toolset.get_tools(ctx))['set_dependency']
+
+    async with anyio.create_task_group() as tg:
+        for depends_on_id in 'ab':
+            args = {'task_id': 'c', 'depends_on_id': depends_on_id}
+            tg.start_soon(toolset.call_tool, 'set_dependency', args, ctx, tool)
+
+    assert [item.depends_on for item in await backing.get_items() if item.id == 'c'] == [['a', 'b']]
+
+
+class GatedPlanStore(InMemoryPlanStore):
+    """Sets `entered` on each read, then waits for `gate` if it has one."""
+
+    def __init__(self, gate: anyio.Event | None = None) -> None:
+        super().__init__()
+        self.entered = anyio.Event()
+        self.gate = gate
+
+    async def get_items(self) -> list[PlanItem]:
+        self.entered.set()
+        if self.gate is not None:
+            await self.gate.wait()
+        return await super().get_items()
+
+
+async def test_concurrent_runs_plan_tools_do_not_wait_for_each_other() -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_plan', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=InMemoryPlanStore,
+        capabilities=[Planning[InMemoryPlanStore](store_resolver=lambda ctx: ctx.deps, inject=False)],
+    )
+    second_store = GatedPlanStore()
+    first_store = GatedPlanStore(gate=second_store.entered)
+
+    # The first run's plan tool waits inside its call until the second run's plan tool reads.
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(partial(agent.run, 'first', deps=first_store))
+            await first_store.entered.wait()
+            tg.start_soon(partial(agent.run, 'second', deps=second_store))
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):

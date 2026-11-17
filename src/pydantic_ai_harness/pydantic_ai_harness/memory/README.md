@@ -33,7 +33,7 @@ The model gets four tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
+| `write_memory` | Append to a file or replace one unique text fragment. In a file with `\r\n` line endings, an `old_text` with `\n` line endings, as the injected snapshot shows them, matches too. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
 | `read_memory` | Read a bounded prefix of one memory file. Left out when `FileSystem` can read the files ([Reading memory with `FileSystem`](#reading-memory-with-filesystem)). |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
@@ -133,6 +133,8 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 
 `FileMemoryStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileMemoryStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileMemoryStore` listings and searches skip symlinked directories, including links that point outside the store.
 
+On its first call, each `PostgresMemoryStore` instance checks for its three tables, its `{table}_versions` sequence and the columns later releases added, and creates or adds whatever is missing under `pg_advisory_xact_lock`. Only that step needs `CREATE` on the schema and ownership of an existing table: once the schema is current, a role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and `USAGE` on the sequence is enough.
+
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
 uv:
@@ -161,6 +163,8 @@ async def build_memory() -> tuple[Memory[None], asyncpg.Pool]:
 ```
 
 Call `build_memory` during application startup and close the returned pool during shutdown. The store does not manage it.
+
+When the store creates its table, it also creates an index on `path COLLATE "C"`, the binary collation its prefix filters compare in, so listing and searching a scope reads only that scope's rows under any database collation. A table created by an earlier release does not get it automatically, because building an index blocks writes to the table until it finishes. Create it without blocking writes with `CREATE INDEX CONCURRENTLY {table}_path_idx ON {table} (path COLLATE "C")`.
 
 ## Namespaces
 
@@ -293,7 +297,7 @@ agent = Agent(
 
 The bundled stores implement `SearchableMemoryStore`. A store counts as searchable when it has a `search` method, so a custom store's `search` must take the arguments `SearchableMemoryStore.search` declares. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
 
-The bundled stores search only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`. The fallback scan for a custom store skips them too, but they still count toward the `max_search_files + 1` paths it requests.
+The bundled stores search and list only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`, so its files do not fill the injected file list or a search's file limit. They implement `ChildListingMemoryStore`, whose `list_child_paths` returns only the paths with no `/` after the prefix. A custom store opts in by implementing it, and `Memory` then uses it for the injected file list and the fallback scan. Without it, both use `list_paths`, so a nested scope's files count toward the paths they request. A subclass of a bundled store that overrides `list_paths` should override `list_child_paths` as well.
 
 Scoring runs on the event loop and yields after each file, so a scan near the limits slows that search without stalling other runs in the process.
 
