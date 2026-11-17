@@ -136,8 +136,8 @@ that reclaims too little), must be deterministic so the cache prefix stays stabl
 whose `metadata` isn't `None` or a `dict`, and can't be set from an agent spec (strings only).
 `min_clear_tokens` skips clears too small to be worth a cache bust. Core `search_tools` /
 `load_capability` returns are never cleared. `max_messages` counts from the last cleared result, so
-clears come in batches about `(max_messages - 2 * keep_pairs) / 2` tool steps apart; at or below `2
-* keep_pairs` it clears on every request.
+clears come in batches about `(max_messages - 2 * keep_pairs) / 2` tool steps apart; at or below
+`2 * keep_pairs` it clears on every request.
 
 ### `DeduplicateFileReads`
 
