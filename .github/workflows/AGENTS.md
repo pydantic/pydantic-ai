@@ -478,15 +478,15 @@ An entry changes only its link's model. Each link keeps its provider's hand-over
   for a limited time. Before you add one, check its data retention on
   [Zen's model list](https://opencode.ai/v2/docs/console/models/).
 
-This value tries DeepSeek on Go, Hy4 Flash on Go, Hy4 Flash on Zen's free tier, then both Coding Plan accounts:
+This value tries DeepSeek on Go, Hy4 Flash on Go, both Coding Plan accounts, then Hy4 Flash on Zen's free tier:
 
 ```json
 [
   {"model": "opencode-go/deepseek-v4.1-flash", "secret": "OPENCODE_API_KEY"},
   {"model": "opencode-go/hy4-flash-free", "secret": "OPENCODE_API_KEY"},
-  {"model": "opencode/hy4-flash-free", "secret": null},
   {"model": "zai-coding-plan/glm-5.3-flash", "secret": "ZAI_API_KEY"},
-  {"model": "zai-coding-plan/glm-5.3-flash", "secret": "ZAI_BACKUP_API_KEY"}
+  {"model": "zai-coding-plan/glm-5.3-flash", "secret": "ZAI_BACKUP_API_KEY"},
+  {"model": "opencode/hy4-flash-free", "secret": null}
 ]
 ```
 

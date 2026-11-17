@@ -840,16 +840,26 @@ def review_on(review_env: Path, configured_chain: str, matrix_index: int = 0) ->
     return provider
 
 
-def test_configured_chain_hands_go_refusals_to_the_zen_free_tier_without_a_key(
+def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
     review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Each configured link runs its entry's model, declared in its config, and Zen's free tier runs with no key."""
     refusal = subprocess.CalledProcessError(1, 'opencode')
-    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (REFUSED, refusal), (FINISHED, None))
+    plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.quota', 'status': 429}}]
+    invoked = fake_opencode(
+        monkeypatch,
+        (REFUSED, refusal),
+        (REFUSED, refusal),
+        (plan_refused, refusal),
+        (plan_refused, refusal),
+        (FINISHED, None),
+    )
     assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
     assert_runs_on(invoked[0], GO_DEEPSEEK)
     assert_runs_on(invoked[1], GO_HY4)
-    assert_runs_on(invoked[2], ZEN_HY4)
+    assert_runs_on(invoked[2], replace(ZAI, declares_model=True))
+    assert_runs_on(invoked[3], replace(ZAI_BACKUP, declares_model=True))
+    assert_runs_on(invoked[4], ZEN_HY4)
     limit = 'failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
     zen = 'opencode/hy4-flash-free on the OpenCode Zen free tier'
     assert capsys.readouterr().out == (
@@ -857,23 +867,24 @@ def test_configured_chain_hands_go_refusals_to_the_zen_free_tier_without_a_key(
         'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
         'retrying on opencode-go/hy4-flash-free on OpenCode Go.\n'
         f'OpenCode run on opencode-go/hy4-flash-free on OpenCode Go {limit}\n'
-        f'opencode-go/hy4-flash-free refused the run before its first step; retrying on {zen}.\n'
+        f'opencode-go/hy4-flash-free refused the run before its first step; retrying on {GLM} on {ZAI.plan}.\n'
+        f'OpenCode run on {GLM} on {ZAI.plan} failed with error type provider.quota, status 429.\n'
+        f'{GLM} refused the run before its first step; retrying on {GLM} on {ZAI_BACKUP.plan}.\n'
+        f'OpenCode run on {GLM} on {ZAI_BACKUP.plan} failed with error type provider.quota, status 429.\n'
+        f'{GLM} refused the run before its first step; retrying on {zen}.\n'
         f'OpenCode run served by {zen}.\n'
     )
 
 
 @pytest.mark.parametrize('kind', ['provider.quota', 'provider.rate-limit'])
-def test_zen_free_tier_refusal_hands_the_run_to_the_coding_plan(
-    review_env: Path, monkeypatch: pytest.MonkeyPatch, kind: str
-) -> None:
+def test_zen_free_tier_refusal_hands_the_run_on(review_env: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
     """A spent Zen free allowance, which OpenCode types `provider.quota`, or a rate limit hands the run on."""
-    refusal = subprocess.CalledProcessError(1, 'opencode')
     zen_refused = [REFUSED[0], {'type': 'error', 'error': {'type': kind, 'status': 429}}]
-    invoked = fake_opencode(
-        monkeypatch, (REFUSED, refusal), (REFUSED, refusal), (zen_refused, refusal), (FINISHED, None)
-    )
-    assert review_on(review_env, HY4_CHAIN) == replace(ZAI, declares_model=True)
-    assert_runs_on(invoked[3], replace(ZAI, declares_model=True))
+    invoked = fake_opencode(monkeypatch, (zen_refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    chain = [{'model': 'opencode/hy4-flash-free', 'secret': None}, {'model': GLM, 'secret': 'ZAI_API_KEY'}]
+    assert review_on(review_env, json.dumps(chain)) == replace(ZAI, declares_model=True)
+    assert_runs_on(invoked[0], ZEN_HY4)
+    assert_runs_on(invoked[1], replace(ZAI, declares_model=True))
 
 
 @pytest.mark.parametrize(('run_number', 'first'), [('3188', ZAI), ('3189', ZAI_BACKUP)])
@@ -892,13 +903,15 @@ def test_configured_chain_leaves_out_a_link_without_its_key(review_env: Path, mo
     """A link whose secret is empty is left out, even Go's, and a chain with no link left fails before any run."""
     monkeypatch.setenv('OPENCODE_API_KEY', '')
     monkeypatch.delenv('ZAI_API_KEY')
-    invoked = fake_opencode(monkeypatch, (FINISHED, None))
+    plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.quota', 'status': 429}}]
+    invoked = fake_opencode(monkeypatch, (plan_refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
     assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
-    assert_runs_on(invoked[0], ZEN_HY4)
+    assert_runs_on(invoked[0], replace(ZAI_BACKUP, declares_model=True))
+    assert_runs_on(invoked[1], ZEN_HY4)
     keyed = json.dumps([{'model': 'opencode-go/hy4-flash-free', 'secret': 'OPENCODE_API_KEY'}])
     with pytest.raises(ValueError, match='No `PR_REVIEW_MODEL_CHAIN` link has its secret set'):
         review_on(review_env, keyed)
-    assert len(invoked) == 1
+    assert len(invoked) == 2
 
 
 @pytest.mark.parametrize(
