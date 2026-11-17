@@ -140,9 +140,11 @@ class DaytonaProvider:
                 secret = (await client.get(ref.id)).labels.get(SECRET_LABEL)
             except daytona.DaytonaNotFoundError:
                 secret = None
-            await self._destroy(client, ref)
+            # The secret goes first: its id is only in the sandbox's label, so a failure here leaves the sandbox
+            # for a retry to find it by, rather than the token in the organization with nothing pointing to it.
             if secret is not None:
                 await _delete_secret(client, secret)
+            await self._destroy(client, ref)
         finally:
             await client.close()
 
@@ -153,9 +155,10 @@ class DaytonaProvider:
 
 
 async def _delete_secret(client: 'daytona.AsyncDaytona', secret_id: str) -> None:
-    import daytona
+    # The secrets API raises its generated client's error, not `DaytonaNotFoundError` (proven live).
+    from daytona_api_client_async.exceptions import NotFoundException
 
     try:
         await client.secret.delete(secret_id)
-    except daytona.DaytonaNotFoundError:
+    except NotFoundException:
         pass

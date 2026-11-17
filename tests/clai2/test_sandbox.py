@@ -1318,11 +1318,15 @@ class FakeDaytonaSecrets:
         self.secrets[f'sec-{number}'] = (name, value, hosts)
         return SimpleNamespace(id=f'sec-{number}', name=name, placeholder=f'dtn_secret_{number}', hosts=hosts)
 
-    async def delete(self, secret_id: str) -> None:
-        import daytona
+    delete_error: Exception | None = None
 
+    async def delete(self, secret_id: str) -> None:
+        from daytona_api_client_async.exceptions import NotFoundException
+
+        if self.delete_error is not None:
+            raise self.delete_error
         if self.secrets.pop(secret_id, None) is None:
-            raise daytona.DaytonaNotFoundError(f'no secret: {secret_id}')
+            raise NotFoundException(status=404, reason='Not Found')
 
 
 @pytest.fixture
@@ -1438,6 +1442,28 @@ class TestDaytona:
         await provider.close(backend)
         account.secrets.clear()
         await provider.delete(ref)
+
+    async def test_a_failed_secret_delete_keeps_the_sandbox_for_a_retry(
+        self,
+        fake_daytona: 'tuple[FakeDaytona, FakeDaytonaSecrets]',
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import daytona
+
+        fake, account = fake_daytona
+        monkeypatch.setenv('GH_TOKEN', 'dtn_secret_1')
+        provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        await provider.close(backend)
+        account.delete_error = daytona.DaytonaError('service unavailable')
+        with pytest.raises(daytona.DaytonaError):
+            await provider.delete(ref)
+        # The sandbox, and the label naming the secret, are still there, so a retry deletes both.
+        assert any(sandbox.state == 'started' for sandbox in fake.sandboxes)
+        account.delete_error = None
+        await provider.delete(ref)
+        assert account.secrets == {}
 
     @pytest.mark.parametrize(
         'failure', ['sandbox refused', 'sandbox refused without a login', 'stand-in is the token', 'no stand-in']

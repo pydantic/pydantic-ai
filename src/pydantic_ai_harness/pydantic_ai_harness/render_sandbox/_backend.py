@@ -159,7 +159,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         except RateLimitError:
             raise
         except ClientError as error:
-            raise WorkspaceUnavailableError('Could not create a Render sandbox') from error
+            # Render's reason, such as an account without a payment card, is what the user can act on.
+            raise WorkspaceUnavailableError(f'Could not create a Render sandbox: {error}') from error
         self._ref = WorkspaceRef(provider='render', id=sandbox.id)
         self._working_dir_pending = True
         logger.info('Created Render sandbox %s', sandbox.id)

@@ -238,7 +238,7 @@ async def test_failed_create_lets_a_later_operation_create(
     # As on E2B: a failed create records no sandbox, so the next operation tries again.
     workspace_harness.create_error = error
     backend = workspace_harness.backend()
-    with pytest.raises(expected):
+    with pytest.raises(expected, match=str(error)):
         await backend.working_dir()
     assert backend.ref is None
     workspace_harness.create_error = None
