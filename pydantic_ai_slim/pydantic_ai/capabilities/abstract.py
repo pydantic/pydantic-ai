@@ -249,13 +249,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Whether this capability can be added per-run when a durability capability is bound.
 
     Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
-    integrations read it to allow `Instrumentation` to attach per-run despite the
-    blanket restriction on runtime capability additions.
-
-    A first-class extension point that derives this from a capability's overridden
-    hooks (so third-party capabilities don't need to set a flag manually) is tracked
-    in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+    is the only built-in capability that sets this to `True`. When it's `True`, the bundled
+    `durable_exec` integrations skip their structural check of a per-run capability (whether it
+    contributes executing toolsets or `@durable_operation` methods, or chooses or wraps the model)
+    and always allow it.
     """
 
     @property
