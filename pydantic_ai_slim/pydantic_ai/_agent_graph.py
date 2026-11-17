@@ -1025,7 +1025,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     prepared_output_tool_defs: list[ToolDefinition] | None = dataclasses.field(default=None, repr=False)
     """The output tools as this step's `prepare_output_tools` hooks left them, recorded once they're prepared.
 
-    Runtime-only: read by `RunContext.output_tool_defs`, so a wrapper toolset building its tools after them
+    Runtime-only: read by `RunContext.output_tools`, so a wrapper toolset building its tools after them
     (like Code Mode's catalog) and the step's tools see what this step accepts. `None` before any step."""
 
     model_id: str | None = None
@@ -5005,7 +5005,7 @@ class OutputToolsFirstToolset(CombinedToolset[DepsT]):
     """The output toolset combined with the other tools, preparing the output tools first.
 
     The other tools then see them as this step's `prepare_output_tools` hooks left them, through
-    `RunContext.output_tool_defs`: Code Mode builds its sandbox's output functions from them.
+    `RunContext.output_tools`: Code Mode builds its sandbox's output functions from them.
     """
 
     async def get_tools(self, ctx: RunContext[DepsT]) -> dict[str, ToolsetTool[DepsT]]:
@@ -5019,7 +5019,7 @@ class OutputToolsFirstToolset(CombinedToolset[DepsT]):
 
 @dataclasses.dataclass
 class _GraphOutputSubmitter(Generic[DepsT]):
-    """Backs `RunContext.output_tool_defs` and `RunContext.submit_output` with the run's output pipeline."""
+    """Backs `RunContext.output_tools` and `RunContext.submit_output` with the run's output pipeline."""
 
     state: weakref.ref[GraphAgentState]
     deps: weakref.ref[GraphAgentDeps[DepsT, Any]]
@@ -5034,19 +5034,19 @@ class _GraphOutputSubmitter(Generic[DepsT]):
         return GraphRunContext(state=state, deps=deps)
 
     @property
-    def tool_defs(self) -> list[ToolDefinition]:
+    def tools(self) -> dict[str, ToolDefinition]:
         if (deps := self.deps()) is None:
-            return []
+            return {}
         prepared = (
             None if deps.prepared_output_tool_defs is None else {d.name: d for d in deps.prepared_output_tool_defs}
         )
-        tool_defs: list[ToolDefinition] = []
-        for target in _output.output_submission_targets(deps.output_schema).values():
+        tools: dict[str, ToolDefinition] = {}
+        for name, target in _output.output_submission_targets(deps.output_schema).items():
             if target.route != 'tool' or prepared is None:
-                tool_defs.append(target.tool_def)
+                tools[name] = target.tool_def
             elif (prepared_def := prepared.get(target.tool_def.name)) is not None:
-                tool_defs.append(prepared_def)
-        return tool_defs
+                tools[name] = prepared_def
+        return tools
 
     def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
         self.ctx.deps.prepared_output_tool_defs = tool_defs
