@@ -308,6 +308,8 @@ With a union output type, there's one function per member, so the code picks the
 
 Calling an output function stops the code there. If the output is accepted, `run_code` returns as usual with what the code printed before it, and the run ends without another model request. If it's rejected, `run_code` is answered with the validation errors, the rejection uses up one of the agent's output retries, and the REPL keeps the variables the code defined, so the model can fix the value and call the function again.
 
+If the same response has other tool calls, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides whether they still run, as for a parallel output tool call. An output function whose name clashes with a sandboxed tool raises a `UserError`; rename the output with `ToolOutput(name=...)`.
+
 ## Concurrent tool calls
 
 Sandboxed tools render as `async def` functions, so generated code can start several calls and
