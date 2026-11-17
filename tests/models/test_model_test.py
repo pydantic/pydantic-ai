@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import re
+from collections.abc import Callable
 from datetime import UTC
 from typing import Annotated, Any, Literal
 
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Discriminator, Field, Tag
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
     AudioUrl,
     BinaryContent,
     ImageUrl,
@@ -594,10 +596,14 @@ def test_json_schema_test_data_narrow_exclusive_bounds():
     )
 
 
-def test_gen_unknown_type():
-    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly."""
-    with pytest.raises(NotImplementedError, match='Unknown type: foo'):
-        _JsonSchemaTestData({'type': 'foo'}).generate()
+@pytest.mark.parametrize('type_', ['foo', []])
+def test_gen_unknown_type(type_: str | list[str]):
+    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly.
+
+    An empty `type` list names no type to generate from.
+    """
+    with pytest.raises(NotImplementedError, match=re.escape(f'Unknown type: {type_}')):
+        _JsonSchemaTestData({'type': type_}).generate()
 
 
 def test_json_schema_number_uses_strictest_bounds():
@@ -854,6 +860,47 @@ def test_int_hand_written_bounds_tool_args() -> None:
 
 
 @pytest.mark.parametrize(
+    'seed,expected',
+    [
+        (0, snapshot({'nullable': 'a', 'null_first': None, 'multi': 3, 'list': [0], 'obj': {'x': False}})),
+        (1, snapshot({'nullable': None, 'null_first': 'b', 'multi': 'bb', 'list': None, 'obj': None})),
+    ],
+)
+def test_tool_type_list_args(seed: int, expected: dict[str, object]) -> None:
+    """The seed picks one member of a JSON Schema `type` list, as it picks an `anyOf` member.
+
+    The picked type keeps the sibling keywords (`minimum`, `minLength`, `items`, `properties`), and type lists
+    nested under `items` and an object property are generated the same way. `TestModel` makes no provider
+    request, so there is nothing to record.
+    """
+    calls: list[dict[str, object]] = []
+
+    def lookup(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema: dict[str, object] = {
+        'type': 'object',
+        'properties': {
+            'nullable': {'type': ['string', 'null']},
+            'null_first': {'type': ['null', 'string']},
+            'multi': {'type': ['integer', 'string'], 'minimum': 3, 'minLength': 2},
+            'list': {'type': ['array', 'null'], 'minItems': 1, 'items': {'type': ['integer', 'null']}},
+            'obj': {
+                'type': ['object', 'null'],
+                'properties': {'x': {'type': ['boolean', 'null']}},
+                'required': ['x'],
+            },
+        },
+        'required': ['nullable', 'null_first', 'multi', 'list', 'obj'],
+    }
+    tool = Tool.from_schema(lookup, name='lookup', description='Look something up.', json_schema=schema)
+    Agent(TestModel(seed=seed), tools=[tool]).run_sync('hello')
+
+    assert calls == [expected]
+
+
+@pytest.mark.parametrize(
     'content',
     [
         AudioUrl(url='https://example.com'),
@@ -1060,3 +1107,105 @@ def test_structured_dict_oneof_beside_type():
     result = agent.run_sync('hello')
 
     assert result.output == snapshot({'a': 0})
+
+
+def _get_city(city: str, country: str) -> str:
+    return f'{city}, {country}'
+
+
+def _get_weather(city: str, days: int) -> str:
+    return f'sunny in {city} for {days} days'
+
+
+class _City(BaseModel):
+    city: str
+    country: str
+
+
+@dataclasses.dataclass(frozen=True)
+class UsageCase:
+    id: str
+    response_usages: list[RequestUsage]
+    total: RunUsage
+    tools: tuple[Callable[..., str], ...] = ()
+    output_type: type[str] | type[_City] = str
+    custom_output_text: str | None = None
+
+
+USAGE_CASES = [
+    UsageCase(
+        id='text',
+        response_usages=snapshot([RequestUsage(input_tokens=51, output_tokens=4)]),
+        total=snapshot(RunUsage(input_tokens=51, output_tokens=4, requests=1)),
+    ),
+    UsageCase(
+        id='one_tool',
+        tools=(_get_city,),
+        response_usages=snapshot(
+            [RequestUsage(input_tokens=51, output_tokens=7), RequestUsage(input_tokens=53, output_tokens=12)]
+        ),
+        total=snapshot(RunUsage(input_tokens=104, output_tokens=19, requests=2, tool_calls=1)),
+    ),
+    UsageCase(
+        id='two_tools',
+        tools=(_get_city, _get_weather),
+        response_usages=snapshot(
+            [RequestUsage(input_tokens=51, output_tokens=13), RequestUsage(input_tokens=59, output_tokens=25)]
+        ),
+        total=snapshot(RunUsage(input_tokens=110, output_tokens=38, requests=2, tool_calls=2)),
+    ),
+    UsageCase(
+        id='output_tool',
+        output_type=_City,
+        response_usages=snapshot([RequestUsage(input_tokens=51, output_tokens=7)]),
+        total=snapshot(RunUsage(input_tokens=51, output_tokens=7, requests=1)),
+    ),
+    UsageCase(
+        id='text_with_delimiters',
+        custom_output_text='Paris, France.',
+        response_usages=snapshot([RequestUsage(input_tokens=51, output_tokens=3)]),
+        total=snapshot(RunUsage(input_tokens=51, output_tokens=3, requests=1)),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in USAGE_CASES])
+async def test_usage_consistent_across_run_modes(case: UsageCase):
+    """Regression test for #11854: streamed `TestModel` usage equals `run()` usage, per response and in total."""
+    agent = Agent(TestModel(custom_output_text=case.custom_output_text), output_type=case.output_type, tools=case.tools)
+    usages: dict[str, tuple[list[RequestUsage], RunUsage]] = {}
+
+    run_result = await agent.run('hello')
+    usages['run'] = ([m.usage for m in run_result.all_messages() if isinstance(m, ModelResponse)], run_result.usage)
+
+    async with agent.run_stream('hello') as stream_result:
+        await stream_result.get_output()
+    usages['run_stream'] = (
+        [m.usage for m in stream_result.all_messages() if isinstance(m, ModelResponse)],
+        stream_result.usage,
+    )
+
+    async with agent.run_stream_events('hello') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                usages['run_stream_events'] = (
+                    [m.usage for m in event.result.all_messages() if isinstance(m, ModelResponse)],
+                    event.result.usage,
+                )
+
+    async with agent.iter('hello') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+    assert agent_run.result is not None
+    usages['iter_node_stream'] = (
+        [m.usage for m in agent_run.result.all_messages() if isinstance(m, ModelResponse)],
+        agent_run.result.usage,
+    )
+
+    run_response_usages, run_total = usages['run']
+    assert run_response_usages == case.response_usages
+    assert run_total == case.total
+    assert usages == dict.fromkeys(['run', 'run_stream', 'run_stream_events', 'iter_node_stream'], usages['run'])
