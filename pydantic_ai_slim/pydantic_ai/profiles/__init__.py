@@ -455,6 +455,18 @@ class ModelProfile(TypedDict, total=False):
     [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
     """
 
+    rejects_unpaired_tool_calls: bool
+    """Whether the API rejects a tool call that has no result, or a tool result that names no call. Default: `False`.
+
+    When set, `Model.prepare_messages` pairs the history it translates from another provider's native tool search: a
+    translated `search_tools` result whose ID names no call takes the ID of the oldest call in its response still
+    waiting for one, and a translated call that has no result gets a synthesized interrupted result. It doesn't touch
+    other unanswered tool calls, which the repair every agent run makes already handles. Set by
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and by
+    [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] for the `AsyncAnthropic` client. See
+    [Configuring `ToolSearch`](../tools-advanced.md#configuring-toolsearch).
+    """
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 

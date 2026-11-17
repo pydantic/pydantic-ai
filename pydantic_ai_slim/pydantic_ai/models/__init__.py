@@ -1046,7 +1046,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Submit encoded requests that share a `group` as one batch job.
 
         A failed submission is not retried, because the provider may have created the job before the connection
-        failed: check the provider's jobs before submitting the requests again.
+        failed: check the provider's jobs before submitting the requests again. A retrying transport on the provider's
+        HTTP client does send it again after an error response, unless its `validate_response`
+        [skips batch creates](../../batch.md#retrying-transports).
         """
         raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
@@ -2161,8 +2163,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         from .._tool_search import synthesize_local_tool_search_messages
 
+        untranslated = messages
         messages = synthesize_local_tool_search_messages(
-            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
+            messages,
+            keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None,
+            pair_returns=self.profile.get('rejects_unpaired_tool_calls', False),
         )
 
         if not clears_request_scoped_prompts:
@@ -2186,11 +2191,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _order_tool_results_by_call(messages)
+        # After the reorder above, so the returns land where an agent run's repair after this method puts them.
+        messages = self._repair_dangling_translated_tool_search_calls(messages, untranslated)
 
         if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _repair_dangling_translated_tool_search_calls(
+        self, messages: list[ModelMessage], untranslated: list[ModelMessage]
+    ) -> list[ModelMessage]:
+        """Answer the tool-search calls translated from `untranslated` that have no return, where the API requires it.
+
+        See `_tool_search.repair_dangling_translated_calls` and the profile's `rejects_unpaired_tool_calls`.
+        """
+        if not self.profile.get('rejects_unpaired_tool_calls', False):
+            return messages
+        from .._tool_search import repair_dangling_translated_calls
+
+        return repair_dangling_translated_calls(messages, untranslated)
 
     def _translate_legacy_tool_reveals(
         self,
@@ -5388,7 +5408,8 @@ the parts every adapter already knows how to map, or drops it. So an adapter mee
 step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
 a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
-adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
+adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts. An adapter
+that maps its parts without it, as `OpenAIDecisionsModel` does, needs an arm of its own for each.
 """
 
 
