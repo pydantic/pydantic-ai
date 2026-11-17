@@ -25,7 +25,7 @@ The video example also needs `OPENAI_API_KEY` for ingestion and search.
 
 | Example | What it does | Default model |
 |---|---|---|
-| [`agent_control.py`](agent_control.py) | A support agent whose prompt, model, settings and tool descriptions are editable from Logfire, block by block. Runs on the code-default path with no Logfire configured | `anthropic:claude-fable-5` |
+| [`agent_control.py`](agent_control.py) | A support agent whose prompt, model, settings and tool descriptions are editable from Logfire, block by block. Runs on the code-default path with no Logfire configured | `anthropic:claude-fable-5-2` |
 | [`coding_agent.py`](coding_agent.py) | A coding agent for the current repo: `Coder` in a local workspace that passes on `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE` | `anthropic:claude-opus-5-5` |
 | [`research_agent.py`](research_agent.py) | A web-research agent that cites every claim, built from the blocks that make up `Researcher` | `openai:gpt-5.6-sol` |
 | [`pixeltable_video.py`](pixeltable_video.py) | Search stored video transcripts and frame captions with timestamps and persistent memory; see the [Pixeltable guide](../../../docs/harness/pixeltable.md#video-audio-and-images) for setup | `openai:gpt-5.6-sol` |

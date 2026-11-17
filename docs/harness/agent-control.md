@@ -345,6 +345,19 @@ run context exists, so the callable gets the `deps`, `prompt` and `messages` bot
 `AgentControl.resolved` exposes the config the current run picked up (`value`, `label`, `version`,
 and on Logfire 4.34 and later `reason`), and is `None` outside a run.
 
+## Moving from `ManagedPrompt`
+
+`AgentControl` is not a drop-in replacement for [`ManagedPrompt`](managed-prompt.md):
+
+- The config lives in a different variable, `agent__<name>` rather than `prompt__<name>`, so published
+  prompt versions and labels don't carry over. Publish the prompt again in the agent's config.
+- There is no code-side default on the capability. The default prompt moves into
+  `Agent(instructions=...)`, and the published prompt becomes an `{"id": "agent", "instructions": ...}`
+  entry that replaces it, rather than the whole value of the variable.
+- The agent needs an explicit `name`, or pass `AgentControl(name=...)`.
+- `render_template=True` renders only *added* blocks. An entry that replaces the `agent` block is sent
+  as published, so keep `{{...}}` placeholders in an added block instead.
+
 ## API reference
 
 ::: pydantic_ai_harness.logfire.AgentControl

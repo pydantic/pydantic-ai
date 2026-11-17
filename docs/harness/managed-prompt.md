@@ -5,7 +5,8 @@ description: Back a Pydantic AI agent's instructions with a Logfire-managed prom
 
 # Managed Prompt
 
-`ManagedPrompt` is legacy; use a prompt-only [`AgentControl`](agent-control.md) for new setups.
+`ManagedPrompt` is legacy; use a prompt-only [`AgentControl`](agent-control.md) for new setups, and see
+[Moving from `ManagedPrompt`](agent-control.md#moving-from-managedprompt) for what changes.
 
 `ManagedPrompt` takes an agent's instructions from a
 [Logfire-managed prompt](https://logfire.pydantic.dev/docs/reference/advanced/prompt-management/). Edit,

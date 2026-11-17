@@ -38,7 +38,7 @@ from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.logfire import AgentControl
 
-DEFAULT_MODEL = os.environ.get('PYDANTIC_AI_MODEL', 'anthropic:claude-fable-5')
+DEFAULT_MODEL = os.environ.get('PYDANTIC_AI_MODEL', 'anthropic:claude-fable-5-2')
 
 ORDERS = {
     'A-1001': {'customer': 'cus_42', 'status': 'delivered', 'total': '129.00', 'item': 'Oak desk lamp'},

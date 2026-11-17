@@ -21,7 +21,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.logfire import AgentControl
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     name='checkout_assistant',
     tools=[...],
     capabilities=[AgentControl(label='production')],  # -> agent__checkout_assistant
@@ -159,7 +159,8 @@ flowchart TB
 
 ## `ManagedPrompt`
 
-`ManagedPrompt` is legacy; use a prompt-only [`AgentControl`](#agentcontrol) for new setups.
+`ManagedPrompt` is legacy; use a prompt-only [`AgentControl`](#agentcontrol) for new setups, and see
+[Moving from `ManagedPrompt`](#moving-from-managedprompt) for what changes.
 
 `ManagedPrompt` takes an agent's instructions from a Logfire-managed
 [prompt](https://logfire.pydantic.dev/docs/reference/advanced/prompt-management/). Edit, version, label, and
@@ -425,7 +426,7 @@ def get_weather(city: str) -> str:
 
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     name='checkout_assistant',
     instructions='You are a concise checkout assistant.',
     tools=[get_weather],
@@ -453,7 +454,7 @@ value from code.
     {"id": "agent", "instructions": "You are a concise checkout assistant."},
     {"id": "toolset:legacy_crm", "instructions": null}
   ],
-  "model": "anthropic:claude-fable-5-1",
+  "model": "anthropic:claude-fable-5-2",
   "settings": {
     "temperature": 0.4,
     "max_tokens": 2048,
@@ -554,7 +555,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.logfire import AgentControl
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     name='checkout_assistant',
     instructions='You are a concise checkout assistant.',
     capabilities=[AgentControl()],
@@ -576,6 +577,19 @@ override moves that boundary either. `render_template=True` is the one exception
 this run's `deps` rather than fixed text, so it is contributed as dynamic and sorts with the rest of
 the per-request text. Only `agent.override(instructions=...)` replaces the lot, and a capability can't
 reach it.
+
+### Moving from `ManagedPrompt`
+
+`AgentControl` is not a drop-in replacement for [`ManagedPrompt`](#managedprompt):
+
+- The config lives in a different variable, `agent__<name>` rather than `prompt__<name>`, so published
+  prompt versions and labels don't carry over. Publish the prompt again in the agent's config.
+- There is no code-side default on the capability. The default prompt moves into
+  `Agent(instructions=...)`, and the published prompt becomes an `{"id": "agent", "instructions": ...}`
+  entry that replaces it, rather than the whole value of the variable.
+- The agent needs an explicit `name`, or pass `AgentControl(name=...)`.
+- `render_template=True` renders only *added* blocks. An entry that replaces the `agent` block is sent
+  as published, so keep `{{...}}` placeholders in an added block instead.
 
 ### Notes
 

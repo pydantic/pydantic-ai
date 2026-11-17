@@ -76,7 +76,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelSelectionContext
     from pydantic_ai.run import AgentRunResult
 
-_AGENT_CONTROL_ID = 'agent-control'
+_AGENT_CONTROL_ID = 'agent_control'
 """The capability ID an `AgentControl` carries, so two of them read as one managed config."""
 
 # Where a renamed tool records the code-side name it routes back to, on its own definition's
@@ -655,7 +655,7 @@ class AgentControl(AbstractCapability[AgentDepsT]):
 
     logfire.configure()
     agent = Agent(
-        'anthropic:claude-fable-5-1',
+        'anthropic:claude-fable-5-2',
         name='checkout_assistant',
         instructions='You are a checkout assistant.',
         capabilities=[AgentControl(label='production')],

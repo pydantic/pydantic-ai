@@ -431,7 +431,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import AgentControl
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    'anthropic:claude-fable-5-2',
     name='checkout_assistant',
     instructions='You are a concise checkout assistant.',
     capabilities=[AgentControl(label='production')],
@@ -455,7 +455,8 @@ Logfire is unavailable or no value is published.
 
 Resolves a Logfire-managed prompt once per run and uses it as the agent's instructions, with the label
 and version attached as baggage to every span of the run. Prefer `AgentControl` for new agents; this
-capability remains for existing prompt variables.
+capability remains for existing prompt variables. Moving one over changes the variable (`agent__<name>`),
+moves the default prompt into `Agent(instructions=...)`, and needs an explicit agent `name`.
 
 ```bash
 uv add "pydantic-ai-harness[logfire]"
