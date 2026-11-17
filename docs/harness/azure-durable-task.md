@@ -268,7 +268,9 @@ are agent control flow, not activity failures. `UserError` and serialization fai
 `resolve_tool_options(operation_id, tool, tool_name)` sets a policy per tool: return a `RetryPolicy`,
 `None` to keep `tool_options`, or `False` to run a function tool inline in the orchestrator. A function
 tool can also opt out with `metadata={'azure_durable_task': False}`. Inline tools must be deterministic
-and do no I/O. MCP and dynamic tools always run as activities.
+and do no I/O outside `ctx.workspace`, whose calls still run as activities. The harness `FileSystem`
+write tools opt out this way, so their file-change requests reach listeners in the orchestrator. MCP
+and dynamic tools always run as activities.
 Async function tools can opt out with the engine-neutral [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit),
 too, which works on every engine and wins over `resolve_tool_options`; an `'azure_durable_task'` key on
 the same tool wins over it.

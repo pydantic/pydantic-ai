@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         CompactOnRequest,
         DeduplicateFileReads,
         FallbackCompaction,
+        PruneToolResults,
         RelevanceCompaction,
         ReportContextUsage,
         SlidingWindowCompaction,
@@ -54,10 +55,13 @@ if TYPE_CHECKING:
         OutputBlocked,
         OutputGuardrail,
         OutputGuardrailFunc,
+        StreamGuardrail,
+        StreamGuardrailFunc,
         ToolGuardrail,
     )
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
+    from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -90,6 +94,7 @@ if TYPE_CHECKING:
     from .step_persistence import StepPersistence
     from .sub_agents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .tool_budgets import ToolBudgets
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
@@ -144,6 +149,8 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'KeenableSearch',
+    'KubernetesSandbox',
+    'KubernetesSandboxBackend',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -165,6 +172,7 @@ __all__ = [
     'Planning',
     'PostHog',
     'PromptInjectionDefender',
+    'PruneToolResults',
     'PydanticAIDocs',
     'Pylon',
     'READ_ONLY_TOOL_NAMES',
@@ -189,11 +197,14 @@ __all__ = [
     'SpritesSandboxBackend',
     'StackOne',
     'StepPersistence',
+    'StreamGuardrail',
+    'StreamGuardrailFunc',
     'SubAgent',
     'SubAgents',
     'SummarizingCompaction',
     'SystemReminders',
     'TieredCompaction',
+    'ToolBudgets',
     'ToolCallJudge',
     'ToolGuardrail',
     'ToolOutputLimits',
@@ -251,6 +262,8 @@ _LAZY_EXPORTS = {
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
     'KeenableSearch': 'keenable',
+    'KubernetesSandbox': 'kubernetes_sandbox',
+    'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -271,6 +284,7 @@ _LAZY_EXPORTS = {
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
+    'PruneToolResults': 'compaction',
     'PydanticAIDocs': 'pydantic_ai_docs',
     'Pylon': 'pylon',
     'READ_ONLY_TOOL_NAMES': 'file_system',
@@ -295,11 +309,14 @@ _LAZY_EXPORTS = {
     'SSHWorkspaceBackend': 'ssh_workspace',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
+    'StreamGuardrail': 'guardrails',
+    'StreamGuardrailFunc': 'guardrails',
     'SubAgent': 'sub_agents',
     'SubAgents': 'sub_agents',
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',
+    'ToolBudgets': 'tool_budgets',
     'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',
     'ToolOutputLimits': 'tool_output_limits',
