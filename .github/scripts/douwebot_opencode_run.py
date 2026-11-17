@@ -92,10 +92,9 @@ ZAI_BACKUP = Provider(
     CODING_PLAN_HANDOVER_ERRORS,
     restart_on_rate_limit=True,
 )
-# OpenCode Zen's free models, with no key: OpenCode 2.2.5 then sends Zen the key `public`. Zen types a spent free
-# allowance `FreeUsageLimitError`, which OpenCode types `provider.quota`: `QUOTA_CODES` in `provider-error.ts`.
-# Only a `PR_REVIEW_MODEL_CHAIN` link runs it, and douwebot passes no configured chain, so no douwebot receipt names
-# its `review_engine`; give it its own `ReviewEngine` before douwebot can run it.
+# OpenCode Zen's free models, with no key: OpenCode 2.2.5 then sends Zen the key `public`. Zen reports a spent free
+# allowance as `FreeUsageLimitError`, which OpenCode 2.2.5 types `provider.free-limit`: `toSessionError` in
+# https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
 OPENCODE_ZEN_FREE = Provider(
     'opencode',
     'opencode/hy4-flash-free',
@@ -103,10 +102,12 @@ OPENCODE_ZEN_FREE = Provider(
     None,
     'the OpenCode Zen free tier',
     'opencode',
-    frozenset({'provider.quota', 'provider.rate-limit'}),
+    frozenset({'provider.free-limit', 'provider.quota', 'provider.rate-limit'}),
 )
 # The links a `PR_REVIEW_MODEL_CHAIN` entry can name, by provider and the secret the entry names. An entry changes
 # only the model, so it can hand a key only to the provider that key belongs to, and only Zen runs without a key.
+# douwebot passes no configured chain, so no douwebot receipt names a link's `review_engine`. Give each served model
+# its own `ReviewEngine` before douwebot runs a configured chain.
 CHAIN_LINKS = {
     (provider.name, provider.secret_variable): provider
     for provider in (OPENCODE_GO, ZAI, ZAI_BACKUP, OPENCODE_ZEN_FREE)
@@ -526,8 +527,8 @@ def run_with_fallback(
             )
     if not keyed:
         # Every workflow that runs the default chain passes Go's key, so an empty one is a broken secret binding.
-        if not os.environ['OPENCODE_API_KEY']:
-            raise ValueError('OPENCODE_API_KEY is empty')
+        if not _has_key(OPENCODE_GO):
+            raise ValueError(f'{OPENCODE_GO.secret_variable} is empty')
         keyed = [link for link in (OPENCODE_GO, ZAI, ZAI_BACKUP) if _has_key(link)]
     # Run numbers count up within a workflow, so a burst of runs, and the checks of one matrix, alternate accounts.
     turn = int(os.environ['GITHUB_RUN_NUMBER']) + matrix_index

@@ -394,15 +394,7 @@ def test_run_number_and_matrix_place_alternate_the_first_account(
     """Consecutive runs of a workflow, and consecutive checks of one matrix, start on alternate accounts."""
     monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
     invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
-    _, provider = douwebot_opencode_run.run_with_fallback(
-        lambda command, env, stream: subprocess.run(
-            command, input='', text=True, cwd=review_env.parent, env=env, stdout=stream, check=True, timeout=None
-        ),
-        agent='reviewer',
-        output=review_env.parent / 'review.ndjson',
-        matrix_index=matrix_index,
-    )
-    assert provider == first
+    assert review_on(review_env, '', matrix_index) == first
     assert_runs_on(invoked[1], first)
 
 
@@ -827,7 +819,7 @@ ZEN_HY4 = replace(OPENCODE_ZEN_FREE, declares_model=True)
 
 
 def review_on(review_env: Path, configured_chain: str, matrix_index: int = 0) -> Provider:
-    """Run the fallback chain the way `PR Review Checks` does, with `configured_chain`; return the provider that served."""
+    """Run the fallback chain with `configured_chain` and `matrix_index`; return the provider that served."""
     _, provider = douwebot_opencode_run.run_with_fallback(
         lambda command, env, stream: subprocess.run(
             command, input='', text=True, cwd=review_env.parent, env=env, stdout=stream, check=True, timeout=None
@@ -876,9 +868,9 @@ def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
     )
 
 
-@pytest.mark.parametrize('kind', ['provider.quota', 'provider.rate-limit'])
+@pytest.mark.parametrize('kind', ['provider.free-limit', 'provider.quota', 'provider.rate-limit'])
 def test_zen_free_tier_refusal_hands_the_run_on(review_env: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
-    """A spent Zen free allowance, which OpenCode types `provider.quota`, or a rate limit hands the run on."""
+    """A spent Zen free allowance, which OpenCode types `provider.free-limit`, a quota or a rate limit hands the run on."""
     zen_refused = [REFUSED[0], {'type': 'error', 'error': {'type': kind, 'status': 429}}]
     invoked = fake_opencode(monkeypatch, (zen_refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
     chain = [{'model': 'opencode/hy4-flash-free', 'secret': None}, {'model': GLM, 'secret': 'ZAI_API_KEY'}]

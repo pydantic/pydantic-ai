@@ -441,8 +441,9 @@ is unset, empty or invalid, or names no secret that is set, the review runs the 
 that names no secret that is set, adds a job-log warning that never repeats the value.
 
 Edit the variable under **Settings → Secrets and variables → Actions → Variables**. The next review uses the new
-value without a pull request. A user with write access can edit it. GitHub prints the review step's environment, this
-variable included, in the public job log, so never put a key in the variable.
+value without a pull request. A user with write access can edit it. Never put a key in the variable: the public job
+log prints the review step's environment, and
+[variables render unmasked](https://docs.github.com/en/actions/concepts/workflows-and-actions/variables).
 
 The value is a JSON list of entries, tried in order. Each entry holds exactly two fields:
 
@@ -462,7 +463,8 @@ The review step passes each secret by a fixed `secrets.<NAME>` expression, never
 an entry's key only to the provider the table pairs it with. So the variable cannot send a key to another provider,
 and cannot reach any other secret. Nothing in a pull request reaches the variable: the workflow runs default-branch
 code on `pull_request_target`, and only users with write access set repository variables. To add a provider or a
-secret, open a pull request that adds its `Provider` to `CHAIN_LINKS` and its secret to the review step's `env`.
+secret, open a pull request that adds its `Provider` to `CHAIN_LINKS`, its row to the table above, and its secret to
+the review step's `env`.
 
 An entry changes only its link's model. Each link keeps its provider's hand-over errors and restart rule from above:
 
@@ -473,8 +475,9 @@ An entry changes only its link's model. Each link keeps its provider's hand-over
   catalog lacks, such as `hy4-flash-free`. The declaration is empty, so it leaves a model the catalog has unchanged.
 - Without a key, OpenCode 2.2.5 sends Zen the key `public` and runs only Zen's free models. A keyless link to a paid
   Zen model, such as `opencode/gemini-3.1-pro`, fails with `provider.no-route` and fails the review. Zen's free usage
-  is limited. Zen reports a spent allowance as `FreeUsageLimitError`, which OpenCode types `provider.quota`. Zen hands a
-  run on after `provider.quota` or `provider.rate-limit` before the run's first step, and never restarts a run.
+  is limited. Zen reports a spent allowance as `FreeUsageLimitError`, which OpenCode 2.2.5 types `provider.free-limit`.
+  Zen hands a run on after `provider.free-limit`, `provider.quota` or `provider.rate-limit` before the run's first
+  step, and never restarts a run.
 - A Zen run sends Zen the same content a Go run sends Go, fork pull request content included. Zen offers free models
   for a limited time. Before you add one, check its data retention on
   [Zen's model list](https://opencode.ai/v2/docs/console/models/).
