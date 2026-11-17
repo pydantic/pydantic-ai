@@ -302,8 +302,8 @@ Gotchas:
   `importlib.resources` `Traversable`); relative library paths resolve against it, and the run needs
   no workspace of its own (or its workspace can be a sandbox). The loaded instructions leave out
   the skill directory; pass `read_files=True` for the model to read `references/` from there, and
-  put the library in the run's workspace with `Shell` there to run `scripts/`. Otherwise `Skills` reads from the run's workspace, and a run without
-  one fails at start.
+  put the library in the run's workspace with `Shell` there to run `scripts/`. Otherwise `Skills`
+  reads from the run's workspace, and a run without one fails at start.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
   `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are

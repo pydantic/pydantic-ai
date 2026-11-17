@@ -359,7 +359,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         Args:
             ctx: The run context.
             skill: The name of the loaded skill.
-            path: The file's path, relative to the skill's directory.
+            path: The file's path relative to the skill's directory, such as `references/guide.md`, without
+                the directory itself in front.
             offset: The character to start at, to continue a file longer than one read returns.
         """
         try:
@@ -521,7 +522,9 @@ async def _read_text(entry: _Entry, path: str) -> str:
     paths = workspace.paths
     # Rejected before anything resolves it: an absolute or drive path would replace the directory when joined.
     if paths.isabs(path) or paths.splitdrive(path)[0]:
-        raise ModelRetry(f'Give a path relative to the directory of skill {skill!r}, not {path!r}.')
+        raise ModelRetry(
+            f"Give a path relative to the directory of skill {skill!r}, such as 'references/guide.md', not {path!r}."
+        )
     if not isinstance(innermost_backend(workspace), (SupportsRealpath, SupportsCommands)):
         raise ToolFailed(f'The workspace of skill {skill!r} cannot resolve symlinks, so its files are not read.')
     try:
