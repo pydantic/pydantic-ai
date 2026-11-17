@@ -117,6 +117,10 @@ integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 r
 .PHONY: integration-azure-durable-task
 integration-azure-durable-task: ## Run the harness Azure Durable Task tests (`docker run -d -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:v0.0.9`, or set AZURE_DURABLE_TASK_TEST_ENDPOINT)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/azure_durable_task
+
+.PHONY: integration-bubblewrap
+integration-bubblewrap: ## Run the harness BubblewrapWorkspace tests, those that need a working `bwrap` included (set BWRAP_REQUIRE_LIVE=1 to fail rather than skip them without one)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest tests/harness/bubblewrap_sandbox
 .PHONY: integration-kubernetes
 integration-kubernetes: ## Run the harness Kubernetes sandbox tests against real sandboxd (`GOBIN=$$PWD/.bin go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7`, then set SANDBOXD_BIN)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/kubernetes/test_live_sandboxd.py

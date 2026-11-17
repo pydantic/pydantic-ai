@@ -51,6 +51,14 @@ of tool calls (`started`/`completed`/`failed`). It stores message history only: 
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.
 
+It is not the recommended session store: to store conversations, use core's `ConversationStore`
+(`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
+already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has.
+Settle a session whose newest run ends on unanswered tool calls (a pending approval or deferred result)
+first: its last `complete` snapshot leaves that turn out (see "Moving sessions to a `ConversationStore`"
+on the Step Persistence page).
+
 ```python
 import asyncio
 
@@ -98,8 +106,8 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
   write, so the user needs index-creation privileges.
 - `PostgresStepStore(pool, *, table='step_persistence')`: `pool` is your own `asyncpg` pool (the
   driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
-  is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
-  `CREATE` on the schema.
+  is a prefix of at most 40 characters. It creates its tables on first use unless they all exist, so only that
+  first call needs `CREATE` on the schema.
 
 File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
@@ -464,21 +472,21 @@ active on the **next** run, and only if you pass it in:
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness import CapabilityCreation
 
+workspace = LocalWorkspaceBackend('.')
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[creation])
 
 
 
 async def main():
     history = None
     for prompt in ['Add a capability that logs tool calls.', 'Now refactor utils.py.']:
-        result = await agent.run(
-            prompt, message_history=history, capabilities=creation.store.load_active()
-        )
+        extra = await creation.load_active(workspace)
+        result = await agent.run(prompt, message_history=history, capabilities=extra, workspace=workspace)
         history = result.all_messages()
 ```
 
@@ -486,8 +494,11 @@ Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorks
 authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
 `ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
 a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
-With `defer_loading=True` these checks refuse each authoring tool call instead. `store.load_active()` runs outside this check, since it has no workspace. Only use it where you would run the
-model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+With `defer_loading=True` these checks refuse each authoring tool call instead. `creation.load_active(workspace)`
+makes them against `workspace` before loading, and only against it, so pass the same workspace as `agent.run(workspace=...)`
+instead of a `LocalWorkspace` capability (for a directory outside the working directory,
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('.')), authority='operator', path_authority={'/abs/path': 'operator'})`); `creation.store.load_active()` has no workspace and skips them, so only
+use it where you would run the model's code yourself. Authored code runs during `author_capability` validation, in the current run.
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
 a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
