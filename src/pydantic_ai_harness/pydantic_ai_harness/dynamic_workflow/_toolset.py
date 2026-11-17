@@ -223,9 +223,9 @@ finding = await researcher(task="...", output_schema={
 
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
-# return schema, plus an `output_schema` overload for an entry that allows it. Render each catalog entry
-# through core's `FunctionSignature` (the renderer code_mode and Pydantic AI already use). This keeps the catalog format consistent across
-# capabilities, forces keyword-only `task` to match `dispatch` (which reads `kwargs['task']`), and
+# return schema, plus an `output_schema` overload for an entry that allows it. Render each catalog
+# entry through core's `FunctionSignature` (the renderer code_mode and Pydantic AI already use).
+# This keeps the catalog format consistent across capabilities, forces keyword-only `task` to match `dispatch` (which reads `kwargs['task']`), and
 # renders docstrings safely -- a hand-rolled f-string breaks on a newline or a quote inside a
 # description.
 _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
@@ -453,19 +453,25 @@ def _reveal_announcement(
     name: str,
     catalog: Mapping[str, WorkflowAgent[AgentDepsT]],
     tool_name: str,
+    *,
+    explain_output_schema: bool,
 ) -> SystemPromptPart:
     """Announcement enqueued when a sub-agent is revealed mid-run.
 
     Delivered as a system-level conversation message (not folded into the cached tool description),
     so the prompt-cache prefix stays stable while the model still learns the agent is now callable.
     `catalog` holds the agents up to and including `name`, in reveal order. The metadata marks
-    the part so `_visible_revealed_agents` can find it again.
+    the part so `_visible_revealed_agents` can find it again. `explain_output_schema` adds the
+    `output_schema` instructions the frozen tool description lacks.
     """
     block = '\n\n'.join(_signature_blocks(catalog, [name], body='...'))
+    content = (
+        f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
+    )
+    if explain_output_schema:
+        content = f'{content}\n\n{_OUTPUT_SCHEMA_DESCRIPTION}'
     return SystemPromptPart(
-        content=(
-            f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
-        ),
+        content=content,
         metadata={_REVEAL_TOOL_KEY: tool_name, _REVEAL_AGENT_KEY: name},
     )
 
@@ -866,7 +872,15 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 self._by_name[name] = entry
             self._in_flight_announcements.add(name)
             try:
-                ctx.enqueue(_reveal_announcement(name, self._catalog_through(name), self.tool_name))
+                ctx.enqueue(
+                    _reveal_announcement(
+                        name,
+                        self._catalog_through(name),
+                        self.tool_name,
+                        explain_output_schema=entry.allow_output_schema
+                        and not any(self._by_name[known].allow_output_schema for known in self._baseline_names),
+                    )
+                )
             except UserError as exc:
                 warnings.warn(
                     f'DynamicWorkflow revealed sub-agent {name!r}, but could not enqueue its announcement: '
@@ -1006,6 +1020,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             message = f'sub-agent {agent_name!r} raised {type(exc).__name__}'
             if isinstance(exc, _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES):
                 message = f'{message}: {exc}'
+            elif output_type is not None and isinstance(exc, UserError):
+                message = (
+                    f'{message}; if it has output validators, it cannot take output_schema, so call it without one'
+                )
             raise RuntimeError(message) from exc
         raise RuntimeError(
             f'sub-agent {agent_name!r} {reason}; a workflow script cannot resume it, '

@@ -643,7 +643,13 @@ try:
 except RuntimeError as e:
     error = str(e)
 [plain, error]"""
-    assert await _run_script(ts, code) == ['ok', "sub-agent 'validated' raised UserError"]
+    assert await _run_script(ts, code) == snapshot(
+        [
+            'ok',
+            "sub-agent 'validated' raised UserError; if it has output validators, it cannot take output_schema, "
+            'so call it without one',
+        ]
+    )
 
 
 @pytest.mark.parametrize(
@@ -1717,6 +1723,25 @@ async def test_runtime_reveal_announces_and_makes_callable() -> None:
 
     out = await _run_script(ts, "r = await extra(task='x')\nr['score']", ctx)
     assert out == 4
+
+
+@pytest.mark.parametrize('baseline_allows', [False, True])
+async def test_reveal_of_an_agent_allowing_output_schema(baseline_allows: bool) -> None:
+    workflow = DynamicWorkflow[object](
+        agents=[WorkflowAgent(_sub_agent(name='base'), allow_output_schema=baseline_allows)]
+    )
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+    await ts.get_tools(ctx)
+    workflow.reveal(WorkflowAgent(_review_agent({'claim': 'c'}, name='extra'), allow_output_schema=True))
+    await ts.get_tools(ctx)
+    announced = _enqueued_text(ctx)
+    assert 'async def extra(*, task: str, output_schema: dict[str, Any]) -> dict[str, Any]:' in announced
+    # The frozen tool description explains `output_schema` only when a baseline agent allows it.
+    explained = 'A sub-agent with an `output_schema` overload can return a result in a shape you choose'
+    assert (explained in announced) is not baseline_allows
+    code = "r = await extra(task='x', output_schema={'type': 'object'})\nr['claim']"
+    assert await _run_script(ts, code, ctx) == 'c'
 
 
 async def test_runtime_reveal_disambiguates_type_name_conflicts_against_catalog() -> None:
