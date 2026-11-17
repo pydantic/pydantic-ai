@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import re
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
@@ -1092,6 +1094,17 @@ class TestPeers:
         await agent.run('second', capabilities=[peers])
         assert [peer.handle for peer in await network.join(handle='probe').peers()] == ['bob']
 
+    def test_a_shared_instance_releases_collected_agents(self) -> None:
+        peers = Peers(InMemoryPeerNetwork())
+        bound: list[AbstractCapability[None]] = []
+        Agent(text_model(), name='transient', capabilities=[peers]).root_capability.apply(bound.append)
+        (joined,) = [weakref.ref(capability) for capability in bound if isinstance(capability, Peers)]
+        bound.clear()
+        gc.collect()
+        Agent(text_model(), name='kept', capabilities=[peers])
+        gc.collect()
+        assert joined() is None
+
     def test_network_join_needs_a_unique_handle(self) -> None:
         network = InMemoryPeerNetwork()
         with pytest.raises(UserError, match=re.escape('give the agent a `name`, or pass `Peers(network, handle=...)`')):
@@ -1101,7 +1114,7 @@ class TestPeers:
             Agent(text_model(), name='bob', capabilities=[Peers(network)])
 
     def test_handle_and_inbox_must_fit_the_network(self) -> None:
-        class HostInbox:
+        class ProtocolOnlyInbox:
             async def take(self, run_id: str) -> Sequence[PeerMessage]:
                 raise NotImplementedError
 
@@ -1115,7 +1128,7 @@ class TestPeers:
         with pytest.raises(UserError, match=re.escape('a host connection has its own')):
             Agent(text_model(), capabilities=[Peers(connection, handle='b')])  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match=re.escape('delivers to a `LocalPeerInbox`')):
-            Agent(text_model(), name='b', capabilities=[Peers(InMemoryPeerNetwork(), inbox=HostInbox())])  # pyright: ignore[reportCallIssue,reportArgumentType]
+            Agent(text_model(), name='b', capabilities=[Peers(InMemoryPeerNetwork(), inbox=ProtocolOnlyInbox())])  # pyright: ignore[reportCallIssue,reportArgumentType]
 
     async def test_join_without_an_inbox_is_send_only(self) -> None:
         network = InMemoryPeerNetwork()
