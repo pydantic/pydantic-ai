@@ -209,9 +209,9 @@ work nobody asked for, and the other models measured don't. The rule goes to mod
 `delegates_unprompted`, and follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without it, the
 model is told the rule was withdrawn. A `FallbackModel` gets no rule. See
-[Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions). A delegate explores the project again from a fresh context, so
-delegation the user did not ask for multiplies tool calls and cost. To have the agent delegate, ask for it in the
-prompt, in `AGENTS.md`, or in `instructions=`.
+[Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
+A delegate explores the project again from a fresh context, so delegation the user did not ask for multiplies tool
+calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`

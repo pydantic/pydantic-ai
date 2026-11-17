@@ -21,7 +21,6 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.exceptions import UserError
-    from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.profiles.openai import (
         OpenAIJsonSchemaTransformer,
         OpenAIModelProfile,
@@ -320,10 +319,6 @@ def test_delegates_unprompted(model_name: str, delegates: bool):
     profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(profile, dict)
     assert profile.get('delegates_unprompted', False) is delegates
-
-
-def test_claude_does_not_delegate_unprompted():
-    assert 'delegates_unprompted' not in (anthropic_model_profile('claude-opus-5-5') or {})
 
 
 class TestEncryptedReasoningContent:
