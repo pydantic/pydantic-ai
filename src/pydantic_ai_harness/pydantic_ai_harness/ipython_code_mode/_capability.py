@@ -72,7 +72,7 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
     """
 
     def get_ordering(self) -> CapabilityOrdering:
-        """Wrap around `ToolSearch` and `ToolBridge` so that their tools stay native, as `CodeMode` does."""
+        """Wrap around `ToolSearch`, so `search_tools` stays native, and `ToolBridge`, so its dispatchers are sandboxed."""
         return CapabilityOrdering(position='outermost', wraps=[ToolSearch, ToolBridge])
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

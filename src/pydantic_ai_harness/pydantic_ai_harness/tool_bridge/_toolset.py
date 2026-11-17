@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import re
-from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -12,7 +10,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
-from pydantic_ai.capabilities import ToolSearchFunc
+from pydantic_ai.capabilities import ToolSearchFunc, keywords_search_fn
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError, UserError
 from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
@@ -66,8 +64,7 @@ def _dispatcher(description: str, args: type[object]) -> tuple[str, dict[str, An
 
 _DISPATCHERS = {
     SEARCH_TOOL_NAME: _dispatcher(
-        'Search the tools available through `tool_call` by keywords. '
-        'Returns the names and descriptions of the matching tools.',
+        'Search the tools available through `tool_call`. Returns the names and descriptions of the matching tools.',
         _SearchArgs,
     ),
     DESCRIBE_TOOL_NAME: _dispatcher(
@@ -185,7 +182,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     async def _search(
         self, ctx: RunContext[AgentDepsT], query: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
     ) -> list[_Match]:
-        search = self.search or _keyword_search
+        search = self.search or keywords_search_fn
         names = search(ctx, [query], [tool.tool_def for tool in bridged.values()])
         if inspect.isawaitable(names):
             names = await names
@@ -243,15 +240,3 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
-
-
-_WORD = re.compile(r'[a-z0-9]+')
-
-
-def _keyword_search(ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
-    """Rank the tools by how many of the query's words appear in their name or description."""
-    words = set(_WORD.findall(' '.join(queries).lower()))
-    scores = {
-        tool.name: len(words & set(_WORD.findall(f'{tool.name} {tool.description or ""}'.lower()))) for tool in tools
-    }
-    return sorted((name for name, score in scores.items() if score), key=lambda name: -scores[name])
