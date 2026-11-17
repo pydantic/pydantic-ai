@@ -212,8 +212,9 @@ A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.git
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Choose the `area:` and `provider:` topic labels this way:
 
-- Apply one `area:` label, at most two. Choose the subsystem whose code changes, not the API a reporter called.
-  A Harness capability built on a core concept takes that concept's area. A durable engine label implies `area:durable-exec`.
+- Apply one or two `area:` labels. Choose the subsystem whose code changes, not the API a reporter called.
+  A Harness capability built on a core concept takes that concept's area.
+  An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`.
 - Apply zero to two `provider:` labels, only when the behavior depends on a vendor endpoint. Leave them off when the change reproduces with `TestModel`.
 - Label a provider adapter's request or response mapping `area:models`. Label any other adapter change with the area of the feature it implements, such as `area:thinking` or `area:streaming`.
 - For an OpenAI-compatible vendor, apply `provider:<vendor>` when the catalog has one.
