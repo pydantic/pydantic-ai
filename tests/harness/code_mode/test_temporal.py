@@ -586,7 +586,8 @@ async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> N
 
 
 async def test_code_mode_submits_final_output_in_temporal_workflow(client: Client) -> None:
-    """`run_code` runs in the workflow under Temporal, so the code can submit the run's output."""
+    """`run_code` runs in the workflow under Temporal, so the code can submit the run's output, and the history replays."""
+    workflow_id = 'test_code_mode_temporal_submit'
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -597,7 +598,15 @@ async def test_code_mode_submits_final_output_in_temporal_workflow(client: Clien
         result = await client.execute_workflow(
             SubmitWorkflow.run,
             args=['Add 40 and 2'],
-            id='test_code_mode_temporal_submit',
+            id=workflow_id,
             task_queue=TASK_QUEUE,
         )
     assert result == {'total': 42, 'requests': 1}
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay_result = await Replayer(
+        workflows=[SubmitWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None

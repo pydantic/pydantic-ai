@@ -26,6 +26,7 @@ from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail, OutputBlocked, OutputGuardrail
+from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 
 class Invoice(BaseModel):
@@ -382,26 +383,36 @@ caught: This code already submitted the final output, or had a submission blocke
         with pytest.raises(OutputBlocked, match='Invoices need a review'):
             await agent.run('Invoice the order.')
 
-    async def test_eager_submission_waits_for_a_parallel_input_guardrail(self):
-        """An output function can have side effects, so an eager submission waits for the guard's verdict too."""
+    async def test_eager_submission_waits_for_a_parallel_input_guardrail(self, monkeypatch: pytest.MonkeyPatch):
+        """An output function can have side effects, so an eager submission waits for the guard's verdict too.
+
+        Eager execution reaches the submission off the event loop, so only the wait for the verdict, which has no
+        public hook, tells the guard when to decide: like `GuardedRun` in `test_input_guardrail.py`, the test watches
+        it rather than waiting out a timer.
+        """
         submitted: list[Invoice] = []
-        code_sent = asyncio.Event()
+        submission_reached = asyncio.Event()
+        """Set once the submission either waits for the verdict or runs, so the guard decides then."""
+
+        async def allow(ctx: RunContext[object]) -> bool:
+            submission_reached.set()
+            return await input_guardrails_allow(ctx)
+
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.input_guardrails_allow', allow)
 
         def record_invoice(order_id: str, total: int) -> Invoice:
             submitted.append(invoice := Invoice(order_id=order_id, total=total))  # pragma: no cover
+            submission_reached.set()  # pragma: no cover
             return invoice  # pragma: no cover
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
             args = json.dumps({'code': "submit_invoice(order_id='ord_1', total=1)\nprint('done')\n'end'"})
             # The submission's statement is closed once the next one is, so eager execution runs it now.
             yield {0: DeltaToolCall('run_code', json_args=args[: args.index("'end'")], tool_call_id='call-0')}
-            code_sent.set()
             await asyncio.Event().wait()
 
         async def guard(prompt: str) -> GuardrailResult:
-            await code_sent.wait()
-            # Time for a submission that doesn't wait for the verdict to run, so `submitted` would show it.
-            await asyncio.sleep(0.2)
+            await submission_reached.wait()
             return GuardrailResult.block('blocked')
 
         agent = Agent(
