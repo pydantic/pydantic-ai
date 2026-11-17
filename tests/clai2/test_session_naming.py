@@ -343,6 +343,38 @@ async def test_templated_sessions_get_their_own_titles_not_the_prompt_prefix(tmp
     assert prompts[-1].startswith('Previous title: Fix issue 11281\n')
 
 
+async def test_a_generated_title_survives_later_unrelated_turns(tmp_path: Path) -> None:
+    """Later renames refresh only the detail, so a session stays findable under the title it was given."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = await store.save(
+        summary=ConversationSummary(workspace='/a'),
+        messages=[ModelRequest(parts=[UserPromptPart('Reply with just the word OK.')])],
+    )
+    names = iter(
+        [
+            SessionName(title='Minimal acknowledgment reply check', subtitle='One-word reply'),
+            SessionName(title='Remove r4-feature git worktree', subtitle='Removing a git worktree', tags=['git']),
+        ]
+    )
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=next(names))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    assert await namer.name(conversation_id=saved.id, client=client)
+    named = await store.get(conversation_id=saved.id)
+    for _ in range(40):
+        await store.save(summary=named.summary, messages=named.messages)
+        named = await store.get(conversation_id=saved.id)
+    assert await namer.name(conversation_id=saved.id, client=client)
+    summary = (await store.get(conversation_id=saved.id)).summary
+    assert (summary.title, summary.subtitle, summary.tags) == (
+        'Minimal acknowledgment reply check',
+        'Removing a git worktree',
+        ('git',),
+    )
+
+
 async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond_case(tmp_path: Path) -> None:
     """Prompts differing only in their last word must not end up with titles differing only in case."""
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')

@@ -12,7 +12,7 @@ A production agent serves each conversation across many requests, processes and 
 |---|---|---|
 | Save a conversation and pick it up later — a chat thread, a support ticket, an assistant that remembers yesterday | [Store its `Conversation`](#storing-a-conversation-yourself) in a column of your own database | Core |
 | The same, with each message stored once, conflicting saves caught, and forking built in | A [`ConversationStore`](#using-a-conversation-store) on your own database | Core |
-| A log of what each run did, and snapshots to continue or fork a run from | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| A log of what each run did, a ledger of its tool side effects, and snapshots to recover a run from; not for storing sessions | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | A run to survive the process dying mid-tool-call, replaying its completed steps and retrying the one in flight | [Durable execution](durable_execution/overview.md) | Core |
 
@@ -120,11 +120,13 @@ Each stored message is a [`ConversationEntry`][pydantic_ai.conversation_store.Co
 
 [`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore] is for tests and examples. For a real database, subclass `ConversationStore`: it implements the loading, saving and forking on five storage primitives, so a backend only reads and writes records and entries.
 
-## Not writing that code yourself
+To have a [UI adapter](ui/overview.md#saving-to-a-conversation-store) load and save each chat request's conversation through a store, pass it as `conversation_store`. The client is sent a [`UserError`][pydantic_ai.exceptions.UserError] your store raises as is, so keep queries, hostnames and credentials out of it: for any other exception, the adapter warns on the server and sends a generic message.
 
-[`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) packages the pattern as a capability you add to an agent, so the load and save calls are not yours to write. It ships in-memory, file, SQLite, PostgreSQL and MongoDB backends, and its store is a protocol you can implement against your own database. Its snapshots hold the messages only, not the usage and pending deferred tool requests a `Conversation` carries, so store the `Conversation` too when you need those.
+## Recording what each run did
 
-It records more than the messages: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a conversation from, and a tool-effect ledger that records whether each tool call started, returned or raised. After a crash, a call that never finished has an unknown outcome, and one that raised may still have had its effect, so check the external system before running it again.
+To store sessions, use a [`ConversationStore`](#using-a-conversation-store), or [store the `Conversation`](#storing-a-conversation-yourself) yourself. [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) from Pydantic AI Harness remains supported, but it is for recovering runs rather than storing sessions: its snapshots hold the messages only, not the usage and pending deferred tool requests a `Conversation` carries. If you stored sessions with it, [Moving sessions to a `ConversationStore`](https://pydantic.dev/docs/ai/harness/step-persistence/#moving-sessions-to-a-conversationstore) copies each conversation into a store.
+
+What it adds is a record of each run: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a run from, and a tool-effect ledger that records whether each tool call started, returned or raised. After a crash, a call that never finished has an unknown outcome, and one that raised may still have had its effect, so check the external system before running it again.
 
 [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) builds on that without storing anything of its own: it ranks the history `StepPersistence` already wrote and gives the model a tool to pull earlier turns back into context on demand, including turns [compaction](capabilities/compaction.md) dropped. Pair the two on one store instance and recall needs no extra write path.
 

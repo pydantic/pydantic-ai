@@ -5,8 +5,6 @@ name: PR Review Gates
 # `.github/workflows/AGENTS.md` documents the rules and trust boundaries.
 
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] -- executes only default-branch code and evaluates live metadata
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   workflow_run: # zizmor: ignore[dangerous-triggers] -- no artifacts or upstream code are consumed; reevaluates live metadata
     workflows: [PR Bots, PR Review Gates Events]
     types: [completed]
@@ -46,7 +44,7 @@ jobs:
               // REST name includes custom run-name titles; identify the workflow by path.
               const events = {
                 '.github/workflows/bots.yml': ['pull_request_target'],
-                '.github/workflows/pr-review-gates-events.yml': ['pull_request_review', 'pull_request_review_comment']
+                '.github/workflows/pr-review-gates-events.yml': ['pull_request', 'pull_request_review', 'pull_request_review_comment']
               };
               if (!events[run.path]?.includes(run.event) ||
                   run.repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
@@ -69,9 +67,7 @@ jobs:
               if (matches.length !== 1) throw new Error('Requires one open PR at the observed workflow head');
               number = matches[0].number;
             } else {
-              number = context.payload.pull_request.number;
-              head = context.payload.pull_request.head.sha;
-              repository = context.payload.pull_request.head.repo?.id;
+              throw new Error('Unrecognized review gate event');
             }
             if (!Number.isSafeInteger(number) || number < 1 || !/^[a-f0-9]{40}$/.test(head) ||
                 !Number.isSafeInteger(repository) || repository < 1) throw new Error('Invalid PR identity');
@@ -133,6 +129,7 @@ jobs:
             .github/scripts/pr_gates.py
             .github/scripts/review_gates.py
             .github/scripts/publish_douwebot_review.py
+            .github/scripts/publish_pr_review_checks.py
             .github/scripts/pr_size.sh
             .github/scripts/check_api_compatibility.py
           sparse-checkout-cone-mode: false

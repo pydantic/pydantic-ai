@@ -37,7 +37,20 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls slow_research, a tool marked to run in the background. BackgroundTools answers at once with a started message and a task ID, so the model keeps working on other calls while the tool runs. When the tool finishes, its result arrives as a follow-up user message wrapped in a tool_result tag that names the tool and the call, and the next model request uses it. A normal run waits for its background tools before it ends.](https://pydantic.dev/docs/ai/img/harness/background-tools.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Background Tools: slow tools run while the agent keeps working
+    accDescr: The model calls slow_research(query) through the BackgroundTools capability. The capability runs slow_research in the background and answers with a started message and a task ID, so the model works on other calls or ends its turn. When slow_research returns its result, the capability sends the model a follow-up user message with the result and the same task ID.
+    participant model
+    participant cap as BackgroundTools()
+    participant tool as slow_research
+    model->>cap: slow_research(query)
+    cap->>tool: runs in the<br/>background
+    cap-->>model: started, task ID
+    Note over model: works on other calls<br/>or ends its turn
+    tool-->>cap: result
+    cap->>model: follow-up user message:<br/>result, same task ID
+```
 
 ## Selecting which tools run in the background
 
@@ -105,22 +118,25 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
-`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
-including handled failure notifications. This identifies the entire completion part, including any
-files and extra content. The metadata is not sent to the model and survives native message
-serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
-this metadata. A history loaded back from them keeps the text and its framing, but the follow-up
-is then an ordinary user prompt.
+Each follow-up, including a handled failure notification, is a
+`BackgroundToolResultPart` (from `pydantic_ai_harness.background_tools`), a
+`CapabilityPart` the run enqueues for its next `ModelRequest`.
+Find follow-ups in history by that type: its `tool_name`, `tool_call_id` and `outcome` fields name the call.
+The Vercel AI and AG-UI message conversions leave capability parts out, so follow-ups stay in
+server-side history.
 
 The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
-tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
+tags, like the `<pyai:tool_result>` tags Pydantic AI puts around tool files it sends on the user
+channel, with a note in the application's voice that the tool wrote it, not the user or the
+application. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
-completes. The `<` of every opening or closing framing tag inside the output (`<tool_result>`,
-`<system>` and the rest) is escaped, so the output stays inside its frame. A failed call is framed
+completes. The output goes out as the tool wrote it: text in it that looks like the frame's own tag
+or an application frame such as `<system>` gets a further note naming the tool as its author, so it
+can't end the frame early or speak as the application. A failed call is framed
 the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
-Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
+Text and files returned by the tool, then any `ToolReturn.content`, are sent to the model in that
+frame, with adjacent text joined on separate lines. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
 when a `before_tool_execute` or `after_tool_execute` hook raises them. A `ValidationError` from
 such a hook is reported too, as a sequential tool retries it. Any other tool exception ends the

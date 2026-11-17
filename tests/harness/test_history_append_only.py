@@ -13,24 +13,33 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
 from mcp.server.fastmcp import FastMCP
 
+import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    LocalWorkspace,
+    RawToolArgs,
+    ToolSearch,
+    Toolset,
+)
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
     Advisor,
     ApprovalReviewer,
     AskUser,
-    BubblewrapSandbox,
+    BubblewrappedWorkspace,
     CapabilityCreation,
     ClampOversizedMessages,
     ClearToolResults,
@@ -47,7 +56,9 @@ from pydantic_ai_harness import (
     ManagedPrompt,
     Ordinal,
     OutputGuardrail,
+    Peers,
     PostHog,
+    PruneToolResults,
     Pylon,
     RelevanceCompaction,
     RepoContext,
@@ -57,6 +68,7 @@ from pydantic_ai_harness import (
     SlidingWindowCompaction,
     SmartSearch,
     StackOne,
+    StreamGuardrail,
     SummarizingCompaction,
     SystemReminders,
     TieredCompaction,
@@ -70,16 +82,17 @@ from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTaskEvent,
     DelegationTasks,
     SubAgent,
     SubAgents,
-    is_task_report,
+    TaskOutputPart,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
@@ -101,6 +114,9 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = pytest.mark.filterwarnings(
@@ -164,6 +180,18 @@ def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
 
 
+class _PruneLatestReturn(AbstractCapability[None]):
+    """Points a scripted `prune_tool_result` call at the previous step's result, whose ID differs by provider."""
+
+    async def before_tool_validate(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        if call.tool_name != 'prune_tool_result':
+            return args
+        [latest] = [part.tool_call_id for part in ctx.messages[-2].parts if isinstance(part, ToolReturnPart)]
+        return {**call.args_as_dict(), 'tool_call_id': latest}
+
+
 def _forecast(city: str) -> str:
     """Get the weather forecast for a city."""
     return f'Sunny in {city}.'
@@ -186,6 +214,51 @@ def _forecasting() -> AbstractCapability[Any]:
     return Capability(
         id='forecasting', description='Weather forecasts.', tools=[Tool(_forecast, name='forecast')], defer_loading=True
     )
+
+
+def _open_forecasting(ctx: RunContext[Any]) -> str:
+    """Open the forecasting capability."""
+    ctx.load_capability('forecasting')
+    return 'Opened.'
+
+
+def _summarized_load(
+    load: tuple[str, dict[str, Any]], *extra: AbstractCapability[Any]
+) -> Callable[[Path], tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]]:
+    """Load `forecasting` and call `forecast` in the first run; the continued run compacts, then calls it again.
+
+    A load the summary replaced is recorded again right after it as a `CapabilityLoadDeltaPart` and the reveal of its
+    tools (#11770), whether the model or code loaded it, so the requests after the compaction only append, and the
+    model's call to the tool the load revealed still runs.
+    """
+    scenario = Scenario(
+        turns=(
+            Turn(calls=(load,)),
+            Turn(calls=(('forecast', {'city': 'Paris'}),)),
+            Turn(text='Sunny in Paris.'),
+            # The second run's second request compacts, and the model then calls the tool the load revealed.
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(calls=(('forecast', {'city': 'Brest'}),)),
+            Turn(text='Sunny in Brest.'),
+        ),
+    )
+
+    def still_loaded(result: ConversationResult) -> None:
+        returns = [
+            part.content
+            for message in result.history
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'forecast'
+        ]
+        assert returns[-1] == 'Sunny in Brest.', f'the call after the compaction was refused: {returns[-1]!r}'
+
+    def conversation(
+        tmp_path: Path,
+    ) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+        compaction = SummarizingCompaction(TestModel(), max_messages=8, keep_messages=2)
+        return [compaction, _forecasting(), *extra], scenario, still_loaded
+
+    return conversation
 
 
 def _tidal() -> AbstractCapability[Any]:
@@ -233,6 +306,14 @@ def _modal_sandbox() -> AbstractCapability[Any]:
     return ModalSandbox(warn_if_no_tools=False)
 
 
+def _kubernetes_sandbox() -> KubernetesSandbox:
+    # Imported here, so collecting this file never imports the agent-sandbox SDK. The test has already
+    # skipped when it isn't installed (`OPTIONAL_DEPENDENCIES`).
+    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+    return KubernetesSandbox(warm_pool='python-pool')
+
+
 def _ipython_code_mode() -> AbstractCapability[Any]:
     # Imported here, so collecting this file never imports `jupyter_client`. The test has already skipped
     # when it isn't installed (`OPTIONAL_DEPENDENCIES`).
@@ -255,7 +336,7 @@ FIXTURES: dict[str, Fixture] = {
     'Advisor': lambda _: Advisor(TestModel()),
     'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
     'AskUser': lambda _: AskUser(answerer=None),
-    'BubblewrapSandbox': lambda tmp_path: BubblewrapSandbox(LocalWorkspace(tmp_path)),
+    'BubblewrappedWorkspace': lambda tmp_path: BubblewrappedWorkspace(LocalWorkspace(tmp_path)),
     'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
@@ -273,10 +354,13 @@ FIXTURES: dict[str, Fixture] = {
     # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
     # launching a kernel process for every provider.
     'IPythonCodeMode': lambda _: _ipython_code_mode(),
+    'KubernetesSandbox': lambda _: _kubernetes_sandbox(),
     'Macroscope': _workspace(Macroscope),
     'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
     'ModalSandbox': lambda _: _modal_sandbox(),
     'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
+    'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
+    'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'RepoContext': _repo_context,
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
@@ -285,6 +369,7 @@ FIXTURES: dict[str, Fixture] = {
     'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
     'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
     'StackOne': lambda _: StackOne('account', client=_hosted_server()),
+    'StreamGuardrail': lambda _: StreamGuardrail(guard=lambda part: True),
     'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
     'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
     'TieredCompaction': lambda _: TieredCompaction(
@@ -383,6 +468,26 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
         ],
         _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
     ),
+    # A discovery the summary replaced is recorded again as a reveal right after it (#11493), so the tool stays
+    # callable without another search, and the requests after the compaction only append.
+    'SummarizingCompaction+ToolSearch': (
+        lambda _: [
+            SummarizingCompaction(TestModel(), max_messages=8, keep_messages=2),
+            ToolSearch(strategy='keywords'),
+            _deferred_forecast_and_tides(),
+        ],
+        Scenario(
+            turns=(
+                Turn(calls=(('search_tools', {'queries': ['forecast']}),)),
+                Turn(calls=(('forecast', {'city': 'Paris'}),)),
+                Turn(text='Sunny in Paris.'),
+                # The second run's second request compacts, and the model then calls the tool it found in the first.
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(calls=(('forecast', {'city': 'Brest'}),)),
+                Turn(text='Sunny in Brest.'),
+            ),
+        ),
+    ),
     # The documented contrast: the catalog lives in `run_code`'s description.
     'CodeMode(dynamic_catalog=False)+ToolSearch': (
         lambda _: [CodeMode(dynamic_catalog=False), ToolSearch(strategy='keywords'), _deferred_forecast_and_tides()],
@@ -415,6 +520,20 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
+    ),
+    # The first run's second step prunes the first step's result.
+    'PruneToolResults': Scenario(state_calls=(('prune_tool_result', {'tool_call_id': '', 'summary': 'Quiet.'}),)),
+    # Each run ends with a review round, which takes a turn of its own.
+    'RefineOutput': Scenario(
+        turns=(
+            Turn(calls=(('look_up', {'topic': 'weather'}),)),
+            Turn(calls=(('look_up', {'topic': 'news'}),)),
+            Turn(text='Here is the weather and the news.'),
+            Turn(text='Here is the weather and the news, checked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+            Turn(text='Here is more, checked.'),
+        )
     ),
     'RepoContext': Scenario(
         state_calls=(
@@ -457,11 +576,40 @@ ALLOWED: dict[str, Allowed] = {
         'Clears superseded file reads in place, as documented, when the model reads a file again',
         (('messages', 'tool-return'),),
     ),
+    'PruneToolResults': Allowed(
+        'Replaces the tool result the model pruned, once per accepted `prune_tool_result` call',
+        (('messages', 'tool-return'),),
+    ),
     # With a 20-token trigger every request is over it, so each request with an older step outside the
     # one-token tail judges and rewrites it: two in this conversation.
     'RelevanceCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
+    # The compaction, which removes the load's reveal of `forecast` (sent as a system message) with the rest, and on
+    # Chat Completions, which has no deferred-tool channel, the first run's reveal adding `forecast` to `tools`
+    # (docs/tools-advanced.md). The load recorded again after the summary, and the statement of the capability's
+    # instructions that follows it, must move nothing more. Only Chat Completions needs the second move, but
+    # `Allowed` can't vary `max_moves` by provider.
+    **{
+        name: Allowed(
+            f'{_COMPACTION}; on Chat Completions a load also adds its tools to `tools`, as documented',
+            (*_HISTORY, ('messages', 'system-prompt'), ('tools', 'tool:forecast')),
+            max_moves=2,
+        )
+        for name in (
+            'SummarizingCompaction+Capability(defer_loading=True)',
+            'SummarizingCompaction+RunContext.load_capability',
+        )
+    },
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
+    # The compaction, and on Chat Completions, which has no deferred-tool channel, the first run's reveal adding
+    # `forecast` to `tools` (docs/tools-advanced.md). The reveal recorded after the summary must move nothing more.
+    # Only Chat Completions needs the second move: Anthropic and OpenAI Responses move once, for the compaction,
+    # but `Allowed` can't vary `max_moves` by provider.
+    'SummarizingCompaction+ToolSearch': Allowed(
+        f'{_COMPACTION}; on Chat Completions a local reveal also adds the tool to `tools`, as documented',
+        (*_HISTORY, ('tools', 'tool:search_tools')),
+        max_moves=2,
+    ),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
@@ -530,11 +678,15 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'BoxLiteSandbox': 'boxlite',
     'BrowserUse': 'browser_use',
     'DaytonaSandbox': 'daytona',
+    'AzureDurableTaskDurability': 'durabletask',
     'E2BSandbox': 'e2b',
     'ExaAgent': 'exa_py',
     'ExaSearch': 'exa_py',
     'IPythonCodeMode': 'jupyter_client',
+    'KubernetesSandbox': 'k8s_agent_sandbox',
     'ModalSandbox': 'modal',
+    'OpenSandbox': 'opensandbox',
+    'Pixeltable': 'pixeltable',
     'PlaywrightBrowser': 'playwright',
     'PromptInjectionDefender': 'stackone_defender',
     'SmolSandbox': 'smol',
@@ -592,12 +744,10 @@ def _delegation_reports(
     def delivered_once(result: ConversationResult) -> None:
         parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
         assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
-        # Delivered as framed `<task_output>` data on the user channel, recognized by its metadata.
+        # Delivered as a typed `<task_output>` capability part, which survives serialization as one.
         (part,) = parts
-        assert is_task_report(part), f'expected a task report, found {part!r}'
-        assert not isinstance(part.content, str)
-        (text,) = part.content
-        assert isinstance(text, TextContent) and text.content.startswith('<task_output task_id=')
+        assert isinstance(part, TaskOutputPart), f'expected a task report, found {part!r}'
+        assert part.content == _REPORT
 
     scenario = Scenario(
         turns=(
@@ -619,7 +769,42 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
-CONVERSATIONS = {'DelegationReports': _delegation_reports}
+_PEER_NOTE = 'The deploy finished.'
+
+
+def _peer_message(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A peer message that arrives between the runs enters the second run's history once, as peer data."""
+    network = InMemoryPeerNetwork()
+    inbox = LocalPeerInbox(path=tmp_path / 'inbox.json')
+    view = network.join(handle='self', inbox=inbox)
+    sender = network.join(handle='ops')
+
+    async def send() -> None:
+        (recipient,) = await sender.peers()
+        await sender.send(recipient.id, _PEER_NOTE, key='ops:1')
+
+    def delivered_once(result: ConversationResult) -> None:
+        parts = [
+            part for message in result.history for part in getattr(message, 'parts', ()) if _PEER_NOTE in str(part)
+        ]
+        assert len(parts) == 1, f'expected the peer message in history once, found {len(parts)}'
+        assert read_peer_message(parts[0]) is not None, f'expected a peer message, found {parts[0]!r}'
+
+    return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
+
+
+CONVERSATIONS = {
+    'Peers': _peer_message,
+    'DelegationReports': _delegation_reports,
+    'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
+        ('load_capability', {'id': 'forecasting'})
+    ),
+    'SummarizingCompaction+RunContext.load_capability': _summarized_load(
+        ('open_forecasting', {}), Toolset(FunctionToolset([Tool(_open_forecasting, name='open_forecasting')]))
+    ),
+}
 """Capabilities whose behavior needs a conversation of its own, with the check it must also pass."""
 
 
@@ -628,7 +813,7 @@ def test_every_capability_has_a_case():
     tables = (
         FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
     ) | OPTIONAL_DEPENDENCIES.keys()
-    stale = (tables | CONVERSATIONS.keys()) - CAPABILITIES.keys() - VARIANTS.keys()
+    stale = tables - CAPABILITIES.keys() - VARIANTS.keys() - CONVERSATIONS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
@@ -648,7 +833,10 @@ def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path,
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
-@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(VARIANTS))
+@pytest.mark.parametrize(
+    'name',
+    sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(VARIANTS.keys() | CONVERSATIONS.keys() - CAPABILITIES.keys()),
+)
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):

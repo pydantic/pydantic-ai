@@ -18,7 +18,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset
+from pydantic_ai_harness._mcp import credential, hosted_toolset, one_connection, prefixed_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -50,7 +50,7 @@ class Ordinal(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """Stable capability and toolset ID, so `defer_loading=True` needs none.
 
-    One `Ordinal` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
+    One `Ordinal` is one connection to one account. Two sharing this `id` are
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
 
@@ -80,7 +80,7 @@ class Ordinal(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and self.auth is not None:
+        if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
     @classmethod
@@ -90,15 +90,9 @@ class Ordinal(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Ordinal MCP tools."""
-        id = self.id or _ID
-        if self.client is not None:
-            toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
-            )
-        elif callable(self.auth):
-            toolset = per_run_connection(self.auth, self._connect, id=id)
-        else:
-            toolset = self._connect(self.auth)
+        toolset = hosted_toolset(
+            self.client, self.auth, self._connect, id=self.id or _ID, include_instructions=self.include_instructions
+        )
         return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:

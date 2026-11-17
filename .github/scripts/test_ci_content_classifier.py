@@ -346,6 +346,7 @@ def test_harness_only_tier_skips_only_jobs_outside_the_harness():
         assert harness_skip in CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])['if']
     for name in (
         'quality',
+        'complexity',
         'docs-assets',
         'test',
         'test-all-extras',
@@ -468,7 +469,7 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('.agents/skills/review/SKILL.md', 'false'),
         ('.agents/data/catalog.tsv', 'false'),
         ('.claude/skills/review/SKILL.md', 'false'),
-        ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/_capability.py', 'false'),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/file_system/_capability.py', 'false'),
         ('tests/harness/repo_context/fixtures/AGENTS.md', 'false'),
         ('tests/harness/conftest.py', 'false'),
         ('src/pydantic_clai2/pydantic_clai2/app.py', 'false'),
@@ -511,8 +512,8 @@ def test_benchmark_classifier_skips_filesystem_documentation_pr(tmp_path: Path):
     changed_files = [
         ('THREAT_MODEL.md', ''),
         ('docs/harness/filesystem.md', ''),
-        ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/README.md', ''),
-        ('src/pydantic_ai_harness/pydantic_ai_harness/filesystem/_capability.py', ''),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/file_system/README.md', ''),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/file_system/_capability.py', ''),
     ]
     outputs = _classify(tmp_path, changed_files, workflow_path=BENCHMARK_WORKFLOW)
 
@@ -637,8 +638,9 @@ def test_python_test_jobs_use_content_only_output():
         job = CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])
         assert "needs.classify.outputs.content_only != 'true'" in job['if']
 
-    quality = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['quality'])
-    assert quality['if'] == "needs.classify.outputs.content_only != 'true'"
+    for name in ('quality', 'complexity'):
+        job = CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])
+        assert job['if'] == "needs.classify.outputs.content_only != 'true'"
 
 
 def test_docs_checks_cover_harness_readmes():
@@ -697,6 +699,7 @@ def test_aggregate_requires_the_selected_lightweight_job():
     assert {'test-clai2-web'} <= harness_skips
     for job in (
         'quality',
+        'complexity',
         'docs-assets',
         'test',
         'test-all-extras',

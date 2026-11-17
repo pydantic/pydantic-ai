@@ -270,10 +270,10 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. Pydantic AI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
 
-Three parts of the docstring reach the model: the leading description, the parameter descriptions, and the
-first entry of the returns section. Other sections Griffe can parse, such as `Raises`, `Examples`, `Notes`,
-`Warnings` and `Yields`, are dropped, so anything the model needs to act on belongs in the
-leading description, a parameter description, or the first returns entry.
+Three parts of the docstring reach the model: the leading description, the parameter descriptions (including
+those under `Keyword Args` or `Other Parameters`), and the first entry of the returns section. Other sections
+Griffe can parse, such as `Raises`, `Examples`, `Notes`, `Warnings` and `Yields`, are dropped, so anything the
+model needs to act on belongs in the leading description, a parameter description, or the first returns entry.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
@@ -379,6 +379,8 @@ print(test_model.last_model_request_parameters.function_tools)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+A model whose [profile](models/overview.md#models-and-providers) inlines `$defs`, for example with [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer], receives a copy of each referenced definition wherever it is referenced. Pydantic AI allows up to 250,000 JSON values in those copies per tool or output schema, counting each object, array, string, number, boolean and null once. Past that, it raises a [`UserError`][pydantic_ai.exceptions.UserError] before sending the request, with a message such as `The JSON schema of tool 'search' is too large` that names the limit. To fix this, refer to large definitions from fewer places, leave the tool out of requests with [`prepare_tools`](tools-advanced.md#prepare-tools) or a [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset], or use a model that keeps `$ref`s.
 
 ### Docstrings {#docstrings}
 

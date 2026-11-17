@@ -151,6 +151,8 @@ class WebUI:
     epsilon: str
     busy: str
     """A session another CLAI runs: this test process's parent."""
+    removed: str
+    """Saved in a folder that is gone."""
     saved: str
     """Saved in Gamma's folder, so it opens while Gamma is the default session, and not live until a test opens it."""
     moved: str
@@ -214,6 +216,11 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
                     messages=[],
                 )
             )
+            removed = portal.call(
+                lambda: fleet.launch.sessions.store.save(
+                    summary=ConversationSummary(workspace=str(root / 'gone'), title='Browser Removed'), messages=[]
+                )
+            )
             summary = ConversationSummary(workspace=str(fleet.folder('gamma')), title='Browser Saved')
             history: list[ModelMessage] = [
                 ModelRequest(parts=[UserPromptPart(content='Saved prompt')]),
@@ -232,6 +239,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
                     delta=delta,
                     epsilon=epsilon,
                     busy=busy.id,
+                    removed=removed.id,
                     saved=saved.id,
                     moved=moved.id,
                     fleet=fleet,
@@ -251,7 +259,7 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Alpha', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Render the hostile example')
@@ -294,7 +302,7 @@ async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Print one item per line')
@@ -366,8 +374,95 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
+async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:
+    """A repository's heading shows its main checkout's folder, not the Git folder that keys it."""
+    session = {
+        'id': 's',
+        'title': 'Scratch work',
+        'workspace': '/x/scratch',
+        'updated_at': '2026-01-01T00:00:00Z',
+        'created_at': '2026-01-01T00:00:00Z',
+        'state': 'ready',
+        'owner_pid': None,
+        'messages': 2,
+        'model': None,
+        'current': False,
+        'archived': False,
+        'openable': True,
+    }
+    worktree = {'root': '/x/scratch', 'label': 'main', 'current': True, 'missing': False, 'sessions': [session]}
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(
+            json=[
+                {
+                    'key': '/x/scratch/.git',
+                    'folder': '/x/scratch',
+                    'name': 'scratch',
+                    'current': True,
+                    'worktrees': [worktree],
+                }
+            ]
+        )
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    heading = page.locator('.sidebar .project-title').filter(has_text='scratch')
+    await expect(heading).to_have_attribute('title', '/x/scratch')
+
+
+async def test_imported_session_shows_its_source(page: Page, web_ui: WebUI) -> None:
+    """A session imported from Claude Code or Codex says which beside its title; CLAI's own say nothing."""
+
+    def entry(session_id: str, title: str, source: str | None) -> dict[str, object]:
+        return {
+            'id': session_id,
+            'title': title,
+            'workspace': '/x/scratch',
+            'updated_at': '2026-01-01T00:00:00Z',
+            'created_at': '2026-01-01T00:00:00Z',
+            'state': 'ready',
+            'owner_pid': None,
+            'messages': 2,
+            'model': None,
+            'current': False,
+            'archived': False,
+            'openable': True,
+            'source': source,
+        }
+
+    worktree = {
+        'root': '/x/scratch',
+        'label': 'main',
+        'current': True,
+        'missing': False,
+        'sessions': [entry('a', 'Imported work', 'Claude Code'), entry('b', 'Own work', None)],
+    }
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(
+            json=[
+                {
+                    'key': '/x/scratch/.git',
+                    'folder': '/x/scratch',
+                    'name': 'scratch',
+                    'current': True,
+                    'worktrees': [worktree],
+                }
+            ]
+        )
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    imported = page.locator('.sidebar .session').filter(has_text='Imported work')
+    await expect(imported.locator('.session-chip')).to_have_text('Claude Code')
+    own = page.locator('.sidebar .session').filter(has_text='Own work')
+    await expect(own).to_be_visible()
+    await expect(own.locator('.session-chip')).to_have_count(0)
+
+
 async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
-    """A project's removed worktrees wait, closed, in one group after its live ones; each archives at once."""
+    """Sessions of removed worktrees wait, closed, in one group after the live ones; a branch archives at once."""
 
     def sidebar_session(session_id: str, title: str) -> dict[str, object]:
         return {
@@ -375,11 +470,14 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
             'title': title,
             'workspace': f'/wt/{session_id}',
             'updated_at': '2026-01-01T00:00:00Z',
+            'created_at': '2026-01-01T00:00:00Z',
             'state': 'ready',
+            'owner_pid': None,
             'messages': 2,
             'model': None,
             'current': False,
             'archived': False,
+            'openable': True,
         }
 
     worktrees = [
@@ -400,7 +498,18 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     ]
 
     async def sessions(route: Route) -> None:
-        await route.fulfill(json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}])
+        # Another project's removed worktree has the same label; archiving one branch leaves it alone.
+        other_gone = {
+            'root': '/other/gone',
+            'label': 'gone',
+            'current': False,
+            'missing': True,
+            'sessions': [sidebar_session('o1', 'Other gone')],
+        }
+        other_project = {'key': 'other', 'name': 'other', 'current': False, 'worktrees': [other_gone]}
+        await route.fulfill(
+            json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}, other_project]
+        )
 
     async def archive(route: Route) -> None:
         await route.fulfill(status=204)
@@ -409,23 +518,53 @@ async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(pag
     await page.route('**/api/sessions/archive', archive)
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
+    await sidebar.get_by_role('button', name='Projects', exact=True).click()
     await expect(sidebar.get_by_text('Live work', exact=True)).to_be_visible()
-    fold = sidebar.get_by_role('button', name='Removed worktrees (1)')
+    fold = sidebar.get_by_role('button', name='Removed worktrees (3)', exact=True)
     await expect(fold).to_be_visible()
     await expect(sidebar.get_by_text('Gone one', exact=True)).to_have_count(0)
     await fold.click()
-    await expect(sidebar.get_by_text('Gone one', exact=True)).to_be_visible()
-    gone = sidebar.locator('.worktree-head').filter(has_text='gone')
+    gone = sidebar.locator('.session').filter(has_text='Gone one')
+    await expect(gone).to_be_visible()
     await gone.hover()
-    await gone.get_by_role('button', name='Worktree actions').click()
+    await gone.get_by_role('button', name='Session actions').click()
     async with page.expect_request('**/api/sessions/archive') as request:
-        await sidebar.get_by_role('button', name='Archive all sessions in this worktree').click()
+        await sidebar.get_by_role('button', name='Archive all in gone').click()
     assert (await request.value).post_data_json == {'ids': ['g1', 'g2']}
-    # A search lists only a worktree's matching sessions, so it cannot archive all of them.
+    # A search lists only a branch's matching sessions, so it cannot archive all of them.
     await sidebar.get_by_role('textbox', name='Search sessions', exact=True).fill('Gone one')
     await gone.hover()
-    await gone.get_by_role('button', name='Worktree actions').click()
-    await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
+    await gone.get_by_role('button', name='Session actions').click()
+    await expect(sidebar.get_by_role('button', name='Archive all in gone')).to_be_disabled()
+
+
+async def test_row_menus_open_from_the_keyboard_and_by_right_click(page: Page, web_ui: WebUI) -> None:
+    """Tab reaches a heading's `…` button, which shows on focus, and right-click opens the same menu."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_role('button', name='Projects', exact=True).click()
+    head = sidebar.locator('.project-head').first
+    more = head.locator('.session-more')
+    archive_chats = sidebar.get_by_role('button', name='Archive chats')
+    await expect(more).to_have_css('opacity', '0')
+    await sidebar.get_by_role('textbox', name='Search sessions', exact=True).focus()
+    for _ in range(30):
+        await page.keyboard.press('Tab')
+        if await more.evaluate('button => button === document.activeElement'):
+            break
+    await expect(more).to_be_focused()
+    await expect(more).to_have_css('opacity', '1')
+    await page.keyboard.press('Enter')
+    await expect(archive_chats).to_be_visible()
+    await page.keyboard.press('Escape')
+    await expect(archive_chats).to_have_count(0)
+
+    await page.mouse.move(0, 0)
+    await head.click(button='right')
+    await expect(archive_chats).to_be_visible()
+    await page.keyboard.press('Escape')
+    await sidebar.locator('.session').first.click(button='right')
+    await expect(sidebar.get_by_role('button', name='Rename', exact=True)).to_be_visible()
 
 
 async def test_a_million_token_window_reads_in_millions(page: Page, web_ui: WebUI) -> None:
@@ -447,7 +586,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Only Beta should receive this')
@@ -457,7 +596,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_be_visible()
     await page.locator('.sidebar').get_by_text('Browser Alpha', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await expect(composer).to_be_enabled()
     await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
     await page.clock.install()
@@ -569,7 +708,7 @@ async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     for prompt in ('Recall the first prompt', 'Recall the second prompt\non two lines'):
@@ -651,7 +790,7 @@ async def test_a_failed_tool_leads_with_its_error(
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Delta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Delta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill(prompt)
@@ -726,7 +865,7 @@ async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, 
     for title, conversation in (('Browser Beta', web_ui.beta), ('Browser Alpha', web_ui.alpha)):
         await sidebar.get_by_text(title, exact=True).click()
         await expect(page.locator('.session.current .session-title')).to_have_text(title)
-        await expect(page.locator('.session.opening')).to_have_count(0)
+        await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
         await expect(composer).to_be_enabled()
         await composer.fill(f'Keep {title}')
         async with page.expect_response(f'**/api/sessions/{conversation}/input') as sent:
@@ -749,7 +888,7 @@ async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, 
         await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.transcript[data-kept="yes"]')).to_be_visible()
     await expect(page.locator('.transcript').filter(has_text='Keep Browser Alpha')).to_be_hidden()
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     assert await page.evaluate('window.claiTestSnapshots.length') == snapshots, 'it was watched all along'
     [route] = held
     await route.continue_()
@@ -778,7 +917,7 @@ async def test_a_watched_session_switching_conversation_in_the_background_stays_
     for title in ('Browser Alpha', 'Browser Beta'):
         await sidebar.get_by_text(title, exact=True).click()
         await expect(page.locator('.session.current .session-title')).to_have_text(title)
-        await expect(page.locator('.session.opening')).to_have_count(0)
+        await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     async with page.expect_response(f'**/api/sessions/{web_ui.alpha}/input') as sent:
         await page.evaluate(
             """([id, token]) => fetch(`/api/sessions/${id}/input`, {
@@ -797,7 +936,7 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Epsilon', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Epsilon')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Write the forbidden file')
@@ -813,12 +952,16 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
-async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
-    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+async def test_a_refused_update_shows_no_saved_badge(
+    page: Page, web_ui: WebUI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings > About refuses Update… while CLAI cannot restart; its row must not claim it saved anything."""
+    # The launch session installs for every page, so its refusal is the one About shows.
+    monkeypatch.setattr(web_ui.fleet.launch, 'restart_refusal', lambda: 'CLAI cannot restart now.')
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await page.evaluate("location.hash = '#settings/about'")
     settings = page.get_by_role('dialog', name='Settings')
     version = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Version'))
@@ -828,7 +971,7 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
     badge = await page.wait_for_function(
         """() => {
-          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          if (!document.querySelector('.toast.error')?.textContent?.includes('CLAI cannot restart now.')) return null
           const row = [...document.querySelectorAll('.setting')]
             .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
           return row.querySelector('.setting-state')?.textContent ?? 'none'
@@ -886,9 +1029,11 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await expect(current).to_have_count(1)
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
+    # The row is selected at once; Gamma has shown once no row is still opening.
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(current).to_have_text('Browser Beta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await expect(composer).to_be_focused()
     # Typing right away lands in the prompt box.
     await page.keyboard.type('typed after switching')
@@ -903,12 +1048,15 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
 
     await page.route(f'**/api/sessions/{web_ui.delta}/open', hold)
     await sidebar.get_by_text('Browser Delta', exact=True).click()
-    await expect(page.locator('.session.opening')).to_have_count(1)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(1)
+    # The row picked is the selection at once, while its session still opens, and shows no spinner of its own.
+    await expect(current).to_have_text('Browser Delta')
+    await expect(page.locator('.session[aria-busy="true"] .spinner')).to_have_count(0)
     search = page.get_by_placeholder('Search sessions')
     await search.focus()
     release.set()
     await expect(current).to_have_text('Browser Delta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await expect(search).to_be_focused()
     # A watched session shows at once without opening, and takes focus all the same.
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
@@ -925,7 +1073,7 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
         (folder / name).write_text(name)
     await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     options = page.get_by_role('listbox').get_by_role('option')
@@ -957,7 +1105,8 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     # A mention typed before more text replaces only itself, the caret stays after it, and the list stays closed.
     await composer.fill('see  and more')
     await composer.evaluate('area => area.setSelectionRange(4, 4)')
-    await page.keyboard.type('@REA')
+    # Entered at once: typed key by key, the list for `@RE` could show first, and Tab waits for the newer one.
+    await page.keyboard.insert_text('@REA')
     await expect(names.first).to_have_text('README.md')
     await composer.press('Tab')
     await expect(composer).to_have_value('see @README.md and more')
@@ -1057,6 +1206,7 @@ async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui
     # This CLAI does not follow sessions' folders, so it continues only those of the session it shows: Beta's.
     await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     async with page.expect_response(f'**/api/sessions/{web_ui.busy}') as shown:
         await sidebar.get_by_text('Browser Busy', exact=True).click()
     assert (await shown.value).ok
@@ -1073,7 +1223,7 @@ async def list_gamma_folder_as_openable(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await page.reload()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
 
@@ -1203,7 +1353,7 @@ async def test_opening_a_session_that_resolves_to_the_shown_one_ends_the_wait(pa
     shown = 'Browser Beta'
     await sidebar.get_by_text(shown, exact=True).click()
     await expect(current).to_have_text(shown)
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
 
     async def to_shown(route: Route) -> None:
         await route.fulfill(json={'id': web_ui.beta})
@@ -1213,8 +1363,201 @@ async def test_opening_a_session_that_resolves_to_the_shown_one_ends_the_wait(pa
         await sidebar.get_by_text(clicked, exact=True).click()
     # Well before the 15 second fallback that ends a wait for a session that never shows.
     await expect(page.locator('.opening-overlay')).to_have_count(0, timeout=2_000)
-    await expect(page.locator('.session.opening')).to_have_count(0, timeout=2_000)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0, timeout=2_000)
     await expect(current).to_have_text(shown)
+
+
+async def opened(page: Page, title: str) -> None:
+    """Wait for the session picked to be the one shown, not only the row selected."""
+    await expect(page.locator('.session.current .session-title')).to_have_text(title)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
+
+
+async def send(page: Page, conversation: str, text: str) -> None:
+    """Prompt a session that the page does not show, as another tab or the terminal would."""
+    async with page.expect_response(f'**/api/sessions/{conversation}/input') as sent:
+        await page.evaluate(
+            """([id, token, text]) => fetch(`/api/sessions/${id}/input`, {
+              method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+              body: JSON.stringify({text}),
+            })""",
+            [conversation, TOKEN, text],
+        )
+    assert (await sent.value).ok
+
+
+async def test_sidebar_rows_keep_their_places(page: Page, web_ui: WebUI) -> None:
+    """Activity, renames, and selection move no row: each keeps its height in the list, however far it is scrolled."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_role('button', name='Projects', exact=True).click()
+    await expect(sidebar.get_by_text('Browser Epsilon', exact=True)).to_be_visible()
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await opened(page, 'Browser Beta')
+    rows = sidebar.locator('.session')
+
+    async def places() -> list[tuple[str, float]]:
+        return await rows.evaluate_all(
+            'rows => rows.map(row => [row.dataset.session, Math.round(row.getBoundingClientRect().top - row.closest(".projects").getBoundingClientRect().top + row.closest(".projects").scrollTop)])'
+        )
+
+    before = await places()
+    # Projects are listed by name, whichever is current, and removed folders fold away last.
+    assert [title for title in await sidebar.locator('.project-name').all_inner_texts()][-1] == 'Removed worktrees (1)'
+
+    # A turn in a session not shown saves it, which used to move its row to the top.
+    await send(page, web_ui.gamma, 'Activity elsewhere')
+    gamma = sidebar.locator(f'.session[data-session="{web_ui.gamma}"]')
+    await expect(gamma).to_have_class(re.compile(r'\bunread\b'))
+    assert await places() == before
+
+    response = await page.evaluate(
+        """([id, token]) => fetch(`/api/sessions/${id}/rename`, {
+          method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+          body: JSON.stringify({title: 'Browser Delta renamed'}),
+        }).then(response => response.status)""",
+        [web_ui.delta, TOKEN],
+    )
+    assert response == 204
+    await expect(sidebar.get_by_text('Browser Delta renamed', exact=True)).to_be_visible()
+    assert await places() == before
+
+    await sidebar.get_by_text('Browser Alpha', exact=True).click()
+    await opened(page, 'Browser Alpha')
+    assert await places() == before
+    # Opening the unread session marks it read.
+    await gamma.locator('.session-main').click()
+    await opened(page, 'Browser Gamma')
+    await expect(gamma).not_to_have_class(re.compile(r'\bunread\b'))
+    assert await places() == before
+
+    # Recent lists every project's sessions newest created first.
+    await sidebar.get_by_role('button', name='Recent', exact=True).click()
+    created = [web_ui.removed, web_ui.busy, web_ui.epsilon, web_ui.delta, web_ui.gamma, web_ui.lines]
+    listed = [conversation for conversation, _ in await places() if conversation in created]
+    assert listed == [web_ui.busy, web_ui.epsilon, web_ui.delta, web_ui.gamma, web_ui.lines], (
+        'the removed one is folded away'
+    )
+    await page.evaluate(
+        """([id, token]) => fetch(`/api/sessions/${id}/rename`, {
+          method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+          body: JSON.stringify({title: 'Browser Delta'}),
+        })""",
+        [web_ui.delta, TOKEN],
+    )
+    await expect(sidebar.get_by_text('Browser Delta', exact=True)).to_be_visible()
+    await sidebar.get_by_role('button', name='Recent', exact=True).click()
+    await expect(sidebar.get_by_role('button', name='Projects', exact=True)).to_have_attribute('aria-pressed', 'true')
+
+
+async def test_a_session_another_clai_runs_shows_a_ring(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    row = sidebar.locator(f'.session[data-session="{web_ui.busy}"]')
+    ring = row.locator('.state.busy')
+    await expect(ring).to_have_attribute('title', f'Running in clai2 pid {os.getppid()}')
+    await expect(row.locator('.spinner')).to_have_count(0)
+    # It is running, so the attention view lists it, and the archived view does not.
+    await sidebar.get_by_role('button', name=re.compile('^Attention')).click()
+    await expect(row).to_be_visible()
+    await expect(sidebar.locator('.session').filter(has_text='Browser Beta')).to_have_count(0)
+    search = sidebar.get_by_role('textbox', name='Search sessions', exact=True)
+    await search.fill('nothing is called this')
+    await expect(sidebar.get_by_text('No matching sessions', exact=True)).to_be_visible()
+    await search.fill('')
+    await sidebar.get_by_role('button', name='Archived', exact=True).click()
+    await expect(row).to_have_count(0)
+    await sidebar.get_by_role('button', name='Projects', exact=True).click()
+    await expect(row).to_be_visible()
+
+
+async def test_removed_worktrees_fold_away(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    bucket = sidebar.get_by_role('button', name='Removed worktrees (1)', exact=True)
+    await expect(bucket).to_have_attribute('aria-expanded', 'false')
+    removed = sidebar.get_by_text('Browser Removed', exact=True)
+    await expect(removed).to_have_count(0)
+    await bucket.click()
+    await expect(removed).to_be_visible()
+    # What is opened or folded is kept across reloads.
+    await page.reload()
+    await expect(removed).to_be_visible()
+    await bucket.click()
+    await expect(removed).to_have_count(0)
+
+
+async def test_sidebar_keyboard(page: Page, web_ui: WebUI) -> None:
+    """Search moves to its results with Down and opens the first with Enter; the arrows move between rows."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    search = sidebar.get_by_role('textbox', name='Search sessions', exact=True)
+    await search.fill('Browser Gamma')
+    gamma = sidebar.locator(f'.session[data-session="{web_ui.gamma}"] .session-main')
+    await expect(sidebar.locator('.session')).to_have_count(1)
+    await expect(gamma).to_be_visible()
+    await search.press('ArrowDown')
+    await expect(gamma).to_be_focused()
+    # Up goes back through the project's heading to the search.
+    await page.keyboard.press('ArrowUp')
+    gamma_project = sidebar.locator('.project', has=page.locator(f'[data-session="{web_ui.gamma}"]'))
+    await expect(gamma_project.locator('.project-title')).to_be_focused()
+    await page.keyboard.press('ArrowUp')
+    await expect(search).to_be_focused()
+    await search.fill('Browser Lines')
+    lines = sidebar.locator(f'.session[data-session="{web_ui.lines}"] .session-main')
+    await expect(sidebar.locator('.session')).to_have_count(1)
+    await expect(lines).to_be_visible()
+    await search.press('Enter')
+    await opened(page, 'Browser Lines')
+    # Enter right after typing opens the first result for what was typed, not for the search before.
+    await search.fill('Browser Epsilon')
+    await search.press('Enter')
+    await opened(page, 'Browser Epsilon')
+    # So does Enter typed while the list shows no match at all.
+    await search.fill('no such session anywhere')
+    await expect(sidebar.locator('.session')).to_have_count(0)
+    await search.fill('Browser Gamma')
+    await search.press('Enter')
+    await opened(page, 'Browser Gamma')
+    await search.fill('Browser Lines')
+    await expect(sidebar.locator('.session')).to_have_count(1)
+    await search.fill('')
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_be_visible()
+    await lines.focus()
+    await page.keyboard.press('ArrowDown')
+    await expect(lines).not_to_be_focused()
+    await page.keyboard.press('ArrowUp')
+    await expect(lines).to_be_focused()
+    # Left moves to the project's heading, which Left folds and Right opens again.
+    await page.keyboard.press('ArrowLeft')
+    heading = sidebar.locator('.project-title:has(.project-name:text-is("lines"))')
+    await expect(heading).to_be_focused()
+    await page.keyboard.press('ArrowLeft')
+    await expect(heading).to_have_attribute('aria-expanded', 'false')
+    await page.keyboard.press('ArrowRight')
+    await expect(heading).to_have_attribute('aria-expanded', 'true')
+
+
+@pytest.mark.parametrize(
+    'cache',
+    [
+        pytest.param('{"projects": []}', id='object'),
+        pytest.param('[{}]', id='project'),
+        pytest.param('[{"key": "k", "name": "n", "worktrees": [{"label": "b", "sessions": [{}, {}]}]}]', id='sessions'),
+    ],
+)
+async def test_sidebar_ignores_saved_state_of_another_shape(page: Page, web_ui: WebUI, cache: str) -> None:
+    """A cached list, view, or folding of the wrong shape, as another version might leave, does not break the page."""
+    await page.add_init_script(f"""
+      localStorage.setItem('clai-sidebar-cache', {json.dumps(cache)});
+      localStorage.setItem('clai-sidebar-view', JSON.stringify('nonsense'));
+      localStorage.setItem('clai-sidebar-collapsed', JSON.stringify([1, 2]));
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await expect(sidebar.get_by_role('button', name='Projects', exact=True)).to_have_attribute('aria-pressed', 'true')
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_be_visible()
 
 
 def git(*args: str) -> str:
@@ -1252,12 +1595,16 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await page.goto(f'{web_ui.url}/?token={TOKEN}')
         sidebar = page.locator('.sidebar')
         dialog = page.get_by_role('dialog', name='New session')
-        new_worktree = dialog.get_by_role('listbox').get_by_role('button', name='New worktree of repo · main…')
+        new_worktree = dialog.get_by_role('listbox').get_by_role('button', name='New worktree of repo…')
+        # The project's row, not one of its worktrees' rows, which are named `repo · BRANCH`.
+        project = dialog.get_by_role('option', name=re.compile(r'^repo(?! ·)\b'))
         await sidebar.get_by_role('button', name='New session').click()
-        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
-        await dialog.get_by_role('option', name='repo · main').hover()
+        await expect(project).to_be_visible()
+        # A project of one checkout has nothing to unfold.
+        await expect(dialog.get_by_role('button', name='Show the worktrees of repo')).to_have_count(0)
+        await project.hover()
         await new_worktree.click()
-        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_label('Branch of the new worktree of repo').fill('feature-x')
         await dialog.get_by_label('Base').fill('main')
         # A session that fails to start leaves the worktree made, and trying again starts one in it.
         # Esc while the request runs keeps the form, as the disabled Back button does.
@@ -1279,25 +1626,57 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await expect(dialog).to_have_count(0)
         await expect(page.locator(f'.workspace[title="{root}"]')).to_be_visible()
         assert git('-C', str(root), 'branch', '--show-current') == 'feature-x'
-        # The next dialog lists it, offers no worktree of a folder outside Git, and refuses the same branch inline.
+        # The next dialog lists the project once, folded, and its chevron or → unfolds its worktrees, ← folds them.
         runtimes['feature-x'].sessions.relocate = stay
         await page.reload()
         await sidebar.get_by_role('button', name='New session').click()
-        await expect(dialog.get_by_role('option', name='repo · feature-x')).to_be_visible()
+        await expect(project).to_be_visible()
+        feature = dialog.get_by_role('option', name='repo · feature-x')
+        await expect(feature).to_have_count(0)
+        await dialog.get_by_role('button', name='Show the worktrees of repo').click()
+        await expect(feature).to_be_visible()
+        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
+        await dialog.get_by_role('listbox').focus()
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        # On a worktree, ← goes up to its project; on the project, it folds them, and the cursor stays put.
+        await page.keyboard.press('ArrowDown')
+        await expect(project).to_have_attribute('aria-selected', 'false')
+        await page.keyboard.press('ArrowLeft')
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        await expect(feature).to_be_visible()
+        await page.keyboard.press('ArrowLeft')
+        await expect(feature).to_have_count(0)
+        await page.keyboard.press('ArrowRight')
+        await expect(feature).to_be_visible()
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        await expect(project).to_have_accessible_name('repo, 2 worktrees shown, current')
+        # On an unfolded project, → steps into its first worktree: the current one, listed first.
+        await page.keyboard.press('ArrowRight')
+        await expect(feature).to_have_attribute('aria-selected', 'true')
+        await expect(feature).to_have_accessible_name('repo · feature-x, current')
+        await page.keyboard.press('ArrowLeft')
+        await expect(project).to_have_attribute('aria-selected', 'true')
+        # It offers no worktree of a folder outside Git, and refuses the same branch inline.
         alpha = dialog.locator('.dialog-option-row').filter(has=page.get_by_role('option', name='alpha'))
         await alpha.hover()
         await expect(alpha.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
-        await dialog.get_by_role('option', name='repo · main').hover()
+        await project.hover()
         await new_worktree.click()
         # Esc goes back to the list, and Esc there closes the dialog.
         await page.keyboard.press('Escape')
         await expect(dialog.get_by_label('Another directory')).to_be_visible()
         await new_worktree.click()
-        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_label('Branch of the new worktree of repo').fill('feature-x')
         await dialog.get_by_role('button', name='Create and start').click()
         await expect(dialog.get_by_role('alert')).to_have_text(
             'Cannot create worktree: branch feature-x already exists. Pick another name.'
         )
+        # A typed path lists its repository with the worktrees unfolded.
+        await dialog.get_by_role('button', name='Back').click()
+        await dialog.get_by_label('Another directory').fill(str(repo))
+        await expect(feature).to_be_visible()
+        await dialog.get_by_role('button', name='Hide the worktrees of repo').click()
+        await expect(feature).to_have_count(0)
     finally:
         for name in ('repo', 'feature-x'):
             if name in runtimes:
@@ -1336,6 +1715,14 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
             data={'title': f'Browser {name.title()}'},
         )
         assert renamed.ok, await renamed.text()
+    # A worktree of `north` with the newest session of that repository, which the sidebar lists before `north` itself.
+    side = (tmp_path / 'north' / '.worktrees' / 'side').resolve()
+    git('-C', str(tmp_path / 'north'), 'worktree', 'add', '-b', 'side', str(side))
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(side)}
+    )
+    assert opened.ok, await opened.text()
+    web_ui.fleet.portal.call(web_ui.fleet.runtimes['side'].session.commit_messages, list[ModelMessage]())
     # The page starts on the last session opened: one in a folder outside Git, so the list's cursor starts on a row
     # without New worktree….
     (tmp_path / 'plain').mkdir()
@@ -1350,13 +1737,15 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
         await page.goto(f'{web_ui.url}/?token={TOKEN}')
         dialog = page.get_by_role('dialog', name='New session')
         await page.locator('.sidebar').get_by_role('button', name='New session').click()
-        rows = {name: dialog.get_by_role('option', name=f'{name} · main') for name in names}
+        rows = {name: dialog.get_by_role('option', name=name) for name in names}
         tops: dict[str, float] = {}
         for name, row in rows.items():
             await expect(row).to_be_visible()
             box = await row.bounding_box()
             assert box is not None
             tops[name] = box['y']
+        # A project other than the current one starts in its main checkout.
+        await expect(rows['north']).to_have_attribute('title', str((tmp_path / 'north').resolve()))
         # The pointer goes straight down from the upper row, across the lower one, to the dialog's buttons.
         chosen, crossed = sorted(names, key=tops.__getitem__)
         await rows[chosen].hover()
@@ -1367,9 +1756,9 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
         await expect(rows[crossed]).not_to_have_attribute('aria-selected', 'true')
         below = dialog.locator('.dialog-actions')
         await expect(below.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
-        await dialog.get_by_role('button', name=f'New worktree of {chosen} · main…').click(timeout=2_000)
-        await expect(dialog.get_by_label(f'Branch of the new worktree of {chosen} · main')).to_be_visible()
-        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_have_count(0)
+        await dialog.get_by_role('button', name=f'New worktree of {chosen}…').click(timeout=2_000)
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {chosen}')).to_be_visible()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed}')).to_have_count(0)
         # From the keyboard, the button below makes a worktree of the row the arrow keys select.
         await page.keyboard.press('Escape')
         await dialog.get_by_role('listbox').focus()
@@ -1378,8 +1767,8 @@ async def test_new_worktree_is_of_the_row_chosen_not_the_last_one_hovered(
                 break
             await page.keyboard.press('ArrowDown')
         await expect(rows[crossed]).to_have_attribute('aria-selected', 'true')
-        await below.get_by_role('button', name=f'New worktree of {crossed} · main…').click()
-        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed} · main')).to_be_visible()
+        await below.get_by_role('button', name=f'New worktree of {crossed}…').click()
+        await expect(dialog.get_by_label(f'Branch of the new worktree of {crossed}')).to_be_visible()
     finally:
         for name in ('plain', *names):
             runtimes[name].sessions.relocate = None

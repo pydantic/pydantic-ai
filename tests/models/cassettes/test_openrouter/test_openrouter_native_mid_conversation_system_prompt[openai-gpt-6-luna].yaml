@@ -1,0 +1,104 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "490"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: openai/gpt-6-luna
+        stream: false
+        messages:
+        - role: system
+          content: You are a helpful assistant. The current access code word is PINEAPPLE.
+        - role: user
+          content: Hi there.
+        - role: assistant
+          content: Hello! How can I help you today?
+        - role: system
+          content: The access code word has been withdrawn. There is no current access code word.
+        - role: user
+          content: >-
+            What is the current access code word? Reply with just the word, or NONE if
+            there is none.
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793404872-xEbcAUQOjQlUuPs5OIaK
+        object: chat.completion
+        created: 1793404872
+        model: openai/gpt-6-luna
+        provider: OpenAI
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: NONE
+            refusal: null
+            reasoning: null
+            reasoning_details:
+            - type: reasoning.encrypted
+              data: >-
+                gAAAAABq5S_Jza_0puNt1jP6xMUazPsj4qSNAa4hQ4mccGw4CkM-TaUiSpjV1tm4V91OvIhGNBostlidaazuV5CvZKO80hN4NJngTzP6c92bjAl7DBZL54C6TE4NZyQhYz_KQ1ylFSvt0SUFOTJvBnzRKsbpDEk4p9PWncDKUFe9_K-QR_kneqceHEuP4lXGT6iigcNSVrazvyoGLeBdUxuUVUipgkdfzsjH4hla5EorDelCmZG-84xopF2eb1QLSdWPQkr4yuoxsSqh7FuYL0giH8jT0n9uUOvbZ7o8dMdISE6DfU1pLLdn5jq1enAQFqLMeaCFQgRJTjUwz1UNH_KoETv5UKxg279_9CYVDuRM50fFMkIYb1BYhXZp5tbfTKRaXCJurT8g4Mb-QSgFBoSyEElUXRnWTpCIiFdXv0thAEMKy1LETRGS7l6r7mMRlf4GFu36moVQ7qHFd4D_mkdGVXz-1WGe5SEkiB5-AphDnaWZCqZ5loCQ4zpKjt8-zNC2_PAfofwTsS3AXaE64urFM0IOZ7g7ZPfi2NAEcEVBeoQckqKtZz-J7BewgI7N7uc1X-kEXAfIzTav5V3DeaG4CtCO_JGdmZjgWqrRHseC9v6tkg0QhoPbmjHA5jHfJV_XALtCepi8B3a0CZA_Nao8UBPfdVfKfh9Mjm1BmEBqxv-RFWYLIBquJmiP479Mu1CkL0NcGFxeIv5pDv2BAf4CTBlnoAdlVix2tpBN6xaInydjbJcWGiohPbRL3LAd559ULRFbTchhsl_FeLD10Eua3pD9xHw6HG6CXUxvm4ldZdf3K2Ww4LSCyO5JaOvWXHMs7_3B54ZDwszHU2Qcffv0CiLtr9LOrBfKDG8yPHG7kNYm3bRZpiIbCNcYzK0wRwOrYxe8kswUcZEBG8Ed8ckydeqX0MsUWQpFQOH3uTI-sta1DQFAMXXcBB4vfAi72jB0XuyevcO4jauvmPwr50yVEshI1vuO_fEb_xuUeNundOhh1DH9xDXyz4dOoc0zEQ47-YSzxDwXoOHqxK__04oLlVq2SG2xbL8iUCPGXaJ9TTF0j3U11WAcj7PwIg6esUFrodmq94A39RcugkWyNxgd04wqtCRbv_fKQof9jQ8Nqh6jXUFv4b08CMAM0omhy6mOFA1Gt65x0pHudlMEAt7tGlShwKtbN3s2EOLbZZGL10QbvI6_88rZE073uGI6d2apMOpCAG0ipg2jL917TEEYmMrAo9L8PBER8raCYa3l2EFUUY5oHH9uIajEeNBH9zAznb7ugwZbgEYIEBfYXtwrcPUSb_vmopFyDSGBhf4Ivmh6F-Vuf5EqPvo6NEG2u8UAnCCiorU5zDle0rEr-Hcc6qJ_ivC_uBd2YV6u8MmtBSHhIHOh5fgkk_N_BAG4gkeQSHW7caVCAB6WPf5FHp8W6SE9XgVCKtEBQRJtChHmtPbBMqCC3Teuia57Lu7bKmTP7thZfCCIj8V_uXUSCJNa_XszN2DbYLnrDs27ocE-_gYnz0Sq-J3ugLzdVFeAe0KgCif9C2SuJqjub2PaErKkHOmOuCdVMpimD0k3HKJfzqF34BNbIC-5eJk4G9KVqEuUkhqAmZyXA3SGlVlVYqX8ly4uz3x1Wtzjs2-AprmTfBNOzaRGeKZXoKKyEGsUx_zeibP3YRna3zsobt0RI6RW7oXi9-tvVzgiJrLVYjDe0HBJ0QjXOiGh55p5vuIZ6x_sHr3zYbyR8dIWHbkMdmAxONs7dHDvtMxOP0mBXGEr9ZeSaIWrWRA=.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC02LWx1bmEtMjAyNjA5MjJ8b3BlbmFpIn0
+              format: openai-responses-v1
+              id: rs_0ad912849e0a7ebb016ae52fc9809c87d1aebd8d58189b1dd7
+              index: 0
+        usage:
+          prompt_tokens: 89
+          completion_tokens: 22
+          total_tokens: 111
+          cost: 0.0000199
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000199
+            upstream_inference_prompt_cost: 8.9e-6
+            upstream_inference_completions_cost: 0.000011
+          completion_tokens_details:
+            reasoning_tokens: 15
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-31T00:01:14.086206+00:00

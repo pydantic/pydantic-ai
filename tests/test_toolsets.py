@@ -4,7 +4,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import UTC
-from typing import Any, Self, TypeVar
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 from unittest.mock import AsyncMock
 
 import anyio
@@ -49,9 +50,20 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, iter_message_parts
+
+has_mcp = find_spec('mcp') is not None
+if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
+    # Imported at collection, outside the event loop: first imported inside an async test, BlockBuster blocks the
+    # `importlib.metadata` scans this import runs, and `importlib.metadata` caches the empty result for the process.
+    from fastmcp.client.transports import FastMCPTransport
+
+    from pydantic_ai.mcp import MCPToolset
+
+    from .mcp_server import mcp as test_mcp_server
 
 T = TypeVar('T')
 
@@ -740,44 +752,41 @@ async def test_comprehensive_toolset_composition():
     )
 
 
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+def in_process_mcp_toolset(transport: FastMCPTransport | None = None) -> MCPToolset:
+    """An `MCPToolset` connected in-process to `tests.mcp_server`, with a handshake deadline no runner stall reaches.
+
+    The default 5-second `init_timeout` is shorter than a stalled CI worker can take to finish the `initialize`
+    handshake. These tests are about how `CombinedToolset` enters and exits its members, not about the transport or
+    the handshake timing, so the deadline is the module's hang guard instead.
+    """
+    return MCPToolset(transport or FastMCPTransport(test_mcp_server), init_timeout=READINESS_WAIT_TIMEOUT)
+
+
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 async def test_context_manager():
-    try:
-        from fastmcp.client.transports import StdioTransport
-
-        from pydantic_ai.mcp import MCPToolset
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
-    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
-    server1 = MCPToolset(transport)
-    server2 = MCPToolset(transport)
+    transport = FastMCPTransport(test_mcp_server)
+    server1 = in_process_mcp_toolset(transport)
+    server2 = in_process_mcp_toolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
-    async with toolset:
-        assert server1.is_running
-        assert server2.is_running
-
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with toolset:
             assert server1.is_running
             assert server2.is_running
+
+            async with toolset:
+                assert server1.is_running
+                assert server2.is_running
 
 
 class InitializationError(Exception):
     pass
 
 
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
-    try:
-        from fastmcp.client.transports import StdioTransport
-
-        from pydantic_ai.mcp import MCPToolset
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
-    server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    server1 = in_process_mcp_toolset()
     server2 = AsyncMock()
     # `CombinedToolset` reads each member's `id` when it is constructed, and an auto-created
     # `AsyncMock` attribute would answer that with a coroutine. This server stands in for one that
@@ -787,7 +796,7 @@ async def test_context_manager_failed_initialization():
 
     toolset = CombinedToolset([server1, server2])
 
-    with pytest.raises(InitializationError):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(InitializationError):
         async with toolset:
             pass
 

@@ -113,6 +113,12 @@ class TestSlack:
         with pytest.raises(UserError, match='`client` owns the connection'):
             Slack(client='https://example.com/mcp', auth=auth)
 
+    async def test_client_accepts_empty_auth(self, server: FastMCP) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        agent = Agent(TestModel(), capabilities=[Slack(client=server, auth='', read_only=True)])
+        result = await agent.run('Use the tools')
+        assert result.output == '{"read_resource":"read"}'
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[Slack(client=server, defer_loading=True)])
 

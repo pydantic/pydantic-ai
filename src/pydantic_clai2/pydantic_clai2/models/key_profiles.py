@@ -3,7 +3,9 @@
 `/login openrouter@work` and `/login vllm@lab` save a connection the way `/model add` does, under the
 profile's account. `/login openai@work` saves a key (or a `/keys` reference) for any Pydantic AI
 provider that takes `api_key`; `openai@work:gpt-5` then runs with it. Models without a profile keep
-their existing setup: `/model add` connections, or core's environment variables.
+their existing setup: `/model add` connections, or core's environment variables. Any core model with
+a `base_url` or an `api_key` saved in `/model settings` is built here too, with that endpoint and the
+named `/keys` entry instead of the environment's.
 """
 
 import inspect
@@ -11,6 +13,7 @@ import json
 import re
 from functools import partial
 from typing import Annotated, Protocol, TypeGuard
+from urllib.parse import urlsplit
 
 from anyio import to_thread
 from prompt_toolkit import PromptSession
@@ -20,7 +23,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.providers import Provider, infer_provider_class
-from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
+from pydantic_clai2.config.api_keys import KeyReference, load_keys, prompt_api_key, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials
 from pydantic_clai2.models.profiles import account, parse_model
 from pydantic_clai2.plugins.keys import choose_key
@@ -37,20 +40,54 @@ class KeyConnection(BaseModel):
     """Required and never empty: an empty key would let the provider fall back to the environment's key."""
 
 
-class KeyedProvider(Protocol):
-    """A provider class that can be built from an API key alone."""
+URL_ARGUMENTS = {
+    'azure': 'azure_endpoint',
+    'azure-responses': 'azure_endpoint',
+    'xai': 'api_host',
+    'litellm': 'api_base',
+}
+"""Providers whose constructor names its endpoint something other than `base_url`."""
 
-    def __call__(self, *, api_key: str) -> Provider[object]:
+KEY_VARIABLES = {
+    'openai-chat': ('OPENAI_API_KEY',),
+    'openai-responses': ('OPENAI_API_KEY',),
+    'openai-decisions': ('OPENAI_API_KEY',),
+    'alibaba': ('ALIBABA_API_KEY', 'DASHSCOPE_API_KEY'),
+    'azure': ('AZURE_OPENAI_API_KEY',),
+    'azure-responses': ('AZURE_OPENAI_API_KEY',),
+    'bedrock': ('AWS_BEARER_TOKEN_BEDROCK',),
+    'bedrock-mantle': ('AWS_BEARER_TOKEN_BEDROCK',),
+    'cohere': ('CO_API_KEY',),
+    'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
+    'google-decisions': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
+    'google-cloud': (),  # Application Default Credentials win over its key variables.
+    'litellm': (),  # LiteLLM reads the key of the provider it routes to.
+    'heroku': ('HEROKU_INFERENCE_KEY',),
+    'huggingface': ('HF_TOKEN',),
+    'vercel': ('VERCEL_AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN'),
+    'voyageai': ('VOYAGE_API_KEY',),
+}
+"""Providers whose API key variables are not just `PROVIDER_API_KEY`."""
+
+KEYED_ELSEWHERE = ('openrouter', 'vllm', 'github-copilot', 'openai-codex')
+"""Providers clai2 builds with the key `/model add` or `/login` saved, or a Codex sign-in, never a model's `api_key`."""
+
+
+class KeyedProvider(Protocol):
+    """A provider class that can be built from string options, such as an API key alone."""
+
+    def __call__(self, **options: str) -> Provider[object]:
         """Build the provider."""
         ...
 
 
-def _accepts_key(provider_class: type[Provider[object]]) -> TypeGuard[KeyedProvider]:
-    return 'api_key' in inspect.signature(provider_class).parameters
+def _accepts(provider_class: type[Provider[object]], *options: str) -> TypeGuard[KeyedProvider]:
+    # `__init__`, as the signature of a `@deprecated` class is its wrapped `__new__` before Python 3.13.
+    return inspect.signature(provider_class.__init__).parameters.keys() >= set(options)
 
 
-def keyed_provider(provider: str) -> KeyedProvider | None:
-    """The class Pydantic AI runs `provider:` models with, when it accepts `api_key`.
+def keyed_provider(provider: str, *options: str) -> KeyedProvider | None:
+    """The class Pydantic AI runs `provider:` models with, when it accepts `options`, by default `api_key`.
 
     A known provider whose SDK is missing raises core's `ImportError`, which names the extra to install.
     """
@@ -58,7 +95,7 @@ def keyed_provider(provider: str) -> KeyedProvider | None:
         provider_class = infer_provider_class(provider)
     except ValueError:
         return None
-    return provider_class if _accepts_key(provider_class) else None
+    return provider_class if _accepts(provider_class, *(options or ('api_key',))) else None
 
 
 def supports(provider: str, *, profile: str | None) -> bool:
@@ -85,7 +122,9 @@ async def login(*, provider: str, profile: str | None, console: Console, dialogs
     if not saved:
         return 'Sign-in cancelled.'
     path = credentials_path(account=name)
-    storage = f'saved in plaintext at {path}' if path.exists() else 'saved in the OS credential store'
+    storage = (
+        f'saved in plaintext at {path}' if await to_thread.run_sync(path.exists) else 'saved in the OS credential store'
+    )
     return f'{name} connected, {storage}. Use {name}:MODEL.'
 
 
@@ -137,11 +176,20 @@ async def _save_token(*, provider: str, name: str, token: SecretStr | KeyReferen
     return True
 
 
-def model(name: str) -> Model:
-    """Build a core provider's model with the profile's saved key instead of environment variables."""
+def model(name: str, *, base_url: str | None = None, api_key: str | None = None) -> Model:
+    """Build a core provider's model with a saved key and `base_url` instead of the environment's.
+
+    `api_key` names the `/keys` entry saved for the model, which wins over the profile's own key.
+    """
     ref = parse_model(name)
+    key = None if api_key is None else _saved_key(api_key)
+    if ref.profile is None:
+        return infer_model(name, provider_factory=partial(build_provider, key=key, base_url=base_url))
     if keyed_provider(ref.provider) is None:
         raise _no_profiles(ref.provider)
+    if key is not None:
+        provider = build_provider(ref.provider, key=key, base_url=base_url)
+        return infer_model(f'{ref.provider}:{ref.name}', provider_factory=lambda _: provider)
     raw = load_codex_credentials(account=ref.account)
     if raw is None:
         raise UserError(f'{ref.account} is not connected. Run /login {ref.account}.')
@@ -149,24 +197,94 @@ def model(name: str) -> Model:
         connection = KeyConnection.model_validate_json(raw)
     except ValidationError:
         raise UserError(f'Stored {ref.account} credentials are invalid. Run /login {ref.account}.') from None
-    provider = build_provider(ref.provider, key=resolve_key(token=connection.token))
+    provider = build_provider(ref.provider, key=resolve_key(token=connection.token), base_url=base_url)
     return infer_model(f'{ref.provider}:{ref.name}', provider_factory=lambda _: provider)
 
 
-def build_provider(provider: str, *, key: str) -> Provider[object]:
-    """The provider core would build for `provider:` models, with `key` instead of the environment's key.
+def build_provider(provider: str, *, key: str | None = None, base_url: str | None = None) -> Provider[object]:
+    """The provider core would build for `provider:` models, with `key` and `base_url` instead of the environment's.
 
-    A `gateway/` route goes through core's gateway provider, as `infer_provider` does, so it keeps the
-    Gateway's endpoint. Other settings, such as an Azure endpoint, still come from the environment.
+    A `gateway/` route goes through core's gateway provider, as `infer_provider` does. Other settings,
+    such as an Azure API version, still come from the environment.
     """
     if provider.startswith('gateway/'):
         from pydantic_ai.providers.gateway import gateway_provider
 
-        return gateway_provider(provider.removeprefix('gateway/'), api_key=key)
-    provider_class = keyed_provider(provider)
+        return gateway_provider(provider.removeprefix('gateway/'), api_key=key, base_url=base_url)
+    if provider == 'xai' and base_url is not None:
+        base_url = _grpc_host(base_url)
+    options = {'api_key': key, _url_argument(provider): base_url}
+    options = {name: value for name, value in options.items() if value is not None}
+    provider_class = keyed_provider(provider, *options)
     if provider_class is None:
+        if base_url is not None and not takes_endpoint(provider):
+            raise no_endpoint(provider)
         raise _no_profiles(provider)
-    return provider_class(api_key=key)
+    return provider_class(**options)
+
+
+def takes_endpoint(provider: str) -> bool:
+    """Whether `build_provider` can send `provider:` models to a `base_url`, as plugin providers' cannot."""
+    if provider.startswith('gateway/'):
+        return True
+    try:
+        return keyed_provider(provider, _url_argument(provider)) is not None
+    except ImportError:  # A known provider; building it reports the missing extra.
+        return True
+
+
+def _saved_key(name: str) -> str:
+    """The `/keys` entry a model's `api_key` names, failing closed with the model setting as the fix."""
+    keys = load_keys()
+    if name not in keys:
+        raise UserError(f'Saved API key {name} is missing. Restore it in /keys or reset api_key in /model settings.')
+    return keys[name].get_secret_value()
+
+
+def takes_key(provider: str) -> bool:
+    """Whether a `/keys` entry saved for a `provider:` model replaces its environment's API key.
+
+    Connections such as OpenRouter keep the key `/model add` saved, and Codex signs in instead.
+    """
+    if provider in KEYED_ELSEWHERE:
+        return False
+    if provider.startswith('gateway/'):
+        return True
+    try:
+        return keyed_provider(provider) is not None
+    except ImportError:  # A known provider; building it reports the missing extra.
+        return True
+
+
+def key_variables(provider: str) -> tuple[str, ...]:
+    """The environment variables core reads `provider`'s API key from, in the order it reads them."""
+    if provider.startswith('gateway/'):
+        return ('PYDANTIC_AI_GATEWAY_API_KEY', 'PAIG_API_KEY')
+    return KEY_VARIABLES.get(provider, (f'{provider.upper().replace("-", "_")}_API_KEY',))
+
+
+def no_api_key(provider: str) -> UserError:
+    """The error for an `api_key` saved for a provider that takes its key some other way."""
+    return UserError(f'{provider} takes no API key from /model settings. Reset api_key in /model settings.')
+
+
+def _grpc_host(base_url: str) -> str:
+    """The `host:port` of an `https://` URL, for xAI's `api_host`, as its SDK connects over gRPC with TLS."""
+    url = urlsplit(base_url)
+    if not url.netloc:
+        return base_url
+    if url.scheme != 'https' or url.path.strip('/') or url.username or url.password or url.query:
+        raise UserError('xai connects over gRPC with TLS, so give base_url as https://HOST[:PORT].')
+    return url.netloc
+
+
+def _url_argument(provider: str) -> str:
+    return URL_ARGUMENTS.get(provider, 'base_url')
+
+
+def no_endpoint(provider: str) -> UserError:
+    """The error for a `base_url` saved for a provider, or a chain, that cannot take one."""
+    return UserError(f'{provider} has no endpoint to override. Reset base_url in /model settings.')
 
 
 def _no_profiles(provider: str) -> UserError:

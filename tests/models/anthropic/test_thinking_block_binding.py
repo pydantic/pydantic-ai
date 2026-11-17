@@ -30,7 +30,7 @@ from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.profiles.anthropic import AnthropicEffort
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsInt, RequestCapture, message, try_import
+from ...conftest import IsInt, RequestCapture, message, retrying_client, try_import
 from ..conftest import AnthropicModelFactory
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs, mock_anthropic_client
 
@@ -337,6 +337,117 @@ async def test_anthropic_count_tokens_retries_a_stale_thinking_block(allow_model
         {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
     assert _THINKING_BINDING_BETA in requests[1]['betas']
+
+
+@pytest.mark.parametrize('call', ['request', 'request_stream', 'count_tokens'])
+async def test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gave_up_on(
+    allow_model_requests: None, call: Literal['request', 'request_stream', 'count_tokens']
+):
+    """A stale thinking block a retrying transport gave up on is retried with `drop_block`, as the SDK's 400 is.
+
+    The transport raises `httpx2.HTTPStatusError` once its attempts run out, and `anthropic` wraps it in
+    `APIConnectionError`, so the recovery reads the status and body from the transport's response. The first three
+    requests are the transport's attempts; the fourth is the recovery.
+
+    Not a VCR test: `test_anthropic_drops_a_stale_thinking_block` records the rejection and the retry. What this adds
+    is the transport raising for the rejection, which depends only on its status and body, so a mock transport serves
+    them.
+    """
+    sent: list[tuple[str, bool]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        thinking = body.get('thinking')
+        dropping = isinstance(thinking, dict) and 'block_binding' in thinking
+        sent.append((request.url.path, dropping))
+        if not dropping:
+            return httpx2.Response(400, json=stale_thinking_block_error().body)
+        if request.url.path.endswith('/count_tokens'):
+            return httpx2.Response(200, json={'input_tokens': 10})
+        if body.get('stream'):
+            events = ''.join(
+                f'event: {event.type}\ndata: {event.model_dump_json()}\n\n' for event in dropped_thinking_stream()
+            )
+            return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=events.encode())
+        message = completion_message(
+            [BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1)
+        )
+        return httpx2.Response(200, json=message.model_dump(mode='json'))
+
+    model = AnthropicModel(
+        'claude-fable-5-1',
+        provider=AnthropicProvider(api_key='test', base_url='http://localhost', http_client=retrying_client(handler)),
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is 2+2?')]
+    # Without `max_tokens`, the model's default is too large for the SDK to send `request` unstreamed.
+    settings: AnthropicModelSettings = {'max_retries': 0, 'max_tokens': 1024}
+
+    with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
+        if call == 'request':
+            response = await model.request(messages, settings, ModelRequestParameters())
+            result: object = response.text
+        elif call == 'request_stream':
+            async with model.request_stream(messages, settings, ModelRequestParameters()) as stream:
+                async for _ in stream:
+                    pass
+            result = stream.get().text
+        else:
+            result = (await model.count_tokens(messages, settings, ModelRequestParameters())).input_tokens
+
+    assert result == (10 if call == 'count_tokens' else '4')
+    path = '/v1/messages/count_tokens' if call == 'count_tokens' else '/v1/messages'
+    assert sent == [(path, False), (path, False), (path, False), (path, True)]
+
+
+@pytest.mark.parametrize('call', ['request', 'request_stream', 'count_tokens'])
+@pytest.mark.parametrize(
+    'model_name,stale_thinking_block',
+    [
+        pytest.param('claude-fable-5-1', False, id='unrelated_bad_request'),
+        pytest.param('claude-fable-5', True, id='model_does_not_bind'),
+    ],
+)
+async def test_anthropic_does_not_retry_a_bad_request_a_retrying_transport_gave_up_on(
+    allow_model_requests: None,
+    call: Literal['request', 'request_stream', 'count_tokens'],
+    model_name: str,
+    stale_thinking_block: bool,
+):
+    """A 400 a retrying transport gave up on raises without a `drop_block` retry, unless it is a stale thinking block
+    on a model that binds them.
+
+    Not a VCR test, for the reason
+    `test_anthropic_retries_a_stale_thinking_block_a_retrying_transport_gave_up_on` gives.
+    """
+    body = (
+        stale_thinking_block_error().body
+        if stale_thinking_block
+        else {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'max_tokens: Field required'}}
+    )
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(400, json=body)
+
+    model = AnthropicModel(
+        model_name,
+        provider=AnthropicProvider(api_key='test', base_url='http://localhost', http_client=retrying_client(handler)),
+    )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is 2+2?')]
+    settings: AnthropicModelSettings = {'max_retries': 0, 'max_tokens': 1024}
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        if call == 'request':
+            await model.request(messages, settings, ModelRequestParameters())
+        elif call == 'request_stream':
+            async with model.request_stream(messages, settings, ModelRequestParameters()):
+                pass  # pragma: no cover
+        else:
+            await model.count_tokens(messages, settings, ModelRequestParameters())
+
+    assert exc_info.value.status_code == 400
+    assert len(requests) == 3
 
 
 @pytest.mark.parametrize('request_shape', ['unmerged', 'normalized-missing-namespace', 'normalized-valid-namespace'])
@@ -1280,6 +1391,49 @@ async def test_anthropic_fable_5_1_drops_a_stale_thinking_block_streamed(
     )
     dropping_request = request_capture.bodies('/v1/messages')[-1]
     assert dropping_request['thinking'] == snapshot(
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+    )
+    assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']
+
+
+@_STALE_THINKING_BLOCK_PREFIX_CHANGE
+@_MATCH_BODY
+async def test_anthropic_fable_5_2_retries_a_stale_thinking_block_on_a_legacy_account(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Claude Fable 5.2 runs the prefix check on every account, so the default request is rejected and retried.
+
+    Recorded on the same legacy account on which Claude Fable 5.1 replays the stale block untouched (see
+    `test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_account`): Fable 5.2 answers that request
+    with a 400, and Pydantic AI retries it once with `drop_block`.
+    https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2
+    """
+    m = anthropic_model('claude-fable-5-2', capture=True)
+    history = await stale_thinking_block_history(m)
+
+    second = Agent(m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.')
+    # The rejection came from a legacy account, so the warning must not tie enforcement to account age.
+    with pytest.warns(
+        AnthropicStaleThinkingBlockWarning,
+        match=(
+            r"^'claude-fable-5-2' rejected a replayed thinking block: Anthropic binds each thinking block to the "
+            r'conversation prefix that produced it, and that prefix changed between requests\. Pydantic AI retried'
+        ),
+    ):
+        replayed = await second.run('And times two?', message_history=history)
+
+    response = message(replayed.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'end_turn',
+            'input_transformations': [
+                {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+            ],
+        }
+    )
+    rejected, retried = request_capture.bodies('/v1/messages')[-2:]
+    assert 'thinking' not in rejected
+    assert retried['thinking'] == snapshot(
         {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
     )
     assert 'thinking-binding-controls-2026-08-01' in request_capture.headers[-1]['anthropic-beta']

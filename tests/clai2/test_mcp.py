@@ -18,7 +18,7 @@ from pydantic import HttpUrl, JsonValue, ValidationError
 from rich.console import Console
 
 import pydantic_clai2.mcp as mcp_package
-import pydantic_clai2.mcp._client as mcp_client
+import pydantic_clai2.mcp.client as mcp_client
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS

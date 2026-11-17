@@ -345,8 +345,45 @@ class CacheHealthDetector:
                 latest_compaction=latest_compaction,
             )
 
-        updated_established = established
-        if not unreported and _sums_cache_usage(measured):
+        # An unreported response tells us nothing about the provider's copy of the prefix -- it may
+        # still be sitting there, aging toward its TTL -- so the mark, its idle clock, and its alert
+        # latch stay put.
+        updated_established = (
+            established
+            if unreported
+            else self._advance_mark(
+                key,
+                mark,
+                measured,
+                collapse,
+                now,
+                compactions=compactions,
+                latest_compaction=latest_compaction,
+            )
+        )
+
+        return CacheHealth(
+            hit_ratio=cache_hit_ratio(read, usage.input_tokens),
+            established_tokens=updated_established,
+            collapse=collapse,
+        )
+
+    def _advance_mark(
+        self,
+        key: CacheKey,
+        mark: CacheMark | None,
+        measured: ModelResponse,
+        collapse: CacheCollapse | None,
+        now: datetime,
+        *,
+        compactions: int,
+        latest_compaction: str | None,
+    ) -> int:
+        """Advance `key`'s mark from a response that reported cache usage, and return the tokens it now establishes."""
+        read = measured.usage.cache_read_tokens
+        write = measured.usage.cache_write_tokens
+        established = mark.established_tokens if mark else 0
+        if _sums_cache_usage(measured):
             # A summed read can still prove a collapse (every pass read at least what the first did), but
             # a high one proves nothing: it neither raises the mark nor re-arms the alert, and the mark
             # keeps the run that established it. Only the retention clock restarts, since the provider
@@ -355,34 +392,26 @@ class CacheHealthDetector:
                 alerted = mark.alerted or (collapse is not None and collapse.alert)
                 self.marks[key] = replace(mark, last_seen=now, alerted=alerted)
                 self.marks = self.store.update(self.conversation_id, self.marks, now)
-        elif not unreported:
-            if collapse is None:
-                # A healthy read-back re-stabilizes the cache, re-arming the alert.
-                updated_established, alerted = max(established, read + write), False
-            else:
-                # After a collapse the mark re-baselines to what this request established, so a
-                # deliberate bust (compaction, a rewritten prompt) is judged once rather than against
-                # a stale high-water mark on every later request.
-                updated_established, alerted = read + write, collapse.previous.alerted or collapse.alert
-            self.marks[key] = CacheMark(
-                updated_established,
-                now,
-                self.run_id,
-                compactions,
-                latest_compaction,
-                alerted,
-                not_enabled_alerted=mark is not None and mark.not_enabled_alerted,
-            )
-            self.marks = self.store.update(self.conversation_id, self.marks, now)
-        # An unreported response tells us nothing about the provider's copy of the prefix -- it may
-        # still be sitting there, aging toward its TTL -- so the mark, its idle clock, and its alert
-        # latch stay put.
-
-        return CacheHealth(
-            hit_ratio=cache_hit_ratio(read, usage.input_tokens),
-            established_tokens=updated_established,
-            collapse=collapse,
+            return established
+        if collapse is None:
+            # A healthy read-back re-stabilizes the cache, re-arming the alert.
+            updated_established, alerted = max(established, read + write), False
+        else:
+            # After a collapse the mark re-baselines to what this request established, so a
+            # deliberate bust (compaction, a rewritten prompt) is judged once rather than against
+            # a stale high-water mark on every later request.
+            updated_established, alerted = read + write, collapse.previous.alerted or collapse.alert
+        self.marks[key] = CacheMark(
+            updated_established,
+            now,
+            self.run_id,
+            compactions,
+            latest_compaction,
+            alerted,
+            not_enabled_alerted=mark is not None and mark.not_enabled_alerted,
         )
+        self.marks = self.store.update(self.conversation_id, self.marks, now)
+        return updated_established
 
     def _classify(
         self,

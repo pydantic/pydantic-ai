@@ -7,7 +7,6 @@ happens when a request takes too long, which a recording can't reproduce on dema
 
 from __future__ import annotations
 
-import asyncio
 import json
 import pickle
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -56,7 +55,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from .clock_utils import LONG_TIMEOUT, Clock
-from .conftest import try_import
+from .conftest import no_leaked_tasks, try_import
 from .continuation_utils import ScriptedStreamedResponse, StreamSegment
 
 with try_import() as openai_available:
@@ -270,14 +269,19 @@ async def test_fallback_gives_each_model_a_fresh_deadline(wrapped: bool):
     That holds behind a wrapper model too, as durable execution puts one around the agent's model.
     """
     timeout = 0.2
-    time_left: list[float] = []
+    deadlines: list[float] = []
 
-    async def record_time_left(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        time_left.append(anyio.current_effective_deadline() - anyio.current_time())
+    async def record_deadline_and_hang(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        deadlines.append(anyio.current_effective_deadline())
+        return await hang(messages, info)
+
+    async def record_deadline(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        deadlines.append(anyio.current_effective_deadline())
         return ModelResponse(parts=[TextPart('fallback answer')])
 
     model: Model = FallbackModel(
-        FunctionModel(hang, model_name='primary'), FunctionModel(record_time_left, model_name='fallback')
+        FunctionModel(record_deadline_and_hang, model_name='primary'),
+        FunctionModel(record_deadline, model_name='fallback'),
     )
     if wrapped:
         model = WrapperModel(model)
@@ -286,8 +290,10 @@ async def test_fallback_gives_each_model_a_fresh_deadline(wrapped: bool):
     result = await agent.run('hello')
 
     assert result.output == 'fallback answer'
-    # The primary used up a whole `request_timeout` of its own, and the fallback started with a fresh one.
-    assert time_left[0] > timeout / 2
+    # The fallback starts once the primary's deadline has passed, and gets a whole `request_timeout` from then. Its
+    # deadline is compared with the primary's rather than with the clock, which a stalled runner moves on.
+    primary_deadline, fallback_deadline = deadlines
+    assert fallback_deadline >= primary_deadline + timeout
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.failed_attempts is not None
@@ -562,15 +568,12 @@ async def test_nested_fallback_gives_each_inner_model_a_deadline():
 async def test_no_tasks_leak_after_timeout(anyio_backend: str):
     stream = StreamThatHangs()
     agent = Agent(FunctionModel(hang, stream_function=stream), model_settings={'request_timeout': SHORT_TIMEOUT})
-    tasks_before = asyncio.all_tasks()
-
-    with pytest.raises(ModelRequestTimeout):
-        await agent.run('hello')
-    with pytest.raises(ModelRequestTimeout):
-        async with agent.run_stream('hello') as result:
-            await result.get_output()
-
-    assert asyncio.all_tasks() == tasks_before
+    with no_leaked_tasks():
+        with pytest.raises(ModelRequestTimeout):
+            await agent.run('hello')
+        with pytest.raises(ModelRequestTimeout):
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
 
 
 async def test_direct_model_request():
