@@ -1163,6 +1163,27 @@ class TestConcurrentChanges:
         assert len(returns) == 2 and all(str(content).startswith('Edited a.py.') for content in returns)
         assert workspace.files['/work/a.py'] == b'import new\nnew()\n'
 
+    async def test_write_into_a_directory_created_in_the_same_response(self, tmp_path: Path) -> None:
+        """Changing calls run in the order the model sent them, so a write finds the directory created before it."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('create_directory', {'path': 'pkg/sub'}),
+                    ToolCallPart('write_file', {'path': 'pkg/sub/a.txt', 'content': 'hello\n'}),
+                ]
+            )
+
+        agent = Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()])
+        messages = (await agent.run('write the file')).all_messages()
+
+        returns = [part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert returns[0] == 'Created directory: pkg/sub'
+        assert str(returns[1]).startswith('Wrote 6 chars (1 lines) to pkg/sub/a.txt.')
+        assert (tmp_path / 'pkg/sub/a.txt').read_text() == 'hello\n'
+
     async def test_edits_through_a_symlink_and_its_target_take_turns(self) -> None:
         toolset = FileSystem[None]().get_toolset()
         assert isinstance(toolset, FileSystemToolset)

@@ -29,6 +29,7 @@ from pydantic_ai_harness.compaction._shared import (
     find_token_cutoff,
     prepend_first_user_message,
     record_compaction_reclaim,
+    require_trigger,
     resolve_token_trigger,
     validate_token_trigger,
 )
@@ -128,8 +129,6 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
-            raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
@@ -242,6 +241,10 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             has_summary=False,
         )
         return ModelRequest(parts=[make_receipt_part(text)])
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject a registration without a trigger."""
+        require_trigger('SlidingWindowCompaction', self.max_messages, self.max_tokens, self.max_fraction)
 
     async def before_model_request(
         self,

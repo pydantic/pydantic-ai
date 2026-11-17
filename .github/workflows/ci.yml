@@ -1785,6 +1785,15 @@ jobs:
       - name: run tests
         run: uv run --package pydantic-clai2 coverage run -m pytest tests/clai2/test_windows_workspace.py tests/clai2/test_windows_coder.py
 
+      # The remote-sandbox fakes run commands as POSIX processes on the host, so their suites must skip here.
+      - name: run sandbox backend tests
+        run: >-
+          uv run --package pydantic-ai-harness --group dev
+          --extra coder --extra render --extra modal --extra e2b --extra sprites --extra boxd --extra opensandbox --extra daytona
+          coverage run -m pytest
+          tests/harness/boxd_sandbox tests/harness/daytona_sandbox tests/harness/e2b_sandbox tests/harness/modal_sandbox
+          tests/harness/opensandbox_sandbox tests/harness/render_sandbox tests/harness/sprites_sandbox
+
       # See the matching step in the `test` job.
       - name: combine coverage files
         run: uv run --package pydantic-clai2 coverage combine
@@ -1887,6 +1896,7 @@ jobs:
       redis: ${{ steps.detect.outputs.redis }}
       azure_durable_task: ${{ steps.detect.outputs.azure_durable_task }}
       kubernetes: ${{ steps.detect.outputs.kubernetes }}
+      bubblewrap: ${{ steps.detect.outputs.bubblewrap }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1927,6 +1937,8 @@ jobs:
           detect kubernetes "$H/pydantic_ai_harness/kubernetes_sandbox" tests/harness/kubernetes_sandbox \
             "$H/pydantic_ai_harness/_workspace_provider.py" "$H/pydantic_ai_harness/_workspace.py" \
             "$H/integration_tests/kubernetes" pydantic_ai_slim/pydantic_ai/workspaces
+          detect bubblewrap "$H/pydantic_ai_harness/bubblewrap_sandbox" tests/harness/bubblewrap_sandbox \
+            tests/harness/_fake_remote_tools.py .github/actions/install-subprocess-isolation-deps
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -2164,6 +2176,42 @@ jobs:
 
       - run: make integration-kubernetes
 
+  # The `BubblewrapWorkspace` sandbox tests with a real `bwrap`: the `test` job has none, so it skips
+  # the tests that need one. Reproduce a failure with `BWRAP_REQUIRE_LIVE=1 make integration-bubblewrap`.
+  harness-bubblewrap-integration:
+    name: harness Bubblewrap integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.bubblewrap == 'true') }}
+    # The pinned bubblewrap package is a noble build.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # A `bwrap` that does not work is a skip locally and must be a failure here.
+      BWRAP_REQUIRE_LIVE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install bubblewrap and socat
+        uses: ./.github/actions/install-subprocess-isolation-deps
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-bubblewrap
+
+      # The runner image restricts unprivileged user namespaces through AppArmor, and `bwrap` needs one.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # Shows `bwrap`'s own error, which the tests only report as a failed requirement.
+      - run: bwrap --ro-bind / / --unshare-all true
+
+      - run: make integration-bubblewrap
+
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
   # SDK we cannot drive (the `anthropic` 1.0.0 case). `check` allows its failure below. Tag refs
@@ -2266,6 +2314,7 @@ jobs:
       - harness-redis-integration
       - harness-azure-durable-task-integration
       - harness-kubernetes-integration
+      - harness-bubblewrap-integration
       - latest-versions-canary
       - coverage
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
@@ -2289,20 +2338,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
