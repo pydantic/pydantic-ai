@@ -206,7 +206,7 @@ agent = Agent(model)
 
 This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) overrides the number of attempts for a model, agent or run, keeping the delays and status codes set here, or the SDK's defaults (a first delay of one second; status 408, 429, 500, 502, 503 and 504) when `retry_options` isn't set. See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
-When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
+When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream and for a status a [retrying transport](../retries.md#error-handling) gave up on. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
 
 ## Document, Image, Audio, and Video Input
 
@@ -378,15 +378,22 @@ Pydantic AI resolves each model's supported levels from Google's documented thin
 requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Google
 [documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for it, but only the Gemini
 API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
-keeps the full scale. For a model id the table doesn't cover, declare its
+keeps the default levels. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
-(default: the full scale); unsupported efforts resolve to the nearest supported level.
+(default: every level but `xhigh`); unsupported efforts resolve to the nearest supported level.
 
-`gemini-4-argon` and `gemini-4-carbon` support the `low`, `medium` and `high` levels, so `thinking=False` and
-`'minimal'` resolve to `low`.
+`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` support the `low`, `medium` and `high` levels, so
+`thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` also supports `xhigh`, its deepest reasoning,
+which `thinking='xhigh'` and `'max'` select; on models without it, they resolve to `high`. The `google-genai` SDK's
+`ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends the level
+anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
+
+Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
+rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
+`high`. Without a `thinking` setting it thinks by default there.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
@@ -546,7 +553,7 @@ A job that fails or is cancelled before it writes any results doesn't report whi
 
 ## Long decode
 
-`gemini-4-argon` and `gemini-4-carbon` cap the output of each request; Google's
+`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` cap the output of each request; Google's
 [long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
 [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
 continuation token, and the `google-genai` SDK continues the response from it in another request, until the response
@@ -575,6 +582,14 @@ decode is one model request:
   already billed. A streamed run keeps what it streamed as a response with
   [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
+- With `google-genai` 2.31.0 and later, a streamed run sends a later request that fails before it streams any output
+  3 more times from the same continuation token, with no wait. If they all fail, the model request fails as above.
+  This applies to errors the HTTP client raises: a connection that can't be opened or that drops, a timeout, or the
+  `HTTPStatusError` of a [retrying transport](../retries.md#transport-retries) that gave up. It doesn't apply to an
+  error status the SDK reads itself. `retry_options` and
+  [`max_retries`](../retries.md#setting-the-sdk-retry-count-per-request) can't turn this off, and they also retry a
+  connection that can't be opened, or a timeout before the response arrives, on each of those 4 requests: with
+  `max_retries=2`, such an error goes on the wire 12 times.
 - The SDK resumes a dropped stream from its last continuation token. If output was streamed after that token, the
   model request fails as above instead, since the resumed request would repeat that output.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model

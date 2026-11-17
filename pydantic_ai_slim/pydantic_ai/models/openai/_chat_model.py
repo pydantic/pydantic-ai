@@ -6,7 +6,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Never, assert_never, cast, overload
 
@@ -50,7 +50,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...exceptions import UserError
+from ...exceptions import ModelRequestRejectedError, UserError
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -104,6 +104,7 @@ from .. import (
 )
 from .._decode_errors import map_decode_errors
 from .._sdk_retries import with_max_retries
+from .._tool_call_ids import stored_tool_call_id
 from .._tool_choice import resolve_tool_choice
 from ._caching import (
     CACHE_SETTINGS_KEYS,
@@ -130,7 +131,12 @@ from ._citations import map_chat_content
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
 from ._model_response_streaming import ModelResponseStreamedResponse
-from ._reasoning import drop_sampling_params_for_reasoning, reasoning_active, resolve_openai_thinking_effort
+from ._reasoning import (
+    drop_sampling_params_for_reasoning,
+    reasoning_active,
+    resolve_openai_thinking_effort,
+    supports_reasoning_effort_none,
+)
 from ._response_fields import map_usage
 from ._settings import (
     OpenAIChatModelSettings,
@@ -524,6 +530,29 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = self.profile
 
+        # A flagged model rejects any request that sends tools while reasoning is on, output tools included, with a
+        # 400 pointing at `/v1/responses` or `reasoning_effort='none'`. `thinking=False` maps to `'none'` only where
+        # the model accepts it; elsewhere it maps to the lowest effort, which the API rejects too. The error is the
+        # category of that 400, so `FallbackModel` and `except ModelAPIError` handle it as they handle the 400.
+        if (
+            tools
+            and profile.get('openai_chat_function_tools_require_reasoning_off', False)
+            and reasoning_active(profile, model_settings, model_request_parameters)
+        ):
+            remedy = ''
+            if supports_reasoning_effort_none(profile):
+                # An explicit `openai_reasoning_effort` wins over `thinking`, so `thinking=False` alone wouldn't help.
+                remedy = (
+                    ", or set `openai_reasoning_effort='none'`"
+                    if model_settings.get('openai_reasoning_effort') is not None
+                    else ', or disable reasoning with `thinking=False`'
+                )
+            raise ModelRequestRejectedError(
+                self.model_name,
+                f'OpenAI rejects tools, output tools included, while reasoning is enabled on {self.model_name!r} over '
+                f'Chat Completions. Use `OpenAIResponsesModel`{remedy} instead.',
+            )
+
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
         self._finalize_cache_breakpoints(tools, openai_messages)
 
@@ -568,6 +597,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
+                    safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
                     web_search_options=web_search_options or OMIT,
                     # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
                     service_tier=cast(Any, resolve_openai_service_tier(model_settings)),
@@ -593,6 +623,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
+                # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
@@ -638,7 +671,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
         return {'unmapped': data} if data else {}
 
-    def _process_response(  # noqa: C901
+    def _process_response(
         self,
         response: chat.ChatCompletion | str,
         *,
@@ -661,15 +694,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if response.created is None:  # pyright: ignore[reportUnnecessaryComparison]
             response.created = 0
 
-        # Some OpenAI-compatible providers omit the finish reason (e.g. local Ollama) or send an empty one (e.g. Snowflake
-        # Cortex), which fails validation. The response is treated as `_missing_finish_reason` says, like a stream that
-        # ends without one (subclasses may also handle an empty one in `_validate_completion`), but that's not reported
-        # as the provider's value.
-        missing_finish_reason = False
-        if response.choices and not (choice := response.choices[0]).finish_reason:
-            missing_finish_reason = True
-            if choice.finish_reason is None:
-                choice.finish_reason = self._missing_finish_reason(choice)
+        missing_finish_reason = self._fill_missing_finish_reason(response)
 
         content_parts = raw_non_text_content_parts(response)
 
@@ -728,24 +753,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         )
         if choice.message.tool_calls is not None:
-            for c in choice.message.tool_calls:
-                if isinstance(c, ChatCompletionMessageFunctionToolCall):
-                    part_provider_details = map_tool_call_provider_details(c)
-                    part = ToolCallPart(
-                        c.function.name,
-                        c.function.arguments,
-                        tool_call_id=c.id,
-                        provider_name=self.system if part_provider_details else None,
-                        provider_details=part_provider_details,
-                    )
-                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
-                    # NOTE: Custom tool calls are not supported.
-                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
-                    raise RuntimeError('Custom tool calls are not supported')
-                else:
-                    assert_never(c)
-                part.tool_call_id = _guard_tool_call_id(part)
-                items.append(part)
+            items.extend(
+                self._process_tool_call(c, provider_response_id=response.id or None, timestamp=timestamp)
+                for c in choice.message.tool_calls
+            )
 
         if response.created:
             provider_details['timestamp'] = number_to_datetime(response.created)
@@ -762,6 +773,48 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
         )
+
+    def _fill_missing_finish_reason(self, response: chat.ChatCompletion) -> bool:
+        """Fill in the finish reason of a response that came without one, and say whether it did."""
+        # Some OpenAI-compatible providers omit the finish reason (e.g. local Ollama) or send an empty one (e.g. Snowflake
+        # Cortex), which fails validation. The response is treated as `_missing_finish_reason` says, like a stream that
+        # ends without one (subclasses may also handle an empty one in `_validate_completion`), but that's not reported
+        # as the provider's value.
+        if not response.choices or (choice := response.choices[0]).finish_reason:
+            return False
+        if choice.finish_reason is None:
+            choice.finish_reason = self._missing_finish_reason(choice)
+        return True
+
+    def _process_tool_call(
+        self,
+        tool_call: ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall,
+        *,
+        provider_response_id: str | None,
+        timestamp: datetime,
+    ) -> ToolCallPart:
+        if isinstance(tool_call, ChatCompletionMessageFunctionToolCall):
+            part_provider_details = map_tool_call_provider_details(tool_call)
+            part = ToolCallPart(
+                tool_call.function.name,
+                tool_call.function.arguments,
+                tool_call_id=stored_tool_call_id(
+                    tool_call.id,
+                    response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+                    provider_response_id=provider_response_id,
+                    timestamp=timestamp,
+                ),
+                provider_name=self.system if part_provider_details else None,
+                provider_details=part_provider_details,
+            )
+        elif isinstance(tool_call, ChatCompletionMessageCustomToolCall):  # pragma: no cover
+            # NOTE: Custom tool calls are not supported.
+            # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
+            raise RuntimeError('Custom tool calls are not supported')
+        else:
+            assert_never(tool_call)
+        part.tool_call_id = _guard_tool_call_id(part)
+        return part
 
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
         """Hook that maps reasoning tokens to thinking parts.
@@ -968,15 +1021,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _auto_thinking_field(self, part: ThinkingPart) -> str | None:
         """The custom field `part` goes back in under `openai_chat_send_back_thinking_parts='auto'`, or `None` for tags.
 
-        It goes back in a field when it came from a custom field of this same provider. `id='content'` means it came
-        from tags in the content, not a custom field.
+        It goes back in a field when it came from this same provider and its id is the profile's
+        `openai_chat_thinking_field`, or, with none set, `reasoning` or `reasoning_content`. Any other id is not a
+        field: `id='content'` marks thinking parsed from tags, and an `OpenAIResponsesModel` reasoning item id
+        (`rs_...`) shares this provider's `system`.
         """
         custom_field = self.profile.get('openai_chat_thinking_field', None)
-        if (
-            part.id
-            and part.id != 'content'
-            and part.provider_name == self.system
-            and (not custom_field or part.id == custom_field)
+        if part.provider_name == self.system and part.id in (
+            (custom_field,) if custom_field else ('reasoning', 'reasoning_content')
         ):
             return part.id
         return None
@@ -1079,8 +1131,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             profile = self._model.profile
             include_method = profile.get('openai_chat_send_back_thinking_parts', 'auto')
 
-            # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
-            # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
                 if field := self._model._auto_thinking_field(item):
                     # Store both content and field name for later use in _into_message_param
@@ -1105,7 +1155,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
             text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and item.content:
                 self.texts.append(text)
             elif item.content:
                 # An empty wrapper in the user turn would tell the model the assistant thought nothing.
@@ -1187,6 +1237,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
+        messages = self._restore_response_scoped_tool_call_ids(messages)
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,

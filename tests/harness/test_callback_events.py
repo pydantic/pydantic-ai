@@ -27,7 +27,7 @@ from pydantic_ai_harness.planning import (
     PlanItem,
     Planning,
 )
-from pydantic_ai_harness.spend import SpendLimits, SpendRecordedEvent
+from pydantic_ai_harness.spend_limits import SpendLimits, SpendRecordedEvent
 from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent, SystemReminders
 
 
