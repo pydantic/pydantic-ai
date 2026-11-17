@@ -32,7 +32,7 @@ def test_a_later_windows_workspace_replaces_an_earlier_one_whole() -> None:
     assert first.id == second.id == 'windows_workspace'
     merged = WindowsWorkspace.combine([first, second])
     assert isinstance(merged, WindowsWorkspace)
-    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
+    assert (merged.working_dir, merged.env, merged.read_only) == (second.working_dir, None, False)
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='checks the refusal off Windows')
