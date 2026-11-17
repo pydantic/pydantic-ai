@@ -135,10 +135,9 @@ class DeferredToolRequests:
         call_ids = {c.tool_call_id for c in self.calls}
 
         if extra_approvals := set(approvals) - approval_ids - native_approval_ids:
-            raise ValueError(
-                '`approvals` contains tool call IDs not in this `DeferredToolRequests.approvals` or '
-                f'`native_approvals`: {sorted(extra_approvals)}'
-            )
+            # Names `native_approvals` only when there are any, so a standard run (which never has them) reads as before.
+            where = '`DeferredToolRequests.approvals`' + (' or `native_approvals`' if self.native_approvals else '')
+            raise ValueError(f'`approvals` contains tool call IDs not in this {where}: {sorted(extra_approvals)}')
         if extra_calls := set(calls) - call_ids:
             raise ValueError(
                 f'`calls` contains tool call IDs not in this `DeferredToolRequests.calls`: {sorted(extra_calls)}'

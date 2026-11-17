@@ -1938,8 +1938,10 @@ class SessionCore:
                 if response.status is None:
                     owed.add(token)
                 elif response.status == 'completed':
-                    pending.extend(replace(token, kind='call', key=call_id) for call_id in response.tool_calls)
-                    pending.extend(replace(token, kind='call', key=call_id) for call_id in response.approvals)
+                    pending.extend(
+                        replace(token, kind='call', key=call_id)
+                        for call_id in [*response.tool_calls, *response.approvals]
+                    )
                     if (continuation := self._continued_by.get(token.key)) is not None:
                         pending.append(replace(token, key=continuation))
             elif (result := self._result_input.get(token.key)) is not None:

@@ -6206,6 +6206,11 @@ def test_deferred_tool_requests_native_approvals_are_decided_only_by_name():
         native_approvals=[native]
     )
     assert requests.remaining(DeferredToolResults(approvals={'approval_1': True, 'mcp_1': False})) is None
+    assert requests.kind('mcp_1') == 'approval'
+    with pytest.raises(
+        ValueError, match=r"not in this `DeferredToolRequests.approvals` or `native_approvals`: \['mcp_2'\]"
+    ):
+        requests.build_results(approvals={'mcp_2': True})
 
 
 def test_deferred_tool_requests_round_trip_with_and_without_native_approvals():
