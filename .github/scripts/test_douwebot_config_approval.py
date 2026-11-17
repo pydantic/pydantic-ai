@@ -358,8 +358,8 @@ def test_category_classify_falls_back_to_opencode_only_on_a_usage_limit() -> Non
         pytest.param('size: S\npkg:core\n', 'false', id='no-category'),
     ],
 )
-def test_category_classify_skips_a_pr_that_has_a_category(tmp_path: Path, labels: str, has_label: str):
-    """A PR carrying `bug:unreleased` is never classified, so `bug` is never added next to it."""
+def test_category_classify_skips_only_a_pr_that_has_a_category(tmp_path: Path, labels: str, has_label: str):
+    """A PR that already has a category, `bug:unreleased` included, is not classified, so `bug` never joins it."""
     step = next(step for step in _workflow()['jobs']['category-classify']['steps'] if step.get('id') == 'check-label')
     step = {**step, 'run': step['run'].replace('${{ github.event.pull_request.number }}', PR_NUMBER)}
     output = tmp_path / 'github-output'
