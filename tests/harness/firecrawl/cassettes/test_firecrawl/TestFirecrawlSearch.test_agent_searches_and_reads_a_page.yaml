@@ -32,7 +32,7 @@ interactions:
       content-type:
       - application/json; charset=utf-8
       etag:
-      - W/"70f-sZGYqcAqrXsedMtVljKtiBjGNgU"
+      - W/"70f-mEKx7iUX6qfdbsGH6ESOTbaSh3E"
     body:
       type: json
       content:
@@ -53,21 +53,21 @@ interactions:
 
              [Learn more](https://iana.org/help/example-domains)
           metadata:
-            language: en
             title: Example Domain
+            language: en
             viewport: width=device-width,initial-scale=1
             favicon: data:,
-            scrapeId: 01a1ea5e-9047-73f0-919a-8d7b7c48360b
+            scrapeId: 01a1eaac-10d6-72c8-82f1-edf076977a8d
             sourceURL: https://example.com/
             url: https://example.com/
             statusCode: 200
             contentType: text/html; charset=utf-8
             proxyUsed: basic
             cacheState: hit
-            cachedAt: 2026-11-17T16:35:43.825Z
+            cachedAt: 2026-11-17T18:01:22.448Z
             creditsUsed: 1
             concurrencyLimited: false
-  recorded_at: 2026-11-17T16:37:08.243696+00:00
+  recorded_at: 2026-11-17T18:01:47.443142+00:00
 - request:
     method: POST
     uri: https://api.firecrawl.dev/v2/search
@@ -79,7 +79,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "49"
+      - "67"
       content-type:
       - application/json
       host:
@@ -89,6 +89,7 @@ interactions:
       content:
         query: Pydantic AI agent framework
         limit: 2
+        highlights: true
   response:
     status: 200
     headers:
@@ -99,7 +100,7 @@ interactions:
       content-type:
       - application/json; charset=utf-8
       etag:
-      - W/"19cc-XVizEYLurHCUc3T9CpaFNy0WOIU"
+      - W/"19cc-ijJPpgPOU3qbfYmBx3QIIp6D+yM"
     body:
       type: json
       content:
@@ -235,5 +236,5 @@ interactions:
               ```
             position: 2
         creditsUsed: 2
-        id: 01a1ea5e-8f47-74bd-b222-3f5a8df028ad
-  recorded_at: 2026-11-17T16:37:08.073678+00:00
+        id: 01a1eaac-0f7c-750d-a32c-0ea368e316a5
+  recorded_at: 2026-11-17T18:01:47.318247+00:00

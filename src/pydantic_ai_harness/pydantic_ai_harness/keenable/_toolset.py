@@ -16,7 +16,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._json_api import JsonApiClient, MalformedResponse, recoverable
-from pydantic_ai_harness._output import truncate_head, validated_budget
+from pydantic_ai_harness._output import truncate_head_within, validated_budget
 from pydantic_ai_harness._typeguards import is_object_list
 
 KEENABLE_MAX_RESULTS = 50
@@ -262,12 +262,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         if not content:
             raise ModelRetry(f'No readable content at {url!r}. Try a different URL.')
 
-        page_text = truncate_head(content, self._max_page_chars)
-        if len(page_text) > self._max_page_chars:
-            # `truncate_head` returns its marker alone when the marker is longer
-            # than the budget; the budget is a ceiling, so a one-character
-            # ellipsis marks the cut instead.
-            page_text = f'{content[: self._max_page_chars - 1]}…'
+        page_text = truncate_head_within(content, self._max_page_chars)
         title = page.get('title') or None
         resolved = str(page.get('url') or url)
         return ToolReturn(page_text, metadata={'sources': self._source_list({resolved: str(title) if title else None})})

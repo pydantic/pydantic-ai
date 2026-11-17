@@ -69,8 +69,10 @@ class FirecrawlSearch(AbstractCapability[AgentDepsT]):
     extraction_mode: FirecrawlExtractionMode = 'highlights'
     """How `web_search` attaches page content.
 
-    `'highlights'` (the default) returns the query-relevant passages Firecrawl
-    picks from each result, which keeps surveying several sources cheap.
+    `'highlights'` (the default) returns the query-relevant passages that
+    Firecrawl's search highlights pick from each result (or the site's own
+    description when it has none), on one line, which keeps surveying several
+    sources cheap.
     `'full_page'` also scrapes every result and returns its full markdown,
     capped at `max_text_chars`; Firecrawl bills each scraped result.
     """
@@ -78,7 +80,9 @@ class FirecrawlSearch(AbstractCapability[AgentDepsT]):
     max_text_chars: int = 10_000
     """Maximum characters of each `web_search` result body and of the page `get_page` returns.
 
-    Longer text is truncated and marked, so the model can tell that it continued.
+    Longer text is truncated and marked, so the model can tell that it
+    continued. The marker counts against the budget, and a budget too small to
+    hold it ends the text with `…` instead.
     """
 
     include_domains: Sequence[str] = field(default_factory=list[str])

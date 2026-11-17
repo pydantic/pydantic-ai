@@ -55,8 +55,10 @@ print(result.output)
 The capability adds two tools:
 
 - `web_search(query)`: the matching pages, each with title, URL, and the
-  passages Firecrawl picks as relevant to the query. A result without a URL, or
-  whose URL has whitespace inside, is left out.
+  passages Firecrawl's [search highlights](https://docs.firecrawl.dev/features/search-highlights)
+  pick as relevant to the query, collapsed onto one line. When Firecrawl has no
+  highlight for a page, the site's own description stands in. A result without
+  a URL, or whose URL has whitespace inside, is left out.
 - `get_page(url)`: one page scraped as markdown, with its title and final URL.
 
 Both return a [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `metadata['sources']` lists the URLs and titles behind
@@ -86,7 +88,7 @@ agent = Agent(
 |---|---|---|
 | `max_results` | `5` | How many results `web_search` returns, from 1 to 100. Sent to Firecrawl as `limit`. |
 | `extraction_mode` | `'highlights'` | `'highlights'` returns query-relevant passages per result; `'full_page'` also scrapes every result and returns its markdown. |
-| `max_text_chars` | `10_000` | Budget for each `web_search` result body and for the page `get_page` returns; longer text is truncated and marked. |
+| `max_text_chars` | `10_000` | Budget for each `web_search` result body and for the page `get_page` returns; longer text is truncated and marked, with the marker counted against the budget. A budget too small to hold the marker ends the text with `…` instead. |
 | `include_domains` | `[]` | If non-empty, search results only come from these domains. Mutually exclusive with `exclude_domains`. |
 | `exclude_domains` | `[]` | Search results never come from these domains. |
 | `guidance` | `None` | Replaces the default research instructions, including their untrusted-content rule; `''` contributes none. |
@@ -137,7 +139,7 @@ configured host.
 
 For a proxy, a self-hosted deployment, or a `FirecrawlClient` of your own, this
 is what the default client sends. `search` posts
-`{"query": ..., "limit": ...}` to `/v2/search`, adding `includeDomains` or
+`{"query": ..., "limit": ..., "highlights": true}` to `/v2/search`, adding `includeDomains` or
 `excludeDomains` when set and `"scrapeOptions": {"formats": ["markdown"]}` in
 `'full_page'` mode, and returns the response's `data.web` list; the toolset
 reads each result's `url`, `title`, `description`, and `markdown`. `scrape`

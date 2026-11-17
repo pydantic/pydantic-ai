@@ -30,6 +30,14 @@ def truncate_head(text: str, max_chars: int) -> str:
     return f'{text[: max(max_chars - len(marker), 0)]}{marker}'
 
 
+def truncate_head_within(text: str, max_chars: int) -> str:
+    """Like `truncate_head`, but a cap too small for the marker ends the text with `…` instead, so it stays a ceiling."""
+    truncated = truncate_head(text, max_chars)
+    if len(truncated) > max_chars:
+        return f'{text[: max_chars - 1]}…'
+    return truncated
+
+
 def truncate_tail(text: str, max_chars: int) -> str:
     """Limit text to `max_chars`, keeping the tail.
 

@@ -16,7 +16,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._json_api import JsonApiClient, MalformedResponse, recoverable
-from pydantic_ai_harness._output import truncate_head, validated_budget
+from pydantic_ai_harness._output import truncate_head_within, validated_budget
 from pydantic_ai_harness._typeguards import is_mapping, is_object_list
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
@@ -120,8 +120,12 @@ class HttpFirecrawlClient(JsonApiClient):
         include_domains: Sequence[str],
         exclude_domains: Sequence[str],
     ) -> list[dict[str, object]]:
-        """Search the web via `POST /v2/search` and return its `web` results."""
-        payload: dict[str, object] = {'query': query, 'limit': limit}
+        """Search the web via `POST /v2/search` and return its `web` results.
+
+        Each result's `description` carries Firecrawl's query-relevant highlights, or the
+        site's own description when Firecrawl has none for the page.
+        """
+        payload: dict[str, object] = {'query': query, 'limit': limit, 'highlights': True}
         if include_domains:
             payload['includeDomains'] = list(include_domains)
         if exclude_domains:
@@ -234,8 +238,9 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
             extraction_mode: `'highlights'` for query-relevant excerpts, or
                 `'full_page'` for each result's full markdown.
             max_text_chars: Maximum characters of each search result body and
-                of the page `get_page` returns; longer text is truncated and
-                marked.
+                of the page `get_page` returns. Longer text is truncated and
+                marked, the marker counted against the budget; a budget too
+                small to hold the marker ends the text with `…` instead.
             include_domains: If non-empty, search results only come from these
                 domains.
             exclude_domains: Search results never come from these domains.
@@ -298,10 +303,11 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
             if not url or any(char.isspace() for char in url):
                 continue
             title = _one_line(result.get('title')) or None
-            # A result whose scrape failed has no markdown, so its highlight stands in.
-            body = (_text(result.get('markdown')) if self._full_page else '') or _text(result.get('description'))
+            # A result whose scrape failed has no markdown, so its highlight stands in. The highlight
+            # goes on one line, so page text can't start a line that reads as another result.
+            body = (_text(result.get('markdown')) if self._full_page else '') or _one_line(result.get('description'))
             sources.setdefault(url, title)
-            sections.append(_format_result(title, url, truncate_head(body, self._max_text_chars)))
+            sections.append(_format_result(title, url, truncate_head_within(body, self._max_text_chars)))
             if len(sections) >= self._max_results:
                 break
         if not sections:
@@ -341,6 +347,6 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
         resolved = _one_line(details.get('url')) or url
         title = _one_line(details.get('title')) or None
         return ToolReturn(
-            _format_result(title, resolved, truncate_head(markdown, self._max_text_chars)),
+            _format_result(title, resolved, truncate_head_within(markdown, self._max_text_chars)),
             metadata={'sources': _source_list({resolved: title})},
         )
