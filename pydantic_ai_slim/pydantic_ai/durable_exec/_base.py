@@ -950,8 +950,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'supported: {names}. {self.engine_name} registers durable {self.durable_unit_plural} when a '
             f'capability is bound to the agent, before the {self.durable_container_noun} starts. A capability '
             f'added per-run therefore has no registered durable {self.durable_unit_plural} for the toolsets it '
-            f'contributes or its own `@durable_operation` methods. Attach all capabilities at agent construction '
-            f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
+            f'contributes or its own `@durable_operation` methods. A per-run capability that chooses or wraps the '
+            f'model (`resolve_model_id`, `get_model` or `get_wrapper_model`) is refused too, because only the '
+            f'model ID reaches the model request {self.durable_unit_noun}, so it would be bypassed there. Only '
+            f'capabilities that add hooks, instructions or settings can be added per-run; attach the rest at agent '
+            f'construction time so `{type(self).__name__}.for_agent()` can register their durable '
+            f'{self.durable_unit_plural}.'
         )
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:

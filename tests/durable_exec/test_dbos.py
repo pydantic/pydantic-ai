@@ -5424,8 +5424,11 @@ async def test_per_run_capability_contributing_executing_toolset_still_rejected_
             'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. DBOS registers '
             'durable steps when a capability is bound to the agent, before the workflow starts. A capability '
             'added per-run therefore has no registered durable steps for the toolsets it contributes or its own '
-            '`@durable_operation` methods. Attach all capabilities at agent construction time so '
-            '`DBOSDurability.for_agent()` can register their durable steps.'
+            '`@durable_operation` methods. A per-run capability that chooses or wraps the model (`resolve_model_id`, '
+            '`get_model` or `get_wrapper_model`) is refused too, because only the model ID reaches the model request '
+            'step, so it would be bypassed there. Only capabilities that add hooks, instructions or settings can be '
+            'added per-run; attach the rest at agent construction time so `DBOSDurability.for_agent()` can register '
+            'their durable steps.'
         ),
     ):
         await run_with_toolset_capability()
