@@ -96,8 +96,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
-    _native_computer: NativeComputer | None = None
     _report_inference_geo: bool = False
+    _native_computer: NativeComputer | None = None
     _current_block: BetaContentBlock | None = field(default=None, init=False)
     _ignored_server_tool_use_indices: set[int] = field(default_factory=set[int], init=False)
     _pending_citations: dict[int, list[BetaTextCitation]] = field(
