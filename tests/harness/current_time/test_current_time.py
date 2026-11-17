@@ -44,7 +44,7 @@ class _HostZone(tzinfo):
         return self.name
 
     def __repr__(self) -> str:
-        return "tzfile('/usr/share/zoneinfo/XST')"
+        return "tzfile('/usr/share/zoneinfo/XST')"  # pragma: no cover
 
 
 def _german_strftime(format: str, t: object) -> str:
