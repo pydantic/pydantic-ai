@@ -16,6 +16,7 @@ from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.spec import AgentSpec
@@ -388,6 +389,10 @@ def _calling(*calls: ToolCallPart) -> tuple[FunctionModel, list[ModelRequest], l
     return FunctionModel(respond), requests, tools
 
 
+def _is_toolset(value: object) -> TypeIs[AbstractToolset[None]]:
+    return isinstance(value, AbstractToolset)
+
+
 def _tool_results(requests: list[ModelRequest]) -> list[object]:
     return [part.content for request in requests for part in request.parts if isinstance(part, ToolReturnPart)]
 
@@ -530,7 +535,7 @@ class TestUntrustedWorkspaces:
         # As in a durable engine's activity in another process, which doesn't hold the run's copy.
         _write_skill(tmp_path / 'skills', 'alpha', description='Alpha help.')
         toolset = Skills[None]('skills').get_toolset()
-        assert isinstance(toolset, AbstractToolset)
+        assert _is_toolset(toolset)
         ctx = RunContext[None](
             deps=None, model=TestModel(), usage=RunUsage(), workspace=_untrusted(tmp_path), run_id='elsewhere'
         )
