@@ -1,7 +1,8 @@
 """Hugging Face logprobs: the settings sent to the SDK and the `provider_details['logprobs']` they return.
 
 The recorded tests go through the Hugging Face router to Novita. The mocked tests pin what no recording shows:
-unset settings reach the SDK as `None`, and a `null` `top_logprobs` maps to an empty list.
+unset settings reach the SDK as `None`, a `null` `top_logprobs` maps to an empty list, and streamed logprobs
+collect across chunks.
 """
 
 from __future__ import annotations as _annotations
@@ -16,14 +17,20 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from cassetter import Cassette
-    from huggingface_hub import ChatCompletionOutputLogprobs, ChatCompletionOutputMessage
+    from huggingface_hub import (
+        ChatCompletionOutputLogprobs,
+        ChatCompletionOutputMessage,
+        ChatCompletionStreamOutput,
+        ChatCompletionStreamOutputDelta,
+        ChatCompletionStreamOutputUsage,
+    )
     from huggingface_hub.hf_api import InferenceProviderMapping
     from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
 
     from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceModelSettings
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
-    from .test_huggingface import MockHuggingFace, completion_message, get_mock_chat_completion_kwargs
+    from .test_huggingface import FinishReason, MockHuggingFace, completion_message, get_mock_chat_completion_kwargs
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),
@@ -141,5 +148,50 @@ async def test_huggingface_logprobs_streaming(
                 'logprob': None,
                 'top_logprobs': [{'token': 'Paris', 'logprob': 0}, {'token': 'Par', 'logprob': -17.142858505249023}],
             }
+        ]
+    )
+
+
+def logprobs_chunk(text: str, logprob: float, finish_reason: FinishReason | None = None) -> ChatCompletionStreamOutput:
+    """A streamed chunk carrying the logprobs for its own token, as the API returns them."""
+    return ChatCompletionStreamOutput.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+        {
+            'id': 'x',
+            'choices': [
+                {
+                    'index': 0,
+                    'delta': ChatCompletionStreamOutputDelta(content=text, role='assistant'),
+                    'finish_reason': finish_reason,
+                    'logprobs': {
+                        'content': [
+                            {'token': text, 'logprob': logprob, 'top_logprobs': [{'token': text, 'logprob': logprob}]}
+                        ]
+                    },
+                }
+            ],
+            'created': 1704067200,  # 2024-01-01
+            'model': 'hf-model',
+            'object': 'chat.completion.chunk',
+            'usage': ChatCompletionStreamOutputUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+        }
+    )
+
+
+async def test_huggingface_logprobs_streaming_accumulates(allow_model_requests: None):
+    """The streamed recording carries logprobs in one chunk only, so this pins collecting them across chunks."""
+    stream = [logprobs_chunk('hello ', -0.25), logprobs_chunk('world', -1.5, finish_reason='stop')]
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m, model_settings=HuggingFaceModelSettings(huggingface_logprobs=True, huggingface_top_logprobs=1))
+
+    async with agent.run_stream('') as result:
+        await result.get_output()
+
+    provider_details = result.response.provider_details
+    assert provider_details is not None
+    assert provider_details['logprobs'] == snapshot(
+        [
+            {'token': 'hello ', 'logprob': -0.25, 'top_logprobs': [{'token': 'hello ', 'logprob': -0.25}]},
+            {'token': 'world', 'logprob': -1.5, 'top_logprobs': [{'token': 'world', 'logprob': -1.5}]},
         ]
     )
