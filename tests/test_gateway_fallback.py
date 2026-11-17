@@ -348,6 +348,8 @@ async def test_a_step_follows_the_gateway_at_most_five_times(allow_model_request
     [
         pytest.param(lambda: hand_back('anthropic:claude-sonnet-4-5', 'state-1'), id='outside-the-gateway'),
         pytest.param(lambda: hand_back('gateway/anthropic', 'state-1'), id='no-model-name'),
+        pytest.param(lambda: hand_back('gateway/anthropic:', 'state-1'), id='empty-model-name'),
+        pytest.param(lambda: hand_back('gateway/:claude-sonnet-4-5', 'state-1'), id='empty-provider'),
         pytest.param(lambda: httpx2.Response(424, headers={'x-should-retry': 'false'}), id='no-model-header'),
     ],
 )

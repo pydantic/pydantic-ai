@@ -514,6 +514,8 @@ def _fallback_target(headers: Mapping[str, str] | None) -> tuple[str, str | None
     if not (model.startswith('gateway/') and ':' in model):
         return None
     upstream, model_name = model.removeprefix('gateway/').split(':', 1)
+    if not (upstream and model_name):
+        return None
     # A format can also be named by the gateway's ID for it, as in the `formats` the client advertised.
     upstream = {'gemini': 'google', 'bedrock-converse': 'bedrock'}.get(upstream, upstream)
     return f'gateway/{upstream}:{model_name}', headers.get(_FALLBACK_STATE_RESPONSE_HEADER)
