@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
 from pydantic_ai.messages import InstructionPart
-from pydantic_ai.models import Model
+from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 Autonomy = Literal['low', 'medium', 'high', 'max']
@@ -115,8 +115,9 @@ def delegation_instruction(delegate_tool: str) -> Callable[[RunContext[AgentDeps
     text = _DELEGATION.format(tool_name=delegate_tool)
 
     def delegation(ctx: RunContext[AgentDepsT]) -> InstructionPart:
+        model: AbstractModel = ctx.model
         try:
-            delegates = isinstance(ctx.model, Model) and ctx.model.profile.get('delegates_unprompted', False)
+            delegates = isinstance(model, Model) and model.profile.get('delegates_unprompted', False)
         except NotImplementedError:
             # `FallbackModel` picks its model per request, so no one profile speaks for it.
             delegates = False
