@@ -194,11 +194,13 @@ class TestToolBridge:
             [[{'name': '_get_weather', 'description': 'Get the current weather for a city.'}]]
         )
 
-    async def test_reserved_name_collides(self):
+    @pytest.mark.parametrize('bridged', [None, ['_get_weather']], ids=['bridged', 'native'])
+    async def test_reserved_name_collides(self, bridged: list[str] | None):
         def tool_call() -> str:
             return 'mine'  # pragma: no cover
 
-        agent = Agent(_scripted([]), tools=[tool_call, _get_weather], capabilities=[ToolBridge(['_get_weather'])])
+        bridge = ToolBridge() if bridged is None else ToolBridge(bridged)
+        agent = Agent(_scripted([]), tools=[tool_call, _get_weather], capabilities=[bridge])
 
         with pytest.raises(UserError, match="Tool name 'tool_call' is reserved for `ToolBridge`"):
             await agent.run('hi')
@@ -248,8 +250,11 @@ class TestToolBridge:
         assert seen == [['_get_weather', 'tool_search', 'tool_describe', 'tool_call']]
 
     async def test_approval_raised_by_a_bridged_tool(self):
+        call_ids: list[str | None] = []
+
         def delete_file(ctx: RunContext[None], path: str) -> str:
             """Delete a file."""
+            call_ids.append(ctx.tool_call_id)
             if not ctx.tool_call_approved:
                 raise ApprovalRequired
             return f'deleted {path} for {ctx.tool_call_metadata}'
@@ -266,6 +271,7 @@ class TestToolBridge:
         second = await agent.run(message_history=first.all_messages(), deferred_tool_results=results)
 
         assert _returns(second.new_messages()) == ["deleted a.txt for {'by': 'alice'}"]
+        assert call_ids == [request.tool_call_id, request.tool_call_id]
 
     async def test_denied_by_a_handler(self):
         def delete_file(ctx: RunContext[None], path: str) -> str:

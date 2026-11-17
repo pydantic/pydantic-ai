@@ -107,6 +107,8 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         bridged: dict[str, ToolsetTool[AgentDepsT]] = {}
         # Dropped here because the run's own `unless_tool_kind` filter only sees the tools left native.
         for name, tool in drop_superseded_tools(await self.wrapped.get_tools(ctx)).items():
+            if name in _DISPATCHERS:
+                raise UserError(f'Tool name {name!r} is reserved for `ToolBridge`. Rename the tool.')
             if await self._bridges(ctx, tool.tool_def):
                 # The bridge discloses its tools itself, so tool search must not hold a deferred one back.
                 bridged[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=False))
@@ -115,8 +117,6 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         # `sequential` only decides how calls are scheduled, so changing it leaves the provider's tool list as it was.
         sequential = any(tool.tool_def.sequential for tool in bridged.values())
         for name, (description, schema, validator) in _DISPATCHERS.items():
-            if name in native:
-                raise UserError(f'Tool name {name!r} is reserved for `ToolBridge`. Rename the tool or bridge it.')
             native[name] = _DispatcherTool(
                 toolset=self,
                 tool_def=ToolDefinition(
@@ -198,7 +198,9 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             )
         name = target.tool_def.name
         manager = ToolManager(toolset=self.wrapped, root_capability=parent.root_capability, ctx=ctx, tools=bridged)
-        call = ToolCallPart(tool_name=name, args=args_json or '{}')
+        assert ctx.tool_call_id is not None, 'the run sets the ID of the `tool_call` call being executed'
+        # One `tool_call` runs one bridged call, so they share an ID, as a direct call would keep its own.
+        call = ToolCallPart(tool_name=name, args=args_json or '{}', tool_call_id=ctx.tool_call_id)
         reserved = reserve_nested_call(ctx)
         # The `tool_call` running this counts only once it returns, so it is pending too: concurrent
         # `tool_call`s would otherwise all pass the check before any of them is counted.

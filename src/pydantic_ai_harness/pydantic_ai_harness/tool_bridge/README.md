@@ -23,7 +23,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ToolBridge()])
 
 `tool_call` takes the arguments as a JSON object string rather than a nested object, because some models send nested free-form objects as `null`. An empty string is read as `{}`.
 
-A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs. A bridged tool's retries are counted under its own name, as for a direct call, so its `ctx.retry` and `max_retries` see only its own failures; each one also spends a retry of `tool_call`. If any bridged tool is `sequential`, so is `tool_call`.
+A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call, under the `tool_call` call's ID: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs. A bridged tool's retries are counted under its own name, as for a direct call, so its `ctx.retry` and `max_retries` see only its own failures; each one also spends a retry of `tool_call`. If any bridged tool is `sequential`, so is `tool_call`.
 
 ## Options
 
@@ -40,7 +40,7 @@ These tools are never bridged, so they reach the model as usual:
 - Framework control tools, such as tool search and `load_capability`.
 - Local fallbacks for a provider-native tool (`unless_native`), so the model can drop them when the provider runs the tool natively.
 
-Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`ToolSearch`](https://pydantic.dev/docs/ai/capabilities/tool-search/) has nothing left to reveal. Deferred tools that a capability owns, such as the tools of a capability with `defer_loading=True`, stay native, so core's tool search and `load_capability` reveal them as usual. A tool whose `unless_tool_kind` names another tool's kind is left out, as it would be without the bridge. The tool names `tool_search`, `tool_describe` and `tool_call` are reserved: a native tool with one of them raises a `UserError`.
+Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`ToolSearch`](https://pydantic.dev/docs/ai/capabilities/tool-search/) has nothing left to reveal. Deferred tools that a capability owns, such as the tools of a capability with `defer_loading=True`, stay native, so core's tool search and `load_capability` reveal them as usual. A tool whose `unless_tool_kind` names another tool's kind is left out, as it would be without the bridge. The tool names `tool_search`, `tool_describe` and `tool_call` are reserved: an agent tool with one of them raises a `UserError`.
 
 ## Trade-offs
 
