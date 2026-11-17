@@ -83,11 +83,14 @@ class _Api:
     bodies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     betas: list[str] = field(default_factory=list[str])
     stream: bool = False
+    usages: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    """Extra `usage` fields of each response in turn, sent on the final `message_delta` of a stream."""
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.bodies.append(json.loads(request.content))
         self.betas.append(request.headers.get('anthropic-beta', ''))
         reply = self.replies.pop(0) if self.replies else {'type': 'text', 'text': 'OK'}
+        usage = self.usages.pop(0) if self.usages else {}
         if isinstance(reply, httpx2.Response):
             return reply
         message = {
@@ -99,7 +102,10 @@ class _Api:
         }
         stop_reason = 'tool_use' if reply['type'] == 'tool_use' else 'end_turn'
         if not self.stream:
-            return httpx2.Response(200, json={**message, 'content': [reply], 'stop_reason': stop_reason})
+            usage = {'input_tokens': 5, 'output_tokens': 1, **usage}
+            return httpx2.Response(
+                200, json={**message, 'content': [reply], 'stop_reason': stop_reason, 'usage': usage}
+            )
         if reply['type'] == 'text':
             start: dict[str, Any] = {'type': 'text', 'text': ''}
             delta: dict[str, Any] = {'type': 'text_delta', 'text': reply['text']}
@@ -111,7 +117,7 @@ class _Api:
             {'type': 'content_block_start', 'index': 0, 'content_block': start},
             {'type': 'content_block_delta', 'index': 0, 'delta': delta},
             {'type': 'content_block_stop', 'index': 0},
-            {'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': {}},
+            {'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': usage},
             {'type': 'message_stop'},
         ]
         body = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
@@ -597,6 +603,33 @@ async def test_dropped_fallbacks_start_a_new_thread(allow_model_requests: None):
         await agent.run('More', message_history=second.all_messages(), model_settings=fallbacks())
 
     assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'create']
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_fallback_model_response_starts_a_new_thread(allow_model_requests: None, stream: bool):
+    """The thread doesn't store a turn a server-side fallback model wrote, so the next request creates a new thread."""
+    fallback_message = {
+        'type': 'fallback_message',
+        'model': 'claude-haiku-4-5',
+        'input_tokens': 5,
+        'output_tokens': 1,
+        'cache_read_input_tokens': 0,
+        'cache_creation_input_tokens': 0,
+    }
+    api = _Api(stream=stream, usages=[{'iterations': [fallback_message]}])
+    settings: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'fallbacks': [{'model': 'claude-haiku-4-5'}]}}
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=settings)
+        first = await _run(agent, 'Hi', [], stream)
+        second = await _run(agent, 'Again', first, stream)
+        await _run(agent, 'More', second, stream)
+
+    assert [body['thread'] for body in api.bodies] == [
+        {'type': 'create'},
+        {'type': 'create'},
+        {'type': 'continue', 'previous_message_id': 'msg_2'},
+    ]
+    assert _user_texts(api.bodies[1]) == ['Hi', 'OK', 'Again']
 
 
 _OVERRIDE_MESSAGES: list[dict[str, str]] = [{'role': 'user', 'content': 'The PIN is 1234.'}]

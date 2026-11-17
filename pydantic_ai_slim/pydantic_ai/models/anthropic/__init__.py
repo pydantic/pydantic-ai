@@ -370,6 +370,7 @@ try:
         ThreadRecord,
         continue_cache_breakpoints,
         may_use_thread,
+        served_by_fallback_model,
         thread_continuation,
         thread_fingerprint,
         thread_unsupported,
@@ -720,11 +721,13 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and a request
     continues from it only when its own fingerprint matches, so changing the instructions, tools, betas or another
     fixed field starts a new thread, as does a new message that needs a beta the thread was created without, like
-    the Files API's for an `UploadedFile`. So does a response from another model, a refusal, or an expired thread,
-    which Anthropic reports when the continue request fails, and the full conversation is then sent again. The
-    response also records its [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], covering
-    its ID, its fingerprint, its parts and the history it was created from, so a history processor that trims or
-    redacts either starts a new thread instead of continuing from the unchanged copy Anthropic holds. A request
+    the Files API's for an `UploadedFile`. So does a response from another model, whether through
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or Anthropic's server-side fallback, which the
+    thread doesn't store, or a refusal. So does an expired thread, which Anthropic reports when the continue request
+    fails, and the full conversation is then sent again. The response also records its
+    [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], covering its ID, its fingerprint, its
+    parts and the history it was created from, so a history processor that trims or redacts either starts a new
+    thread instead of continuing from the unchanged copy Anthropic holds. A request
     using something threads don't support, like context management, is sent without a thread, with a warning. Its
     response records `'thread_unsupported': True` beside its `'thread_fingerprint'`, so later requests with the same
     fixed fields are sent without one straight away.
@@ -1415,8 +1418,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(
             messages, False, model_settings, model_request_parameters, thread_record=thread_record
         )
-        model_response = await self._finish_response(response, messages, model_settings, model_request_parameters)
-        model_response = thread_record.stamp(model_response)
+        model_response = await self._finish_response(
+            response, messages, model_settings, model_request_parameters, thread_record=thread_record
+        )
         mark_continuation_context_input_tokens(messages, model_response)
         return model_response
 
@@ -1426,18 +1430,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        thread_record: ThreadRecord | None = None,
     ) -> ModelResponse:
-        """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`."""
+        """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`.
+
+        With `thread_record`, the response records the message thread its request was sent in, if any.
+        """
         response = check_json_response(self.model_name, response)
         code_execution_in_open_turn = open_turn_has_code_execution(messages, self.system)
         if isinstance(response, BetaMessage):
-            return self._process_response(
+            model_response = self._process_response(
                 response,
                 model_request_parameters,
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=code_execution_in_open_turn,
             )
+            if thread_record is None:
+                return model_response
+            return thread_record.stamp(model_response, from_fallback_model=served_by_fallback_model(response.usage))
         # The request was streamed behind the scenes, see `_messages_create`. `map_api_errors` maps a transport
         # error that breaks the stream off, both while it opens and while it's read.
         async with response.source:
@@ -1447,6 +1459,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=code_execution_in_open_turn,
+                thread_record=thread_record,
             )
             async for _ in streamed_response:
                 pass
@@ -1565,7 +1578,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 fetched_pages_from_history(messages),
                 code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
-                stamp_thread=thread_record.stamp,
+                thread_record=thread_record,
             )
             yield streamed_response
             mark_continuation_context_input_tokens(messages, streamed_response)
@@ -2802,7 +2815,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         history_fetched_pages: Sequence[tuple[str, str]] = (),
         *,
         code_execution_in_open_turn: bool = False,
-        stamp_thread: Callable[[ModelResponse], ModelResponse] | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -2829,7 +2842,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
             _history_fetched_pages=history_fetched_pages,
             _report_inference_geo=self._sends_inference_geo(model_settings, self.profile),
-            _stamp_thread=stamp_thread,
+            _thread_record=thread_record,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response

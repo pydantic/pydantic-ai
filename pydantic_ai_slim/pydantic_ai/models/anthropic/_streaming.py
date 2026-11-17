@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -77,6 +77,7 @@ from ._response import (
     report_inference_geo,
     report_input_transformations,
 )
+from ._threads import ThreadRecord, served_by_fallback_model
 
 if TYPE_CHECKING:
     from . import AnthropicModelName
@@ -100,8 +101,9 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _history_fetched_pages: Sequence[tuple[str, str]] = ()
     _report_inference_geo: bool = False
-    _stamp_thread: Callable[[ModelResponse], ModelResponse] | None = None
+    _thread_record: ThreadRecord | None = None
     """Records the message thread the request was sent in, if any, on the response `get()` builds."""
+    _from_fallback_model: bool = field(default=False, init=False)
     _current_block: BetaContentBlock | None = field(default=None, init=False)
     _ignored_server_tool_use_indices: set[int] = field(default_factory=set[int], init=False)
     _pending_citations: dict[int, list[BetaTextCitation]] = field(
@@ -115,7 +117,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         response = super().get()
-        return response if self._stamp_thread is None else self._stamp_thread(response)
+        if self._thread_record is None:
+            return response
+        return self._thread_record.stamp(response, from_fallback_model=self._from_fallback_model)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
@@ -343,6 +347,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def _map_message_delta(self, event: BetaRawMessageDeltaEvent) -> None:
         self._usage = map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
+        self._from_fallback_model = served_by_fallback_model(event.usage)
         if (context_input_tokens := last_pass_input_tokens(event.usage)) is not None:
             mark_context_input_tokens(self, context_input_tokens)
         if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch

@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from anthropic import omit as OMIT
-from anthropic.types.beta import BetaCompactionConfigParam, BetaMessageParam
+from anthropic.types.beta import BetaCompactionConfigParam, BetaMessageDeltaUsage, BetaMessageParam, BetaUsage
 
 from ..._utils import is_str_mapping
 from ...messages import ModelMessage, ModelResponse
@@ -145,7 +145,8 @@ class ThreadRecord:
     """Set by `_first_attempt` when its request was sent in a thread, or without one that threads don't support.
 
     The response is stamped with the thread's fingerprint in its `provider_details`. Sent in the thread, it also gets
-    its `thread_digest` as its `history_digest`. Sent without it, it's marked
+    its `thread_digest` as its `history_digest`, unless a server-side fallback model wrote it: the thread doesn't
+    store that turn, so it's left unstamped and the next request creates a new thread. Sent without it, it's marked
     `'thread_unsupported'`, so the next request with the same fingerprint doesn't try the thread again.
     """
 
@@ -153,16 +154,29 @@ class ThreadRecord:
     history: Hasher | None = None
     """The history the request was sent in the thread with, or `None` when threads don't support the request."""
 
-    def stamp(self, response: ModelResponse) -> ModelResponse:
-        """`response` with its thread recorded, if its request was sent in one or threads don't support it."""
+    def stamp(self, response: ModelResponse, *, from_fallback_model: bool) -> ModelResponse:
+        """`response` with its thread recorded, if its request was sent in one or threads don't support it.
+
+        `from_fallback_model` says whether a server-side fallback model wrote it (see `served_by_fallback_model`).
+        """
         if self.fingerprint is None:
             return response
         details = {**(response.provider_details or {}), _THREAD_FINGERPRINT_KEY: self.fingerprint}
         if self.history is None:
             return replace(response, provider_details={**details, _THREAD_UNSUPPORTED_KEY: True})
+        if from_fallback_model:
+            return response
         return replace(
             response, provider_details=details, history_digest=thread_digest(self.history, response, self.fingerprint)
         )
+
+
+def served_by_fallback_model(usage: BetaUsage | BetaMessageDeltaUsage) -> bool:
+    """Whether a server-side fallback model wrote a response: its `usage.iterations` then has a `fallback_message`.
+
+    On a stream, the final `message_delta` carries it.
+    """
+    return any(iteration.type == 'fallback_message' for iteration in usage.iterations or [])
 
 
 _THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
