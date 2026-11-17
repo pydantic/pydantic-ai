@@ -37,14 +37,14 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     Exposes a single `read_pyai_docs(topic)` tool. Docs are located and returned
     when asked for -- never bundled into context. Each call resolves the topic
     from a configured local checkout first, then falls back to fetching the page
-    from `pydantic/pydantic-ai:main`, which needs network access.
+    from GitHub at the installed `pydantic_ai` release's tag, which needs network access.
 
     The local checkout path comes from `local_docs_path`, or the
     `PYDANTIC_AI_HARNESS_DOCS_PATH` env var when that is unset; with neither set
     every call goes straight to the remote source. The checkout is read through
     the run's workspace, and a run with a local path but no workspace fails at its
     start. The capability never runs git -- keep
-    the local checkout current yourself; the remote path always reads `main`.
+    the local checkout current yourself.
 
     ```python
     from pathlib import Path
@@ -69,6 +69,10 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     """If `True`, each returned doc is memoized for one agent run."""
 
     _: KW_ONLY
+    remote_ref: str | None = None
+    """Git ref of `pydantic/pydantic-ai` the remote fallback reads, such as `'main'`. When `None`, the
+    installed `pydantic_ai` release's tag, so the docs match the installed APIs; a dev build reads `main`."""
+
     id: str | None = 'pydantic_ai_docs'
     """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
 
@@ -118,6 +122,7 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
         return PydanticAIDocsToolset[AgentDepsT](
             local_docs_path=self._resolved_local_path(),
             cache=self._cache if self.cache else None,
+            remote_ref=self.remote_ref,
         )
 
     @classmethod
