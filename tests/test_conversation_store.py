@@ -1515,3 +1515,30 @@ async def test_a_nested_run_s_error_carries_the_outer_run_s_conversation() -> No
     failed = exc_info.value.conversation
     assert failed is not None
     assert failed.conversation_id == 'outer'
+
+
+async def test_a_nested_run_s_cancellation_keeps_its_own_conversation_as_the_cause() -> None:
+    inner = Agent(TestModel(), deps_type=type(None))
+
+    @inner.tool
+    async def stop(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        # The cancellation is delivered at the next await.
+        await asyncio.Event().wait()
+        return 'unreachable'  # pragma: no cover
+
+    class _Delegates(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await inner.run('Stop', conversation_id='inner')
+
+    outer = Agent(TestModel(), deps_type=type(None), capabilities=[_Delegates()])
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await outer.run('Delegate', conversation_id='outer')
+
+    cancelled = exc_info.value
+    assert cancelled.conversation is not None and cancelled.conversation.conversation_id == 'outer'
+    nested = cancelled.__cause__
+    assert isinstance(nested, RunCancelled)
+    assert nested.conversation is not None and nested.conversation.conversation_id == 'inner'
+    assert nested.conversation.messages == nested.all_messages()

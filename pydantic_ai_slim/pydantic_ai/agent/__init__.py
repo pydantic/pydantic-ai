@@ -5207,6 +5207,9 @@ def _carrying_conversation(build: Callable[[], Conversation]) -> Generator[None]
     """
     try:
         yield
+    except exceptions.RunCancelled:
+        # The run's own cancellation handling replaces it with one it stamps, keeping this one, and its conversation, as the cause.
+        raise
     except exceptions.AgentRunError as error:
         error._pydantic_ai_conversation = build()  # pyright: ignore[reportPrivateUsage]
         raise

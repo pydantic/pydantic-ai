@@ -56,7 +56,12 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models._batch_codec import BatchJobError
-from pydantic_ai.models._batch_model import BatchedModel, BatchPool
+from pydantic_ai.models._batch_model import (
+    BatchedModel,
+    BatchPool,
+    _Requester,  # pyright: ignore[reportPrivateUsage]
+    _Ticket,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models._in_memory_batch import _State  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel
@@ -409,16 +414,18 @@ async def test_runs_sharing_a_failed_check_each_get_their_own_error(monkeypatch:
             await release.wait()
             raise ModelHTTPError(status_code=401, model_name='test', body={'error': 'denied'})
 
-    polling: list[object] = []
+    polling: list[_Ticket] = []
     both_polling = asyncio.Event()
     poll = BatchPool.poll
 
-    async def counting_poll(self: BatchPool, *args: Any) -> Any:
+    async def counting_poll(
+        self: BatchPool, model: Model, ticket: _Ticket, requester: _Requester | None
+    ) -> tuple[Batch, dict[str, BatchResult] | None]:
         # `poll` joins a running check before it first awaits, so a run counted here has joined it once the other is.
-        polling.append(args)
+        polling.append(ticket)
         if len(polling) == 2:
             both_polling.set()
-        return await poll(self, *args)
+        return await poll(self, model, ticket, requester)
 
     monkeypatch.setattr(BatchPool, 'poll', counting_poll)
     checks: list[str] = []
