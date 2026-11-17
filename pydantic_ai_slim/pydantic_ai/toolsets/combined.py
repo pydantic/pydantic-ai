@@ -76,8 +76,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     )
 
                 tool_def = tool.tool_def
-                if tool_def.toolset_id is None and tool_toolset.id is not None:
-                    tool_def = replace(tool_def, toolset_id=tool_toolset.id)
+                # Only an `id` chosen for the toolset is stamped: a hostname-derived one would change tool
+                # definitions that durable engines hash and serialize, and that telemetry exports.
+                if tool_def.toolset_id is None and (toolset_id := tool_toolset._explicit_id) is not None:
+                    tool_def = replace(tool_def, toolset_id=toolset_id)
 
                 all_tools[name] = _CombinedToolsetTool(
                     toolset=tool_toolset,

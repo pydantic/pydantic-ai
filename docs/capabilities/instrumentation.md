@@ -23,4 +23,4 @@ Pass [`InstrumentationSettings`][pydantic_ai.models.instrumented.Instrumentation
 
 Other capabilities can attach attributes to the created spans through the OpenTelemetry API (`opentelemetry.trace.get_current_span().set_attribute(...)`).
 
-See [Debugging and Monitoring](../logfire.md) for the full guide: setup, what gets captured, semantic-conventions versions, and excluding sensitive or binary content.
+See [Debugging and Monitoring](../logfire.md#using-logfire) for the full guide: setup, what gets captured, semantic-conventions versions, and excluding sensitive or binary content.

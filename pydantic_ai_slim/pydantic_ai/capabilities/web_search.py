@@ -122,9 +122,4 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return (
-            self.blocked_domains is not None
-            or self.allowed_domains is not None
-            or self.max_uses is not None
-            or self.external_web_access is False
-        )
+        return bool(self._default_native().restricting_settings)

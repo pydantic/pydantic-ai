@@ -18,6 +18,8 @@
 
 ::: pydantic_ai.profiles.openai_codex
 
+::: pydantic_ai.profiles.openai_chatgpt
+
 ::: pydantic_ai.profiles.anthropic
 
 ::: pydantic_ai.profiles.google
@@ -37,5 +39,7 @@
 ::: pydantic_ai.profiles.groq
 
 ::: pydantic_ai.profiles.zai
+
+::: pydantic_ai.profiles.minimax
 
 ::: pydantic_ai.profiles.decision

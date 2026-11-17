@@ -17,15 +17,22 @@ See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
 from __future__ import annotations as _annotations
 
 import warnings
-from typing import Annotated, Any
+from enum import Enum, IntEnum
+from importlib.metadata import version
+from typing import Annotated, Any, Literal
 
 import pytest
+from packaging.version import Version
 from pydantic import BaseModel, Field
 
-from .._inline_snapshot import snapshot
+from pydantic_ai import BoolCriteria, Choices, UseEnumMemberDocstrings
+from pydantic_ai.tools import GenerateToolJsonSchema
+
+from .._inline_snapshot import Is, snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.native_tools import (
         AdvisorTool,
         CodeExecutionTool,
@@ -36,7 +43,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
-    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -135,6 +142,154 @@ def test_strict_true_nested_model():
             'properties': {'name': {'type': 'string'}, 'address': {'$ref': '#/$defs/Address'}},
             'additionalProperties': False,
             'required': ['name', 'address'],
+        }
+    )
+
+
+class Area(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    billing = 'billing'
+    """Charges and invoices."""
+    bug = 'bug'
+    """Something is broken."""
+
+
+class Priority(UseEnumMemberDocstrings, IntEnum):
+    low = 1
+    """Can wait a week."""
+    high = 2
+    """Needs attention today."""
+
+
+class Weight(UseEnumMemberDocstrings, Enum):
+    half = 0.5
+    """Half the usual weight."""
+    unknown = 'unknown'
+    """Not weighed yet."""
+
+
+def _enum_schema(type_: str, value: str | int | float, *, description: str | None = None) -> dict[str, Any]:
+    """Expected literal constraint: SDK 2.7.0 drops the redundant type beside an enum."""
+    schema: dict[str, Any] = {'type': type_} if Version(version('anthropic')) < Version('2.7.0') else {}
+    schema['enum'] = [value]
+    if description is not None:
+        schema['description'] = description
+    return schema
+
+
+def test_strict_true_described_options():
+    """With strict=True, untyped `const` options become one-value `enum`s.
+
+    Described enums, `Choices` and `BoolCriteria` all render their options this way. Before SDK 2.7.0,
+    Anthropic's `transform_schema()` raises on an option without a `type`, and moves a `const` into the
+    description, which would leave the option unconstrained. A unit test: `walk()` runs `transform_schema()`
+    on the generated schema, which is where the error was raised, so no request is needed.
+    """
+
+    class Ticket(BaseModel):
+        area: Area
+        priority: Priority
+        weight: Weight
+        team: Annotated[str, Choices({'finance': 'Money matters.', 'eng': 'Engineering.'})]
+        urgent: Annotated[bool, BoolCriteria(true='The customer is blocked.', false='The customer can wait.')]
+
+    schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
+    transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Area': {
+                    'anyOf': [
+                        Is(_enum_schema('string', 'billing', description='Charges and invoices.')),
+                        Is(_enum_schema('string', 'bug', description='Something is broken.')),
+                    ]
+                },
+                'Priority': {
+                    'anyOf': [
+                        Is(_enum_schema('integer', 1, description='Can wait a week.')),
+                        Is(_enum_schema('integer', 2, description='Needs attention today.')),
+                    ]
+                },
+                'Weight': {
+                    'anyOf': [
+                        Is(_enum_schema('number', 0.5, description='Half the usual weight.')),
+                        Is(_enum_schema('string', 'unknown', description='Not weighed yet.')),
+                    ]
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'area': {'$ref': '#/$defs/Area'},
+                'priority': {'$ref': '#/$defs/Priority'},
+                'weight': {'$ref': '#/$defs/Weight'},
+                'team': {
+                    'anyOf': [
+                        Is(_enum_schema('string', 'finance', description='Money matters.')),
+                        Is(_enum_schema('string', 'eng', description='Engineering.')),
+                    ]
+                },
+                'urgent': {
+                    'anyOf': [
+                        Is(_enum_schema('boolean', True, description='The customer is blocked.')),
+                        Is(_enum_schema('boolean', False, description='The customer can wait.')),
+                    ]
+                },
+            },
+            'additionalProperties': False,
+            'required': ['area', 'priority', 'weight', 'team', 'urgent'],
+        }
+    )
+
+
+def test_strict_true_typed_const():
+    """With strict=True, a typed `const` becomes a one-value `enum`.
+
+    Pydantic emits a typed `const` for a single-value `Literal`, including a tagged union's discriminator.
+    Before SDK 2.7.0, Anthropic's `transform_schema()` moves a `const` into the description, which would leave
+    the model free to return any tag. A unit test: `walk()` runs `transform_schema()`, where the constraint
+    was lost, and the request a recording would capture doesn't show whether the model was held to it.
+    """
+
+    class Cat(BaseModel):
+        kind: Literal['cat']
+
+    class Dog(BaseModel):
+        kind: Literal['dog']
+
+    class Pet(BaseModel):
+        pet: Annotated[Cat | Dog, Field(discriminator='kind')]
+        legs: Literal[4]
+
+    transformer = AnthropicJsonSchemaTransformer(Pet.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Cat': {
+                    'type': 'object',
+                    'properties': {'kind': Is(_enum_schema('string', 'cat'))},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+                'Dog': {
+                    'type': 'object',
+                    'properties': {'kind': Is(_enum_schema('string', 'dog'))},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'pet': {
+                    'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}],
+                    'description': "{discriminator: {'mapping': {'cat': '#/$defs/Cat', 'dog': '#/$defs/Dog'}, 'propertyName': 'kind'}}",
+                },
+                'legs': Is(_enum_schema('integer', 4)),
+            },
+            'additionalProperties': False,
+            'required': ['pet', 'legs'],
         }
     )
 
@@ -363,23 +518,26 @@ def test_model_profile_fable_5():
         ('claude-opus-5', True, False),
         ('claude-sonnet-5', True, False),
         ('claude-opus-5-5', True, True),
-        ('claude-sonnet-5-5', True, True),
+        ('claude-sonnet-5-5', True, False),
         ('claude-haiku-5-5', True, False),
         ('claude-fable-5', True, True),
         ('claude-fable-5-1', True, True),
+        ('claude-fable-5-2', True, True),
         ('claude-mythos-5-1', True, True),
+        ('claude-mythos-5-2', True, True),
         ('claude-mythos-preview', True, True),
     ],
 )
 def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: bool, always_thinks: bool):
-    """Which models think without a `thinking` setting, and which reject `{'type': 'disabled'}`.
+    """Which models think without a `thinking` setting, and which can't turn thinking off.
 
     Verified live for every model except Mythos. Haiku 5.5's adaptive default was verified with
     `anthropic_effort='high'` and no `thinking` parameter; the response included thinking tokens. Anthropic [documents
     Haiku 5.5 as adaptive-on by default](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide#configure-thinking)
     and accepts `thinking={'type': 'disabled'}` at effort `high` or below. With no `thinking` parameter,
     Claude Opus 5, Sonnet 5, Opus 5.5, Fable 5 and Fable 5.1 return thinking tokens where Sonnet 4.6 and Opus 4.8
-    return none; Opus 5.5, Fable 5 and Fable 5.1 reject `thinking={'type': 'disabled'}` with a 400.
+    return none; Opus 5.5, Fable 5 and Fable 5.1 reject both `thinking={'type': 'disabled'}` and
+    `{'type': 'between_tools'}` with a 400. Sonnet 5.5 rejects `disabled` but turns thinking off with `between_tools`.
     """
     profile = anthropic_model_profile(model_name)
     assert profile is not None
@@ -395,6 +553,8 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
     [
         ('claude-fable-5-1', False),
         ('claude-mythos-5-1', False),
+        ('claude-fable-5-2', False),
+        ('claude-mythos-5-2', False),
         ('claude-fable-5', True),
         ('claude-mythos-5', True),
         ('claude-mythos-preview', True),
@@ -406,11 +566,11 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
     ],
 )
 def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: bool):
-    """The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
+    """The 5.1 and 5.2 generations, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
 
-    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and the Opus 5.5
-    and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
-    `claude-fable-5-1`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
+    Anthropic's forcing-tool-use table names Claude Fable 5.1 and 5.2 and Claude Mythos 5.1 and 5.2, and the
+    Opus 5.5 and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
+    `claude-fable-5-1`, `claude-fable-5-2`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
     and `{'type': 'tool'}` while `claude-fable-5`, `claude-opus-5`, and `claude-sonnet-5` return 200
     for both.
     The Mythos ids are Project Glasswing-only and unreachable with our credentials, so they follow
@@ -462,6 +622,7 @@ def test_model_profile_fable_5_1():
     assert profile == snapshot(
         {
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': False,
             'supports_thinking': True,
@@ -472,9 +633,13 @@ def test_model_profile_fable_5_1():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -494,6 +659,27 @@ def test_model_profile_fable_5_1():
     # Project Glasswing-only and not reachable with our credentials, so the rest is the mirror.
     assert profile is not None
     assert anthropic_model_profile('claude-mythos-5-1') == {**profile, 'anthropic_binds_thinking_blocks': False}
+
+
+def test_model_profile_fable_5_2():
+    """Claude Fable 5.2 carries Claude Fable 5.1's capability surface plus fast mode.
+
+    Verified live against the Anthropic API by probing `claude-fable-5-2` side by side with `claude-fable-5-1` and
+    `claude-fable-5`. All three reject sampling settings, budget-based thinking, and `thinking: {'type': 'disabled'}`
+    or `{'type': 'between_tools'}`, and accept `low`/`xhigh`/`max` effort, task budgets, json-schema output, strict
+    tools, tool search, code execution `20260120`, web search `20260209`, on-demand compaction, a mid-conversation
+    `system` entry, and `tool_addition` by reference. Like Fable 5.1 and unlike Fable 5, Fable 5.2 returns a 400 for
+    a forced `tool_choice` and binds thinking blocks to the conversation prefix. Unlike both, it accepts
+    `anthropic_speed='fast'`, and it returns the prefix-check 400 with `prefix_mismatch_behavior` unset on an account
+    created before 31 August 2026, where Fable 5.1 replays the block.
+    """
+    profile = anthropic_model_profile('claude-fable-5-2')
+    assert profile == {**(anthropic_model_profile('claude-fable-5-1') or {}), 'anthropic_supports_fast_speed': True}
+
+    # Anthropic documents Mythos 5.2 as having "the same capabilities" as Fable 5.2, including fast mode and the
+    # prefix check on every account. It is available only to verified organizations: our key gets a 404
+    # `not_found_error` for `claude-mythos-5-2`.
+    assert anthropic_model_profile('claude-mythos-5-2') == profile
 
 
 def test_model_profile_sonnet_5():
@@ -541,6 +727,7 @@ def test_model_profile_opus_5():
     assert profile == snapshot(
         {
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': True,
             'supports_thinking': True,
@@ -551,9 +738,13 @@ def test_model_profile_opus_5():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -613,8 +804,9 @@ def test_model_profile_sonnet_5_5():
     Where Sonnet 5.5 diverges, it matches Opus 5.5: it returns a 400 for a forced `tool_choice` and for a
     thinking block replayed after the `system` prompt changes (with an explicit
     `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` in favor of
-    `{'type': 'between_tools'}`, which passes through `anthropic_thinking` unchanged, so thinking can't be
-    turned off.
+    `{'type': 'between_tools'}`, which turns thinking off and, like disabled thinking on Opus 5, returns a 400 for
+    `xhigh` and `max` effort; live on the Anthropic API and on Bedrock. It also gets the sealed `<system>` rendering,
+    which measured better than the native role.
     """
     profile = anthropic_model_profile('claude-sonnet-5-5')
     sonnet_5 = anthropic_model_profile('claude-sonnet-5')
@@ -624,7 +816,9 @@ def test_model_profile_sonnet_5_5():
         **sonnet_5,
         'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
-        'thinking_always_enabled': True,
+        'anthropic_disallows_top_effort_when_thinking_disabled': True,
+        'anthropic_disables_thinking_with_between_tools': True,
+        'needs_sealed_system_blocks': True,
     }
 
 
@@ -638,9 +832,11 @@ def test_model_profile_haiku_5_5():
     also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced tool
     choice, task-budget acceptance, `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance,
     deferred tool addition, inline system messages, and the `drop_block` transformation after a prefix change. The only
-    Haiku-specific profile overrides are fast speed disabled and thinking-block binding enabled; unchanged fields
-    retain Opus 5's existing profile defaults. See Anthropic's
+    Haiku-specific profile overrides are fast speed disabled, thinking-block binding enabled, a text block
+    before a `system` entry that follows a tool result (for an application that opts into the native role), and the
+    sealed `<system>` rendering, which measured better than the native role; unchanged fields retain Opus 5's existing profile defaults. See Anthropic's
     [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
+    [mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results),
     [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide),
     [thinking configuration](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting),
     [effort](https://platform.claude.com/docs/en/build-with-claude/effort),
@@ -656,6 +852,8 @@ def test_model_profile_haiku_5_5():
         **opus_5,
         'anthropic_supports_fast_speed': False,
         'anthropic_binds_thinking_blocks': True,
+        'anthropic_distrusts_system_after_tool_result': True,
+        'needs_sealed_system_blocks': True,
     }
 
 
@@ -668,3 +866,25 @@ def test_anthropic_tool_deferral_mode_tracks_tool_search_support(model_name: str
     profile = anthropic_model_profile(model_name)
     assert profile is not None
     assert profile.get('tool_deferral_mode') == expected
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'sealed'),
+    [
+        ('claude-sonnet-4-6', True),
+        ('claude-haiku-5-5', True),
+        ('claude-sonnet-4-5', False),
+        ('claude-sonnet-5', False),
+        ('claude-sonnet-5-5', True),
+        ('claude-opus-5', False),
+        ('claude-haiku-4-5', False),
+    ],
+)
+def test_anthropic_sealed_system_block_models(model_name: str, sealed: bool):
+    """A sealed model never gets the native role: its blocks are the `<system>` fallback."""
+    profile = AnthropicModel(model_name, provider=AnthropicProvider(api_key='mock-api-key')).profile
+    assert profile.get('needs_sealed_system_blocks', False) is sealed
+    if sealed:
+        assert profile.get('supports_inline_system_prompts') is False
+        # Sonnet 4.6 rejects the entry; the other two take it, with the sealed block inside.
+        assert profile.get('supports_request_scoped_system_prompts') is (model_name != 'claude-sonnet-4-6')

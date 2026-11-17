@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import TypeAdapter
@@ -472,6 +473,27 @@ async def test_context_snapshots_and_missing_field_guards(missing: str | None) -
     assert 'checked' in await run_agent_in_task(agent, runtime, context)
 
 
+@pytest.mark.parametrize('carried', [True, False])
+async def test_child_task_reads_the_run_deadline(carried: bool) -> None:
+    """The run's deadline crosses into a child task; a payload without it reads as a run without one."""
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='deadline', deps_type=type(None), capabilities=[runtime])
+    seen: list[datetime | None] = []
+
+    @agent.tool
+    async def inspect_deadline(ctx: RunContext[None]) -> str:
+        seen.append(ctx.deadline)
+        return 'checked'
+
+    context = TaskBoundary(tamper_request=None if carried else rewrite_tool_context(_drop('deadline')))
+    assert 'checked' in await run_agent_in_task(agent, runtime, context, timeout=60)
+    (deadline,) = seen
+    if carried:
+        assert deadline is not None and deadline > datetime.now(UTC)
+    else:
+        assert deadline is None
+
+
 async def test_run_context_serialization_is_exhaustive() -> None:
     """Every `RunContext` field is either carried into a child task or deliberately left out.
 
@@ -502,6 +524,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker's agent
         'workspace',  # live facade; only its ref crosses, as `workspace_ref`
         '_run_held_toolsets',  # a child task may run in another process, so it enters its own toolsets
+        '_dispatched_tool_name',  # names a tool in the live `tool_manager`, which a child task doesn't have
     }
     carried_only_when_set = {
         '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise

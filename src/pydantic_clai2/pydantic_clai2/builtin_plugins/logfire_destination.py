@@ -16,12 +16,8 @@ from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
 from pydantic import BaseModel
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
-from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL
-from pydantic_clai2.ui.menus.field_menu import Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.plugins.menus import Dialogs, Option
 
 _MCP_PATH = '/mcp'
 OTHER = 'other'
@@ -100,66 +96,53 @@ def destination_problem(text: str) -> str | None:
 
 
 REGIONS: dict[str, Destination] = {
-    'Logfire US': parse_destination(LOGFIRE_US_MCP_URL),
-    'Logfire EU': parse_destination(LOGFIRE_EU_MCP_URL),
+    'Logfire US': Destination(base_url='https://logfire-us.pydantic.dev'),
+    'Logfire EU': Destination(base_url='https://logfire-eu.pydantic.dev'),
 }
-"""The hosted regions, from the MCP URLs harness `LogfireMCP` publishes."""
+"""The hosted regions, whose MCP URLs are harness's `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`.
+
+Spelled out rather than imported: `pydantic_ai_harness.logfire_mcp` loads the MCP client, and `observability`
+imports this module at every startup.
+"""
 
 
-def pick_destination(runners: Runners, *, current: Destination | None, then: str) -> Destination | None:
-    """A hosted region, or another Logfire typed in; `None` when cancelled. Blocking, so run it in a worker.
+async def choose_destination(dialogs: Dialogs, *, current: Destination | None, then: str) -> Destination | None:
+    """A hosted region, or another Logfire typed in; `None` when cancelled. Asked wherever the menu was opened.
 
-    `current` is highlighted; `then` says what happens after the pick, in short lines.
+    `current` starts selected; `then` says what happens after the pick, in short lines.
     """
-    items = [MenuItem(name, value=region, description=region.base_url) for name, region in REGIONS.items()]
-    items.append(MenuItem('Another Logfire...', value=OTHER, description='self-hosted or staging: type its address'))
-    typed_before = current is not None and current.region is None
-    initial = len(items) - 1 if typed_before else next((i for i, item in enumerate(items) if item.value == current), 0)
+    options = [
+        Option(value=name, label=name, description=f'UI and API  {region.base_url}\nMCP server  {region.mcp_url}')
+        for name, region in REGIONS.items()
+    ]
+    options.append(
+        Option(
+            value=OTHER,
+            label='Another Logfire...',
+            description='\n'.join(['Self-hosted or staging: type its address,', 'as any of', *_EXAMPLES]),
+        )
+    )
+    typed_before = urlsplit(current.base_url).netloc if current is not None and current.region is None else ''
+    start = OTHER if typed_before else (current.region if current is not None else None)
     while True:
-        result = runners.run_choice(
-            MenuBuilder('Which Logfire?')
-            .style(markdown_style())
-            .items(items)
-            .initial_index(initial)
-            .preview(lambda item: _preview(item, then))
-            .footer_hint('Enter choose - Esc cancel, nothing changes')
-            .key_source(menu_key)
-            .build()
-        )
-        if result.cancelled or result.item is None:
+        picked = await dialogs.choose(title='Which Logfire?', options=options, current=start, description=then)
+        if picked is None:
             return None
-        if isinstance(result.item.value, Destination):
-            return result.item.value
-        typed = runners.run_text(
-            TextInputBuilder('Another Logfire')
-            .style(markdown_style())
-            .prompt('Address: ')
-            .initial(urlsplit(current.base_url).netloc if current is not None and typed_before else '')
-            .placeholder('logfire.example.com, https://logfire.example.com, or .../mcp')
-            .validator(destination_problem)
-            .footer_hint('Enter use this address - Esc back to the list')
-            .key_source(menu_key)
-            .build()
+        if picked != OTHER:
+            return REGIONS[picked]
+        typed = await dialogs.text(
+            title='Another Logfire',
+            label='Address',
+            placeholder='logfire.example.com, https://logfire.example.com, or .../mcp',
+            initial=typed_before,
+            check=destination_problem,
         )
-        if not typed.cancelled and isinstance(typed.value, str):
-            return parse_destination(typed.value)
-        initial = len(items) - 1  # Esc goes back to the list, on the row it came from.
+        if typed:
+            return parse_destination(typed)
+        start = OTHER  # Esc, or nothing typed, goes back to the list, on the row it came from.
 
 
-def _preview(item: MenuItem, then: str) -> str:
-    # One short fact per line: the preview panel cuts long lines off.
-    if isinstance(item.value, Destination):
-        lines = [item.label, '', f'UI and API  {item.value.base_url}', f'MCP server  {item.value.mcp_url}', '', then]
-    else:
-        lines = [
-            'A self-hosted or staging Logfire',
-            '',
-            'Enter: type its address, as any of',
-            '  logfire.example.com',
-            '  https://logfire.example.com',
-            '  https://logfire.example.com/mcp',
-        ]
-    return '\n'.join(lines)
+_EXAMPLES = ('  logfire.example.com', '  https://logfire.example.com', '  https://logfire.example.com/mcp')
 
 
 def logfire_dir() -> Path:

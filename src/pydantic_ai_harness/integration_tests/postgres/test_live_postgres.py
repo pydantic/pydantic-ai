@@ -1,6 +1,6 @@
-"""Live PostgreSQL tests for `PostgresStepStore` and `PostgresMediaStore`.
+"""Live PostgreSQL tests for the harness `Postgres*Store` classes.
 
-Both stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
+The stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
 there is no in-process Postgres to run them against. The unit suites under
 `tests/harness` run the stores against an in-memory SQLite stand-in for the pool,
 which rewrites the few Postgres-only spellings. This file runs every read, write,
@@ -41,13 +41,15 @@ External assumptions:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
-from typing import NoReturn
+from decimal import Decimal
+from typing import NoReturn, Protocol
 from uuid import uuid4
 
 import anyio
@@ -61,9 +63,11 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import (
@@ -75,6 +79,9 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
+from pydantic_ai_harness.memory import Memory, MemoryConflictError, MemoryOperation, PostgresMemoryStore
+from pydantic_ai_harness.planning import PlanItem, PostgresPlanStore
+from pydantic_ai_harness.spend_limits import PostgresSpendStore, SpendEntry, Spent
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     PostgresStepStore,
@@ -177,8 +184,13 @@ def _derived_tables(prefix: str) -> list[str]:
         f'{prefix}_events',
         f'{prefix}_snapshots',
         f'{prefix}_snapshot_keys',
+        f'{prefix}_messages',
         f'{prefix}_tool_effects',
         f'{prefix}_media',
+        f'{prefix}_operations',
+        f'{prefix}_metadata',
+        f'{prefix}_counters',
+        f'{prefix}_dedup',
     ]
 
 
@@ -205,6 +217,9 @@ async def _live_tables() -> AsyncGenerator[tuple[PostgresPool, str], None]:
             async with pool.acquire() as connection:
                 for table in _derived_tables(prefix):
                     await connection.execute(f'DROP TABLE IF EXISTS {table}')
+                # `PostgresMemoryStore`'s version counter, and a trigger function a memory test may add.
+                await connection.execute(f'DROP SEQUENCE IF EXISTS {prefix}_versions')
+                await connection.execute(f'DROP FUNCTION IF EXISTS {prefix}_fail')
         finally:
             await driver_pool.close()
 
@@ -221,6 +236,33 @@ async def _table_exists(pool: PostgresPool, table: str) -> bool:
         exists = await connection.fetchval('SELECT to_regclass($1) IS NOT NULL', table)
     assert isinstance(exists, bool)
     return exists
+
+
+@asynccontextmanager
+async def _writer_pool(
+    pool: PostgresPool, prefix: str, *tables: str, sequence: str | None = None
+) -> AsyncGenerator[PostgresPool, None]:
+    """Yield a pool for a role with no `CREATE` on the schema, granted only reads and writes on `tables`."""
+    role, password = f'{prefix}_writer', uuid4().hex
+    async with pool.acquire() as connection:
+        await connection.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
+        await connection.execute(f'GRANT USAGE ON SCHEMA public TO {role}')
+        await connection.execute(f'REVOKE CREATE ON SCHEMA public FROM {role}')
+        await connection.execute(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {", ".join(tables)} TO {role}')
+        if sequence is not None:
+            await connection.execute(f'GRANT USAGE ON SEQUENCE {sequence} TO {role}')
+    try:
+        writer_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            _postgres_url(), user=role, password=password, min_size=1, max_size=1
+        )
+        try:
+            yield _as_store_pool(writer_pool)
+        finally:
+            await writer_pool.close()
+    finally:
+        async with pool.acquire() as connection:
+            await connection.execute(f'DROP OWNED BY {role}')
+            await connection.execute(f'DROP ROLE {role}')
 
 
 def _user_messages(text: str = 'a') -> list[ModelMessage]:
@@ -438,6 +480,531 @@ async def test_media_null_byte_in_text_is_rejected_by_the_server() -> None:
 
         # The failed statement rolled back and the connection went back to the pool usable.
         assert await store.exists(media_uri_for(data)) is False
+
+
+# ---------------------------------------------------------------------------
+# PostgresMemoryStore: write metadata
+# ---------------------------------------------------------------------------
+
+
+async def _memory_metadata(store: PostgresMemoryStore, path: str) -> object:
+    file = await store.read(path, max_chars=1_000)
+    assert file is not None
+    return file.metadata
+
+
+async def test_memory_metadata_is_written_replaced_replayed_and_deleted_with_the_content() -> None:
+    """Metadata rides in the content's statement, so each write, replay, conflict and delete keeps them together."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresMemoryStore(pool, table=prefix)
+        path = 'alice/main/MEMORY.md'
+
+        created = await store.write_with_metadata(path, '- typed', expected_version=None, metadata=_AWKWARD_METADATA)
+        assert await _memory_metadata(store, path) == _AWKWARD_METADATA
+
+        operation = MemoryOperation(id='run-1:call-1', fingerprint='write')
+        written = await store.write_with_metadata(
+            path, '- inferred', expected_version=created.version, operation=operation, metadata={'updated_by': 'agent'}
+        )
+        replay = await store.write_with_metadata(
+            path, '- inferred', expected_version=created.version, operation=operation, metadata={'updated_by': 'ui'}
+        )
+        assert (replay.replayed, replay.version) == (True, written.version)
+        with pytest.raises(MemoryConflictError):
+            await store.write_with_metadata(
+                path, '- stale', expected_version=created.version, metadata={'updated_by': 'ui'}
+            )
+        assert await _memory_metadata(store, path) == {'updated_by': 'agent'}
+
+        plain = await store.write(path, '- unattributed', expected_version=written.version)
+        assert await _memory_metadata(store, path) is None
+
+        # The column is JSONB, so an application can query it.
+        await store.write_with_metadata(
+            path, '- again', expected_version=plain.version, metadata={'updated_by': 'agent'}
+        )
+        await store.write_with_metadata(
+            'bob/main/MEMORY.md', '- bob', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                f"SELECT path FROM {prefix} WHERE write_metadata->>'updated_by' = $1", 'agent'
+            )
+        assert [row[0] for row in rows] == [path]
+
+        current = await store.read(path, max_chars=1_000)
+        assert current is not None
+        await store.delete(path, expected_version=current.version)
+        await store.write(path, '- recreated', expected_version=None)
+        assert await _memory_metadata(store, path) is None
+
+
+async def test_memory_metadata_rolls_back_with_the_content() -> None:
+    """A write that fails after its row changed leaves the previous content and metadata."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresMemoryStore(pool, table=prefix)
+        created = await store.write_with_metadata(
+            'main.md', 'typed', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+        async with pool.acquire() as connection:
+            await connection.execute(
+                f'CREATE FUNCTION {prefix}_fail() RETURNS trigger LANGUAGE plpgsql '
+                "AS $$ BEGIN RAISE EXCEPTION 'receipt refused'; END $$"
+            )
+            # Completing the receipt is the write's last statement, after the content and metadata changed.
+            await connection.execute(
+                f'CREATE TRIGGER {prefix}_fail BEFORE UPDATE ON {prefix}_operations '
+                f'FOR EACH ROW EXECUTE FUNCTION {prefix}_fail()'
+            )
+
+        with pytest.raises(asyncpg.RaiseError, match='receipt refused'):
+            await store.write_with_metadata(
+                'main.md',
+                'inferred',
+                expected_version=created.version,
+                operation=MemoryOperation(id='op', fingerprint='write'),
+                metadata={'updated_by': 'agent'},
+            )
+
+        file = await store.read('main.md', max_chars=1_000)
+        assert file is not None
+        assert (file.content, file.version, file.metadata) == ('typed', created.version, {'updated_by': 'ui'})
+
+
+async def test_memory_metadata_is_not_encoded_again_by_a_jsonb_codec_on_the_pool() -> None:
+    """A pool can decode and encode JSONB itself, as asyncpg's docs show; the store binds text, so it stays an object."""
+
+    async def init(connection: asyncpg.Connection) -> None:
+        await connection.set_type_codec(  # pyright: ignore[reportUnknownMemberType]
+            'jsonb', encoder=json.dumps, decoder=json.loads, schema='pg_catalog'
+        )
+
+    async with _live_tables() as (_, prefix):
+        driver_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            _postgres_url(), min_size=1, max_size=2, init=init
+        )
+        try:
+            pool = _as_store_pool(driver_pool)
+            store = PostgresMemoryStore(pool, table=prefix)
+            await store.write_with_metadata('main.md', 'typed', expected_version=None, metadata={'updated_by': 'ui'})
+
+            assert await _memory_metadata(store, 'main.md') == {'updated_by': 'ui'}
+            async with pool.acquire() as connection:
+                stored = await connection.fetchval(f'SELECT write_metadata FROM {prefix} WHERE path = $1', 'main.md')
+            assert stored == {'updated_by': 'ui'}
+        finally:
+            await driver_pool.close()
+
+
+async def test_memory_store_adds_the_metadata_column_to_a_previous_release_table() -> None:
+    """Rows written before the column existed read as no metadata, and every store instance migrates idempotently."""
+    async with _live_tables() as (pool, prefix):
+        async with pool.acquire() as connection:
+            # The schema `PostgresMemoryStore` created before it recorded write metadata.
+            await connection.execute(
+                f'CREATE TABLE {prefix} (path TEXT PRIMARY KEY, content TEXT NOT NULL, '
+                'version BIGINT NOT NULL DEFAULT 1, last_operation_id TEXT)'
+            )
+            await connection.execute(
+                f'CREATE TABLE {prefix}_operations (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, '
+                'version TEXT, existed BOOLEAN NOT NULL, completed BOOLEAN NOT NULL)'
+            )
+            await connection.execute(f'CREATE SEQUENCE {prefix}_versions MINVALUE 0 START 0')
+            await connection.execute(
+                f'CREATE TABLE {prefix}_metadata (id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id), '
+                'versions_initialized BOOLEAN NOT NULL)'
+            )
+            await connection.execute(f'INSERT INTO {prefix}_metadata VALUES (TRUE, TRUE)')
+            await connection.execute(
+                f"INSERT INTO {prefix} VALUES ('main/MEMORY.md', 'old', nextval('{prefix}_versions'), 'op-0')"
+            )
+
+        stores = [PostgresMemoryStore(pool, table=prefix) for _ in range(3)]
+        versions: list[str] = []
+
+        async def read(store: PostgresMemoryStore) -> None:
+            file = await store.read('main/MEMORY.md', max_chars=1_000)
+            assert file is not None
+            assert (file.content, file.operation_id, file.metadata) == ('old', 'op-0', None)
+            versions.append(file.version)
+
+        async with anyio.create_task_group() as task_group:
+            for store in stores:
+                task_group.start_soon(read, store)
+
+        assert len(set(versions)) == 1
+        async with pool.acquire() as connection:
+            column_type = await connection.fetchval(
+                'SELECT data_type FROM information_schema.columns WHERE table_name = $1 AND column_name = $2',
+                prefix,
+                'write_metadata',
+            )
+        assert column_type == 'jsonb'
+        # Building the path index would block writes to an existing table, so it is left to the application.
+        assert not await _table_exists(pool, f'{prefix}_path_idx')
+        await stores[0].write_with_metadata(
+            'main/MEMORY.md', 'new', expected_version=versions[0], metadata={'updated_by': 'ui'}
+        )
+        assert await _memory_metadata(stores[1], 'main/MEMORY.md') == {'updated_by': 'ui'}
+
+
+class _LoggedQuery(Protocol):
+    """The fields of asyncpg's untyped `LoggedQuery` that the index test reads."""
+
+    query: str
+    args: tuple[object, ...]
+
+
+async def test_memory_prefix_listings_seek_the_path_index_under_a_linguistic_collation() -> None:
+    """Prefix filters select by code point under any database collation and use the store's index in a generic plan.
+
+    The `postgres` image's default `en_US.utf8` collation ignores `/`, `-`, `_` and `.` at the first
+    comparison level, so a range in the database collation would select the wrong paths for `a/`.
+    """
+    queries: list[tuple[str, tuple[object, ...]]] = []
+
+    def log(record: _LoggedQuery) -> None:
+        queries.append((record.query, record.args))
+
+    async def init(connection: asyncpg.Connection) -> None:
+        connection.add_query_logger(log)  # pyright: ignore[reportUnknownMemberType]
+
+    async with _live_tables() as (_, prefix):
+        driver_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            _postgres_url(), min_size=1, max_size=2, init=init
+        )
+        try:
+            pool = _as_store_pool(driver_pool)
+            store = PostgresMemoryStore(pool, table=prefix)
+            for path in ['a.md', 'a-b.md', 'a/x.md', 'a/b/c.md', 'a_b/c.md', 'ab/c.md', 'b.md']:
+                await store.write(path, 'tea', expected_version=None)
+            queries.clear()
+
+            assert await store.list_paths('a/', limit=10) == ['a/b/c.md', 'a/x.md']
+            assert await store.list_child_paths('a/', limit=10) == ['a/x.md']
+            assert await store.list_paths(limit=4) == ['a-b.md', 'a.md', 'a/b/c.md', 'a/x.md']
+            assert await store.list_child_paths('', limit=10) == ['a-b.md', 'a.md', 'b.md']
+            result = await store.search('a/', 'tea', limit=10, max_files=10, max_chars=100, max_file_chars=100)
+            assert [match.path for match in result.matches] == ['a/x.md']
+
+            selects = [(query, args) for query, args in queries if query.startswith('SELECT path')]
+            assert len(selects) == 5
+            async with pool.acquire() as connection, connection.transaction():
+                # The plan asyncpg's cached prepared statements reuse after their first executions.
+                await connection.execute('SET LOCAL plan_cache_mode = force_generic_plan')
+                await connection.execute('SET LOCAL enable_seqscan = off')
+                for index, (query, args) in enumerate(selects):
+                    await connection.execute(f'PREPARE {prefix}_{index} AS {query}')
+                    literals = [
+                        str(await connection.fetchval('SELECT quote_literal($1::TEXT)', str(arg))) for arg in args
+                    ]
+                    rows = await connection.fetch(f'EXPLAIN EXECUTE {prefix}_{index}({", ".join(literals)})')
+                    plan = '\n'.join(str(row[0]) for row in rows)
+                    assert f'{prefix}_path_idx' in plan and 'Index Cond' in plan, plan
+                    await connection.execute(f'DEALLOCATE {prefix}_{index}')
+        finally:
+            await driver_pool.close()
+
+
+async def test_memory_agent_write_replaces_the_provenance_a_ui_write_recorded() -> None:
+    """The issue's case: the UI records `updated_by='ui'`, the agent edits, and the row then names the agent."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresMemoryStore(pool, table=prefix)
+        await store.write_with_metadata(
+            'alice/main/MEMORY.md', '- prefers tea\n', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart('write_memory', {'content': '- now coffee'}, tool_call_id='w')]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=str,
+            capabilities=[
+                Memory[str](
+                    store,
+                    namespace=lambda ctx: ctx.deps,
+                    write_metadata=lambda ctx: {'updated_by': 'agent', 'actor_id': ctx.deps},
+                )
+            ],
+        )
+        await agent.run('I drink coffee now', deps='alice')
+
+        file = await store.read('alice/main/MEMORY.md', max_chars=1_000)
+        assert file is not None
+        assert (file.content, file.metadata) == (
+            '- prefers tea\n- now coffee\n',
+            {'updated_by': 'agent', 'actor_id': 'alice'},
+        )
+
+
+# ---------------------------------------------------------------------------
+# PostgresSpendStore: shared counters and replay markers
+# ---------------------------------------------------------------------------
+
+
+async def test_spend_counters_round_trip_exactly_through_bigint_columns() -> None:
+    """The driver hands `BIGINT` back as `int` and binds `TIMESTAMPTZ` from an aware `datetime`."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        entry = SpendEntry(
+            key='b|day|*|2026-08-04',
+            usd=Decimal('0.000123456'),
+            tokens=7,
+            requests=1,
+            unpriced=1,
+            ttl=timedelta(hours=48),
+        )
+
+        totals = await store.add_many([entry])
+
+        spent = Spent(usd=Decimal('0.000123456'), tokens=7, requests=1, unpriced_requests=1)
+        assert totals == {entry.key: spent}
+        assert await store.get_many([entry.key, 'never']) == {entry.key: spent, 'never': Spent()}
+
+
+async def test_spend_concurrent_replays_of_one_response_apply_it_once() -> None:
+    """Two workers presenting the same token at once: the second waits on the first's marker and skips."""
+    async with _live_tables() as (pool, prefix):
+        stores = [PostgresSpendStore(pool, table=prefix) for _ in range(4)]
+        await stores[0].get_many(['day'])
+        entries = [
+            SpendEntry(key='day', usd=Decimal('1'), requests=1, token='resp-1'),
+            SpendEntry(key='month', usd=Decimal('1'), requests=1, token='resp-1'),
+        ]
+
+        async with anyio.create_task_group() as tg:
+            for store in stores:
+                tg.start_soon(store.add_many, entries)
+
+        assert await stores[0].get_many(['day', 'month']) == {
+            'day': Spent(usd=Decimal('1'), requests=1),
+            'month': Spent(usd=Decimal('1'), requests=1),
+        }
+
+
+async def test_spend_concurrent_writers_taking_windows_in_either_order_do_not_deadlock() -> None:
+    """Rows are locked in key order whatever order the entries arrive in, so no writer is aborted."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.get_many(['day'])
+        forward = [SpendEntry(key='day', requests=1), SpendEntry(key='month', requests=1)]
+
+        async with anyio.create_task_group() as tg:
+            for index in range(40):
+                tg.start_soon(store.add_many, forward if index % 2 else forward[::-1])
+
+        assert await store.get_many(['day', 'month']) == {'day': Spent(requests=40), 'month': Spent(requests=40)}
+
+
+async def test_spend_concurrent_calls_sharing_a_key_with_different_tokens_do_not_deadlock() -> None:
+    """Markers are all claimed before any counter, so no writer holds a counter while waiting on a marker."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.get_many(['k'])
+
+        for round_ in range(20):
+            first, second = f'r{round_}-a', f'r{round_}-b'
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    store.add_many,
+                    [SpendEntry(key='k', requests=1, token=first), SpendEntry(key='k', requests=1, token=second)],
+                )
+                tg.start_soon(store.add_many, [SpendEntry(key='k', requests=1, token=second)])
+
+        assert await store.get_many(['k']) == {'k': Spent(requests=40)}
+
+
+async def test_spend_a_write_that_waited_on_a_lock_keeps_its_full_horizon() -> None:
+    """The horizon is measured from when the row is written, not from when the transaction began."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.add_many([SpendEntry(key='k', requests=1, ttl=timedelta(minutes=5))])
+        held = anyio.Event()
+
+        async def hold_the_row() -> None:
+            async with pool.acquire() as connection, connection.transaction():
+                await connection.execute(f'UPDATE {prefix}_counters SET tokens = tokens')
+                held.set()
+                await anyio.sleep(1.0)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(hold_the_row)
+            await held.wait()
+            await store.add_many([SpendEntry(key='k', requests=1, ttl=timedelta(milliseconds=500))])
+
+        assert await store.get_many(['k']) == {'k': Spent(requests=2)}
+
+
+async def test_spend_concurrent_writers_succeed_on_a_pool_defaulting_to_serializable() -> None:
+    """The write sets `READ COMMITTED` itself, so a stricter pool default cannot fail a concurrent writer."""
+    async with _live_tables() as (_, prefix):
+        driver_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            _postgres_url(), min_size=1, max_size=4, server_settings={'default_transaction_isolation': 'serializable'}
+        )
+        try:
+            store = PostgresSpendStore(_as_store_pool(driver_pool), table=prefix)
+            await store.get_many(['day'])
+            entries = [SpendEntry(key='day', requests=1, token='resp-1'), SpendEntry(key='month', requests=1)]
+
+            async with anyio.create_task_group() as tg:
+                for _ in range(8):
+                    tg.start_soon(store.add_many, entries)
+
+            assert await store.get_many(['day', 'month']) == {'day': Spent(requests=1), 'month': Spent(requests=8)}
+        finally:
+            await driver_pool.close()
+
+
+async def test_spend_a_role_without_create_uses_existing_tables() -> None:
+    """Postgres checks `CREATE` on the schema before `IF NOT EXISTS`, so the store skips DDL when the tables exist."""
+    async with _live_tables() as (pool, prefix):
+        await PostgresSpendStore(pool, table=prefix).add_many([SpendEntry(key='k', requests=1)])
+        async with _writer_pool(pool, prefix, f'{prefix}_counters', f'{prefix}_dedup') as writer_pool:
+            store = PostgresSpendStore(writer_pool, table=prefix)
+            assert await store.add_many([SpendEntry(key='k', requests=1, token='resp-1')]) == {'k': Spent(requests=2)}
+
+
+async def test_media_a_role_without_create_uses_an_existing_table() -> None:
+    """A role granted only reads and writes on the table can store and read media."""
+    async with _live_tables() as (pool, prefix):
+        await PostgresMediaStore(pool, table=prefix).put(b'by the owner')
+        async with _writer_pool(pool, prefix, prefix) as writer_pool:
+            store = PostgresMediaStore(writer_pool, table=prefix)
+            uri = await store.put(b'by the writer')
+            assert await store.get(uri) == b'by the writer'
+
+
+async def test_memory_a_role_without_create_uses_existing_tables() -> None:
+    """The upgrade's `ALTER TABLE` needs ownership too, so it is skipped with the rest once the schema is current."""
+    async with _live_tables() as (pool, prefix):
+        owner_store = PostgresMemoryStore(pool, table=prefix)
+        created = await owner_store.write('notes.md', 'one', expected_version=None)
+        tables = (prefix, f'{prefix}_operations', f'{prefix}_metadata')
+        async with _writer_pool(pool, prefix, *tables, sequence=f'{prefix}_versions') as writer_pool:
+            store = PostgresMemoryStore(writer_pool, table=prefix)
+            operation = MemoryOperation(id='op-1', fingerprint='write')
+            await store.write('notes.md', 'two', expected_version=created.version, operation=operation)
+            file = await store.read('notes.md', max_chars=100)
+            assert file is not None and file.content == 'two'
+
+
+async def test_planning_a_role_without_create_uses_an_existing_table() -> None:
+    """A role granted only reads and writes on the table can add and list steps."""
+    async with _live_tables() as (pool, prefix):
+        await PostgresPlanStore(pool, table=prefix).add_item(PlanItem(content='by the owner'))
+        async with _writer_pool(pool, prefix, prefix) as writer_pool:
+            store = PostgresPlanStore(writer_pool, table=prefix)
+            await store.add_item(PlanItem(content='by the writer'))
+            assert [item.content for item in await store.get_items()] == ['by the owner', 'by the writer']
+
+
+async def test_step_persistence_a_role_without_create_uses_existing_tables() -> None:
+    """A role granted only reads and writes on the tables can register runs and save snapshots."""
+    async with _live_tables() as (pool, prefix):
+        await PostgresStepStore(pool, table=prefix, media_store=None).register_run(RunRecord(run_id='by-owner'))
+        suffixes = ('runs', 'events', 'snapshots', 'messages', 'snapshot_keys', 'tool_effects')
+        async with _writer_pool(pool, prefix, *(f'{prefix}_{suffix}' for suffix in suffixes)) as writer_pool:
+            store = PostgresStepStore(writer_pool, table=prefix, media_store=None)
+            await store.register_run(RunRecord(run_id='by-writer'))
+            await store.save_snapshot(ContinuableSnapshot(run_id='by-writer', step_index=0, messages=_user_messages()))
+            assert {run.run_id for run in await store.list_runs()} == {'by-owner', 'by-writer'}
+
+
+async def test_spend_a_counter_overflow_rolls_back_every_window_and_the_marker() -> None:
+    """Past the signed 64-bit range the server refuses the write, and the whole response goes with it."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.add_many([SpendEntry(key='month', requests=1)])
+        async with pool.acquire() as connection:
+            await connection.execute(f'UPDATE {prefix}_counters SET tokens = $1', 2**63 - 1)
+        response = [SpendEntry(key='day', tokens=1, token='resp-1'), SpendEntry(key='month', tokens=1, token='resp-1')]
+
+        with pytest.raises(asyncpg.NumericValueOutOfRangeError):
+            await store.add_many(response)
+
+        assert (await store.get_many(['day']))['day'] == Spent()
+        assert await _count_rows(pool, f'{prefix}_dedup') == 0
+
+
+async def test_spend_rolled_over_rows_read_as_zero_and_are_swept() -> None:
+    """The sweep's `FOR UPDATE SKIP LOCKED` runs on a real server and removes only expired rows."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix, sweep_every=3)
+        await store.add_many(
+            [
+                SpendEntry(key='yesterday', requests=1, ttl=timedelta(hours=1), token='resp-1'),
+                SpendEntry(key='total', requests=1, token='resp-1'),
+            ]
+        )
+        async with pool.acquire() as connection:
+            for table in (f'{prefix}_counters', f'{prefix}_dedup'):
+                await connection.execute(
+                    f"UPDATE {table} SET expires_at = now() - interval '1 minute' WHERE expires_at IS NOT NULL"
+                )
+
+        assert (await store.get_many(['yesterday']))['yesterday'] == Spent()
+        await store.add_many([SpendEntry(key='today', requests=1, ttl=timedelta(hours=1))])
+
+        async with pool.acquire() as connection:
+            keys = await connection.fetch(f'SELECT key FROM {prefix}_counters ORDER BY key')
+        assert [row[0] for row in keys] == [b'today', b'total']
+        assert await _count_rows(pool, f'{prefix}_dedup') == 0
+
+
+async def test_spend_concurrent_schema_initialization() -> None:
+    """Two instances creating the same tables at once both succeed."""
+    async with _live_tables() as (pool, prefix):
+        first = PostgresSpendStore(pool, table=prefix)
+        second = PostgresSpendStore(pool, table=prefix)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(first.add_many, [SpendEntry(key='a', requests=1)])
+            tg.start_soon(second.add_many, [SpendEntry(key='b', requests=1)])
+
+        assert await first.get_many(['a', 'b']) == {'a': Spent(requests=1), 'b': Spent(requests=1)}
+
+
+async def test_spend_a_key_and_token_past_the_btree_entry_limit_are_stored() -> None:
+    """A caller-supplied conversation id can exceed the ~2.7 kB B-tree entry limit; the tables index digests."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        # Random, so compression cannot bring the value back under the limit.
+        entry = SpendEntry(key='b|conversation|*|' + os.urandom(4000).hex(), requests=1, token=os.urandom(4000).hex())
+
+        await store.add_many([entry])
+
+        assert await store.add_many([entry]) == {entry.key: Spent(requests=1)}
+        assert await store.get_many([entry.key]) == {entry.key: Spent(requests=1)}
+
+
+async def test_spend_a_nul_in_a_key_or_token_is_recorded() -> None:
+    """`TEXT` refuses NUL, so a caller-supplied id carrying one must not fail the write after the model call."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        entry = SpendEntry(key='b|conversation|*|a\x00b', requests=1, token='resp\x001')
+
+        await store.add_many([entry])
+
+        assert await store.add_many([entry]) == {entry.key: Spent(requests=1)}
+        async with pool.acquire() as connection:
+            stored = await connection.fetchval(f'SELECT key FROM {prefix}_counters')
+        assert stored == entry.key.encode()
+
+
+async def test_spend_hostile_keys_and_tokens_are_bound_not_interpolated() -> None:
+    """A quote, a backslash and `$1` in a key and a token are stored and matched verbatim."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        entry = SpendEntry(key=_HOSTILE_TEXT, requests=1, token=_HOSTILE_TEXT)
+
+        await store.add_many([entry])
+
+        assert await store.add_many([entry]) == {_HOSTILE_TEXT: Spent(requests=1)}
 
 
 # ---------------------------------------------------------------------------
@@ -896,6 +1463,26 @@ async def test_concurrent_keyed_snapshot_is_written_once() -> None:
         assert await first.list_events(run_id='r1') == [event]
 
 
+async def test_concurrent_saves_sharing_messages_store_each_once() -> None:
+    """Saves racing over overlapping histories store each message once and all restore."""
+    async with _live_tables() as (pool, prefix):
+        stores = [PostgresStepStore(pool, table=prefix, media_store=None) for _ in range(4)]
+        shared: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'shared {i}')]) for i in range(50)]
+        histories: list[list[ModelMessage]] = [
+            [*shared, ModelResponse(parts=[TextPart(content=f'only in r{n}')])] for n in range(len(stores))
+        ]
+
+        async with anyio.create_task_group() as tg:
+            for n, (store, history) in enumerate(zip(stores, histories)):
+                tg.start_soon(store.save_snapshot, ContinuableSnapshot(run_id=f'r{n}', step_index=0, messages=history))
+
+        assert await _count_rows(pool, f'{prefix}_messages') == len(shared) + len(stores)
+        for n, history in enumerate(histories):
+            restored = await stores[0].latest_snapshot(run_id=f'r{n}')
+            assert restored is not None
+            assert restored.messages == history
+
+
 # ---------------------------------------------------------------------------
 # PostgresStepStore: list_snapshots
 # ---------------------------------------------------------------------------
@@ -1050,8 +1637,12 @@ def _assert_media_restored(snapshot: ContinuableSnapshot | None, big_binary: byt
 
 
 async def _stored_messages_length(pool: PostgresPool, prefix: str) -> int:
+    """The bytes a snapshot's history takes: its row plus the messages it stores once."""
     async with pool.acquire() as connection:
-        length = await connection.fetchval(f'SELECT octet_length(messages::text) FROM {prefix}_snapshots')
+        length = await connection.fetchval(
+            f'SELECT (SELECT octet_length(messages::text) FROM {prefix}_snapshots) '
+            f'+ (SELECT coalesce(sum(octet_length(message)), 0) FROM {prefix}_messages)'
+        )
     assert isinstance(length, int)
     return length
 

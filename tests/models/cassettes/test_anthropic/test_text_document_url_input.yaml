@@ -27,7 +27,7 @@ interactions:
       etag:
       - W/"61efea10-a0e"
       expires:
-      - Tue, 06 Oct 2026 17:05:27 GMT
+      - Sun, 01 Nov 2026 05:17:29 GMT
       last-modified:
       - Tue, 25 Jan 2022 12:16:16 GMT
       strict-transport-security:
@@ -60,7 +60,7 @@ interactions:
         License: Attribution-ShareAlike 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
 
         Feel free to use and share the file according to the license above.
-  recorded_at: 2026-09-29T17:05:27.292181+00:00
+  recorded_at: 2026-10-25T05:17:29.422878+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -68,11 +68,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2864"
+      - "2865"
       content-type:
       - application/json
       host:
@@ -80,7 +80,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -112,7 +112,7 @@ interactions:
               media_type: text/plain
               type: text
             type: document
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
   response:
     status: 200
@@ -125,10 +125,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=91
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5cd1a221cdb335121c27063762c7a353-f6a719302530fb55-01
+      - 00-f7307b602a7e6af73ebf3a2fab2d4303-5bbc0615899e40c2-01
       transfer-encoding:
       - chunked
       vary:
@@ -137,321 +139,384 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY6TkWC4ud4vcXZjHQb6","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":713,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgNPWLgUYARvND5R16D3m","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":960,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"#"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"This is a sample TXT"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Main"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" file,"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Content Summary"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" created to"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nThis is"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" show what"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a **"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that file type looks like."}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"test"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Its main"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" content is an"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"example T"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" excerpt from Wik"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"XT file** ("}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ipedia's"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Version"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" article on **"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 1.0) that demonstrates"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\"John Doe\"**,"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the plain"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text file"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" placeholder name."}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" format."}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n**"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Primary"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Key points from the text"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Topic"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":**\n\n1. **Plac"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"eholder names in"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\nThe document explains"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" legal cont"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the use of **"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"exts**"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"placeholder"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n   - \"John Doe"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" names like"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\" is used for males, \""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"John Doe\""}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Jane Doe\" or \""}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Jane Roe\" for"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Jane Doe\"** in legal"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" females, and \"Jonn"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ie Doe\" and \""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" everyday"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Janie Doe\" for children"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" contexts."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n   - They st"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n## Key Points"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"and in for a party whose ident"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Covered:\n\n1. **Legal"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ity is unknown or must"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Usage"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" be withheld, and they are"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: These"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" also used for"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" names"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" un"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" are used for"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"identified corpses or h"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" parties"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ospital patients.\n   -"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" whose identity"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The pract"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is unknown or must be withheld"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ice is common"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in legal cases"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in the U.S. and"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n2. **Geographic"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Canada but"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Variations**: \n   - Common"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rare"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in the US"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" el"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and Canada\n   - UK"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"sewhere, including the U"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"K, where it"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Australia, and New Zealand use \"Joe"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" originated. The UK,"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Bloggs\" or"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Australia, and New Z"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"John Smith\""}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ealand use names"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" instead"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" like \"Joe Blo"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n3. **Various"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ggs\" or \"John Sm"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Applications**:\n   - Un"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ith\" instead.\n\n2."}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"identified corp"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Other"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ses or"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" uses of"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" hospital patients\n   - Typical"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"John Doe\"**"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n   - It can"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"generic"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" m"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" person"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ean a typical or"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" examples"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" average"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" male, similar to \""}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"like"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"John Q. Public\""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"John Q. Public\")\n   "}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" or \"Joe Public.\""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"- Form"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n   - It"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is often used as"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"filling examples\n   - Pop culture references"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" sample name on forms."} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"e"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n   - It appears in popular"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".g., \"Meet John Doe"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" culture, such as the Fr"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\""}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ank Capra film *Me"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" film"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"et John Doe* and a"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")\n\n4. **Related"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 2002 American T"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Names"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"V series called"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**: Baby"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" *John Doe*."}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Doe, Jane"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n3. **Variants and related"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Roe, Precious"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" names**\n   -"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Doe, and"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Un"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" numbered"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"identified children"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" variants"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" may"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" be called \"Baby Do"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"John Doe #1, #"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"e,\" as"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"2, etc.)\n\n## Document"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in the \""}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Metadata"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Precious Doe\" case"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":\n- Created"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in Kansas City."}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" by: online"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n   - Other exam"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-convert.com\n- Content"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ples include \"C"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" source"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ali Doe\" and \""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":": Wikipedia article"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Princess Doe.\"\n   "}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on \""}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"- When two an"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"John Doe\"\n- License:"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"onymous parties app"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Attribution-ShareAlike 4."}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ear in one"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"0"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" case, \""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nThe"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Doe\" and \"Ro"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" document serves as a functional"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"e\" may"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" example file"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" be used together"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for demonst"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", as in \"John Doe"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rating the"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" v. Jane Roe"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" T"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\"\n   - Multiple"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"XT format while"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" un"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" providing"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"known parties can be numb"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" inform"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ered (John"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ative content"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Doe #1, #"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" about placeholder"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"2, and so on)."}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" naming"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Operation Delego cited "}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" conventions."}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"21 of"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" them.\n   - Older al"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ternatives such"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" as \"John Stiles\""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and \"Richard Miles"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\" are now"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rarely used, and"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Mary Major\" has"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" appeared in some American federal"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" cases.\n\n**Metad"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ata:**"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The file"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" was created by online-convert."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"com, and"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the text com"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"es from Wikipedia"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" under a"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Creative Commons Attrib"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ution-ShareAlike"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 4.0 license, which"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" allows free"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" use and sharing."}            }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0        }
+        data: {"type":"content_block_stop","index":0    }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":713,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":309}}
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":960,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":668,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"   }
+        data: {"type":"message_stop"     }
 
-  recorded_at: 2026-09-29T17:05:34.361453+00:00
+  recorded_at: 2026-10-25T05:17:34.241822+00:00

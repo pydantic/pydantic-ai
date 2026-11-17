@@ -3,7 +3,7 @@
 The built-in `notion` plugin: harness `Notion`, connected with a browser sign-in by default or a named key from `/keys`.
 
 Plugin settings are plaintext SQLite, so they hold only `Notion`'s non-secret options, all edited in the menu
-`/plugins configure notion` opens. Its key row picks or enters a key in the named keystore and saves only the
+`/plugins configure notion` opens, or the web UI's plugins panel shows. Its key row picks or enters a key in the named keystore and saves only the
 name, in CLAI's credential store; each run resolves it again, so replacing the key in `/keys` reaches every
 plugin that shares it, and a deleted key fails the run rather than connecting.
 
@@ -12,7 +12,6 @@ chosen key instead. The sign-in runs only from that menu or `/notion login`, nev
 `pydantic_clai2.plugins.sign_in`.
 """
 
-import asyncio
 from collections.abc import Sequence
 from functools import partial
 from typing import Generic, Literal
@@ -29,7 +28,8 @@ from pydantic_clai2.config.api_keys import KeyReference, resolve_key, save_key_c
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
-from pydantic_clai2.plugins.keys import on_loop
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import (
     SUBCOMMANDS,
     run_subcommand,
@@ -37,9 +37,8 @@ from pydantic_clai2.plugins.sign_in import (
     sign_out_now,
     warn_if_signed_out,
 )
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
-from pydantic_clai2.ui.menus.key_picker import pick_key
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.runtime.session import WorkspacelessCapability
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 
 NOTION_MCP_URL = 'https://mcp.notion.com/mcp'
@@ -52,8 +51,7 @@ TOKEN_ACCOUNT = 'plugin_notion'
 SETUP = 'Choose one with /plugins configure notion.'
 SIGN_IN = OAuthSignIn(name=TOKEN_ACCOUNT, service='Notion', setup='/notion login', url=NOTION_MCP_URL)
 """The browser sign-in; its tokens are the keyring credential `mcp-plugin_notion`."""
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
+KEY_LABEL = f'Notion OAuth access token (saved in /keys as {KEY_NAME})'
 
 
 class NotionSettings(BaseModel):
@@ -98,7 +96,7 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
     """Choose the connection per run, so a new key, a sign-in, or a logout applies without a reload."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        return (self._connect,)
+        return (WorkspacelessCapability[DepsT](self._connect),)
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -111,8 +109,9 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
             ),
         )
 
-    async def configure(self) -> str:
-        return await _configure(NotionSource(self.host))
+    def settings_menu(self) -> SettingsMenu:
+        source = NotionSource(self.host)
+        return SettingsMenu(source=source, actions={'key': source.pick_key, 'auth': source.pick_auth})
 
     async def on_session_start(self, event: SessionStart) -> None:
         # Here rather than on load, so the keyring read does not block the shell's loop.
@@ -136,13 +135,19 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
                 raise UserError(f'No Notion key is selected. {SETUP}')
             token = await anyio.to_thread.run_sync(partial(resolve_key, token=reference), abandon_on_cancel=True)
             return Notion[DepsT](
-                auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions
+                defer_loading=True,
+                auth=token,
+                read_only=settings.read_only,
+                include_instructions=settings.include_instructions,
             )
         # Checked per run, so signing in from the menu or `/notion login` applies to the next prompt.
         if not await anyio.to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
             return None
         return Notion[DepsT](
-            client=SIGN_IN.client(), read_only=settings.read_only, include_instructions=settings.include_instructions
+            defer_loading=True,
+            client=SIGN_IN.client(),
+            read_only=settings.read_only,
+            include_instructions=settings.include_instructions,
         )
 
     async def _command(self, args: list[str]) -> str:
@@ -262,6 +267,36 @@ class NotionSource(Generic[DepsT]):
         self._host.save_settings(NotionSettings.model_validate(data))
         return f'Reset {row.label}.'
 
+    async def pick_key(self, dialogs: Dialogs) -> list[str]:
+        """The Key row: pick a saved key or save a new one in `/keys`, then switch Sign-in to key only."""
+        reference = await choose_key(name=KEY_NAME, label=KEY_LABEL, dialogs=dialogs)
+        if reference is None:
+            return []
+        await anyio.to_thread.run_sync(select_key, reference)
+        messages = [f'Notion uses the saved key {reference.name}. Manage it in /keys.']
+        # A chosen key is used only with key-only sign-in, so choosing one switches to it.
+        if not await anyio.to_thread.run_sync(self._uses_key):
+            await anyio.to_thread.run_sync(self.apply, _AUTH, 'key')
+            messages.append(f'Saved {_AUTH.label}: {_AUTH.display("key")}.')
+        return messages
+
+    async def pick_auth(self, dialogs: Dialogs) -> list[str]:
+        """The Sign-in row: choosing the browser signs in now when not signed in yet."""
+        picked = await dialogs.choose(
+            title=f'Choose {_AUTH.label}',
+            options=[Option(value=choice, label=_AUTH.display(choice)) for choice in _AUTH.choices],
+            current=await anyio.to_thread.run_sync(self.current, _AUTH),
+        )
+        if picked is None:
+            return []
+        saved = await anyio.to_thread.run_sync(self.apply, _AUTH, picked)
+        if picked != 'oauth' or await anyio.to_thread.run_sync(SIGN_IN.signed_in):
+            return [saved]
+        return [saved, await sign_in_now(SIGN_IN, dialogs)]
+
+    def _uses_key(self) -> bool:
+        return self.settings.auth == 'key'
+
     def _updated(self, row: FieldRow, raw: str) -> NotionSettings:
         data = self.settings.model_dump(mode='json')
         value: JsonValue = raw
@@ -269,35 +304,3 @@ class NotionSource(Generic[DepsT]):
             value = raw == 'true'
         data[row.key] = value
         return NotionSettings.model_validate(data)
-
-
-async def _configure(source: NotionSource[DepsT]) -> str:
-    loop = asyncio.get_running_loop()
-
-    def choose() -> list[str]:
-        label = f'Notion OAuth access token (saved in /keys as {KEY_NAME})'
-        reference = pick_key(loop, name=KEY_NAME, label=label, runners=RUNNERS)
-        if reference is None:
-            return []
-        select_key(reference)
-        messages = [f'Notion uses the saved key {reference.name}. Manage it in /keys.']
-        if source.settings.auth != 'key':
-            # A chosen key is used only with key-only sign-in, so choosing one switches to it.
-            source.apply(_AUTH, 'key')
-            messages.append(f'Saved {_AUTH.label}: {_AUTH.display("key")}.')
-        return messages
-
-    menu = FieldMenu(source)
-
-    def pick_auth() -> list[str]:
-        pick = RUNNERS.run_choice(menu.build_choices(_AUTH))
-        if pick.cancelled or pick.item is None:
-            return []
-        saved = menu.apply(_AUTH, str(pick.item.value))
-        if pick.item.value != 'oauth' or SIGN_IN.signed_in():
-            return [saved]
-        message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
-        return [saved] if message is None else [saved, message]
-
-    messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={'key': choose, 'auth': pick_auth}))
-    return '\n'.join(messages) or 'Notion settings unchanged.'

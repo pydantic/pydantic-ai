@@ -2,24 +2,40 @@
 
 import asyncio
 import io
+import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
 
 import anyio
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config import SETTING_FIELDS, PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import (
+    LiveSession,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionEnd,
+    SessionStart,
+    TurnEnd,
+    TurnStart,
+    load_plugin,
+)
 from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
+from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.plugins.process_plugins import ProcessPlugins, handling
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -55,19 +71,25 @@ class Harness:
         *,
         builtin: tuple[PluginSettings, ...] = (),
         project: tuple[PluginSettings, ...] = (),
+        process: ProcessPlugins[None] | None = None,
+        name: str = 'one',
     ) -> None:
-        self.store = SettingsStore(tmp_path / 'config.db')
+        """One session; with `process`, one of several live sessions joined to it, told apart by `name`."""
+        self.store = process.store if process is not None else SettingsStore(tmp_path / 'config.db')
         self.store.plugins_dir.mkdir(exist_ok=True)
         self.output = io.StringIO()
         self.commands = Commands()
         self.commands.register(Command(name='help', description='Built in', handler=lambda _: ''))
         self.loader: PluginLoader[None] = PluginLoader(
-            store=self.store,
+            store=None if process is not None else self.store,
+            process=process,
             console=Console(file=self.output, width=200),
             commands=self.commands,
             session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=self.store.load()),
             builtin=builtin,
             project=project,
+            session_id=lambda: f'conversation-{name}',
+            live_id=name,
         )
 
     def write(
@@ -190,7 +212,7 @@ async def test_add_saves_settings_only_once_activation_accepts_them(
     package = tmp_path / 'site' / 'clai_strict'
     package.mkdir(parents=True)
     (package / '__init__.py').write_text(
-        'from pydantic import BaseModel, ConfigDict\n'
+        'from pydantic import BaseModel, JsonValue, ConfigDict\n'
         'from pydantic_clai2.plugins import Plugin, SessionStart\n'
         'class Settings(BaseModel):\n'
         "    model_config = ConfigDict(extra='forbid')\n"
@@ -218,7 +240,7 @@ async def test_add_keeps_settings_the_plugin_saves_while_activating(
     package = tmp_path / 'site' / 'clai_migrating'
     package.mkdir(parents=True)
     (package / '__init__.py').write_text(
-        'from pydantic import BaseModel\n'
+        'from pydantic import BaseModel, JsonValue\n'
         'from pydantic_clai2.plugins import Plugin\n'
         'class Settings(BaseModel):\n'
         '    version: int = 1\n'
@@ -351,7 +373,7 @@ async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
 async def test_saved_settings_persist_and_a_failed_start_after_saving_can_load_again(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     (harness.store.plugins_dir / 'tuned.py').write_text(
-        'from pydantic import BaseModel\n'
+        'from pydantic import BaseModel, JsonValue\n'
         'from pydantic_clai2.plugins import Plugin, SessionStart\n'
         'class Tuned(BaseModel):\n'
         '    level: int = 1\n'
@@ -455,6 +477,161 @@ async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path
     assert loaded is not None
     loaded.host.save_settings(Chosen(level=2))
     assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
+
+
+TUNED = """
+\"\"\"Takes a level.\"\"\"
+
+from pydantic import BaseModel, JsonValue
+
+from pydantic_clai2.plugins import Plugin
+
+
+class TunedSettings(BaseModel):
+    level: int = 1
+
+
+class Tuned(Plugin[TunedSettings]):
+    pass
+"""
+
+
+async def test_plugins_catalog_saves_only_a_loaded_plugins_own_settings(tmp_path: Path) -> None:
+    """`host.plugins` is the loader; `save_settings` takes the loaded plugin's own model, as its menu would save."""
+
+    class Other(BaseModel):
+        level: int = 2
+
+    harness = Harness(tmp_path)
+    harness.write('plain')
+    (harness.store.plugins_dir / 'tuned.py').write_text(TUNED)
+    await harness.loader.load('plain')
+    await harness.loader.load('tuned')
+    loaded = harness.loader.entries()[0].loaded
+    assert loaded is not None and loaded.host.plugins is harness.loader
+    [plain, tuned] = harness.loader.listing()
+    assert (plain.name, plain.settings_model, plain.settings, plain.provides) == (
+        'plain',
+        None,
+        None,
+        '1 command, 4 hooks',
+    )
+    assert tuned.settings_model is not None and tuned.settings is not None
+    assert (tuned.description, tuned.origin, tuned.status) == ('Takes a level.', 'drop-in', 'on')
+
+    with pytest.raises(TypeError, match='tuned takes TunedSettings, not Other'):
+        await harness.loader.save_settings('tuned', Other())
+    with pytest.raises(ValueError, match='plain takes no settings'):
+        await harness.loader.save_settings('plain', NoSettings())
+    await harness.loader.save_settings('tuned', tuned.settings_model.model_validate({'level': 4}))
+    assert [saved.settings for saved in harness.store.plugins() if saved.id == 'tuned'] == [{'level': 4}]
+    await harness.loader.disable('tuned')
+    with pytest.raises(ValueError, match='tuned is not loaded'):
+        await harness.loader.save_settings('tuned', tuned.settings)
+
+
+DECLARED = """
+\"\"\"Declares its settings menu.\"\"\"
+
+from pydantic import BaseModel, JsonValue
+
+from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+
+
+class LevelSettings(BaseModel):
+    level: int = 1
+
+
+class Levels:
+    title = 'Levels'
+
+    def __init__(self, host):
+        self.host = host
+
+    def rows(self):
+        return [FieldRow(key='level', label='level', description='How much.', default='1')]
+
+    def current(self, row):
+        return str(self.host.settings(LevelSettings).level)
+
+    def problem(self, row, text):
+        return None
+
+    def apply(self, row, raw):
+        self.host.save_settings(LevelSettings(level=int(raw)))
+        return f'Saved {row.label}.'
+
+    def reset(self, row):
+        return 'Reset.'
+
+
+class Declared(Plugin[LevelSettings]):
+    def settings_menu(self):
+        return SettingsMenu(source=Levels(self.host))
+"""
+
+
+async def test_plugins_catalog_edits_only_a_declared_menu_one_edit_at_a_time(tmp_path: Path) -> None:
+    """`edit_settings` runs one edit on a declared menu and reloads after a change; other edits wait their turn."""
+    harness = Harness(tmp_path)
+    harness.write('plain')
+    (harness.store.plugins_dir / 'tuned.py').write_text(TUNED)
+    (harness.store.plugins_dir / 'declared.py').write_text(DECLARED)
+    for name in ('declared', 'plain', 'tuned'):
+        await harness.loader.load(name)
+    assert [(info.name, info.settings_menu) for info in harness.loader.listing()] == [
+        ('declared', True),
+        ('plain', False),
+        ('tuned', False),
+    ]
+    # Neither of the others declares a menu: nothing to edit through, nor to configure.
+    assert harness.loader.settings_menu('tuned') is None
+    with pytest.raises(ValueError, match='tuned declares no settings menu'):
+        await harness.loader.edit_settings('tuned', lambda menu: anyio.sleep(0))
+    with pytest.raises(ValueError, match='Plugin plain has no settings menu'):
+        await harness.loader.configure('plain')
+
+    before = harness.loader.entries()[0].loaded
+
+    async def edit(menu: SettingsMenu) -> str:
+        # While one edit runs, the menu is open: another, or the terminal's, is refused.
+        with pytest.raises(ValueError, match='settings menu of declared is already open'):
+            await harness.loader.configure('declared')
+        [row] = menu.source.rows()
+        assert menu.source.current(row) == '1'
+        return menu.source.apply(row, '7')
+
+    assert await harness.loader.edit_settings('declared', edit) == 'Saved level.'
+    # It saved new settings, so it loaded again with them.
+    after = harness.loader.entries()[0].loaded
+    assert after is not None and after is not before
+    menu = harness.loader.settings_menu('declared')
+    assert menu is not None and menu.source.current(menu.source.rows()[0]) == '7'
+    await harness.loader.disable('declared')
+    assert harness.loader.settings_menu('declared') is None
+
+
+async def test_concurrent_unloads_end_a_plugin_once(tmp_path: Path) -> None:
+    """Two browser tabs, or the panel and the terminal, may unload the same plugin at once."""
+    harness = Harness(tmp_path)
+    harness.write('slow', end_body="await __import__('anyio').lowlevel.checkpoint()")
+    await harness.loader.load_all()
+    await asyncio.gather(harness.loader.unload('slow'), harness.loader.unload('slow'))
+    assert harness.text.count('slow stopped exit') == 1
+
+
+async def test_plugin_changes_run_one_at_a_time(tmp_path: Path) -> None:
+    """A disable that arrives while a reload is running waits for it, so it ends off, as saved."""
+    harness = Harness(tmp_path)
+    harness.write('slow', end_body="await __import__('anyio').lowlevel.checkpoint()")
+    await harness.loader.load_all()
+    await asyncio.gather(harness.loader.reload('slow'), harness.loader.disable('slow'))
+    [slow] = harness.loader.listing()
+    assert slow.status == 'off'
+    assert harness.text.count('slow stopped exit') == 2
+    with pytest.raises(ValueError, match='slow is disabled; enable it before reloading'):
+        await harness.loader.reload('slow')
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:
@@ -713,6 +890,44 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
         )
 
 
+@pytest.mark.parametrize('under_home', [True, False])
+async def test_repo_context_builtin_walks_up_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, under_home: bool
+) -> None:
+    # Under home the walk stops at home; elsewhere it stops at the repository root.
+    base = Path.home() if under_home else tmp_path / 'srv'
+    repo = base / 'repo'
+    workspace = repo / 'pkg'
+    workspace.mkdir(parents=True)
+    (repo / '.git').mkdir()
+    (workspace / 'AGENTS.md').write_text('project\n')
+    (repo / 'AGENTS.md').write_text('repo root\n')
+    (base / 'AGENTS.md').write_text('above the repo\n')
+    monkeypatch.chdir(workspace)
+    repo_context = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'repo_context')
+    harness = Harness(tmp_path, builtin=(repo_context,))
+    await harness.loader.load_all()
+
+    async def instructions() -> str:
+        model = TestModel(call_tools=[])
+        await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+            'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+        )
+        assert model.last_model_request_parameters is not None
+        return '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+
+    text = await instructions()
+    assert text.index('repo root') < text.index('project')
+    assert ('above the repo' in text) is under_home
+
+    off = '{"walk_up": false}'
+    assert await harness.loader.command(['add', 'repo_context', repo_context.factory, off]) == (
+        'Replaced built-in repo_context.'
+    )
+    text = await instructions()
+    assert 'project' in text and 'repo root' not in text
+
+
 @pytest.mark.parametrize('error', ['RuntimeError', 'CancelledError'])
 async def test_failed_start_reports_cleanup_error_without_masking_start_failure(tmp_path: Path, error: str) -> None:
     harness = Harness(tmp_path)
@@ -834,3 +1049,650 @@ async def test_failed_load_cleanup_is_bounded_and_continues_after_timeout(
     assert stopped.is_set()
     assert 'TimeoutError' in harness.text
     assert harness.loader.entries()[0].loaded is None
+
+
+SHARED = """
+from pydantic_clai2.commands import Command
+from pydantic_clai2.plugins import Plugin
+
+
+class Shared(Plugin):
+    scope = 'process'
+
+    def get_commands(self):
+        return [Command(name='shared', description='From a process plugin', handler=lambda _: 'ok')]
+
+    async def on_session_start(self, event):
+        self.host.console.print(f'shared started in {self.host.live.current().id}')
+
+    async def on_session_end(self, event):
+        self.host.console.print(f'shared stopped {event.reason}')
+
+    async def on_turn_end(self, event):
+        current = self.host.live.current()
+        self.host.console.print(f'turn in {current.id} for {self.host.session_id}')
+"""
+
+
+def two_sessions(tmp_path: Path, *, builtin: tuple[PluginSettings, ...] = ()) -> tuple[Harness, Harness]:
+    """Two live sessions of one process, as a CLAI serving several sessions will hold them."""
+    process = ProcessPlugins[None](store=SettingsStore(tmp_path / 'config.db'), builtin=builtin)
+    return Harness(tmp_path, process=process, name='a'), Harness(tmp_path, process=process, name='b')
+
+
+async def test_a_change_in_one_session_reaches_every_live_one(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    a.write('alpha')
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert (a.text.count('alpha started'), b.text.count('alpha started')) == (1, 1)
+    await a.loader.disable('alpha')
+    assert ('alpha stopped exit' in a.text, 'alpha stopped exit' in b.text) == (True, True)
+    assert 'alpha' not in a.commands and 'alpha' not in b.commands
+    await b.loader.enable('alpha')
+    assert (a.text.count('alpha started'), b.text.count('alpha started')) == (2, 2)
+    await a.loader.reload('alpha')
+    assert (a.text.count('alpha started'), b.text.count('alpha started')) == (3, 3)
+    assert 'alpha' in a.commands and 'alpha' in b.commands
+    assert await b.loader.remove('alpha') == 'Disabled alpha. Delete {} to remove the plugin itself.'.format(
+        a.store.plugins_dir / 'alpha.py'
+    )
+    assert [entry.status for entry in a.loader.entries()] == ['off']
+
+
+async def test_a_change_that_fails_in_its_session_still_reaches_the_others(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'picky.py').write_text(
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Picky(Plugin):\n'
+        '    async def on_session_start(self, event):\n'
+        "        assert self.host.session_id != 'conversation-a', 'not here'\n"
+        "        self.host.console.print('picky started')\n"
+    )
+    await a.loader.load_all()
+    await b.loader.load_all()
+    await b.loader.disable('picky')
+    with pytest.raises(PluginError, match='not here'):
+        await a.loader.enable('picky')
+    assert b.text.count('picky started') == 2, 'saved as enabled, so the session it loads in loads it'
+
+
+async def test_another_session_keeps_its_plugins_until_its_turn_ends(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    a.write('alpha')
+    await a.loader.load_all()
+    await b.loader.load_all()
+    async with b.loader.turn():
+        await a.loader.disable('alpha')
+        assert 'alpha stopped exit' in a.text
+        assert 'alpha stopped' not in b.text, 'the running turn may still use it'
+        assert [entry.loaded for entry in b.loader.entries()] == [None]
+    assert 'alpha stopped exit' in b.text
+
+
+async def test_a_session_reports_its_own_failure_to_follow(tmp_path: Path) -> None:
+    """Another session's failure to load is shown there, as at startup; plugins off there are left alone."""
+    a, b = two_sessions(tmp_path)
+    c = Harness(tmp_path, process=a.loader.process, name='c')
+    c.loader.enabled = False
+    (a.store.plugins_dir / 'flaky.py').write_text(
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Flaky(Plugin):\n'
+        '    async def on_session_start(self, event):\n'
+        "        assert self.host.session_id != 'conversation-b', 'not here'\n"
+        "        self.host.console.print('flaky started')\n"
+    )
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert 'not here' in b.text
+    await a.loader.reload('flaky')
+    assert b.text.count('not here') == 2
+    assert a.text.count('flaky started') == 2 and c.text == ''
+    [entry] = b.loader.entries()
+    assert (entry.status, entry.error) == ('failed', 'AssertionError: not here')
+
+
+async def test_a_process_plugin_is_built_once_and_hears_every_session(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert a.text == 'shared started in a\n' and b.text == '', (
+        'one instance, on the console of the session that built it'
+    )
+    [in_a], [in_b] = a.loader.entries(), b.loader.entries()
+    assert in_a.loaded is not None and in_a.loaded is in_b.loaded
+    assert 'shared' in a.commands and 'shared' in b.commands
+    await b.loader.fire(TurnEnd(text='hi', outcome='completed'))
+    await a.loader.fire(TurnEnd(text='hi', outcome='completed'))
+    assert 'turn in b for conversation-b\nturn in a for conversation-a' in a.text
+    live = in_a.loaded.plugin.host.live
+    assert live is not None and live.current() is None
+    assert [session.id for session in live.listing()] == ['a', 'b']
+    assert live.get('b').session_id == 'conversation-b'
+    with pytest.raises(LookupError, match='No live session c'):
+        live.get('c')
+    await a.loader.close('exit')
+    assert 'shared stopped' not in a.text and 'shared' not in a.commands
+    assert [entry.loaded for entry in b.loader.entries()] == [in_b.loaded] and 'shared' in b.commands
+    await b.loader.close('eof')
+    assert a.text.count('shared stopped') == 1 and a.text.endswith('shared stopped eof\n')
+
+
+async def test_live_sessions_tell_listeners_when_one_joins_or_leaves(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    live = a.loader.process.live
+    heard: list[list[str]] = []
+    live.subscribe(lambda: heard.append([session.id for session in live.listing()]))
+    await a.loader.load_all()
+    await b.loader.load_all()
+    await a.loader.close('exit')
+    await a.loader.close('exit')
+    assert heard == [['a'], ['a', 'b'], ['b']]
+
+
+async def test_a_process_plugin_ends_once_every_running_turn_is_over(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    await b.loader.reload('shared')
+    assert (a.text.count('shared started'), a.text.count('shared stopped exit')) == (1, 1)
+    assert 'shared started in b' in b.text, 'the new instance is built by the session that reloaded it'
+    async with a.loader.turn():
+        async with b.loader.turn():
+            await a.loader.disable('shared')
+            assert 'shared' not in a.commands and 'shared' not in b.commands
+            assert 'shared stopped' not in b.text
+        assert 'shared stopped' not in b.text, 'the first session still runs a turn with it'
+    assert b.text.count('shared stopped exit') == 1
+    await b.loader.enable('shared')
+    assert [entry.status for entry in a.loader.entries()] == ['on']
+
+
+async def test_a_turn_without_the_process_plugin_does_not_hold_back_its_end(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    b.loader.enabled = False
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    async with b.loader.turn():
+        await a.loader.disable('shared')
+        assert 'shared stopped exit' in a.text
+
+
+async def test_a_process_plugin_that_fails_to_start_is_not_kept(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    (a.store.plugins_dir / 'shared.py').write_text(
+        SHARED.replace("self.host.console.print(f'shared started", "raise RuntimeError('no start')  # ")
+    )
+    await a.loader.load_all()
+    await b.loader.load_all()
+    assert 'no start' in a.text and 'no start' in b.text, 'each session tries it, as nothing is shared'
+    assert 'shared' not in a.commands and 'shared' not in b.commands
+
+
+async def test_a_session_waits_for_a_process_plugin_that_fails_to_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    starting, fail = anyio.Event(), anyio.Event()
+    ended: list[LiveSession | None] = []
+    module = ModuleType('fails_late')
+
+    class FailsLate(Plugin):
+        scope = 'process'
+
+        def get_commands(self) -> list[Command]:
+            return [Command(name='late', description='From a process plugin', handler=lambda _: 'ok')]
+
+        async def on_session_start(self, event: SessionStart) -> None:
+            starting.set()
+            await fail.wait()
+            raise RuntimeError('no start')
+
+        async def on_session_end(self, event: SessionEnd) -> None:
+            assert self.host.live is not None
+            ended.append(self.host.live.current())
+
+    FailsLate.__module__ = module.__name__
+    module.__dict__['FailsLate'] = FailsLate
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    a, b = two_sessions(tmp_path, builtin=(PluginSettings(id='late', factory=module.__name__),))
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(a.loader.load_all)
+        await starting.wait()
+        tasks.start_soon(b.loader.load_all)
+        await anyio.wait_all_tasks_blocked()
+        assert 'late' not in b.commands, 'the second session waits for the instance the first is starting'
+        fail.set()
+    assert 'no start' in a.text and 'no start' in b.text, 'nothing was shared, so each tried its own'
+    assert ended == [a.loader.live_session, b.loader.live_session], 'each ends as the session that built it'
+    assert 'late' not in a.commands and 'late' not in b.commands
+    assert [entry.loaded for entry in b.loader.entries()] == [None]
+
+    # Loaded for one launch while off, as `--web` loads `web`: a session starting meanwhile waits too.
+    starting, fail = anyio.Event(), anyio.Event()
+    a.store.save_plugin(PluginSettings(id='late', factory=module.__name__, enabled=False))
+
+    async def load_late() -> None:
+        with pytest.raises(PluginError, match='no start'):
+            await a.loader.load('late')
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(load_late)
+        await starting.wait()
+        tasks.start_soon(b.loader.load_all)
+        await anyio.wait_all_tasks_blocked()
+        fail.set()
+    assert [entry.loaded for entry in b.loader.entries()] == [None] and 'late' not in b.commands
+
+
+async def test_a_process_plugin_manages_the_plugins_of_the_session_being_handled(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    a.write('alpha')
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    await b.loader.load_all()
+    shared = next(entry.loaded for entry in a.loader.entries() if entry.name == 'shared')
+    assert shared is not None and shared.plugin.host.plugins is not None
+    plugins = shared.plugin.host.plugins
+    await a.loader.close('exit')
+    await plugins.disable('alpha')
+    assert [info.name for info in plugins.listing()] == ['alpha', 'shared']
+    assert [entry.status for entry in b.loader.entries()] == ['off', 'on']
+    assert a.loader.process.sessions == (b.loader,), 'the closed session does not join again'
+    with handling(b.loader.live_session):
+        await plugins.enable('alpha')
+        await plugins.reload('alpha')
+        assert plugins.settings_menu('alpha') is None and plugins.side_panels() == {}
+        with pytest.raises(ValueError, match='takes no settings'):
+            await plugins.save_settings('alpha', NoSettings())
+        with pytest.raises(ValueError, match='declares no settings menu'):
+            await plugins.edit_settings('alpha', lambda menu: anyio.sleep(0))
+    assert b.text.count('alpha started') == 3
+    await b.loader.close('exit')
+
+
+async def test_one_session_ends_its_own_plugins_before_the_process_ones(tmp_path: Path) -> None:
+    """Process-scoped plugins, such as `observability`, outlast every session plugin's `on_session_end`."""
+    harness = Harness(tmp_path)
+    harness.write('alpha')
+    (harness.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await harness.loader.load_all()
+    await harness.loader.close('exit')
+    assert harness.text.index('alpha stopped exit') < harness.text.index('shared stopped exit')
+
+
+async def test_the_last_session_closing_mid_turn_ends_process_plugins_after_it(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await harness.loader.load_all()
+    async with harness.loader.turn():
+        await harness.loader.close('exit')
+        assert 'shared stopped' not in harness.text, 'the running turn may still use it'
+    assert harness.text.count('shared stopped exit') == 1
+
+
+async def test_a_process_plugin_follows_the_session_being_handled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its host acts on the session whose moment it handles, and `host.live` reaches every live one."""
+    calls: list[str] = []
+    module = ModuleType('follows_sessions')
+
+    class Follows(Plugin):
+        scope = 'process'
+
+        async def on_turn_end(self, event: TurnEnd) -> None:
+            host = self.host
+            host.send_input('typed')
+            host.submit_prompt('submitted')
+            host.interrupt()
+            calls.append(f'{host.workspace.name} {host.setting("theme")} {host.tasks}')
+            assert await host.resolve_model('chosen') == f'{host.workspace.name}:chosen'
+            assert host.model_settings('chosen') == {'temperature': 0.1 if host.workspace.name == 'a' else 0.2}
+
+    Follows.__module__ = module.__name__
+    module.__dict__['Follows'] = Follows
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    store = SettingsStore(tmp_path / 'config.db')
+    process = ProcessPlugins[None](store=store, builtin=(PluginSettings(id='follows', factory=module.__name__),))
+
+    def session(name: str) -> PluginLoader[None]:
+        async def resolve_model(model: str) -> str:
+            return f'{name}:{model}'
+
+        commands = Commands()
+        commands.register(Command(name='help', description='Built in', handler=lambda _: ''))
+        return PluginLoader(
+            process=process,
+            console=Console(file=io.StringIO()),
+            commands=commands,
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+            submit_prompt=lambda text: calls.append(f'{name} submit {text}'),
+            send_input=lambda text, images: calls.append(f'{name} send {text}'),
+            interrupt=lambda: calls.append(f'{name} interrupt') is None,
+            setting=lambda key: f'{name}-{key}',
+            workspace=lambda: tmp_path / name,
+            running=lambda: name == 'b',
+            live_id=name,
+            resolve_model=resolve_model,
+            model_settings=lambda model: ModelSettings(temperature=0.1 if name == 'a' else 0.2),
+        )
+
+    a, b = session('a'), session('b')
+    await a.load_all()
+    await b.load_all()
+    await b.fire(TurnEnd(text='hi', outcome='completed'))
+    assert calls == ['b send typed', 'b submit submitted', 'b interrupt', 'b b-theme None']
+    calls.clear()
+    with handling(a.live_session):
+        live = a.entries()[0].loaded
+        assert live is not None and live.plugin.host.live is not None
+        assert live.plugin.host.live.current() is a.live_session
+        assert await live.plugin.host.resolve_model('chosen') == 'a:chosen'
+        assert live.plugin.host.model_settings('chosen') == {'temperature': 0.1}
+    other = process.live.get('b')
+    assert (other.running, other.workspace, other.tasks, other.sessions) == (True, tmp_path / 'b', None, None)
+    assert other.conversation is not a.live_session.conversation and other.status is not a.live_session.status
+    other.send_input('hi')
+    assert other.interrupt() and calls == ['b send hi', 'b interrupt']
+    assert [completion.text for completion in await other.complete('/he')] == ['help']
+    await a.close('exit')
+    await b.close('exit')
+
+
+async def test_a_process_plugin_keeps_what_it_includes_off_in_every_session(tmp_path: Path) -> None:
+    """`web` includes `ask_user`: while it runs, no live session loads `ask_user`."""
+    builtin = (
+        PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
+        PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', enabled=False),
+    )
+    a, b = two_sessions(tmp_path, builtin=builtin)
+    await a.loader.load_all()
+    await b.loader.load_all()
+
+    def statuses(harness: Harness) -> list[str]:
+        return [entry.status for entry in harness.loader.entries()]
+
+    assert statuses(a) == statuses(b) == ['on', 'off']
+    await a.loader.enable('web')
+    assert statuses(a) == statuses(b) == ['included', 'on']
+    assert a.loader.entries()[1].loaded is b.loader.entries()[1].loaded
+    await b.loader.disable('web')
+    assert statuses(a) == statuses(b) == ['on', 'off']
+    await a.loader.close('exit')
+    await b.loader.close('exit')
+
+
+def test_a_session_joins_a_process_or_makes_its_own(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+
+    def start() -> SessionStart:
+        raise AssertionError  # pragma: no cover -- neither session is built, so nothing starts
+
+    console = Console(file=io.StringIO())
+    with pytest.raises(TypeError, match='needs the process it joins'):
+        PluginLoader[None](console=console, commands=Commands(), session_start=start)
+    with pytest.raises(TypeError, match='pass them to it'):
+        PluginLoader[None](
+            process=ProcessPlugins[None](store=store),
+            store=store,
+            console=console,
+            commands=Commands(),
+            session_start=start,
+        )
+
+
+async def test_a_session_opened_later_joins_the_running_process_plugins(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    process = a.loader.process
+    (a.store.plugins_dir / 'shared.py').write_text(SHARED)
+    await a.loader.load_all()
+    later, off = Harness(tmp_path, process=process, name='later'), Harness(tmp_path, process=process, name='off')
+    off.loader.enabled = False
+    await later.loader.load_all()
+    await off.loader.load_all()
+    [shared] = a.loader.entries()
+    assert [entry.loaded for entry in later.loader.entries()] == [shared.loaded] and later.text == ''
+    assert off.loader.entries() == [] and 'shared' not in off.commands
+    await process.close('exit', origin=a.loader)
+    assert a.text.count('shared stopped exit') == 1
+    assert [entry.loaded for harness in (a, b, later) for entry in harness.loader.entries()] == [None] * 3
+    assert 'shared' not in later.commands
+
+
+@pytest.mark.parametrize(
+    ('location', 'walk_up', 'root', 'allow_target', 'parent_loaded'),
+    [
+        ('outside', True, 'default', False, False),
+        ('outside', True, 'ancestor', False, True),
+        ('home', True, 'default', False, True),
+        ('home', False, 'ancestor', False, False),
+        ('outside', True, 'nonancestor', False, False),
+        ('symlink', True, 'ancestor', False, False),
+        ('symlink', True, 'ancestor', True, True),
+        ('symlink', False, 'ancestor', True, False),
+    ],
+)
+async def test_repo_context_user_boundaries_reach_the_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    location: str,
+    walk_up: bool,
+    root: str,
+    allow_target: bool,
+    parent_loaded: bool,
+) -> None:
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    parent = home if location == 'home' else tmp_path / 'outside'
+    parent.mkdir(exist_ok=True)
+    workspace = parent / 'workspace'
+    workspace.mkdir()
+    tooling = tmp_path / 'shared tooling'
+    tooling.mkdir()
+    (tooling / 'shared.md').write_text('Parent policy sentinel.')
+    if location == 'symlink':
+        (parent / 'AGENTS.md').symlink_to(tooling / 'shared.md')
+    else:
+        (parent / 'AGENTS.md').write_text('Parent policy sentinel.')
+    (workspace / 'AGENTS.md').write_text('Workspace policy sentinel.')
+    monkeypatch.chdir(workspace)
+    values: dict[str, JsonValue] = {
+        'repo_context.walk_up_roots': [{'default': '~', 'ancestor': str(parent), 'nonancestor': str(home)}[root]],
+        'repo_context.autoload_symlink_roots': [str(tooling)] if allow_target else [],
+    }
+    host = PluginHost[None](
+        name='repo_context',
+        console=Console(file=io.StringIO()),
+        settings={'walk_up': walk_up},
+        setting=values.__getitem__,
+    )
+    loaded = load_plugin(RepoContextPlugin, host)
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=loaded.capabilities).run(
+        'boundary probe', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert 'Workspace policy sentinel.' in text
+    assert ('Parent policy sentinel.' in text) is parent_loaded
+    if location == 'symlink' and parent_loaded:
+        assert '../AGENTS.md' in text
+        assert 'shared.md' not in text, 'external instructions retain the scanned entry label'
+
+
+@pytest.mark.parametrize(
+    ('roots', 'workspace_dir', 'loaded'),
+    [
+        pytest.param(['~/projects'], 'home/projects/team/ws', ['projects', 'team', 'ws'], id='one-root'),
+        pytest.param(
+            ['{tmp}/home/projects', '{tmp}/home/projects/team'], 'home/projects/team/ws', ['team', 'ws'], id='deepest'
+        ),
+        pytest.param(['{tmp}/home/projects/team', '~'], 'home/projects/team/ws', ['team', 'ws'], id='deepest-first'),
+        pytest.param(
+            ['~', '{tmp}/volume'], 'home/projects/team/ws', ['home', 'projects', 'team', 'ws'], id='home-tree'
+        ),
+        pytest.param(['~', '{tmp}/volume'], 'volume/repo/ws', ['volume', 'repo', 'ws'], id='volume-tree'),
+        pytest.param(['~', '{tmp}/link'], 'home/projects/team/ws', ['projects', 'team', 'ws'], id='symlinked-root'),
+        pytest.param(
+            ['~', '{tmp}/loop'], 'home/projects/team/ws', ['home', 'projects', 'team', 'ws'], id='symlink-loop'
+        ),
+        pytest.param(['{tmp}/volume'], 'home/projects/team/ws', ['ws'], id='no-containing-root'),
+        pytest.param([], 'home/projects/team/ws', ['ws'], id='no-roots'),
+    ],
+)
+async def test_repo_context_walks_up_to_the_nearest_listed_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, roots: list[str], workspace_dir: str, loaded: list[str]
+) -> None:
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    workspace = tmp_path / workspace_dir
+    workspace.mkdir(parents=True)
+    (tmp_path / 'link').symlink_to(tmp_path / 'home' / 'projects', target_is_directory=True)
+    (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
+    for directory in [Path(workspace_dir), *Path(workspace_dir).parents[:-1]]:
+        (tmp_path / directory / 'AGENTS.md').write_text(f'{directory.name} sentinel.')
+    values: dict[str, JsonValue] = {
+        'repo_context.walk_up_roots': [root.format(tmp=tmp_path) for root in roots],
+        'repo_context.autoload_symlink_roots': [],
+    }
+    host = PluginHost[None](
+        name='repo_context',
+        console=Console(file=io.StringIO()),
+        settings={'walk_up': True},
+        setting=values.__getitem__,
+        workspace=lambda: workspace,
+    )
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=load_plugin(RepoContextPlugin, host).capabilities).run(
+        'nearest root probe', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert re.findall(r'(\w+) sentinel\.', text) == loaded
+
+
+@pytest.mark.moves_cache_prefix(reason='User instruction boundaries deliberately change between independent runs.')
+async def test_repo_context_uses_live_user_settings_on_the_next_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    parent = tmp_path / 'outside'
+    workspace = parent / 'workspace'
+    workspace.mkdir(parents=True)
+    tooling = tmp_path / 'tooling'
+    tooling.mkdir()
+    (tooling / 'policy.md').write_text('Live parent sentinel.')
+    (parent / 'AGENTS.md').symlink_to(tooling / 'policy.md')
+    monkeypatch.chdir(workspace)
+    store = SettingsStore(tmp_path / 'config.db')
+    host = PluginHost[None](
+        name='repo_context',
+        console=Console(file=io.StringIO()),
+        settings={'walk_up': True},
+        setting=lambda key: store.load().model_dump()[SETTING_FIELDS[key]],
+    )
+    loaded = load_plugin(RepoContextPlugin, host)
+    model = TestModel(call_tools=[])
+    agent = Agent(model, deps_type=type(None), capabilities=loaded.capabilities)
+    for step, expected in enumerate([False, False, True, False, True, False]):
+        if step == 1:
+            store.set('repo_context.walk_up_roots', [str(parent)])
+        elif step == 2:
+            store.set('repo_context.autoload_symlink_roots', [str(tooling)])
+        elif step == 3:
+            store.reset('repo_context.autoload_symlink_roots')
+        elif step == 4:
+            store.set('repo_context.autoload_symlink_roots', [str(tooling)])
+        elif step == 5:
+            store.reset('repo_context.walk_up_roots')
+        await agent.run(f'live boundary probe {step}', workspace=LocalWorkspaceBackend(working_dir=workspace))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert ('Live parent sentinel.' in text) is expected
+
+
+@pytest.mark.parametrize('walk_up', [False, True])
+async def test_repo_context_without_clai_settings_keeps_home_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, walk_up: bool
+) -> None:
+    home = tmp_path / 'home'
+    workspace = home / 'workspace'
+    workspace.mkdir(parents=True)
+    (home / 'AGENTS.md').write_text('Home fallback sentinel.')
+    tooling = tmp_path / 'tooling'
+    tooling.mkdir()
+    (tooling / 'policy.md').write_text('Unauthorized fallback sentinel.')
+    (workspace / 'AGENTS.md').symlink_to(tooling / 'policy.md')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.chdir(workspace)
+    loaded = load_plugin(
+        RepoContextPlugin,
+        PluginHost[None](
+            name='repo_context',
+            console=Console(file=io.StringIO()),
+            settings={'walk_up': walk_up},
+        ),
+    )
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=loaded.capabilities).run(
+        'no settings probe', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert ('Home fallback sentinel.' in text) is walk_up
+    assert 'Unauthorized fallback sentinel.' not in text
+
+
+@pytest.mark.parametrize('field', ['walk_up_roots', 'autoload_symlink_roots'])
+async def test_repo_context_plugin_cannot_supply_user_boundaries(tmp_path: Path, field: str) -> None:
+    harness = Harness(tmp_path)
+    with pytest.raises(PluginError, match='extra_forbidden'):
+        await harness.loader.command(
+            [
+                'add',
+                'repo_context',
+                'pydantic_clai2.builtin_plugins.repo_context',
+                json.dumps({field: ['/']}),
+            ]
+        )
+
+
+@pytest.mark.parametrize('walk_up', [False, True])
+async def test_repo_context_authorizes_workspace_links_independently_of_walk_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, walk_up: bool
+) -> None:
+    home = tmp_path / 'home'
+    tooling = home / 'shared tooling'
+    tooling.mkdir(parents=True)
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (tooling / 'policy.md').write_text('Authorized workspace link sentinel.')
+    (workspace / 'AGENTS.md').symlink_to(tooling / 'policy.md')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.chdir(workspace)
+    values: dict[str, JsonValue] = {
+        'repo_context.walk_up_roots': ['~'],
+        'repo_context.autoload_symlink_roots': ['~/shared tooling'],
+    }
+    loaded = load_plugin(
+        RepoContextPlugin,
+        PluginHost[None](
+            name='repo_context',
+            console=Console(file=io.StringIO()),
+            settings={'walk_up': walk_up},
+            setting=values.__getitem__,
+        ),
+    )
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=loaded.capabilities).run(
+        f'workspace link probe {walk_up}', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
+    assert model.last_model_request_parameters is not None
+    text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+    assert 'Authorized workspace link sentinel.' in text
+    assert 'AGENTS.md' in text

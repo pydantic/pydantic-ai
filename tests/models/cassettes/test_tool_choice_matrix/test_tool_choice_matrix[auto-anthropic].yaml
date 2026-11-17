@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "394"
+      - "424"
       content-type:
       - application/json
       host:
@@ -19,14 +19,16 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: What's the weather in Paris?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
+        thinking:
+          type: disabled
         tool_choice:
           type: auto
         tools:
@@ -51,10 +53,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=161
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1fb4201769dfcd45c7238ba8f657eac4-c5cb1cf494793a94-01
+      - 00-03d53de4e4ae74e82fc0db77c57dddd8-f64dc1f2b6082da9-01
       transfer-encoding:
       - chunked
       vary:
@@ -63,36 +67,54 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kWXgUWG9gMigFVxxS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":572,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}   }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPHNSnRCt8MRtsraBP3U","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":452,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}             }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_018p88himGvyVqsDZNbHyvGv","name":"get_weather","input":{},"caller":{"type":"direct"}}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'ll check the current"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Pari"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" weather in"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"s\"}"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Paris for you."}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_0115C2D4vREUBkZCVxZ67PCE","name":"get_weather","input":{},"caller":{"type":"direct"}}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Pari"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"s\"}"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":572,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":53}    }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":452,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":66,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"         }
+        data: {"type":"message_stop"   }
 
-  recorded_at: 2026-09-29T16:29:55.606365+00:00
+  recorded_at: 2026-10-25T16:37:38.647624+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -100,11 +122,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "703"
+      - "807"
       content-type:
       - application/json
       host:
@@ -112,7 +134,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -120,21 +142,25 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_018p88himGvyVqsDZNbHyvGv
+          - text: I'll check the current weather in Paris for you.
+            type: text
+          - id: toolu_0115C2D4vREUBkZCVxZ67PCE
             type: tool_use
             name: get_weather
             input:
               city: Paris
         - role: user
           content:
-          - tool_use_id: toolu_018p88himGvyVqsDZNbHyvGv
+          - tool_use_id: toolu_0115C2D4vREUBkZCVxZ67PCE
             type: tool_result
             content:
             - text: Sunny, 22C in Paris
               type: text
             is_error: false
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
+        thinking:
+          type: disabled
         tool_choice:
           type: auto
         tools:
@@ -159,10 +185,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=87
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-d8db897c5f1b39f219b74150df39383d-64e356a0f92e01dc-01
+      - 00-e1ee400f41efcd8259a3cd01d299072b-2a1c8d9d4119ac7d-01
       transfer-encoding:
       - chunked
       vary:
@@ -171,7 +199,7 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kcMvAVxLTK9Aqg5vR","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":646,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}    }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPHNZBsiAMMHEubSSjNv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":535,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
@@ -180,39 +208,33 @@ interactions:
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The weather in Paris is"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currently **sunny with a"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" weather in Paris is sunny"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" temperature of 22°C"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with a temperature of 22°C"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"**"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" (about"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". It loo"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 72°F). It"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks like a pleasant day"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s a beautiful"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" day there"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}       }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0           }
+        data: {"type":"content_block_stop","index":0          }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":646,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":32}             }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":535,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":39,"output_tokens_details":{"thinking_tokens":0}}            }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"      }
 
-  recorded_at: 2026-09-29T16:29:57.031985+00:00
+  recorded_at: 2026-10-25T16:37:39.641978+00:00

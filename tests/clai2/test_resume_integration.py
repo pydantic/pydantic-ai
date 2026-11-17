@@ -1,5 +1,6 @@
 """The command, startup flag, naming resolver and terminal worker share one service."""
 
+import os
 from builtins import BaseExceptionGroup
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
@@ -19,12 +20,12 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, StepEvent, ToolEffectRecord
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -35,7 +36,7 @@ async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pyte
     def rebuild(factory: Callable[[], object]) -> object:
         return factory()
 
-    monkeypatch.setattr('pydantic_clai2._app.reload_clai', rebuild)
+    monkeypatch.setattr('pydantic_clai2.app.reload_clai', rebuild)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         pipe.send_text('first\r/reload\rsecond\r/exit\r')
         await chat(
@@ -101,7 +102,7 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     session.resolve_model = resolve
     assert await service.generate('Fix tests') is not None
     context.set_setting(['sessions.naming', 'false'])
-    assert not service.namer.submit(saved_id)
+    assert not service.namer.submit(saved_id, client=service.naming)
     context.set_setting(['sessions.naming_model', 'null'])
     assert context.settings.session_namer_model is None
 
@@ -284,7 +285,7 @@ async def test_simultaneous_service_failures_remain_grouped(tmp_path: Path, monk
         finally:
             raise ValueError('worker cleanup failed')
 
-    async def broken_command(self: Sessions[None, str], args: list[str]) -> str:
+    async def broken_command(self: Sessions[None, str], args: list[str], *, unarchive: bool = True) -> str:
         await entered.wait()
         raise ValueError('browser failed')
 
@@ -299,3 +300,61 @@ async def test_simultaneous_service_failures_remain_grouped(tmp_path: Path, monk
             resume='',
         )
     assert len(caught.value.exceptions) == 2
+    assert 'browser failed' in [str(error) for error in caught.value.exceptions]
+
+
+async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+    await session.prompt('old work')
+    old = session.conversation_id
+    await session.clear()
+    await session.prompt('current work')
+    with pytest.raises(ValueError, match='The current session cannot be archived'):
+        await service.archive(session.conversation_id)
+    running = ConversationSummary(workspace=str(tmp_path), title='Busy', outcome='running', owner_pid=os.getpid())
+    busy = await store.save(summary=running, messages=[])
+    with pytest.raises(ValueError, match='A running session cannot be archived'):
+        await service.archive(busy.id)
+    assert (await service.archive(old)).archived_at is not None
+    assert old not in [entry.id for entry in await service.listing()]
+    assert [entry.id for entry in await service.listing(archived=True)] == [old]
+
+    def browse(browser: SessionBrowser) -> str:
+        assert old not in [entry.id for entry in browser.entries]
+        browser.archived = True
+        browser.reload()
+        entry = next(entry for entry in browser.entries if entry.id == old)
+        browser.archive(entry, False)
+        browser.archive(entry, True)
+        return old
+
+    monkeypatch.setattr(SessionBrowser, 'run', browse)
+    assert (await service.command([])).startswith('Resumed')
+    assert session.conversation_id == old and session.summary.archived_at is None
+    assert old in [entry.id for entry in await service.listing()]
+    copy = await service.start(resume=old, fork=True)
+    assert 'Resumed' in copy and session.conversation_id != old, 'a fork continues in the copy'
+    assert (await store.get(conversation_id=old)).summary.archived_at is None, 'it was unarchived above'
+    await service.archive(old)
+    await service.start(resume=old, fork=True)
+    assert (await store.get(conversation_id=old)).summary.archived_at is not None, 'the original stays archived'
+    assert session.summary.archived_at is None
+    # Picked in the browser, as `--resume --fork-session` does, it stays archived too.
+    assert (await service.start(resume='', fork=True)).startswith('Resumed')
+    assert (await store.get(conversation_id=old)).summary.archived_at is not None
+    assert session.conversation_id != old
+    await service.resume(old)
+    # Archived meanwhile by another CLAI, as it was open here between turns: the next turn lists it again.
+    await store.set_archived(conversation_id=old, archived=True)
+    await session.prompt('continued')
+    assert old in [entry.id for entry in await service.listing()]
+    assert (await service.unarchive(old)).archived_at is None

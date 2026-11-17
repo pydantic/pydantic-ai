@@ -1,0 +1,83 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "590"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: |
+
+            Always respond with a JSON object that's compatible with this schema:
+
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "additionalProperties": false, "title": "CityLocation"}
+
+            Don't include any text or Markdown fencing before or after.
+        - role: user
+          content: What is the largest city in Mexico? Name two of its neighbouring countries.
+        model: qwen/qwen3.8-27b
+        "n": 1
+        response_format:
+          type: json_object
+        stream: false
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-12ed3dda-0b68-43cc-980c-354127cc5dfa
+        object: chat.completion
+        created: 1794928558
+        model: qwen/qwen3.8-27b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "{\"city\": \"Mexico City\", \"country\": \"Mexico\"}"
+          logprobs: null
+          finish_reason: stop
+        usage:
+          queue_time: 1.079551797
+          prompt_tokens: 109
+          prompt_time: 0.009182749
+          completion_tokens: 14
+          completion_time: 0.028178206
+          total_tokens: 123
+          total_time: 0.037360955
+        usage_breakdown: null
+        system_fingerprint: fp_43dd1ea4ee
+        x_groq:
+          id: req_01m7n18f8qeg1r5vkcyp4yfppd
+          seed: 1599250930
+        service_tier: on_demand
+  recorded_at: 2026-11-17T15:15:58.458007+00:00

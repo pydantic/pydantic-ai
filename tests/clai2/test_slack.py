@@ -1,15 +1,15 @@
-"""The built-in `slack` plugin: a settings menu for `Slack`'s options, with the user token kept in `/keys`."""
+"""The built-in `slack` plugin: a declared settings menu for `Slack`'s options, with the user token kept in `/keys`."""
 
 import io
 import threading
+import time
 
 import anyio
 import pytest
 from anyio import to_thread
 from pydantic import SecretStr
 from rich.console import Console
-from termflow.tui.menu import MenuResult
-from termflow.tui.textinput import TextInputResult
+from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -20,12 +20,18 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
 from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import SessionStart
+from pydantic_clai2.plugins import SessionStart, keys as plugin_keys
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.plugins.menus import Option
+from pydantic_clai2.ui.menus import dialogs
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
+from pydantic_clai2.ui.menus.menu_worker import worker_stopping
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
+from tests.clai2.dialog_script import Asked, Back, Confirm, Pick, Type
 from tests.clai2.menu_script import pick, typed
-from tests.clai2.slack_shell import BUILTIN, ENABLED, ESC, script, shell
+from tests.clai2.slack_shell import BUILTIN, CONTEXT, ENABLED, script, shell
+
+LABEL = 'Slack user token (xoxp-); a new one is saved in /keys as SLACK_USER_TOKEN'
 
 pytestmark = pytest.mark.anyio
 
@@ -33,20 +39,6 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture(autouse=True)
 def no_env_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('SLACK_USER_TOKEN', raising=False)
-
-
-def key_choice(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | None, *, think: float = 0) -> None:
-    """Answer the saved-key list, which needs a real terminal; with `/keys` empty the real prompt runs instead.
-
-    `think` keeps the picker open past the menu thread's polling interval, as a person choosing would.
-    """
-
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> str | KeyReference | None:
-        assert label.startswith('Slack user token (xoxp-)')
-        await anyio.sleep(think)
-        return choice
-
-    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
 
 
 def test_declared_as_disabled_builtin() -> None:
@@ -87,18 +79,55 @@ async def test_slack_without_a_chosen_key_stays_quiet() -> None:
     await app.plugins.close('exit')
 
 
-async def test_reopening_repicks_a_shared_key_that_stays_live(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_menu_declares_an_action_for_each_credential_row() -> None:
+    app = await shell()
+    menu = app.plugins.settings_menu('slack')
+    assert menu is not None
+    assert menu.source.title == 'Slack'
+    assert set(menu.actions) == {'token', 'client_id', 'account'}
+    assert menu.searchable
+    await app.plugins.close('exit')
+
+
+async def test_configure_outside_a_terminal_explains_how() -> None:
+    app = await shell(terminal=False)
+    assert await app.plugins.command(['configure', 'slack']) == (
+        'Configure Slack from a terminal: /plugins configure slack'
+    )
+    await app.plugins.close('exit')
+
+
+async def test_closing_the_menu_unchanged_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    script(monkeypatch, lists=[])
+    app = await shell()
+    assert await app.plugins.command(['configure', 'slack']) == 'Slack: nothing changed.'
+    await app.plugins.close('exit')
+
+
+async def test_reopening_repicks_a_shared_key_that_stays_live() -> None:
     save_key(name='SLACK_USER_TOKEN', value='xoxp-first')
     save_key(name='ACME_SLACK', value='xoxp-acme')
     slack_plugin.save_connection(KeyReference(name='SLACK_USER_TOKEN'))
-    key_choice(monkeypatch, KeyReference(name='ACME_SLACK'), think=0.2)
-    script(monkeypatch, lists=[pick('token')])
     app = await shell()
     assert await app.turn_token() == 'xoxp-first'
-    assert (
-        await app.plugins.command(['configure', 'slack']) == 'Slack uses the saved key ACME_SLACK. Manage it in /keys.'
-    )
+    messages, asked = await app.act('token', [Pick(value='ACME_SLACK')])
+    assert messages == ['Slack uses the saved key ACME_SLACK. Manage it in /keys.']
+    assert asked.asked == [
+        Asked(
+            kind='choose',
+            title=LABEL,
+            options=(
+                Option(value='ACME_SLACK', label='ACME_SLACK'),
+                Option(value='SLACK_USER_TOKEN', label='SLACK_USER_TOKEN'),
+                Option(value='enter', label='Enter a different API key'),
+            ),
+            description='Choose a saved key for this connection. Only key names are displayed.',
+        )
+    ]
     assert app.store.plugins() == []  # The token choice never touches plugin settings.
+    auth = app.slack().auth
+    assert callable(auth)
+    assert auth(CONTEXT) == 'xoxp-acme', 'the new key applies at once, with no reload'
     assert await app.turn_token() == 'xoxp-acme'
 
     save_key(name='ACME_SLACK', value='xoxp-replaced')
@@ -114,28 +143,38 @@ async def test_reopening_repicks_a_shared_key_that_stays_live(monkeypatch: pytes
 
 
 @pytest.mark.parametrize('picked', [True, False])
-async def test_bot_tokens_are_refused(monkeypatch: pytest.MonkeyPatch, picked: bool) -> None:
+async def test_bot_tokens_are_refused(picked: bool) -> None:
     if picked:
         save_key(name='BOT', value='xoxb-bot')
-        key_choice(monkeypatch, KeyReference(name='BOT'))
-    script(monkeypatch, lists=[pick('token')], texts=[typed('xoxb-bot')])
     app = await shell()
-    message = await app.plugins.command(['configure', 'slack'])
-    assert message == "That is a bot token (xoxb-). Slack's MCP server accepts only user tokens (xoxp-)."
+    messages, asked = await app.act('token', [Pick(value='BOT')] if picked else [Type(text='xoxb-bot')])
+    assert messages == ["That is a bot token (xoxb-). Slack's MCP server accepts only user tokens (xoxp-)."]
+    if not picked:  # With `/keys` empty, the masked input opens straight away.
+        assert asked.asked == [
+            Asked(
+                kind='text',
+                title=LABEL,
+                label='Token',
+                placeholder='Paste the token; it is saved in /keys as SLACK_USER_TOKEN',
+                secret=True,
+            )
+        ]
     assert load_codex_credentials(account='slack') is None
     assert ('SLACK_USER_TOKEN' in load_keys()) is False
     await app.plugins.close('exit')
 
 
 @pytest.mark.parametrize(('replace', 'expected'), [(False, 'xoxp-shared'), (True, 'xoxp-mine')])
-async def test_a_shared_name_is_replaced_only_when_confirmed(
-    monkeypatch: pytest.MonkeyPatch, replace: bool, expected: str
-) -> None:
+async def test_a_shared_name_is_replaced_only_when_confirmed(replace: bool, expected: str) -> None:
     save_key(name='SLACK_USER_TOKEN', value='xoxp-shared')
-    key_choice(monkeypatch, 'xoxp-mine')
-    script(monkeypatch, lists=[pick('token')], choices=[pick(replace)])
     app = await shell()
-    await app.plugins.command(['configure', 'slack'])
+    _, asked = await app.act('token', [Pick(value='enter'), Type(text='xoxp-mine'), Confirm(yes=replace)])
+    assert asked.asked[-1] == Asked(
+        kind='confirm',
+        title='SLACK_USER_TOKEN is already in /keys',
+        yes='Replace SLACK_USER_TOKEN for every plugin and connection that uses it',
+        no='Keep the saved token',
+    )
     assert load_keys()['SLACK_USER_TOKEN'].get_secret_value() == expected
     assert (load_codex_credentials(account='slack') is not None) is replace
     await app.plugins.close('exit')
@@ -145,43 +184,47 @@ async def test_a_shared_name_is_replaced_only_when_confirmed(
 async def test_a_key_saved_meanwhile_by_another_session_still_needs_confirmation(
     monkeypatch: pytest.MonkeyPatch, replace: bool, expected: str
 ) -> None:
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> str:
-        save_key(name='SLACK_USER_TOKEN', value='xoxp-other-session')  # After the name was found free.
-        return 'xoxp-mine'
+    """Through the terminal menu, so its widgets are the ones the shared key helper opens."""
 
     def keys_before_the_other_session() -> dict[str, SecretStr]:
+        save_key(name='SLACK_USER_TOKEN', value='xoxp-other-session')  # After the name was found free.
         return {}
 
     monkeypatch.setattr('pydantic_clai2.plugins.keys.load_keys', keys_before_the_other_session)
-    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
-    shown = script(monkeypatch, lists=[pick('token')], choices=[pick(replace)])
+    shown = script(monkeypatch, lists=[pick('token')], choices=[pick(replace)], texts=[typed('xoxp-mine')])
     app = await shell()
     await app.plugins.command(['configure', 'slack'])
-    assert shown.opened == ['list', 'choice', 'list']
+    assert shown.opened == ['list', 'text', 'choice', 'list']
     assert load_keys()['SLACK_USER_TOKEN'].get_secret_value() == expected
     assert (load_codex_credentials(account='slack') is not None) is replace
     await app.plugins.close('exit')
 
 
-@pytest.mark.parametrize('answer', [ESC, typed('   ')])
-async def test_cancelling_or_an_empty_token_changes_nothing(
-    monkeypatch: pytest.MonkeyPatch, answer: TextInputResult
-) -> None:
-    script(monkeypatch, lists=[pick('token')], texts=[answer])
+@pytest.mark.parametrize('answer', [Back(), Type(text='   ')])
+async def test_cancelling_or_an_empty_token_changes_nothing(answer: Back | Type) -> None:
     app = await shell()
-    assert await app.plugins.command(['configure', 'slack']) == 'Slack settings unchanged.'
+    messages, _ = await app.act('token', [answer])
+    assert messages == []
     assert load_keys() == {}
     assert load_codex_credentials(account='slack') is None
     await app.plugins.close('exit')
 
 
 async def test_a_key_deleted_before_saving_points_back_to_the_menu(monkeypatch: pytest.MonkeyPatch) -> None:
-    key_choice(monkeypatch, KeyReference(name='GONE'))
-    script(monkeypatch, lists=[pick('token')])
+    save_key(name='GONE', value='xoxp-gone')
+
+    def deleted_once_listed() -> dict[str, SecretStr]:
+        keys = load_keys()
+        if 'GONE' in keys:  # Another session deletes it once the list offered it.
+            delete_key(name='GONE')
+        return keys
+
+    monkeypatch.setattr(plugin_keys, 'load_keys', deleted_once_listed)
     app = await shell()
-    assert await app.plugins.command(['configure', 'slack']) == (
+    messages, _ = await app.act('token', [Pick(value='GONE')])
+    assert messages == [
         'The selected API key no longer exists. Select a saved key again through /plugins configure slack.'
-    )
+    ]
     assert load_codex_credentials(account='slack') is None
     await app.plugins.close('exit')
 
@@ -229,25 +272,25 @@ async def test_rows_show_the_token_state_and_validate_options() -> None:
 
 
 async def test_closing_the_menu_mid_pick_cancels_the_key_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
-    picking = anyio.Event()
-    cancelled = anyio.Event()
+    save_key(name='OTHER', value='xoxp-other')  # So the saved-key list opens.
+    picking = threading.Event()
+    closed = threading.Event()
 
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> None:
+    def run_choice(menu: Menu) -> MenuResult:
         picking.set()
-        try:
-            await anyio.sleep_forever()
-        finally:
-            cancelled.set()
+        while not worker_stopping():
+            time.sleep(0.01)
+        closed.set()
+        return MenuResult(cancelled=True)
 
-    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
-    script(monkeypatch, lists=[pick('token')])
+    shown = script(monkeypatch, lists=[pick('token')])
+    monkeypatch.setattr(dialogs, 'RUNNERS', Runners(run_list=shown.run_list, run_choice=run_choice))
     app = await shell()
     async with anyio.create_task_group() as group:
         group.start_soon(app.plugins.command, ['configure', 'slack'])
-        await picking.wait()
+        assert await to_thread.run_sync(picking.wait, 5)
         group.cancel_scope.cancel()
-    with anyio.fail_after(5):
-        await cancelled.wait()
+    assert await to_thread.run_sync(closed.wait, 5)
     assert load_codex_credentials(account='slack') is None
     await app.plugins.close('exit')
 
