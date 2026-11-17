@@ -459,8 +459,8 @@ Gotchas:
   `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
 - `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
-  must not reach something. An allow rule trusts everything after its words (`find` allows `find -exec`).
-- Commands with `$`, backticks, subshells, here-documents, or line breaks, and every command on a `'windows'`
+  must not reach something. An allow rule trusts everything after its words (`find` allows `find . -delete`).
+- Commands with `$`, backticks, quoted operators, subshells, here-documents, or line breaks, and every command on a `'windows'`
   workspace, cannot be split: when command rules apply to the tool they ask unless a deny rule matches.
 
 ## SpendLimits

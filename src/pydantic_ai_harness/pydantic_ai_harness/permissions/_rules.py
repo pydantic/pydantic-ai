@@ -95,9 +95,30 @@ def _words(command: str) -> list[str]:
         return []
 
 
+def _quotes_an_operator(command: str) -> bool:
+    """Whether `command` quotes or escapes an operator character, which `shlex` would not tell apart from a real one."""
+    quote = ''
+    escaped = False
+    for char in command:
+        if escaped:
+            escaped = False
+            if char in _OPERATOR_CHARS:
+                return True
+        elif char == '\\' and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = ''
+            elif char in _OPERATOR_CHARS:
+                return True
+        elif char in '\'"':
+            quote = char
+    return False
+
+
 def _tokens(command: str) -> list[str] | None:
     """`command`'s words and operators, or `None` when it has syntax the lexer cannot follow."""
-    if any(marker in command for marker in _UNSPLITTABLE):
+    if any(marker in command for marker in _UNSPLITTABLE) or _quotes_an_operator(command):
         return None
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
