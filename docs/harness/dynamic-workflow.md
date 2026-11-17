@@ -43,6 +43,16 @@ The harness has two delegation capabilities. They trade in the same currency -- 
 
 Start with `SubAgents` if you are not sure. A `delegate_task` orchestrator converts to a workflow catalog without changing the sub-agents themselves.
 
+The controls they share cover the same ground at different levels. `DynamicWorkflow` budgets the whole catalog because one script fans out over it; `SubAgents` budgets each delegate because the parent picks one per call:
+
+| Control | `DynamicWorkflow` | `SubAgents` |
+|---|---|---|
+| Retries of the parent's tool | `max_retries`, like other script tools such as `CodeMode` | `tool_retries` |
+| Number of sub-agent runs | `max_agent_calls`, across the catalog | `SubAgent.max_calls`, per delegate |
+| Usage limits of one sub-agent run | `sub_agent_usage_limits`, for every run | `SubAgent.usage_limits`, per delegate |
+| Shared usage accounting | `forward_usage` | `forward_usage` |
+| Sub-agent model | `inherit_model`, for every run | the `models` menu and `SubAgent.models` |
+
 ## Installation
 
 The script runs inside the Monty sandbox, so install the extra:
