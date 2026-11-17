@@ -124,7 +124,7 @@ default-groups = ["dev", "lint"]
 # The lock leaves out these environments. Lock-only: the published `requires-python` stays `>=3.11`.
 # - Python < 3.11.5: no patched `soupsieve` (>= 4.0.0, see the floor below) supports it.
 # - emscripten: wheel-only dependencies such as `psycopg-binary` ship no emscripten wheels, so a
-#   lock that forks on `sys_platform == 'emscripten'` (as `tzdata` markers do) has no solution.
+#   lock that forks on `sys_platform == 'emscripten'` has no solution.
 environments = ["python_full_version >= '3.11.5' and sys_platform != 'emscripten'"]
 exclude-newer = "7 days"
 conflicts = [
