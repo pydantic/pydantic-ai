@@ -6,6 +6,7 @@ does what it should, with stub programs for the sandbox's own.
 
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import subprocess
@@ -17,6 +18,8 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from ..display_fakes import screen
 from .fake_e2b import FakeE2B
+
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
