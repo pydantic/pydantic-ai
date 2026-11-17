@@ -159,6 +159,7 @@ class TestRequireVerification:
             "sed -i 's/1/2/' app.py",
             "sed -E -i 's/1/2/' app.py",
             'echo 2 > app.py',
+            'echo 2 >> app.py',
         ],
     )
     async def test_an_edit_command_makes_checks_stale(self, tmp_path: Path, command: str) -> None:
@@ -177,6 +178,20 @@ class TestRequireVerification:
     @pytest.mark.parametrize(
         'command',
         [
+            'command -v rg >/dev/null',
+            'ls > /dev/null 2>&1',
+            'python -c "def f() -> int: return 1"',
+            "git log --format='%h > %s'",
+        ],
+    )
+    async def test_read_only_commands_are_not_edits(self, tmp_path: Path, command: str) -> None:
+        result = await _agent(tmp_path, _run(command), 'Done.').run('Look around')
+
+        assert result.output == 'Done.'
+
+    @pytest.mark.parametrize(
+        'command',
+        [
             'pytest -q',
             'uv run pytest tests/test_app.py',
             'python -m pytest',
@@ -190,6 +205,9 @@ class TestRequireVerification:
             'go vet ./...',
             'make -C backend typecheck',
             './gradlew build',
+            'uv run pytest 2>&1',
+            'pytest -q > /dev/null 2>&1',
+            "pytest -k 'parse|render'",
         ],
     )
     async def test_recognizes_verification_commands(self, tmp_path: Path, command: str) -> None:

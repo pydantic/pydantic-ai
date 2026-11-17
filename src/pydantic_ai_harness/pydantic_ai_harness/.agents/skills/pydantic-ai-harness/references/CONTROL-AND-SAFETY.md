@@ -920,8 +920,9 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 - Any edit makes every earlier check stale. Edits to `exempt_paths` (`*.md`, `*.mdx`, `*.rst`) don't count.
 - Commands come from tools whose metadata sets `code_arg_language='shell'` and `code_arg_name`, as
   `Shell`'s do. A check is an `&&`-joined step starting with a `verification_commands` match; `;`, `|`,
-  `||`, background `&`, and command substitution disqualify it. Pass/fail is read from `Shell`'s
-  `[exit code: N]`/timeout/file-limit trailer or the `shell` tool's `exit_code`; a still-running command is no result.
+  `||`, background `&`, and command substitution disqualify it (`2>&1` and single-quoted text are ignored). Pass/fail is read from `Shell`'s
+  `[exit code: N]`/timeout/file-limit trailer or the `shell` tool's `exit_code`; a background or still-running command never counts. `edit_commands` match outside quotes; the default `>`
+  pattern skips `->`, `>&`, and `/dev/null`.
 - The redirect is a `SystemPromptPart`; find it by
   `metadata['origin'] == 'pydantic-ai-harness.require_verification.v1'` (with `attempt`), never by text.
 - State is per run (`for_run`); hooks run in workflow code under Temporal, DBOS, and Prefect. Skipped like

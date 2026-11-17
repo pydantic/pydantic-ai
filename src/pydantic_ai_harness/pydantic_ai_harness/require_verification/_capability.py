@@ -43,15 +43,18 @@ DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
     r'(?<![\w-])(?:sed|perl)(?:\s+-\w+)*\s+-\w*i',
     r'\bgit\s+apply\b|(?:^|\s)patch\s',
     r'\btee\b',
-    r'(?<![\d&>])>(?!&)',
+    r'(?<![\d&>-])>>?(?!&|\s*/dev/null)',
 )
-"""Regular expressions for the commands that count as edits, searched for anywhere in the command."""
+"""Regular expressions for the commands that count as edits, searched for anywhere outside quoted strings."""
 
 _ORIGIN = 'pydantic-ai-harness.require_verification.v1'
 """The `origin` in the `metadata` of the `SystemPromptPart` a redirect is delivered as."""
 
 _ASSIGNMENTS = re.compile(r'^(?:env\s+)?(?:\w+=\S*\s+)*')
 _MASKING = re.compile(r'[;|&`\n]|\$\(')
+_FD_DUPLICATION = re.compile(r'\d*[<>]&(?:\d+|-)')
+_SINGLE_QUOTED = re.compile(r"'[^']*'")
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _FAILED = ('[exit code:', '[Command timed out', '[File-size limit exceeded', '[Command failed with max_file_bytes')
 _RUNNING = ('Status: ', 'ID: ')
 
@@ -124,7 +127,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             if not (isinstance(path, str) and any(fnmatch(path, pattern) for pattern in self.exempt_paths)):
                 self._mark_edit()
         elif (command := _command(tool_def, args)) is not None:
-            if any(pattern.search(command) for pattern in self._edit):
+            if any(pattern.search(_QUOTED.sub('', command)) for pattern in self._edit):
                 self._mark_edit()
             elif self._verifies(command) and (passed := _passed(result)) is not None:
                 self._results[command] = passed
@@ -173,7 +176,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
     def _verifies(self, command: str) -> bool:
         """Whether `command` runs a verification whose exit status no other part of it can hide."""
         steps = [_ASSIGNMENTS.sub('', step.strip(), count=1) for step in command.split('&&')]
-        if any(_MASKING.search(step) for step in steps):
+        if any(_MASKING.search(_FD_DUPLICATION.sub('', _SINGLE_QUOTED.sub('', step))) for step in steps):
             return False
         return any(pattern.match(step) for step in steps for pattern in self._verification)
 
