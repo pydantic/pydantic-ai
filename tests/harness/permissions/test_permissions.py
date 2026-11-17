@@ -532,6 +532,7 @@ class TestPermissionRules:
             ("echo $'a\\''; touch x # '", 'ask'),
             ('cat <<EOF', 'ask'),
             ('rm 2>/dev/null -rf build', 'deny'),
+            ('git 1 >&2 status', 'ask'),
             ('ls ;; ls', 'ask'),
             ("echo 'unbalanced", 'ask'),
             ('', 'ask'),
@@ -686,7 +687,7 @@ class TestPermissionRules:
         [request] = permission_requests(result.output)
         assert (request.action, request.subject, request.reason) == ('write', 'secrets/key', 'Secrets need a look.')
 
-    @pytest.mark.parametrize('command', ['', '   ', "'unbalanced"])
+    @pytest.mark.parametrize('command', ['', '   ', "'unbalanced", "';'"])
     def test_invalid_command_fails_at_construction(self, command: str) -> None:
         with pytest.raises(UserError, match='must be a shell command'):
             PermissionRule('deny', command=command)

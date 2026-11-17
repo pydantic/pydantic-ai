@@ -66,7 +66,7 @@ class PermissionRule:
 
     def __post_init__(self) -> None:
         """Fail at construction on a `command` with no words or unbalanced quotes."""
-        if self.command is not None and not _words(self.command):
+        if self.command is not None and not _loose(_words(self.command)):
             raise UserError(f'PermissionRule.command must be a shell command, got {self.command!r}.')
 
 
@@ -84,6 +84,8 @@ class PermissionRuleSpec(TypedDict, total=False):
 class _Segment:
     words: list[str] = field(default_factory=list[str])
     redirected: bool = False
+    descriptors: set[int] = field(default_factory=set[int])
+    """Indexes of `words` that may be the file descriptor of the redirection after them, as in `2>`."""
 
 
 def _words(command: str) -> list[str]:
@@ -127,7 +129,7 @@ def _segments(command: str) -> list[_Segment] | None:
             target = True
             segment.redirected |= (token, following) not in _HARMLESS_REDIRECTS
             if segment.words and segment.words[-1].isdigit():
-                segment.words.pop()  # the file descriptor of `2>`, not an argument
+                segment.descriptors.add(len(segment.words) - 1)
     return [segment for segment in segments if segment.words or segment.redirected]
 
 
@@ -148,7 +150,8 @@ def _matches_segment(rule: PermissionRule, segment: _Segment) -> bool:
     words = _words(rule.command or '')
     if rule.verdict == 'allow':
         return not segment.redirected and segment.words[: len(words)] == words
-    return _contains(_loose(segment.words), _loose(words))
+    arguments = (word for index, word in enumerate(segment.words) if index not in segment.descriptors)
+    return _contains(_loose(arguments), _loose(words))
 
 
 def _strictest(rules: Iterable[PermissionRule]) -> PermissionRule | None:
