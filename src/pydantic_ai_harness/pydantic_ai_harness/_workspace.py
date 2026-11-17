@@ -4,6 +4,7 @@ import errno
 import hashlib
 import posixpath
 import shlex
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +99,9 @@ def is_unattached(workspace: Workspace) -> bool:
     return innermost_backend(workspace) is NO_WORKSPACE
 
 
+_LOCAL_CAPABILITIES = {'local': 'LocalWorkspace', 'windows': 'WindowsWorkspace'}
+"""The capability for a host workspace's ref provider, which takes the ref's directory."""
+
 _PROVIDER_CAPABILITIES = {
     'modal': 'ModalSandbox()',
     'e2b': 'E2BSandbox()',
@@ -129,8 +133,8 @@ def require_workspace(workspace: Workspace, owner: str, messages: Sequence[Model
     if isinstance(backend, UnavailableWorkspace) and not is_unattached(workspace):
         raise UserError(f'`{owner}` cannot use this workspace: {backend.reason}')
     if not workspace.attached and (ref := _history_ref(messages)) is not None:
-        if ref.provider == 'local':
-            example = f' (such as `LocalWorkspace({ref.id!r})`)'
+        if (local := _LOCAL_CAPABILITIES.get(ref.provider)) is not None:
+            example = f' (such as `{local}({ref.id!r})`)'
         elif (capability := _PROVIDER_CAPABILITIES.get(ref.provider)) is not None:
             example = f' (such as `{capability}`)'
         else:
@@ -141,10 +145,11 @@ def require_workspace(workspace: Workspace, owner: str, messages: Sequence[Model
             f'{example} to continue there, or pass `workspace=` to the run.'
         )
     if not workspace.attached:
+        local = 'WindowsWorkspace' if sys.platform == 'win32' else 'LocalWorkspace'
         raise UserError(
             f'`{owner}` needs a workspace, but none is attached to this run. '
-            "Add `LocalWorkspace('.')` (this machine; `from pydantic_ai.capabilities import LocalWorkspace`, "
-            'or `- LocalWorkspace: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
+            f"Add `{local}('.')` (this machine; `from pydantic_ai.capabilities import {local}`, "
+            f'or `- {local}: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
             "to the agent's capabilities, or pass `workspace=` to the run. "
             'See https://pydantic.dev/docs/ai/workspace/'
         )

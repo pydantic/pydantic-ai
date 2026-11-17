@@ -1,5 +1,0 @@
-{
-  "against": "v2.69.0",
-  "reason": "`pydantic_ai.capabilities.WindowsWorkspace` was added in v2.69.0 (#13475) and moved to `pydantic_clai2.runtime.windows_workspace`, since only CLAI 2 uses it; import it from there, or use `LocalWorkspace` on POSIX.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13598"
-}

@@ -34,9 +34,12 @@ configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
 `workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
 durable execution; see below).
-`LocalWorkspace` needs POSIX. A backend whose shell is PowerShell and whose paths are Windows paths
-reports it through `SupportsPlatform`: `ctx.workspace.platform` is then `'windows'`, and
-`ctx.workspace.paths` (`ntpath`) joins its paths.
+`LocalWorkspace` needs POSIX. On Windows, use `WindowsWorkspace(working_dir, ...)`, with the same parameters
+and the same lack of isolation. Commands run in PowerShell and inherit only the variables Windows tools need
+to start (`PATH`, `PATHEXT`, `SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like) plus `env`. Paths
+are Windows paths: `ctx.workspace.platform` is `'windows'`, and `ctx.workspace.paths` (`ntpath`) joins them.
+Its ref is `WorkspaceRef(provider='windows', id=<absolute working_dir>)`, and it claims only that exact ref,
+as `LocalWorkspace` does. For a single run, pass `workspace=WindowsWorkspaceBackend('.')`.
 Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override

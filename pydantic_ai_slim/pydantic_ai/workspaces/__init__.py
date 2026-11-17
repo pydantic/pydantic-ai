@@ -22,6 +22,7 @@ from .protocol import (
 )
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
+from .windows import WindowsWorkspaceBackend
 from .workspace import Workspace, WorkspacePaths, WrapperWorkspace
 
 __all__ = (
@@ -30,6 +31,7 @@ __all__ = (
     'FileEntry',
     'LocalWorkspaceBackend',
     'ReadOnlyWorkspace',
+    'WindowsWorkspaceBackend',
     'Workspace',
     'WorkspacePaths',
     'WorkspacePlatform',

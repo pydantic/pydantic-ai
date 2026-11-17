@@ -1,6 +1,7 @@
-"""CLAI's workspace on Windows: `WindowsWorkspaceBackend` runs commands as plain host subprocesses in PowerShell.
+"""A Windows implementation of the [workspace backend protocol][pydantic_ai.workspaces.WorkspaceBackend].
 
-It isolates nothing. `WindowsWorkspace` is the `LocalWorkspace` capability with this backend.
+[`WindowsWorkspaceBackend`][pydantic_ai.workspaces.WindowsWorkspaceBackend] runs commands as plain host
+subprocesses in PowerShell -- it **isolates nothing**.
 """
 
 from __future__ import annotations as _annotations
@@ -14,32 +15,18 @@ import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
 
 import anyio
 import anyio.abc
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._utils import run_in_executor
-from pydantic_ai.capabilities import LocalWorkspace
 
-# `Authority` resolves the inherited fields' annotations here, for the agent spec schema.
-from pydantic_ai.messages import Authority  # noqa: F401  # pyright: ignore[reportUnusedImport]
-from pydantic_ai.workspaces import (
-    CommandResult,
-    SupportsPlatform,
-    SupportsRunInDirectory,
-    WorkspaceCommand,
-    WorkspacePlatform,
-)
-from pydantic_ai.workspaces._host import HostWorkspaceBackend
-from pydantic_ai_harness.shell._jobs import JobScripts
+from ._host import HostWorkspaceBackend
+from .protocol import CommandResult, SupportsPlatform, SupportsRunInDirectory, WorkspaceCommand, WorkspacePlatform
 
-from . import windows_jobs
-
-__all__ = ('WindowsWorkspace', 'WindowsWorkspaceBackend', 'powershell_script')
+__all__ = ('WindowsWorkspaceBackend', 'powershell_script')
 
 _INHERITED_ENV = (
     'PATH',
@@ -94,7 +81,7 @@ def _on_windows() -> bool:
 
 
 def powershell_script(script: str) -> str:
-    """`script` as `WindowsWorkspaceBackend` runs a `shell=True` command.
+    """`script` as [`WindowsWorkspaceBackend`][pydantic_ai.workspaces.WindowsWorkspaceBackend] runs a `shell=True` command.
 
     It writes its output as UTF-8 without progress bars, and exits with its last native command's code, as `sh`
     does, rather than PowerShell's 1 for any failure. For a tool that runs PowerShell some other way, such as a
@@ -208,10 +195,10 @@ def _job_objects() -> _JobObjects:
     return _JobObjects()
 
 
-class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRunInDirectory, JobScripts):
+class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRunInDirectory):
     r"""Run commands as subprocesses on this Windows machine, in PowerShell, and use its filesystem.
 
-    The Windows counterpart of `LocalWorkspaceBackend`, and
+    The Windows counterpart of [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend], and
     like it, this isolates nothing: commands and absolute paths reach anywhere this process can. Paths are
     Windows paths (`C:\Users\me\project`), and a `shell=True` command runs in PowerShell: `pwsh` when it
     is on `PATH`, else Windows PowerShell. Its exit code is the last native command's, as in `sh`.
@@ -263,36 +250,6 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
     ) -> CommandResult:
         """Run `command`, a PowerShell script with `shell=True` or an argv, starting in `cwd`."""
         return await self._run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
-
-    def job_launch_script(
-        self,
-        directory: str,
-        cwd: str,
-        command: str,
-        *,
-        exclusive: bool,
-        combined: bool,
-        log_limit: int | None,
-        interval: float,
-    ) -> str:
-        return windows_jobs.launch_script(
-            directory,
-            cwd,
-            powershell_script(command),
-            exclusive=exclusive,
-            combined=combined,
-            log_limit=log_limit,
-            interval=interval,
-        )
-
-    def job_read_script(self, path: str, offset: int, length: int) -> str:
-        return windows_jobs.read_script(path, offset, length)
-
-    def job_stop_script(self, directory: str) -> str:
-        return windows_jobs.stop_script(directory)
-
-    def job_stop_command(self, directory: str) -> str:
-        return f'& {windows_jobs.literal(ntpath.join(directory, "stop.ps1"))}'
 
     async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
         if isinstance(command, str):
@@ -361,28 +318,3 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             if await run_in_executor(os.path.lexists, path):
                 raise
             raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), path) from None
-
-
-@dataclass
-class WindowsWorkspace(LocalWorkspace[AgentDepsT]):
-    """Gives runs a workspace on this Windows machine: PowerShell commands and the host filesystem.
-
-    `LocalWorkspace` for Windows, with the same options. Commands run in PowerShell and paths are Windows
-    paths; see `WindowsWorkspaceBackend`. It isolates nothing: tools reach anywhere on the host this process
-    can. Constructing it elsewhere raises `NotImplementedError`.
-    """
-
-    _: KW_ONLY
-
-    env: Mapping[str, str] | None = None
-    """Environment variables for every command, on top of the variables Windows tools need to start
-    (`PATH`, `PATHEXT`, `SYSTEMROOT`, `TEMP`, `USERPROFILE`, `APPDATA` and the like).
-
-    Nothing else from this process's environment reaches commands; don't pass `os.environ` (secrets).
-    """
-
-    id: str | None = 'windows_workspace'
-    """Fixed, so a later `WindowsWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
-
-    def _backend(self) -> HostWorkspaceBackend:
-        return WindowsWorkspaceBackend(self.working_dir, env=self.env)

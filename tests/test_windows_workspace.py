@@ -10,37 +10,23 @@ import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
 import anyio
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import WindowsWorkspace
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
+from pydantic_ai.workspaces import (
+    WindowsWorkspaceBackend,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+)
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_clai2.runtime.windows_workspace import WindowsWorkspace, WindowsWorkspaceBackend
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='`WindowsWorkspaceBackend` runs only on Windows')
-
-
-def test_a_later_windows_workspace_replaces_an_earlier_one_whole() -> None:
-    """Two share the default id, so they combine as `LocalWorkspace` does: the first one's `env` never leaks."""
-    with patch('pydantic_clai2.runtime.windows_workspace._on_windows', return_value=True):
-        first = WindowsWorkspace[object]('/first', env={'FIRST_SECRET': 'x'}, read_only=True)
-        second = WindowsWorkspace[object]('/second')
-    assert first.id == second.id == 'windows_workspace'
-    merged = WindowsWorkspace.combine([first, second])
-    assert isinstance(merged, WindowsWorkspace)
-    assert (merged.working_dir, merged.env, merged.read_only) == (second.working_dir, None, False)
-
-
-@pytest.mark.skipif(sys.platform == 'win32', reason='checks the refusal off Windows')
-def test_windows_workspace_needs_windows(tmp_path: Path) -> None:
-    with pytest.raises(NotImplementedError, match='only runs on Windows'):
-        WindowsWorkspaceBackend(tmp_path)
-    with pytest.raises(NotImplementedError, match='only runs on Windows'):
-        WindowsWorkspace(tmp_path)
 
 
 @windows_only
