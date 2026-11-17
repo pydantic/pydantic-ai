@@ -7,7 +7,7 @@ modes through an ordered list of size `bands`.
 
 Spilled payloads are written to the run's workspace by default (`WorkspaceOverflowStore`) and read
 back on demand through the registered `read_tool_result` and `grep_tool_result` tools. For spills in
-the run's workspace, `FileSystem`'s `read_file` replaces `read_tool_result`. The `OverflowStore`
+the run's workspace, `FileSystem`'s tools replace them. The `OverflowStore`
 protocol is the seam for any other backend.
 """
 

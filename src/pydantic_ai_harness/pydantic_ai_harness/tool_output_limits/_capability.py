@@ -373,11 +373,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             store = self._store_for(ctx)
             return await _grep(store, handle, pattern, context, max_matches, offset, _reader(ctx, handle))
 
-        # Only the reader steps aside: `read_file` cannot search, and `FileSystem` may offer no search tool.
         prepare = step_aside_for_read_file if self._spills_to_run_workspace else None
         tools = [
             Tool(read_tool_result, tool_kind=READ_TOOL_RESULT_KIND, prepare=prepare),
-            Tool(grep_tool_result, tool_kind=GREP_TOOL_RESULT_KIND),
+            Tool(grep_tool_result, tool_kind=GREP_TOOL_RESULT_KIND, prepare=prepare),
         ]
         return FunctionToolset(tools, id=self.id or 'tool_output_limits')
 
@@ -930,13 +929,19 @@ async def _guarded(handle: str, query: Awaitable[str]) -> str:
         )
 
 
-_Entry = tuple[str, str, int, bool]
-"""A line to render: its prefix, its text, its index in the spill, and whether it is a match.
+@dataclass(frozen=True)
+class _Entry:
+    """A line to render for a spill query."""
 
-An index of -1 marks a separator between grep groups.
-"""
+    prefix: str
+    text: str
+    index: int
+    """The line's index in the spill."""
+    match: bool
 
-_SEPARATOR: _Entry = ('', '', -1, False)
+
+_GroupedEntry = _Entry | None
+"""An entry, or `None` for a separator between grep groups."""
 
 
 def _byte_len(text: str) -> int:
@@ -960,9 +965,9 @@ class _Page:
     omitted: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
     """Ranges of context line indices left out to stay within the cap."""
     size: int = 0
-    first: int = -1
+    first: int | None = None
     """The index of the first line offered, to report leading context that was dropped."""
-    kept: int = -1
+    kept: int | None = None
     """The index of the first line kept."""
 
     def add(self, text: str, match: bool) -> None:
@@ -979,7 +984,7 @@ class _Stop:
     start: int | None = None
 
 
-async def _fill(entries: AsyncIterator[_Entry]) -> _Page:
+async def _fill(entries: AsyncIterator[_GroupedEntry]) -> _Page:
     """Render `entries` up to the output cap.
 
     Stops before a line that would cross the cap, so the match count stays true to the body. Until
@@ -989,7 +994,7 @@ async def _fill(entries: AsyncIterator[_Entry]) -> _Page:
     page = _Page()
     separate = False
     async for entry in entries:
-        if entry[2] < 0:
+        if entry is None:
             separate = True
         elif (stop := _place(page, entry, separate)) is None:
             separate = False
@@ -997,77 +1002,68 @@ async def _fill(entries: AsyncIterator[_Entry]) -> _Page:
             if stop.omit:
                 await _omit(page, entries, stop.start)
             break
-    if page.kept > page.first:
+    if page.first is not None and page.kept is not None and page.kept > page.first:
         page.omitted.insert(0, (page.first, page.kept - 1))
     return page
 
 
 def _place(page: _Page, entry: _Entry, separate: bool) -> _Stop | None:
     """Add one line to `page`, returning why it stopped once it is full."""
-    prefix, line, index, match = entry
-    if page.first < 0:
-        page.first = page.kept = index
-    text = ('--\n' if separate else '') + prefix + _display(line)
+    if page.first is None:
+        page.first = page.kept = entry.index
+    text = ('--\n' if separate else '') + entry.prefix + _display(entry.text)
     if page.size + len(text) <= _MAX_READ_CHARS:
-        page.add(text, match)
+        page.add(text, entry.match)
         return None
     if page.shown:
         # A line opening the next group belongs to a match the next page shows.
-        return _Stop(omit=not (match or separate), start=index)
+        return _Stop(omit=not (entry.match or separate), start=entry.index)
     page.lines.clear()
     page.size = 0
-    page.kept = index if match else index + 1
-    if not match:
+    page.kept = entry.index if entry.match else entry.index + 1
+    if not entry.match:
         return None
     if len(text) <= _MAX_READ_CHARS:
-        page.add(text, match)
+        page.add(text, entry.match)
         return None
-    kept = line[: _MAX_READ_CHARS - len(prefix)]
-    page.add(prefix + _display(kept), match)
-    page.cut = (index, _byte_len(kept))
+    kept = entry.text[: _MAX_READ_CHARS - len(entry.prefix)]
+    page.add(entry.prefix + _display(kept), entry.match)
+    page.cut = (entry.index, _byte_len(kept))
     return _Stop(omit=True)
 
 
-async def _omit(page: _Page, entries: AsyncIterator[_Entry], start: int | None) -> None:
+async def _omit(page: _Page, entries: AsyncIterator[_GroupedEntry], start: int | None) -> None:
     """Record the context lines from `start` (or the next entry) up to the next match or group separator."""
     end = start
-    async for _, _, index, match in entries:
-        if index < 0 or match:
+    async for entry in entries:
+        if entry is None or entry.match:
             break
-        start = index if start is None else start
-        end = index
+        start = entry.index if start is None else start
+        end = entry.index
     if start is not None and end is not None:
         page.omitted.append((start, end))
 
 
 @dataclass(frozen=True)
 class _Reader:
-    """The tool a capped page points the model to for what it left out, named as it is called in the run."""
+    """The `read_tool_result` call a capped page points the model to, named as the tool is called in the run."""
 
     handle: str
     name: str
-    handle_arg: str = 'handle'
-    by_bytes: bool = True
 
     def _call(self, args: str) -> str:
-        return f'{self.name}({self.handle_arg}={self.handle!r}, {args})'
+        return f'{self.name}(handle={self.handle!r}, {args})'
 
     def omitted(self, start: int, end: int) -> str:
         return f'context lines {start + 1}-{end + 1} omitted ({self._call(f"offset={start}, limit={end - start + 1}")})'
 
     def cut(self, offset: int) -> str:
-        if not self.by_bytes:
-            return f'the rest of the cut line, from byte {offset}, cannot be read with {self.name}'
         args = f"unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}"
         return f'the cut line continues at {self._call(args)}'
 
 
 def _reader(ctx: RunContext[Any], handle: str) -> _Reader:
-    """The reader the spill query tools name, as it is called in this run step."""
-    name = ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND)
-    if name is None and (file_reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
-        return _Reader(handle, file_reader, 'path', by_bytes=False)
-    return _Reader(handle, name or READ_TOOL_NAME)
+    return _Reader(handle, ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND) or READ_TOOL_NAME)
 
 
 async def _capped(store: OverflowStore, page: _Page, more: str, reader: _Reader) -> str:
@@ -1115,13 +1111,13 @@ async def _line_slice(
 ) -> str:
     total, window = await _matching_window(store, handle, pattern, offset, limit, from_end=from_end)
     first = max(0, max(0, total - offset) - limit) if from_end else offset
-    page = await _fill(_aiter(('', line, index, True) for index, line in window))
+    page = await _fill(_aiter(_Entry('', line, index, True) for index, line in window))
     more = f'the next line is at offset={first + page.shown}, from_end=False' if page.shown < len(window) else ''
     capped = await _capped(store, page, more, reader)
     return '\n'.join([f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}]', *page.lines])
 
 
-async def _aiter(entries: Iterable[_Entry]) -> AsyncIterator[_Entry]:
+async def _aiter(entries: Iterable[_Entry]) -> AsyncIterator[_GroupedEntry]:
     for entry in entries:
         yield entry
 
@@ -1171,7 +1167,7 @@ class _Grep:
     """How many trailing context lines are still to show."""
     before: deque[tuple[int, str]] = field(default_factory=deque[tuple[int, str]])
 
-    def entries(self, index: int, line: str) -> list[_Entry]:
+    def entries(self, index: int, line: str) -> list[_GroupedEntry]:
         match = self.pattern in line
         entries = self._match(index, line) if match and self.matches in self.page else self._context(index, line)
         self.matches += match
@@ -1180,22 +1176,23 @@ class _Grep:
             self.before.popleft()
         return entries
 
-    def _match(self, index: int, line: str) -> list[_Entry]:
+    def _match(self, index: int, line: str) -> list[_GroupedEntry]:
         leading = [(n, text) for n, text in self.before if n >= self.end]
-        entries: list[_Entry] = [_SEPARATOR] if self.end and (leading[0][0] if leading else index) > self.end else []
-        entries += [(f'{n + 1}-', text, n, False) for n, text in leading]
-        entries.append((f'{index + 1}:', line, index, True))
+        separate = self.end and (leading[0][0] if leading else index) > self.end
+        entries: list[_GroupedEntry] = [None] if separate else []
+        entries += [_Entry(f'{n + 1}-', text, n, False) for n, text in leading]
+        entries.append(_Entry(f'{index + 1}:', line, index, True))
         self.end, self.after = index + 1, self.context
         return entries
 
-    def _context(self, index: int, line: str) -> list[_Entry]:
+    def _context(self, index: int, line: str) -> list[_GroupedEntry]:
         if not self.after:
             return []
         self.end, self.after = index + 1, self.after - 1
-        return [(f'{index + 1}-', line, index, False)]
+        return [_Entry(f'{index + 1}-', line, index, False)]
 
 
-async def _grep_entries(store: OverflowStore, handle: str, grep: _Grep) -> AsyncGenerator[_Entry]:
+async def _grep_entries(store: OverflowStore, handle: str, grep: _Grep) -> AsyncGenerator[_GroupedEntry]:
     index = 0
     async with aclosing(_payload_lines(store, handle)) as batches:
         async for batch in batches:
@@ -1284,7 +1281,8 @@ async def _line_start(store: OverflowStore, handle: str, index: int) -> int:
                 if breaks == index:
                     return position + _byte_len(text[: line_break.end()])
             position += _byte_len(text)
-    return position  # pragma: no cover - the line was just read from this payload
+    # The caller only asks for a line it just read from this payload.
+    raise AssertionError(f'line {index} not found in {handle!r}')  # pragma: no cover
 
 
 async def _payload_texts(store: OverflowStore, handle: str) -> AsyncGenerator[str]:

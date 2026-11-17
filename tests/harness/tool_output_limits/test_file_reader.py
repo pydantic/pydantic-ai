@@ -76,41 +76,13 @@ def _limits(store: OverflowStore | WorkspaceOverflowStore | None = None) -> Tool
 class TestReaderStepsAside:
     async def test_read_file_replaces_read_tool_result(self, tmp_path: Path) -> None:
         recorder, output = await _run(tmp_path, _limits(), FileSystem())
-        assert all(READ_TOOL_NAME not in tools and GREP_TOOL_NAME in tools for tools in recorder.offered)
+        assert all(READ_TOOL_NAME not in tools and GREP_TOOL_NAME not in tools for tools in recorder.offered)
         assert recorder.marker is not None
         assert 'Read it with read_file(path=' in recorder.marker
         assert READ_TOOL_NAME not in recorder.marker
         # The read of the spill is not itself spilled, though it is over the band's threshold.
         assert 'line 100' in output
         assert 'Tool output too large' not in output
-
-    async def test_capped_grep_names_read_file(self, tmp_path: Path) -> None:
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            returns = _returns(messages)
-            if reads := [part for part in returns if part.tool_name == GREP_TOOL_NAME]:
-                return ModelResponse(parts=[TextPart(str(reads[0].content))])
-            if returns:
-                assert returns[0].metadata is not None
-                handle = returns[0].metadata['overflow_handle']
-                return ModelResponse(parts=[ToolCallPart(GREP_TOOL_NAME, {'handle': handle, 'pattern': 'x'})])
-            return ModelResponse(parts=[ToolCallPart('big_tool', {})])
-
-        agent = Agent(
-            FunctionModel(respond),
-            deps_type=type(None),
-            capabilities=[LocalWorkspace(tmp_path), _limits(), FileSystem()],
-        )
-
-        @agent.tool_plain
-        def big_tool() -> str:
-            return 'é\n' + 'x' * 60_000
-
-        header = (await agent.run('go')).output.split('\n', 1)[0]
-        spill = next(tmp_path.glob('.pydantic-ai-harness/tool-output/*/*'))
-        assert header.endswith(
-            f'context lines 1-1 omitted (read_file(path={str(spill)!r}, offset=0, limit=1)); '
-            'the rest of the cut line, from byte 50001, cannot be read with read_file]'
-        )
 
     async def test_prefixed_read_file_is_named(self, tmp_path: Path) -> None:
         recorder, output = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'))

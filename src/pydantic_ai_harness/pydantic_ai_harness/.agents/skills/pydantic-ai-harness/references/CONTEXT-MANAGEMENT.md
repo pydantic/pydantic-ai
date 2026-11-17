@@ -339,7 +339,7 @@ for output without line breaks) and searches it with
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
 With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
-`read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`; `grep_tool_result` stays) and the marker reads
+`read_tool_result` and `grep_tool_result` are left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
 `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
 (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
 are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests
