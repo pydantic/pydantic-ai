@@ -626,7 +626,7 @@ def test_redacted_tool_return_keeps_the_tools_it_made_available(capfire: Capture
 
 
 def test_redacted_shapes_keep_every_field_but_the_data() -> None:
-    """A field added to a redacted type has to be added to its redacted shape too.
+    """A field added to a redacted type has to be added to its redacted shape too, or be dropped on purpose.
 
     The redaction spells each type's fields out rather than dumping and dropping `data`, so a new
     field would otherwise silently stop reaching telemetry. This pins the field sets it mirrors.
@@ -635,6 +635,8 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
     assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'tools', 'kind'}
+    # `validated_args` is dropped on purpose: the redacted shape leaves it out, as the
+    # `deferred_requests_validated_args` case pins.
     assert {f.name for f in fields(DeferredToolRequests)} == {
         'calls',
         'approvals',
