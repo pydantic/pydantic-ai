@@ -54,11 +54,12 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
             return None
         zone = self._zone()
         now = stamp.astimezone(zone)
-        name = zone.key if isinstance(zone, ZoneInfo) else now.tzname()
+        hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec='minutes')
+        offset = hour[len('YYYY-MM-DDTHH:MM') :]
+        name = (zone.key if isinstance(zone, ZoneInfo) else None) or now.tzname() or f'UTC{offset}'
         weekday = _WEEKDAYS[now.weekday()]
         if self.precision == 'date':
             text = f"Today's date is {weekday}, {now.date().isoformat()} ({name})."
         else:
-            hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec='minutes')
             text = f'The current time is within the hour starting {hour} ({weekday}, {name}).'
         return InstructionPart(text, on_change='append')

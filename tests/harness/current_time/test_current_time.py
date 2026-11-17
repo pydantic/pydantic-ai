@@ -31,14 +31,17 @@ def _agent(capability: CurrentTime[None], sent: list[ModelRequest]) -> Agent[Non
 class _HostZone(tzinfo):
     """A `tzinfo` whose `str()` is a host path, as `dateutil`'s are; the prompt names it by `tzname()`."""
 
+    def __init__(self, name: str | None) -> None:
+        self.name = name
+
     def utcoffset(self, dt: datetime | None) -> timedelta:
         return timedelta(hours=3)
 
     def dst(self, dt: datetime | None) -> timedelta:
         return timedelta(0)  # pragma: no cover
 
-    def tzname(self, dt: datetime | None) -> str:
-        return 'XST'
+    def tzname(self, dt: datetime | None) -> str | None:
+        return self.name
 
     def __repr__(self) -> str:
         return "tzfile('/usr/share/zoneinfo/XST')"
@@ -68,7 +71,8 @@ class TestCurrentTime:
                 CurrentTime[None](timezone=ZoneInfo('Europe/Amsterdam'), precision='hour'),
                 'The current time is within the hour starting 2026-01-03T00:00+01:00 (Saturday, Europe/Amsterdam).',
             ),
-            (CurrentTime[None](timezone=_HostZone()), "Today's date is Saturday, 2026-01-03 (XST)."),
+            (CurrentTime[None](timezone=_HostZone('XST')), "Today's date is Saturday, 2026-01-03 (XST)."),
+            (CurrentTime[None](timezone=_HostZone(None)), "Today's date is Saturday, 2026-01-03 (UTC+03:00)."),
         ],
     )
     async def test_states_the_request_time(
