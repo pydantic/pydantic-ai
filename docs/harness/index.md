@@ -13,6 +13,18 @@ description: "Pydantic AI Harness is the official capability library for Pydanti
 
 Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [90+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
+## Pydantic AI, the Harness, and CLAI
+
+Three packages, each built on the one before it. Start with the one that matches what you are doing:
+
+| Package | What it is | Start here when |
+|---|---|---|
+| [Pydantic AI](../index.md) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
+| [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2) (`pydantic-clai2`) | A coding agent for your terminal, run as `clai2`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-clai2` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](../cli.md) that ships with Pydantic AI.
+
 ## Quick start
 
 ```bash
@@ -119,6 +131,7 @@ Look up a capability by the problem it solves. The Capabilities section below li
 | One tool result is flooding the context window | [`ToolOutputLimits`](tool-output-limits.md) | By default, a result of 10,000 characters or more spills to a file in the run's workspace, and the model gets a preview plus a handle to read the rest. If the write fails, the result is truncated to 4,000 characters. Without a workspace, pass `store=LocalFileOverflowStore()`. |
 | The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](../workspace.md), or a sandbox | Set the directory on the workspace: `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox. Every capability that works in the workspace starts there; `Shell(cwd=)` and `FileSystem(cwd=)` warn and are ignored. In your own tool, `ctx.workspace.run(..., cwd='subdir')` starts one command elsewhere. |
 | A run, a day, or a tenant needs a spend ceiling | Core [`UsageLimits`](../agent.md#usage-limits), or [`SpendLimits`](spend.md) | For one run, pass `usage_limits=UsageLimits(cost_limit=Decimal('5'))`: the run raises `UsageLimitExceeded` after the response that crosses the limit. For a day or month, per tenant, or across worker processes, `SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])` refuses the next request once a window is spent. |
+| The model should get only a few calls to an expensive tool per run | [`ToolBudgets`](tool-budgets.md) | `ToolBudgets(per_tool={'web_search': 3}, refuse_repeats={'web_search'})` answers the fourth call, or an exact repeat, with a tool result saying the budget is used, and the run continues. `UsageLimits.tool_calls_limit` stays the hard ceiling. |
 | The model repeats the same tool call without making progress | [`DetectLoops`](detect-loops.md) | The default `action='nudge'` adds a system prompt asking the model to change approach; `action='error'` stops the run with `LoopDetectedError`. |
 | The model sends malformed JSON in a tool call | [`RepairToolArguments`](repair-tool-arguments.md) | Runs `json-repair` on the arguments before validation, fixing trailing commas, single-quoted keys and truncated JSON; valid arguments pass through unchanged. Import it from `pydantic_ai_harness.repair_tool_arguments` and install the `repair-tool-arguments` extra. `Coder` includes `RepairToolArguments`, so its `coder` extra installs `json-repair` too. |
 
@@ -146,6 +159,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Kubernetes Sandbox](kubernetes-sandbox.md) | Harness | Commands and files in a sandbox pod from a Kubernetes [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool |
 | [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Daytona Sandbox](daytona-sandbox.md) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
@@ -263,7 +277,8 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only |
 | [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
-| [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
+| [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
+| [Tool Budgets](tool-budgets.md) | Harness | Cap calls per tool and per run, and refuse exact repeats, with a tool result the model can act on instead of an exception |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
 
@@ -271,7 +286,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Capability Creation](capability-creation.md) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `store.load_active()` and `capabilities=` |
+| [Capability Creation](capability-creation.md) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `load_active(workspace)` and `capabilities=` |
 
 ### Execution runtime
 

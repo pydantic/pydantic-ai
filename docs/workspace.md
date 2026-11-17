@@ -67,7 +67,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and run its tests.')
 ```
 
-The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Render, Sprites, Daytona and boxd, a local smolvm microVM, and self-hosted OpenSandbox servers. A
+The [harness](https://pydantic.dev/docs/ai/harness/) has sandboxes for Modal, E2B, Render, Sprites, Daytona, boxd and Kubernetes (agent-sandbox), a local smolvm microVM, and self-hosted OpenSandbox servers. A
 sandbox is created the first time the run uses it (a tool call, or `Coder` loading repo
 instructions at run start; durable runs create it when they start), and keeps running after the run until you or its
 provider stop it; see [Cleaning up](#cleaning-up). If the run never used it, calling a method on `result.workspace` after a run with `ref=None` may create a new sandbox that no message records. Check the ref before using the workspace after a run, and arrange to clean up any new sandbox you create.
@@ -310,6 +310,10 @@ check it as they adopt it.
 A capability checks authority when it reads a file, so a change applies from the next read. Text it
 already added to a conversation stays in that history, so start a new conversation after lowering a
 workspace's authority.
+
+Pydantic AI Harness's workspace capabilities, such as [`E2BSandbox`](harness/e2b-sandbox.md), [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md), take the
+same `authority` and `path_authority` arguments, for a sandbox, container or host filled with files the operator didn't write.
+Their paths are paths on the sandbox, container or host, so `~` isn't expanded.
 
 For a single run, wrap its workspace in `AuthorityWorkspace(workspace, authority=...)` and pass it as
 `workspace=`, as with `ReadOnlyWorkspace`. A wrapper only lowers the authority: with several, the

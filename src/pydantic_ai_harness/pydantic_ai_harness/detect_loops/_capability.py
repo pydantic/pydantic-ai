@@ -2,35 +2,89 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import re
 from collections import Counter
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from hashlib import sha256
 from itertools import takewhile
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.exceptions import AgentRunError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolReturnPart
+import anyio
+
+from pydantic_ai._utils import ScopedTask
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
+from pydantic_ai.exceptions import AgentRunError, ModelRetry
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
+    ModelResponsePartDelta,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    SystemPromptPart,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness.detect_loops._detectors import (
+    LoopDetector,
+    Repetition,
+    RepetitionDetector,
+    StreamChannel,
+    StreamSample,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 __all__ = ['DetectLoops', 'DetectedLoop', 'LoopDetectedError', 'LoopHandler', 'LoopPattern']
 
-LoopPattern: TypeAlias = Literal['repeated_call', 'repeated_result', 'alternating_calls', 'repeated_text']
+LoopPattern: TypeAlias = Literal[
+    'repeated_call',
+    'repeated_result',
+    'alternating_calls',
+    'repeated_text',
+    'repeated_thinking',
+    'repeated_stream_text',
+    'repeated_tool_args',
+    'repeated_parallel_call',
+]
 """Which kind of loop was detected.
+
+Across the run's responses:
 
 - `'repeated_call'`: one tool call (same tool, same arguments) made many times among the recent calls.
 - `'repeated_result'`: one tool call that returned the same result each of the last several times it was made.
 - `'alternating_calls'`: two different tool calls made in turn, A-B-A-B.
 - `'repeated_text'`: consecutive responses without tool calls whose text is the same.
+
+Within one response, as it streams:
+
+- `'repeated_thinking'`: a thinking part that keeps repeating the same passage.
+- `'repeated_stream_text'`: a text part that keeps repeating the same passage.
+- `'repeated_tool_args'`: one tool call's arguments that keep repeating the same passage.
+- `'repeated_parallel_call'`: the same tool call (same tool, same arguments) made many times in one response.
 """
+
+_IN_RESPONSE_PATTERNS: dict[StreamChannel, LoopPattern] = {
+    'thinking': 'repeated_thinking',
+    'text': 'repeated_stream_text',
+    'tool_args': 'repeated_tool_args',
+}
 
 _NUDGE_ORIGIN = 'pydantic-ai-harness.detect_loops.nudge.v1'
 """The `origin` in the `metadata` of the `SystemPromptPart` a nudge is delivered as."""
@@ -38,6 +92,9 @@ _NUDGE_ORIGIN = 'pydantic-ai-harness.detect_loops.nudge.v1'
 _UNSAFE_NAME_CHARACTERS = re.compile(r'[^A-Za-z0-9_]')
 
 _CHANGE_APPROACH = 'Change your approach, or explain what is blocking you.'
+
+_REJECTED = 'Your previous response was rejected because it kept repeating itself.'
+"""The `ModelRetry` message a nudge for a loop within a response retries the request with."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,27 +108,35 @@ class DetectedLoop:
     """Which kind of loop it is."""
 
     tool_names: tuple[str, ...]
-    """The tools involved: one for `'repeated_call'` and `'repeated_result'`, two for
-    `'alternating_calls'`, none for `'repeated_text'`."""
+    """The tools involved: one for `'repeated_call'`, `'repeated_result'`, `'repeated_tool_args'` and
+    `'repeated_parallel_call'`, two for `'alternating_calls'`, none for the others."""
 
     count: int
-    """How many times the pattern repeated: calls for `'repeated_call'` and `'repeated_result'`,
-    A-B cycles for `'alternating_calls'`, responses for `'repeated_text'`."""
+    """How many times the pattern repeated: calls for `'repeated_call'`, `'repeated_result'` and
+    `'repeated_parallel_call'`, A-B cycles for `'alternating_calls'`, responses for `'repeated_text'`, and
+    repeats of the passage for the other patterns within one response."""
 
     window: int
-    """How many recent tool calls (responses, for `'repeated_text'`) the detection looked at."""
+    """How much the detection looked at: recent tool calls for the call patterns, responses for
+    `'repeated_text'`, the response's tool calls so far for `'repeated_parallel_call'`, and characters
+    of the part for the other patterns within one response."""
 
     fingerprints: tuple[str, ...]
     """Stable hashes of what repeated.
 
-    For the call patterns, each covers a tool name and its canonical arguments: one for `'repeated_call'`
-    and `'repeated_result'`, two for `'alternating_calls'`. For `'repeated_text'`, it's the hash of the
-    normalized text. They don't contain argument values or text in the clear, but a short argument such
-    as a user id can be recovered by hashing candidate values.
+    For the call patterns, each covers a tool name and its canonical arguments: one for `'repeated_call'`,
+    `'repeated_result'` and `'repeated_parallel_call'`, two for `'alternating_calls'`. For `'repeated_text'`,
+    it's the hash of the normalized text, and for the other patterns the hash of the passage that repeated.
+    They don't contain argument values or text in the clear, but a short argument such as a user id can be
+    recovered by hashing candidate values.
     """
 
     message: str
     """The explanation sent to the model as the nudge, and used as the `LoopDetectedError` message."""
+
+    passage: str | None = None
+    """The passage that repeated, for `'repeated_thinking'`, `'repeated_stream_text'` and
+    `'repeated_tool_args'`; `None` for the other patterns. Unlike `fingerprints`, it's the model's own text."""
 
 
 class LoopDetectedError(AgentRunError):
@@ -116,6 +181,56 @@ class _Step:
     """The normalized text of a response without tool calls, or `None`."""
 
 
+@dataclass
+class _Part:
+    """What one thinking part, text part or tool call's arguments in a response has had so far."""
+
+    channel: StreamChannel
+    tool_name: str | None
+    keep: int
+    """How many of the most recent characters `text` holds."""
+    text: str = ''
+    total: int = 0
+    unchecked: int = 0
+    """How many characters arrived since the part was last checked."""
+
+
+@dataclass
+class _ResponseCheck:
+    """The checks on one model response, fed as it streams, or all at once when it arrives whole."""
+
+    parts: dict[int, _Part] = field(default_factory=dict[int, _Part])
+    calls: Counter[str] = field(default_factory=Counter[str])
+    """How many times each tool call fingerprint appears in the response so far, since it was last reported."""
+    call_count: int = 0
+    streamed: bool = False
+    found: DetectedLoop | None = None
+    """A loop found in the stream, waiting for `wrap_model_request` to act on it."""
+    detected: asyncio.Event = field(default_factory=asyncio.Event)
+    resumed: asyncio.Event = field(default_factory=asyncio.Event)
+    stopped: bool = False
+    """Whether `wrap_model_request` stopped the stream, so the stream should pass nothing more on."""
+
+    async def hand_over(self, loop: DetectedLoop) -> bool:
+        """Hold the stream until `wrap_model_request` has acted on `loop`, and return whether it stopped the stream."""
+        self.found = loop
+        self.detected.set()
+        await self.resumed.wait()
+        self.resumed.clear()
+        return self.stopped
+
+    def take(self) -> DetectedLoop:
+        loop = self.found
+        assert loop is not None
+        self.found = None
+        self.detected.clear()
+        return loop
+
+    def release(self, *, stopped: bool) -> None:
+        self.stopped = self.stopped or stopped
+        self.resumed.set()
+
+
 @dataclass(kw_only=True)
 class DetectLoops(AbstractCapability[AgentDepsT]):
     """Detect when an agent repeats the same actions without making progress, and interrupt it.
@@ -127,11 +242,17 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     alternating for `alternating_calls_threshold` cycles, and `repeated_text_threshold` consecutive
     responses without tool calls whose text is the same. Set a threshold to `None` to turn that check off.
 
+    Each response is also checked on its own, as it streams: its thinking, its text and each tool call's
+    arguments are handed to `stream_detector` every `stream_check_every` characters, to catch a model
+    repeating the same passage, and the same tool call made `repeated_parallel_call_threshold` times in the
+    response is reported before any of them run. A response that isn't streamed gets the same checks when
+    it arrives.
+
     On detection, `action` runs: `'nudge'` (the default) adds a system prompt to the conversation, from
-    the current request on, asking the model to change its approach; `'error'` raises
-    `LoopDetectedError`; and a `LoopHandler` is called with the `DetectedLoop`. The calls that formed the
-    loop are then not counted again, so the same loop has to build up again before it is reported a
-    second time.
+    the current request on, asking the model to change its approach, and for a loop within a response
+    also stops the stream and makes the request again; `'error'` raises `LoopDetectedError`; and a
+    `LoopHandler` is called with the `DetectedLoop`. The calls or text that formed the loop are then not
+    counted again, so the same loop has to build up again before it is reported a second time.
 
     ```python
     from pydantic_ai import Agent
@@ -162,14 +283,35 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     """Report this many consecutive responses without tool calls whose text is the same, ignoring case
     and whitespace."""
 
+    stream_detector: LoopDetector[AgentDepsT] | None = field(default_factory=lambda: RepetitionDetector[AgentDepsT]())
+    """How each response's thinking, text and tool call arguments are checked for a repeating passage.
+
+    `RepetitionDetector` by default, a text heuristic. Pass `LoopJudge` to have a model confirm or find loops,
+    your own `LoopDetector`, or `None` to turn these checks off.
+    """
+
+    stream_channels: Sequence[StreamChannel] = ('thinking', 'text', 'tool_args')
+    """Which parts of a response `stream_detector` checks."""
+
+    stream_check_every: int = 256
+    """Check each part every this many characters, and once more when it ends."""
+
+    repeated_parallel_call_threshold: int | None = 5
+    """Report a tool call (same tool, same arguments) made this many times in one response, before any of
+    them run."""
+
     action: Literal['nudge', 'error'] | LoopHandler[AgentDepsT] = 'nudge'
     """What to do when a loop is detected.
 
     - `'nudge'`: enqueue a system prompt telling the model which loop it is in and asking it to change
       its approach. It joins the current request and keeps the default conversation scope, so it keeps
-      applying on later requests instead of being shown once.
+      applying on later requests instead of being shown once. For a loop within a response, the stream
+      is also stopped and the request made again through a `ModelRetry`, and the nudge is request-scoped,
+      so only that request carries it.
     - `'error'`: raise `LoopDetectedError`, ending the run.
-    - a `LoopHandler`: call it with the run context and the `DetectedLoop`.
+    - a `LoopHandler`: call it with the run context and the `DetectedLoop`. For a loop within a response,
+      the response continues when it returns; raise `ModelRetry` from it to stop the stream and make the
+      request again.
     """
 
     _steps: list[_Step] = field(default_factory=list[_Step], init=False, repr=False, compare=False)
@@ -181,6 +323,13 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
 
+    _streaming: _ResponseCheck | None = field(default=None, init=False, repr=False, compare=False)
+    """The checks on the response being streamed, while one is."""
+
+    _reported_in_stream: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether a loop was reported in the response being streamed, which then went on, so the response
+    `after_model_request` records next isn't counted again across responses."""
+
     def __post_init__(self) -> None:
         if self.window < 2:
             raise ValueError(f'`window` must be at least 2, got {self.window}.')
@@ -189,7 +338,12 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             'repeated_result_threshold': self.repeated_result_threshold,
             'alternating_calls_threshold': self.alternating_calls_threshold,
             'repeated_text_threshold': self.repeated_text_threshold,
+            'repeated_parallel_call_threshold': self.repeated_parallel_call_threshold,
         }
+        if self.stream_check_every < 1:
+            raise ValueError(f'`stream_check_every` must be at least 1, got {self.stream_check_every}.')
+        if unknown := [channel for channel in self.stream_channels if channel not in _IN_RESPONSE_PATTERNS]:
+            raise ValueError(f'Unknown `stream_channels` {unknown}; choose from {list(_IN_RESPONSE_PATTERNS)}.')
         for name, threshold in thresholds.items():
             if threshold is not None and threshold < 2:
                 raise ValueError(f'`{name}` must be at least 2 or `None`, got {threshold}.')
@@ -225,6 +379,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         text = None if calls else ' '.join((response.text or '').split()).lower() or None
         self._steps.append(_Step(timestamp=response.timestamp, calls=calls, text=text))
         self._results_pending = True
+        if self._reported_in_stream:
+            self._counted_steps = len(self._steps)
         return response
 
     async def before_model_request(
@@ -239,6 +395,210 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             self._counted_steps = len(self._steps)
             await self._act(ctx, loop)
         return request_context
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        """`False`, so a run isn't made to stream for these checks: a response that isn't streamed is checked whole."""
+        return False
+
+    async def wrap_run_event_stream(
+        self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterable[AgentStreamEvent]:
+        """Check the response being streamed as its events pass, holding an event that completes a loop until it's acted on."""
+        async for event in stream:
+            check = self._streaming
+            if check is not None and not check.stopped:
+                for loop in await self._observe(ctx, check, event):
+                    if await check.hand_over(loop):
+                        break
+                if check.stopped:
+                    # The request is being torn down, so the stream ends without this event.
+                    continue
+            yield event
+
+    async def wrap_model_request(
+        self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        """Act on loops within the response: as it streams, or once it has arrived whole."""
+        if self.stream_detector is None and self.repeated_parallel_call_threshold is None:
+            return await handler(request_context)
+        check = _ResponseCheck()
+        # Under durable execution the response streams inside an activity or step, and the workflow
+        # only replays it, so it's checked whole here, in workflow code.
+        if request_context.streaming and not in_durable_context(ctx):
+            self._streaming = check
+            try:
+                response = await self._watch_stream(ctx, check, request_context, handler)
+            finally:
+                self._streaming = None
+                self._reported_in_stream = False
+        else:
+            response = await handler(request_context)
+        if not check.streamed and (loops := await self._whole_response_loops(ctx, check, response)):
+            # `after_model_request` already recorded the response; it isn't counted again across responses.
+            self._counted_steps = len(self._steps)
+            for loop in loops:
+                await self._act(ctx, loop, in_response=True)
+        return response
+
+    async def _watch_stream(
+        self,
+        ctx: RunContext[AgentDepsT],
+        check: _ResponseCheck,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        """Run the request while acting on each loop the stream hands over, stopping the request when an action raises."""
+
+        async def run_request() -> ModelResponse:
+            return await handler(request_context)
+
+        # A `ScopedTask` takes the cancellation that stops it as a cancel of its own scope, so the agent's shielded
+        # teardown of the model stream inside it finishes.
+        request = ScopedTask(run_request())
+        stopped_by: list[Exception] = []
+
+        async def act_on_loops(stop: anyio.CancelScope) -> None:
+            while True:
+                await check.detected.wait()
+                try:
+                    await self._act(ctx, check.take(), in_response=True)
+                except Exception as error:
+                    stopped_by.append(error)
+                    stop.cancel()
+                    return
+                self._reported_in_stream = True
+                check.release(stopped=False)
+
+        response: ModelResponse | None = None
+        try:
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(act_on_loops, tasks.cancel_scope)
+                response = await request.result()
+                tasks.cancel_scope.cancel()
+        finally:
+            # Only now that the request has stopped, and with it the agent's pull of the stream, is the stream released.
+            check.release(stopped=True)
+        if stopped_by:
+            raise stopped_by[0]
+        assert response is not None
+        return response
+
+    async def _observe(
+        self, ctx: RunContext[AgentDepsT], check: _ResponseCheck, event: AgentStreamEvent
+    ) -> list[DetectedLoop]:
+        """Feed one stream event to the checks, returning the loops it completes."""
+        check.streamed = True
+        if isinstance(event, PartStartEvent):
+            text = self._start_part(check, event.index, event.part)
+            return [] if text is None else await self._feed(ctx, check, event.index, text)
+        if isinstance(event, PartDeltaEvent):
+            if event.index not in check.parts or (text := _delta_text(event.delta)) is None:
+                return []
+            return await self._feed(ctx, check, event.index, text)
+        if isinstance(event, PartEndEvent):
+            return await self._end_part(ctx, check, event.index, event.part)
+        return []
+
+    async def _whole_response_loops(
+        self, ctx: RunContext[AgentDepsT], check: _ResponseCheck, response: ModelResponse
+    ) -> list[DetectedLoop]:
+        """Run the checks a stream gets over a response that arrived whole, part by part."""
+        loops: list[DetectedLoop] = []
+        for index, part in enumerate(response.parts):
+            if (text := self._start_part(check, index, part)) is not None:
+                loops += await self._feed(ctx, check, index, text)
+            loops += await self._end_part(ctx, check, index, part)
+        return loops
+
+    def _start_part(self, check: _ResponseCheck, index: int, part: ModelResponsePart) -> str | None:
+        """Start checking a part that `stream_detector` checks, returning the text it starts with."""
+        detector = self.stream_detector
+        if detector is None:
+            return None
+        channel: StreamChannel
+        if isinstance(part, ThinkingPart):
+            channel, tool_name, text = 'thinking', None, part.content
+        elif isinstance(part, TextPart):
+            channel, tool_name, text = 'text', None, part.content
+        elif isinstance(part, ToolCallPart):
+            channel, tool_name, text = 'tool_args', part.tool_name, part.args if isinstance(part.args, str) else ''
+        else:
+            return None
+        if channel not in self.stream_channels:
+            return None
+        check.parts[index] = _Part(channel=channel, tool_name=tool_name, keep=detector.sample_chars)
+        return text
+
+    async def _feed(
+        self, ctx: RunContext[AgentDepsT], check: _ResponseCheck, index: int, text: str
+    ) -> list[DetectedLoop]:
+        """Add `text` to a part, checking it each time another `stream_check_every` characters have arrived."""
+        part = check.parts[index]
+        loops: list[DetectedLoop] = []
+        every = self.stream_check_every
+        while text:
+            split = every - part.unchecked
+            piece, text = text[:split], text[split:]
+            part.text = (part.text + piece)[-part.keep :]
+            part.total += len(piece)
+            part.unchecked += len(piece)
+            if part.unchecked == every and (loop := await self._check_part(ctx, part)) is not None:
+                loops.append(loop)
+        return loops
+
+    async def _end_part(
+        self, ctx: RunContext[AgentDepsT], check: _ResponseCheck, index: int, part: ModelResponsePart
+    ) -> list[DetectedLoop]:
+        """Check the rest of a finished part, and count it if it's a tool call."""
+        loops: list[DetectedLoop] = []
+        if index in check.parts and isinstance(part, ToolCallPart) and part.args and not isinstance(part.args, str):
+            # Arguments that came as an object are checked as JSON, the way a model writes them.
+            loops += await self._feed(ctx, check, index, json.dumps(part.args))
+        checked = check.parts.pop(index, None)
+        if checked is not None and checked.unchecked and (loop := await self._check_part(ctx, checked)) is not None:
+            loops.append(loop)
+        threshold = self.repeated_parallel_call_threshold
+        if threshold is None or not isinstance(part, ToolCallPart):
+            return loops
+        fingerprint = _call_fingerprint(part)
+        check.calls[fingerprint] += 1
+        check.call_count += 1
+        count = check.calls[fingerprint]
+        if count >= threshold:
+            check.calls[fingerprint] = 0
+            loops.append(
+                DetectedLoop(
+                    pattern='repeated_parallel_call',
+                    tool_names=(part.tool_name,),
+                    count=count,
+                    window=check.call_count,
+                    fingerprints=(fingerprint,),
+                    message=(
+                        f'You called `{_model_facing(part.tool_name)}` with the same arguments {count} times in one '
+                        f'response, which is not making progress. {_CHANGE_APPROACH}'
+                    ),
+                )
+            )
+        return loops
+
+    async def _check_part(self, ctx: RunContext[AgentDepsT], part: _Part) -> DetectedLoop | None:
+        detector = self.stream_detector
+        assert detector is not None
+        sample = StreamSample(
+            channel=part.channel,
+            text=part.text,
+            total_chars=part.total,
+            new_chars=part.unchecked,
+            tool_name=part.tool_name,
+        )
+        part.unchecked = 0
+        repetition = await detector.detect(ctx, sample)
+        if repetition is None:
+            return None
+        # The passages that formed the loop are not counted again.
+        part.text = ''
+        return _in_part_loop(part, repetition, window=len(sample.text))
 
     def _detect(self, steps: Sequence[_Step]) -> DetectedLoop | None:
         recent = [call for step in steps for call in step.calls][-self.window :]
@@ -344,7 +704,27 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             ),
         )
 
-    async def _act(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
+    async def _act(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop, *, in_response: bool = False) -> None:
+        """Act on a loop: across the run's responses before a model request, or within the response `in_response`."""
+        self._trace(ctx, loop)
+        action = self.action
+        if not isinstance(action, str):
+            result = action(ctx, loop)
+            if inspect.isawaitable(result):
+                await result
+        elif action == 'error':
+            raise LoopDetectedError(loop)
+        else:
+            metadata = {'origin': _NUDGE_ORIGIN, 'pattern': loop.pattern, 'tool_names': list(loop.tool_names)}
+            if not in_response:
+                ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
+                return
+            # Rejecting the response makes the request again, and the nudge joins that request only: the response
+            # that looped is gone, so the loop doesn't build up in history the way a loop across responses does.
+            ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata, scope='request'))
+            raise ModelRetry(_REJECTED)
+
+    def _trace(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
         attributes: dict[str, str | int | tuple[str, ...]] = {
             'detect_loops.pattern': loop.pattern,
@@ -356,24 +736,53 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         if ctx.trace_include_content:
             # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
             attributes['detect_loops.fingerprints'] = loop.fingerprints
+            if loop.passage is not None:
+                attributes['detect_loops.passage'] = loop.passage
         ctx.tracer.start_span('loop detected', attributes=attributes).end()
-        if not isinstance(action, str):
-            result = action(ctx, loop)
-            if inspect.isawaitable(result):
-                await result
-        elif action == 'error':
-            raise LoopDetectedError(loop)
-        else:
-            metadata = {'origin': _NUDGE_ORIGIN, 'pattern': loop.pattern, 'tool_names': list(loop.tool_names)}
-            ctx.enqueue(SystemPromptPart(loop.message, metadata=metadata))
+
+
+def _in_part_loop(part: _Part, repetition: Repetition, *, window: int) -> DetectedLoop:
+    count = repetition.count
+    if part.channel == 'thinking':
+        what = 'Your thinking'
+    elif part.channel == 'text':
+        what = 'Your response'
+    else:
+        assert part.tool_name is not None
+        what = f'The arguments of your call to `{_model_facing(part.tool_name)}`'
+    return DetectedLoop(
+        pattern=_IN_RESPONSE_PATTERNS[part.channel],
+        tool_names=() if part.tool_name is None else (part.tool_name,),
+        count=count,
+        window=window,
+        fingerprints=(_digest(repetition.text),),
+        message=(
+            f'{what} repeated the same passage {count} times, which is not making progress. {_CHANGE_APPROACH}'
+            if count > 1
+            # A judge can report a loop without a passage that repeats exactly.
+            else f'{what} kept repeating itself without making progress. {_CHANGE_APPROACH}'
+        ),
+        passage=repetition.text,
+    )
+
+
+def _delta_text(delta: ModelResponsePartDelta) -> str | None:
+    if isinstance(delta, ToolCallPartDelta):
+        # Arguments that arrive as an object are merged key by key, so they're checked once the call ends.
+        return delta.args_delta if isinstance(delta.args_delta, str) else None
+    # Only thinking parts, text parts and tool calls are checked.
+    assert isinstance(delta, TextPartDelta | ThinkingPartDelta)
+    return delta.content_delta
 
 
 def _call_keys(response: ModelResponse) -> list[tuple[str, str, str]]:
     """The tool name, tool call id, and fingerprint of each tool call in `response`."""
-    return [
-        (part.tool_name, part.tool_call_id, _digest(_canonical([part.tool_name, part.args_as_dict()])))
-        for part in response.tool_calls
-    ]
+    return [(part.tool_name, part.tool_call_id, _call_fingerprint(part)) for part in response.tool_calls]
+
+
+def _call_fingerprint(part: ToolCallPart) -> str:
+    """A hash of a tool call's name and canonical arguments."""
+    return _digest(_canonical([part.tool_name, part.args_as_dict()]))
 
 
 def _record_results(step: _Step, messages: Sequence[ModelMessage]) -> None:

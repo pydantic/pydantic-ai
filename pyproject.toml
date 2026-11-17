@@ -121,6 +121,9 @@ members = [
 # `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
+# No patched `soupsieve` (>= 4.0.0, see the floor below) supports Python < 3.11.5, so the lock
+# leaves those patch versions out. Lock-only: the published `requires-python` stays `>=3.11`.
+environments = ["python_full_version >= '3.11.5'"]
 exclude-newer = "7 days"
 conflicts = [
     # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
@@ -185,7 +188,7 @@ constraint-dependencies = [
     "datasets>=5.0.1",
     "sentence-transformers>=5.6.0",
     "oauthlib>=4.0.0",
-    "soupsieve>=2.9.0",
+    "soupsieve>=4.0.0",
     "certifi>=2026.10.19",
 ]
 # `gradio` (an examples dependency) caps `pillow<13`, even in its latest release, so without
@@ -248,6 +251,10 @@ boxd = "2026-10-27T23:56:00Z"
 # TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 render = "2026-10-30T01:06:03Z"
+# k8s-agent-sandbox 1.0.11 is the `kubernetes` extra's floor: the release the backend is verified against.
+# TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 # durabletask and durabletask-azuremanaged 1.13.0 are the floors for the `azure-durable-task` extra
 # of pydantic-ai-harness: they are the first releases that close a dispatch's orchestrator generator.
 # TODO(adtyavrdhn): Remove after 2026-11-09 22:34 UTC, then run `uv lock` and
@@ -605,6 +612,7 @@ markers = [
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
+    "kubernetes_live: claims real pods on the kind cluster from `cluster/up.sh`; needs Docker, kind and kubectl",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
@@ -699,6 +707,7 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/mcp_server.py",  # MCP test server; mostly run over stdio, where coverage doesn't follow, and each test calls only some of its tools
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
