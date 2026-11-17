@@ -229,7 +229,7 @@ marker add to that length.
 ## Size unit
 
 Thresholds are measured in characters by default. Set `over_tokens=True` to measure in
-estimated tokens (the same ~4-chars-per-token heuristic as `compaction`); pass a `tokenizer`
+estimated tokens (the same text estimate as `compaction`); pass a `tokenizer`
 callable for accuracy. `Truncate.max_chars` is always characters -- truncation is a
 character operation regardless of the threshold unit. The cap includes the truncation marker
 and applies separately to each reduced text value. If the budget cannot fit both retained
@@ -346,8 +346,9 @@ security does not come from per-instance isolation:
   foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
   Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
   ownership check.
-- `read` resolves the target and rejects any path that escapes the root. Handle segments are
-  sanitized so a crafted handle cannot traverse out.
+- `read` and `write` resolve the target, following symlinks, and reject any path that escapes
+  the root. `write` checks before it creates a directory, and a refused write runs the band's
+  `then` fallback. Handle segments are sanitized so a crafted handle cannot traverse out.
 
 Set `cleanup_after` to delete spills older than that age.
 
@@ -403,7 +404,13 @@ replay.
   content that overflows is left unreduced with a warning.
 - Multiple oversized returns in one step get distinct handles (keyed per `tool_call_id`);
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
-  earlier attempt's spill.
+  earlier attempt's spill. A `tool_call_id` is only unique within one response, so a provider
+  that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the run:
+  the first call to spill keeps the plain handle, and a later call that would land on the same
+  one moves under the run step that produced it, so each call gets its own spill. The step comes
+  from the run context rather than the history, so a compaction rewriting `ctx.messages` between
+  the two responses cannot make them collide. Every other handle keeps the documented shape, so
+  code that builds or globs it, such as a cleanup job, still matches.
 
 ## Relationship to other capabilities
 

@@ -62,6 +62,7 @@ from pydantic_ai_harness import (
     Coder,
     CompactOnRequest,
     Planning,
+    PruneToolResults,
     RelevanceCompaction,
     Researcher,
     SlidingWindowCompaction,
@@ -196,6 +197,10 @@ def _check_compact_on_request(merged: Any) -> None:
     assert merged.max_per_run == 2
 
 
+def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
+    assert merged.placeholder == '[second]'
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -279,6 +284,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_compact_on_request,
     ),
+    'PruneToolResults': Combines(
+        'one `prune_tool_result` tool per agent',
+        lambda: (PruneToolResults[None](placeholder='[first]'), PruneToolResults[None](placeholder='[second]')),
+        _check_prune_tool_results,
+    ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
         lambda: (ToolOutputLimits[Any](), ToolOutputLimits[Any](strip_ansi=True)),
@@ -361,6 +371,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'InputGuardrail': Anonymous('several guards is the design'),
     'OutputGuardrail': Anonymous('several guards is the design'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
+    'StreamGuardrail': Anonymous('several guards is the design'),
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
@@ -382,6 +393,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
+    'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
