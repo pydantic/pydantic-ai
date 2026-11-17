@@ -165,6 +165,27 @@ class TestPruneToolResults:
         assert returns['g2'] == JUNK
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_prunes_two_results_in_one_step(self) -> None:
+        greps = ModelResponse(
+            parts=[
+                ToolCallPart('grep', {'pattern': 'a'}, tool_call_id='g1'),
+                ToolCallPart('grep', {'pattern': 'b'}, tool_call_id='g2'),
+            ]
+        )
+        prunes = ModelResponse(
+            parts=[
+                ToolCallPart('prune_tool_result', {'tool_call_id': 'g1', 'summary': 'a'}, tool_call_id='p1'),
+                ToolCallPart('prune_tool_result', {'tool_call_id': 'g2', 'summary': 'b'}, tool_call_id='p2'),
+            ]
+        )
+        script = Script([greps, prunes, DONE])
+
+        await _agent(script, PruneToolResults()).run('find the TODOs')
+
+        returns = _returns(script.seen[2])
+        assert (returns['g1'], returns['g2']) == ('[tool result pruned] a', '[tool result pruned] b')
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_leaves_an_earlier_result_with_a_reused_id(self) -> None:
         look = ModelResponse(parts=[ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g2')])
         script = Script([GREP, look, GREP, _prune('g1'), DONE])
