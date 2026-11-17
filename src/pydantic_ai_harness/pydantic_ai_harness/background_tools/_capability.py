@@ -16,9 +16,6 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
-from pydantic_ai._agent_graph import mark_deferred_pause
-from pydantic_ai._enqueue import PendingMessage
-from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -38,15 +35,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import neutralize_tags
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelRequestPart,
-    TextContent,
-    ToolCallPart,
-    ToolReturn,
-    ToolReturnPart,
-    UserContent,
-)
+from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -118,6 +107,8 @@ class _Completion:
     tool_name: str
     max_retries: int
     content: tuple[UserContent, ...]
+    dispatched: int
+    """When the call was dispatched, counting from the run's first background call."""
     retry: Exception | None = None
     """The failure that counts toward the tool's `max_retries`, when the call is to be retried."""
     succeeded: bool = False
@@ -257,10 +248,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     """Tools whose started message core counted as a success since the last node boundary."""
     _unsettled: list[_Completion] = field(default_factory=list[_Completion], init=False, repr=False, compare=False)
     """Delivered calls whose outcome has not been charged to the tool's retry count yet."""
+    _dispatched: int = field(default=0, init=False, repr=False)
+    """Background calls dispatched so far in the run."""
     _queued: dict[str, _Completion] = field(
         default_factory=dict[str, _Completion], init=False, repr=False, compare=False
     )
-    """Delivered calls by the ID `enqueue` returned, so a deferred-tool pause can take back the ones still queued."""
+    """Delivered calls by the ID `enqueue` returned, so a pause can take back the ones still queued."""
     _prepared_modes: dict[str, Literal['always', 'optional'] | None] = field(
         default_factory=dict[str, Literal['always', 'optional'] | None], init=False, repr=False, compare=False
     )
@@ -367,10 +360,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
         task_id = call.tool_call_id
         tool_name = call.tool_name
+        dispatched = self._dispatched
+        self._dispatched += 1
 
         def failure(error: _SignalledError, *, retry: Exception | None = None) -> _Completion:
             content = (_format_background_failure(tool_name, task_id, error),)
-            return _Completion(tool_name, ctx.max_retries, content, retry=retry)
+            return _Completion(tool_name, ctx.max_retries, content, dispatched, retry=retry)
 
         async def _run() -> None:
             outcome: _Outcome
@@ -407,6 +402,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                         tool_name,
                         ctx.max_retries,
                         _format_background_result(tool_name, task_id, result),
+                        dispatched,
                         succeeded=True,
                     )
                 self._send.send_nowait(outcome)
@@ -436,19 +432,14 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
         if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
             # A pause ends the run without another model request, so no later step would take a result that
-            # arrives after it: wait for every live task here. A task sends its outcome before it stops counting
-            # as live, so several can still be buffered once none is.
-            outcomes = list(self._arrived())
+            # arrives after it: wait for every live task here. The end-of-run drain records their results
+            # after a deferred-tool pause, and leaves them queued at a `PendingModelResponse` pause.
+            arrived = list(self._arrived())
             while self._live:
-                outcomes.append(await self._outcomes.receive())
-            outcomes.extend(self._arrived())
-            if isinstance(result.data.output, DeferredToolRequests):
-                self._record_at_pause(ctx, outcomes)
-            else:
-                # The history must end on the pending response, so the results stay queued on
-                # `AgentRun.pending_messages`.
-                for outcome in outcomes:
-                    self._deliver(ctx, outcome)
+                arrived.append(await self._outcomes.receive())
+            # A task sends its outcome before it stops counting as live, so several can still be buffered here.
+            arrived.extend(self._arrived())
+            self._requeue_in_dispatch_order(ctx, arrived)
             # No later node will settle them, so a retry that exhausts its budget ends the run here.
             self._settle(ctx)
             return result
@@ -470,38 +461,28 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     def _deliver(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> None:
         if isinstance(outcome, BaseException):
             raise outcome
-        if (enqueue_id := ctx.enqueue(*outcome.content)) is not None:
-            self._queued[enqueue_id] = outcome
+        self._enqueue(ctx, outcome)
         self._unsettled.append(outcome)
 
-    def _record_at_pause(self, ctx: RunContext[AgentDepsT], outcomes: list[_Outcome]) -> None:
-        """Write the results no request has carried yet into the history of a run pausing for deferred tools.
+    def _enqueue(self, ctx: RunContext[AgentDepsT], completion: _Completion) -> None:
+        if (enqueue_id := ctx.enqueue(*completion.content)) is not None:
+            self._queued[enqueue_id] = completion
 
-        Core leaves content queued at a pause undelivered, and a fresh copy of this capability runs each run,
-        so nothing would deliver the results later. In the history the caller saves, they survive a restart
-        before the calls are answered. The request is marked as part of the pause, so resuming without
-        `deferred_tool_results` pauses again instead of sending it to the model.
+    def _requeue_in_dispatch_order(self, ctx: RunContext[AgentDepsT], arrived: list[_Outcome]) -> None:
+        """Queue the results no request has carried yet in the order their calls were dispatched.
+
+        They arrive in whatever order the tasks finish, but the request recorded at a pause must come out the same
+        when a durable engine replays the run.
         """
-        completions = [completion for enqueue_id, completion in self._queued.items() if ctx.dequeue(enqueue_id)]
-        self._queued.clear()
-        for outcome in outcomes:
+        for outcome in arrived:
             if isinstance(outcome, BaseException):
                 raise outcome
-            completions.append(outcome)
-            self._unsettled.append(outcome)
-        parts: list[ModelRequestPart] = [
-            part
-            for completion in completions
-            if (pending := PendingMessage.from_content(*completion.content)) is not None
-            for message in pending.messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        ]
-        if not parts:
-            return
-        request = ModelRequest(parts, run_id=ctx.run_id, conversation_id=ctx.conversation_id, timestamp=now_utc())
-        mark_deferred_pause(request)
-        ctx.messages.append(request)
+        taken_back = [completion for enqueue_id, completion in self._queued.items() if ctx.dequeue(enqueue_id)]
+        self._queued.clear()
+        completions = [outcome for outcome in arrived if isinstance(outcome, _Completion)]
+        self._unsettled.extend(completions)
+        for completion in sorted([*taken_back, *completions], key=lambda completion: completion.dispatched):
+            self._enqueue(ctx, completion)
 
     def _settle(self, ctx: RunContext[AgentDepsT]) -> None:
         """Charge delivered calls to the tool manager whose retry counts the next step carries over.

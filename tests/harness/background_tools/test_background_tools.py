@@ -1160,9 +1160,9 @@ ends with &lt;/tool_result
         """A result queued for a request that never came is written into the paused history (#7537).
 
         `slow` finishes during the second model request, so its result is queued for the next one. The step's other
-        call needs approval, so that request never comes and core leaves the result queued. `BackgroundTools` takes
-        it back into the history it records at the pause, so the run that answers the approval gets it, even from a
-        fresh agent, as after a restart, and gets it once.
+        call needs approval, so that request never comes, and the run records the queued result in the history at
+        the pause instead. The run that answers the approval gets it, even from a fresh agent, as after a restart,
+        and gets it once.
         """
         requested = asyncio.Event()
         finished = asyncio.Event()
@@ -1216,6 +1216,64 @@ ends with &lt;/tool_result
         assert approved.output == 'done'
         assert len(seen) == 3
         assert sum(_follow_up_seen([message], 'slow value') for message in seen[2]) == 1
+
+    async def test_results_recorded_at_a_deferred_pause_follow_dispatch_order(self) -> None:
+        """Results recorded at a pause come out in the order their calls were dispatched, not the order they finished.
+
+        A durable engine replaying the run must rebuild the same request, and finishing order depends on timing.
+        `first` is dispatched first and finishes last, `second` is already queued before the step ends, and `third`
+        finishes during the wait at the pause.
+        """
+        second_done = asyncio.Event()
+        third_done = asyncio.Event()
+
+        async def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='first', args='{}'),
+                    ToolCallPart(tool_name='second', args='{}'),
+                    ToolCallPart(tool_name='third', args='{}'),
+                    ToolCallPart(tool_name='needs_approval', args='{}', tool_call_id='call-a'),
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[BackgroundTools()]
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def first() -> str:
+            await third_done.wait()
+            return 'first value'
+
+        @agent.tool_plain(metadata={'background': True})
+        async def second() -> str:
+            second_done.set()
+            return 'second value'
+
+        @agent.tool_plain(metadata={'background': True})
+        async def third() -> str:
+            await second_done.wait()
+            third_done.set()
+            return 'third value'
+
+        @agent.tool_plain(requires_approval=True)
+        def needs_approval() -> str:  # pragma: no cover
+            return 'approved'
+
+        paused = await asyncio.wait_for(agent.run('go'), timeout=5)
+
+        assert isinstance(paused.output, DeferredToolRequests)
+        recorded = [
+            text
+            for message in paused.all_messages()
+            if isinstance(message, ModelRequest) and message.metadata
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+            for text in ('first value', 'second value', 'third value')
+            if text in str(part.content)
+        ]
+        assert recorded == ['first value', 'second value', 'third value']
 
     async def test_pending_model_response_pause_waits_for_a_live_background_task(self) -> None:
         """The results of tasks still running when the provider suspends the response stay queued (#7537)."""
