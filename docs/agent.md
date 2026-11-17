@@ -1997,7 +1997,10 @@ from pydantic_ai.models.test import TestModel
 
 
 def no_unrequested_delegation(ctx: RunContext) -> InstructionPart:
-    delegates = isinstance(ctx.model, Model) and ctx.model.profile.get('delegates_unprompted', False)  # (1)!
+    try:
+        delegates = isinstance(ctx.model, Model) and ctx.model.profile.get('delegates_unprompted', False)  # (1)!
+    except NotImplementedError:  # (2)!
+        delegates = False
     return InstructionPart(
         "Don't spawn sub-agents unless the user asks." if delegates else '',
         name='delegation',
@@ -2025,8 +2028,7 @@ print(instructions_sent(TestModel()))
 ```
 
 1. [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted] is set for OpenAI's GPT models. `ctx.model` can also be a [realtime model](realtime/overview.md), which has no `Model.profile`. [Pydantic AI Harness `Coder`](harness/coder.md) uses the same pattern for its own rule against unrequested delegation.
-
-A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead.
+2. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`, and the line is left out. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead.
 
 #### Keep untrusted text out of instructions {#untrusted-instruction-text}
 
