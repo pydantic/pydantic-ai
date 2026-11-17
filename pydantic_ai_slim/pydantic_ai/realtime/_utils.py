@@ -365,28 +365,39 @@ def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio:
     return part.audio
 
 
-def seed_pcm_audio(*, audio: BinaryContent, provider_name: str | None, sample_rate: int) -> bytes:
-    """Extract mono PCM16 bytes from retained WAV audio."""
-    target = f'{provider_name} realtime history' if provider_name else 'realtime history'
+def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int) -> bytes:
+    """Extract mono PCM16 bytes from retained WAV audio seeded into history."""
     if audio.media_type != 'audio/wav':
         raise UserError(
             f'`SpeechPart.audio` with media type {audio.media_type!r} cannot be seeded into '
-            f'{target}. Use WAV audio matching the target session input format.'
+            f'{provider_name} realtime history. Use WAV audio matching the target session input format.'
         )
+    return pcm_from_wav(
+        audio.data,
+        sample_rate=sample_rate,
+        error_prefix=f'Cannot seed retained audio into {provider_name} realtime history',
+    )
+
+
+def pcm_from_wav(data: bytes, *, sample_rate: int, error_prefix: str) -> bytes:
+    """Extract mono PCM16 bytes from WAV data recorded at `sample_rate`.
+
+    `error_prefix` opens each error and says what the caller was doing with the audio.
+    """
     try:
-        with wave.open(io.BytesIO(audio.data), 'rb') as wav:
+        with wave.open(io.BytesIO(data), 'rb') as wav:
             source_rate = wav.getframerate()
             channels = wav.getnchannels()
             sample_width = wav.getsampwidth()
             compression = wav.getcomptype()
             if source_rate != sample_rate:
                 raise UserError(
-                    f'Cannot seed retained audio recorded at {source_rate} Hz into {target}: '
-                    f'expected {sample_rate} Hz. Resample it before passing `message_history`.'
+                    f'{error_prefix}: it was recorded at {source_rate} Hz, but the session expects {sample_rate} Hz. '
+                    'Resample it first.'
                 )
             if channels != 1 or sample_width != 2 or compression != 'NONE':
                 raise UserError(
-                    f'Cannot seed retained audio into {target}: expected mono 16-bit PCM WAV, '
+                    f'{error_prefix}: expected mono 16-bit PCM WAV, '
                     f'got {channels} channel(s), {sample_width * 8}-bit samples, compression {compression!r}.'
                 )
             frame_count = wav.getnframes()
@@ -394,7 +405,7 @@ def seed_pcm_audio(*, audio: BinaryContent, provider_name: str | None, sample_ra
             if len(pcm) != frame_count * channels * sample_width:
                 raise wave.Error('truncated audio data')
     except (EOFError, wave.Error) as e:
-        raise UserError(f'`SpeechPart.audio` cannot be seeded into {target} because it is not valid WAV audio.') from e
+        raise UserError(f'{error_prefix}: it is not valid WAV audio.') from e
     return pcm
 
 
