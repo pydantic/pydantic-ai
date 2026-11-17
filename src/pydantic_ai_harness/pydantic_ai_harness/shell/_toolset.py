@@ -525,6 +525,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             timeout=self._default_timeout if timeout is None else timeout,
             log_limit=self._max_log_bytes,
             secrets=self._secret_bytes,
+            redact=self._redact,
         )
 
     @recoverable

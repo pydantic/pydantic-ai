@@ -11,7 +11,7 @@ itself.
 from __future__ import annotations
 
 import codecs
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Generic, Literal
 
 import anyio
@@ -76,7 +76,15 @@ def command_output(result: str, *, pid: int) -> str:
 class _CommandOutput(Generic[AgentDepsT]):
     """Emit at most `_OUTPUT_TAIL_BYTES` of the log as events, decoded incrementally."""
 
-    def __init__(self, job: Job, ctx: RunContext[AgentDepsT] | None, *, log_limited: bool) -> None:
+    def __init__(
+        self,
+        job: Job,
+        ctx: RunContext[AgentDepsT] | None,
+        *,
+        log_limited: bool,
+        secrets: Sequence[bytes] = (),
+        redact: Callable[[str], str] = str,
+    ) -> None:
         self.job = job
         # `None` where events cannot reach the run's event stream: then nothing is read or emitted.
         self.ctx = ctx
@@ -88,6 +96,18 @@ class _CommandOutput(Generic[AgentDepsT]):
         self.clears = 0
         """The `log_clears` count the last emitted chunk was read under: two per clear."""
         self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+        self.secrets = [secret.decode() for secret in secrets]
+        self.redact = redact
+        self.held = ''
+        """Decoded text not yet emitted: its end may be the start of a secret the next chunk completes."""
+
+    def _masked(self, text: str, *, final: bool) -> str:
+        """The part of `held + text` safe to emit, masked; the rest is held for the next chunk."""
+        text = self.held + text
+        cut = len(text) if final else max(0, len(text) - max(map(len, self.secrets), default=1) + 1)
+        cut = past_secrets(text, cut, self.secrets)
+        self.held = text[cut:]
+        return self.redact(text[:cut])
 
     async def _clears(self) -> int:
         return await self.job.size(self.job.clears_path) if self.log_limited else 0
@@ -112,14 +132,15 @@ class _CommandOutput(Generic[AgentDepsT]):
             self.clears = clears
             self.offset = 0
             self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+            self.held = ''
             chunk = await self._read()
             if await self._clears() != clears:
                 # Another clear began during that read too: start again at the next poll.
                 return False
         self.offset += len(chunk)
         self.emitted += len(chunk)
-        if chunk:
-            await self.ctx.emit(CommandOutputEvent(text=self.decoder.decode(chunk)))
+        if chunk and (text := self._masked(self.decoder.decode(chunk), final=False)):
+            await self.ctx.emit(CommandOutputEvent(text=text))
         return bool(chunk)
 
     async def drain(self) -> None:
@@ -129,7 +150,7 @@ class _CommandOutput(Generic[AgentDepsT]):
     async def finish(self) -> None:
         if self.ctx is None:
             return
-        tail = self.decoder.decode(b'', final=True)
+        tail = self._masked(self.decoder.decode(b'', final=True), final=True)
         if tail:
             await self.ctx.emit(CommandOutputEvent(text=tail))
         clears = await self._clears()
@@ -162,6 +183,7 @@ async def run_persistent_command(
     timeout: float,
     log_limit: int | None = None,
     secrets: Sequence[bytes] = (),
+    redact: Callable[[str], str] = str,
 ) -> str:
     """Start `command` as a detached job and return its PID, output log, and status file.
 
@@ -179,7 +201,7 @@ async def run_persistent_command(
     job = await Job.launch(
         ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True, log_limit=log_limit, job_id=job_id
     )
-    output = _CommandOutput(job, events, log_limited=log_limit is not None)
+    output = _CommandOutput(job, events, log_limited=log_limit is not None, secrets=secrets, redact=redact)
 
     try:
         if output.ctx is not None:
