@@ -2592,6 +2592,35 @@ class TestPlaywrightBrowserLifecycle:
         assert not page.closed and page.goto_calls == [] and not any(page.handlers.values())
         assert page.url == 'chrome://version/'
 
+    async def test_default_context_never_falls_back_to_a_dropped_tab_when_the_blank_tab_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        page = _FakePage(url='https://example.com/', body='PROFILE_STATE')
+        _install_fake_driver(monkeypatch, page)
+        _populate_default_context(monkeypatch, tabs=1)
+        working = _FakeBrowserContext.new_page
+        attempts = 0
+
+        async def fails_once(context: _FakeBrowserContext) -> _FakePage:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PlaywrightError('Target page, context or browser has been closed')
+            return await working(context)
+
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default')
+        async with session:
+            tools = PlaywrightBrowserToolset[None](session=session)
+            assert await tools.get_text() == 'PROFILE_STATE'
+            monkeypatch.setattr(_FakeBrowserContext, 'new_page', fails_once)
+            page.url = 'chrome://version/'
+            failed = await tools.get_text()
+            assert 'has been closed' in failed and 'PROFILE_STATE' not in failed
+            # The dropped tab is the only page the session ever had, and the next call still does not use it.
+            assert await tools.get_text() == 'Hello body'
+            assert attempts == 2 and session.page is not page
+        assert not page.closed and page.goto_calls == [] and not any(page.handlers.values())
+
     async def test_default_context_stops_using_a_popup_that_lands_off_the_web(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

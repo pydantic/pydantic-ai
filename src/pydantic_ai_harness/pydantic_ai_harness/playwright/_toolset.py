@@ -1284,11 +1284,10 @@ class PlaywrightBrowserSession:
         The tab is neither navigated nor closed: in the default context it can be the
         profile owner's, so it stays open in the browser, unwired and unlisted, the way
         attaching leaves such a tab out. The active tab moves to another tracked one, or
-        to a new blank tab when none is left, so the next call works.
+        to a new blank tab when none is left, so the next call works. When opening that
+        tab fails, the next call tries again rather than falling back to the dropped tab.
         """
         left = [page for page in self.pages if self._is_off_web(page.url)]
-        if not left:
-            return
         for page in left:
             # Every listener `_wire_page` added, so the tab reports nothing more.
             for event, handler in (
@@ -1303,8 +1302,11 @@ class PlaywrightBrowserSession:
                 page.remove_listener(event, handler)
             # The same bookkeeping as a tab that closed.
             self._on_page_closed(page)
-        if not self.pages:
+        if not self.pages and self.page is not None and self._is_off_web(self.page.url):
+            # The active pointer still names the dropped tab, from this call or one whose open failed.
             await self._bounded(self.open_tab())
+        if not left:
+            return
         raise BrowserUnavailableError(
             self._off_web_tab_message(', '.join(_without_credentials(page.url) for page in left))
         )
