@@ -4,7 +4,7 @@ import inspect
 import itertools
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -480,13 +480,9 @@ def StructuredDict(
 _MAX_JSON_SCHEMA_ERRORS = 10
 
 
-def _is_json_object(value: object) -> TypeGuard[dict[str, Any]]:
-    return isinstance(value, dict)
-
-
 def _schema_refs(schema: object) -> list[str]:
     """The `$ref` and `$dynamicRef` of one (sub)schema."""
-    if not _is_json_object(schema):
+    if not _utils.is_str_dict(schema):
         return []
     return [ref for key in ('$ref', '$dynamicRef') if isinstance(ref := schema.get(key), str)]
 
