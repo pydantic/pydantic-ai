@@ -30,6 +30,8 @@ The model's instructions then include a line such as `Today's date is Friday, 20
 | `precision` | `'date'` | `'date'` states the weekday and date; `'hour'` states the hour as well: `The current time is within the hour starting 2026-01-02T14:00+01:00 (Friday, Europe/Amsterdam).` |
 | `id` | `'current_time'` | Keys the instruction block, so a change can be appended to the message history. `None` or `''` means the default |
 
+In an [agent spec](../agent-spec.md), `timezone` takes a zone name: `- CurrentTime: {timezone: Europe/Amsterdam}`, loaded with `custom_capability_types=[CurrentTime]`.
+
 ## Prompt caching
 
 The time is read from the timestamp the run gives the request it is about to send. When the date (or hour) moves on during a conversation, the new value is [appended](../agent.md#appending-instruction-changes) to the message history instead of rewriting the instructions, so the provider can keep serving the conversation so far from its prompt cache. With `precision='date'` that is at most one update per day; with `'hour'`, one per hour of conversation. There is no finer precision: text that changes on every request belongs in the user prompt or a tool.

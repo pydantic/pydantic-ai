@@ -11,6 +11,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -156,6 +157,23 @@ Today's date is Saturday, 2026-01-03 (UTC).
         await agent.run('What day is it?')
         await agent.run('And now?')
         assert _CountedZoneInfo.built == 1
+
+    def test_agent_spec_schema_publishes_its_fields(self) -> None:
+        definitions = AgentSpec.model_json_schema_with_capabilities([CurrentTime])['$defs']
+        properties = definitions['spec_params_CurrentTime']['properties']
+        assert set(properties) == {'id', 'description', 'defer_loading', 'timezone', 'precision'}
+        assert properties['timezone']['type'] == 'string'
+
+    async def test_from_spec_takes_a_zone_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        agent = Agent.from_spec(
+            {'model': 'test', 'capabilities': [{'CurrentTime': {'timezone': 'Asia/Tokyo', 'precision': 'hour'}}]},
+            custom_capability_types=[CurrentTime],
+        )
+        _clock(monkeypatch, datetime(2026, 1, 2, 23, 30, tzinfo=UTC))
+        request = (await agent.run('What time is it?')).all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        assert request.instructions is not None
+        assert 'within the hour starting 2026-01-03T08:00+09:00 (Saturday, Asia/Tokyo).' in request.instructions
 
     def test_an_unknown_time_zone_fails_when_built(self) -> None:
         with pytest.raises(ZoneInfoNotFoundError):
