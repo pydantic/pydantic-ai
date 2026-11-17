@@ -29,8 +29,17 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import AgentControl
+from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-TEMPORAL_PORT = 7245
+pytestmark = [
+    pytest.mark.temporal,
+    pytest.mark.xdist_group(name='harness-temporal'),
+    skip_temporal_sandbox_on_314,
+    ignore_source_reads_left_open,
+]
+
+TEMPORAL_PORT = 7264  # avoid conflict with the other Temporal suites
 TASK_QUEUE = 'pydantic-ai-harness-agent-control-queue'
 
 
@@ -39,6 +48,7 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 

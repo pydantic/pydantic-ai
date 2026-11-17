@@ -220,9 +220,10 @@ name is relative to whatever owns it, and Pydantic AI qualifies it with the sour
 ## When something doesn't apply
 
 If Logfire is unreachable, has nothing published, or has something this SDK is too old to understand,
-the agent runs exactly as written -- a published config can never crash a run. The one exception is an
-agent with no model of its own: `Agent(None, ...)` has nothing to fall back to, so it raises rather
-than guessing. Keep a model in code if you want a Logfire outage to be a non-event.
+the agent runs exactly as written: under the default `on_unmatched`, a published config cannot crash a
+run. There are two exceptions. `on_unmatched='error'` raises on anything published that this deployment
+cannot apply, which is what it is for. And an agent with no model of its own, `Agent(None, ...)`, has
+nothing to fall back to, so it raises rather than guessing. Keep a model in code if you want a Logfire outage to be a non-event.
 
 Nothing this SDK can't act on costs more than the piece that contains it. A setting it doesn't
 recognize drops that setting; a malformed tool entry drops that tool; a block it can't apply drops

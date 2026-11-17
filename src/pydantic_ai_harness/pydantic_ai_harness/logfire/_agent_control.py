@@ -30,6 +30,7 @@ from logfire.variables import Variable
 from logfire.variables.abstract import NoOpVariableProvider
 
 from pydantic_ai import AbstractToolset, RunContext, TemplateStr, ToolDefinition, WrapperToolset
+from pydantic_ai._instrumentation import model_request_telemetry_url_ids
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, CombinedCapability, Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -198,7 +199,8 @@ def _warn_dropped(message: str) -> None:
     except Exception:  # pragma: lax no cover
         # Emitted filter-independently, for the reason the contract's own `warn_dropped` is: every
         # drop reported here happens while a managed config is being read or applied, and
-        # `docs/agent-control.md` promises a published config can never crash a run. Under
+        # `docs/agent-control.md` promises a published config cannot crash a run under the default
+        # `on_unmatched`. Under
         # `-W error` / `filterwarnings = ['error']` `warnings.warn` raises, which does not make
         # anything stricter -- a drop raised during resolution is caught by logfire's fallback and
         # silently un-manages every section that did apply. Strictness is `on_unmatched='error'`,
@@ -878,7 +880,7 @@ class AgentControl(AbstractCapability[AgentDepsT]):
         def select(ctx: ModelSelectionContext[AgentDepsT]) -> ModelSelection:
             if not selected:
                 code_model = ctx.model
-                self._code_model.set(f'{code_model.system}:{code_model.model_name}' if code_model is not None else None)
+                self._code_model.set(code_model.model_id if code_model is not None else None)
                 resolved = self._get(self._variable_for(ctx.agent), ctx)
                 model = _usable_model(resolved.value.model, self.on_unmatched)
                 if model is not None:
@@ -1231,7 +1233,7 @@ class AgentControl(AbstractCapability[AgentDepsT]):
         # Core marks the ids an MCP toolset or capability derived from its server URL (its hostname) and
         # masks them in every trace; the baseline is exported on a span too, so it masks the same ids.
         toolset_ids = parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
-        capability_ids = parameters._telemetry_mcp_url_ids or set()  # pyright: ignore[reportPrivateUsage]
+        capability_ids = model_request_telemetry_url_ids(parameters)
         return build_baseline(
             instructions=[
                 Block(
@@ -1251,6 +1253,9 @@ class AgentControl(AbstractCapability[AgentDepsT]):
                     toolset=_MASKED if (key := _toolset_key(tool.toolset)) in toolset_ids else key,
                 )
                 for tool in self._code_tools.get() or []
+                # An external tool is defined and run by the client, as AG-UI frontend tools are: its
+                # definition is the client's content, not the agent's code.
+                if tool.tool_def.kind != 'external'
             ],
         )
 

@@ -12,6 +12,7 @@ fixture in `conftest.py`; `test_a_run_writes_nothing_to_the_variable_api` says i
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -23,9 +24,11 @@ from logfire.variables.local import LocalVariableProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.logfire import AgentControl, _agent_control
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
+from pydantic_ai_harness.logfire import AgentControl
 from pydantic_ai_harness.logfire._contract import SCHEMA_SHA256, canonical_json
 
 from ._helpers import Publish, get_weather, variables_provider, weather_toolset
@@ -505,99 +508,88 @@ async def test_an_agent_that_never_reaches_a_model_reports_nothing(capfire: Capt
     assert hints(capfire) == []
 
 
-async def test_an_oversized_baseline_drops_its_tool_definitions(
-    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_wrapping_model_is_reported_by_its_model_id(capfire: CaptureLogfire) -> None:
+    model = FallbackModel(TestModel(), TestModel(custom_output_text='second'))
+    with variables_provider(capfire, VariablesConfig(variables={})):
+        await Agent(model, name='fallback_agent', capabilities=[AgentControl()]).run('hello')
+
+    assert baseline(hints(capfire)[0])['model'] == model.model_id == 'fallback:test:test,test:test'
+
+
+async def test_client_defined_tools_are_left_out_of_the_baseline(capfire: CaptureLogfire) -> None:
+    """An external tool's definition comes from the client that runs it, as AG-UI frontend tools do."""
+    client_tools = ExternalToolset[object](
+        [ToolDefinition(name='show_map', description='Client text.', kind='external')]
+    )
+    with variables_provider(capfire, VariablesConfig(variables={})):
+        await Agent(
+            TestModel(call_tools=[]),
+            name='frontend_agent',
+            tools=[get_weather],
+            toolsets=[client_tools],
+            capabilities=[AgentControl()],
+        ).run('hello')
+
+    assert [tool['name'] for tool in baseline(hints(capfire)[0])['tool_definitions']] == ['get_weather']
+
+
+def _noop() -> str:
+    return 'ok'  # pragma: no cover - advertised only
+
+
+def _wordy_tools(count: int) -> list[Tool[object]]:
+    """Tools whose descriptions add up to more than a hint span's 1 MiB baseline budget."""
+    return [
+        Tool.from_schema(_noop, name=f'tool_{i}', description='d' * 60_000, json_schema={'type': 'object'})
+        for i in range(count)
+    ]
+
+
+async def test_an_oversized_baseline_drops_its_tool_definitions(capfire: CaptureLogfire) -> None:
     """A baseline over the budget gives up whole sections rather than being cut to length.
 
     The backend enforces its own attribute budget by truncating a long string in place, which for
     JSON yields an attribute that still looks like a string and no longer parses. So the reduction
     happens here, is named on the span, and leaves a whole valid `AgentConfig` behind.
     """
-    # A budget between this agent's full baseline and the same baseline without its tool definitions,
-    # so the first rung of the ladder is the one taken. Tightening it real-world is what a 64 KiB
-    # instruction block and a few dozen tool schemas do on their own.
-    monkeypatch.setattr(_agent_control, '_MAX_BASELINE_BYTES', 200)
     with variables_provider(capfire, VariablesConfig(variables={})):
         await Agent(
-            TestModel(),
+            TestModel(call_tools=[]),
             name='oversized_tools',
             instructions='CODE instruction.',
-            tools=[get_weather],
+            tools=_wordy_tools(20),
             capabilities=[AgentControl()],
         ).run('hello')
 
     attributes = hints(capfire)[0]
     assert attributes['agent_control.baseline_reduction'] == 'tool_definitions'
     # Still a parseable, whole config, with the section that carries the unbounded part left out.
-    assert baseline(attributes) == {
+    carried = baseline(attributes)
+    assert carried == {
         'instructions': [{'id': 'agent', 'instructions': 'CODE instruction.', 'dynamic': False}],
         'model': 'test:test',
     }
-    # The size reported is the full baseline's, so a consumer sees how far over the budget it was
-    # rather than how big the part that survived is.
-    assert attributes['agent_control.baseline_bytes'] > len(attributes['agent_control.baseline'].encode())
+    # The size and the digest are the full baseline's, so a consumer sees how far over the budget it
+    # was, and two reports of the same code agree however much of it each could carry.
+    assert attributes['agent_control.baseline_bytes'] > 1024 * 1024
+    assert attributes['agent_control.baseline_sha256'] != hashlib.sha256(canonical_json(carried)).hexdigest()
 
 
-async def test_a_baseline_too_large_even_reduced_is_omitted_and_says_so(
-    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_baseline_too_large_even_reduced_is_omitted_and_says_so(capfire: CaptureLogfire) -> None:
     # Nothing is guessed at and nothing is cut: the hint still registers the agent, and the reduction
     # says why no baseline is on it.
-    monkeypatch.setattr(_agent_control, '_MAX_BASELINE_BYTES', 10)
+    toolsets = [FunctionToolset[object](id=f'notes_{i}', instructions='i' * 60_000) for i in range(20)]
     with variables_provider(capfire, VariablesConfig(variables={})):
         await Agent(
-            TestModel(),
-            name='omitted_baseline',
-            instructions='CODE instruction.',
-            tools=[get_weather],
-            capabilities=[AgentControl()],
+            TestModel(call_tools=[]), name='omitted_baseline', toolsets=toolsets, capabilities=[AgentControl()]
         ).run('hello')
 
     attributes = hints(capfire)[0]
     assert attributes['agent_control.baseline_reduction'] == 'omitted'
     assert 'agent_control.baseline' not in attributes
     assert attributes['agent_control.variable_name'] == 'agent__omitted_baseline'
-    assert attributes['agent_control.baseline_bytes'] > 10
-
-
-async def test_a_reduced_baseline_still_digests_the_whole_one(
-    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Reduction changes what the span carries, and must not change what the digest says.
-
-    The same code reported twice, once under a budget that leaves no room for a baseline at all. A
-    digest taken after the reduction would make those two look like different agents -- and would
-    leave every omitted report looking like every other one, which is the case with nothing else on
-    the span to tell it apart by.
-    """
-
-    def agent(name: str) -> Agent[None, str]:
-        return Agent(
-            TestModel(),
-            name=name,
-            instructions='CODE instruction.',
-            tools=[get_weather],
-            capabilities=[AgentControl()],
-        )
-
-    with variables_provider(capfire, VariablesConfig(variables={})):
-        await agent('whole_baseline').run('hello')
-        with monkeypatch.context() as clamped:
-            clamped.setattr(_agent_control, '_MAX_BASELINE_BYTES', 10)
-            await agent('clamped_baseline').run('hello')
-
-    whole, clamped_attributes = hints(capfire)
-    assert whole['agent_control.baseline_reduction'] == 'none'
-    assert clamped_attributes['agent_control.baseline_reduction'] == 'omitted'
-    assert clamped_attributes['agent_control.baseline_sha256'] == whole['agent_control.baseline_sha256']
-
-
-def test_the_budget_stays_an_order_of_magnitude_under_the_backends() -> None:
-    # A guard on the constant itself. The whole point of enforcing a budget here is to stay well
-    # under the row budget the backend truncates against, so a change to it is a decision to make
-    # deliberately rather than a number to drift.
-    assert _agent_control._MAX_BASELINE_BYTES == 1024 * 1024  # pyright: ignore[reportPrivateUsage]
+    assert attributes['agent_control.baseline_bytes'] > 1024 * 1024
+    assert len(attributes['agent_control.baseline_sha256']) == 64
 
 
 async def test_a_run_writes_nothing_to_the_variable_api(capfire: CaptureLogfire) -> None:

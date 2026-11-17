@@ -26,7 +26,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import AgentControl as RootAgentControl
-from pydantic_ai_harness.logfire import AgentControl, OnUnmatched, TargetingContext, _agent_control
+from pydantic_ai_harness.logfire import AgentControl, OnUnmatched, TargetingContext
 from pydantic_ai_harness.logfire._contract import (
     MAX_MODEL_FACING_TEXT_LENGTH,
     AgentConfig,
@@ -34,7 +34,6 @@ from pydantic_ai_harness.logfire._contract import (
     InstructionBlock,
     ParameterOverride,
     ToolDefinitionOverride,
-    build_baseline,
 )
 
 from ._helpers import (
@@ -1250,27 +1249,17 @@ def test_logfire_instance_is_ignored_for_a_prebuilt_variable() -> None:
         AgentControl(variable, logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
 
 
-async def test_a_resolved_config_builds_one_snapshot_per_process(
-    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_resolved_config_reports_one_snapshot_per_process(capfire: CaptureLogfire) -> None:
     # The baseline walks every assembled instruction block and every advertised tool, and an agent
     # whose config is published reports it too -- so what keeps that off the request path is the
     # once-per-process guard, not the config having resolved. Two runs of an agent that calls a tool
     # is four model requests, and one snapshot.
-    builds: list[AgentConfig] = []
-
-    def counting(**kwargs: Any) -> AgentConfig:
-        # The contract's own function, not the name patched onto the module under test.
-        baseline = build_baseline(**kwargs)
-        builds.append(baseline)
-        return baseline
-
-    monkeypatch.setattr(_agent_control, 'build_baseline', counting)
     with variables_provider(capfire, published_value('agent__known', {'model': 'test'})):
         agent = Agent(TestModel(), tools=[get_weather], capabilities=[AgentControl('known', label='production')])
         await agent.run('hello')
         await agent.run('again')
-    assert len(builds) == 1
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [span['name'] for span in spans].count('agent_control_config_hint') == 1
 
 
 async def test_the_hooks_outside_a_run_are_inert() -> None:

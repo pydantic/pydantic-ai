@@ -45,8 +45,8 @@ them apart.
 
 They share one contract: **the code-defined agent is the fallback.** Every managed value is a
 patch on what's written in code -- absent fields keep their code values, and a missing, invalid,
-or unreachable remote value degrades to exactly the agent the developer wrote, never a crashed
-run. Values resolve **once per run** and the resolved label + version ride as baggage on every
+or unreachable remote value degrades to exactly the agent the developer wrote, so under the default
+`on_unmatched` it cannot crash a run (`on_unmatched='error'` raises instead). Values resolve **once per run** and the resolved label + version ride as baggage on every
 span of the run, so traces always show which version produced which behavior. Each capability's
 `resolved` exposes the active run's `ResolvedVariable`, whose `reason` says *why* it resolved the way
 it did (e.g. a `'code_default'` fallback).
@@ -74,7 +74,8 @@ stored baseline would describe that day's deployment forever. The platform dedup
 variables that already exist either way: this SDK cannot tell an unknown variable from one with
 nothing published at the label it asked for.
 
-The hint is emitted at most once per process per variable and Logfire instance, on the first model
+The hint is emitted at most once per process per agent (its variable, its name as written, and its
+Logfire project), on the first model
 request that has a baseline to describe, so an agent that never reaches a model reports nothing and a
 restart after a code change reports the new baseline.
 

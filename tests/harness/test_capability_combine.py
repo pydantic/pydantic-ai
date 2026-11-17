@@ -388,9 +388,6 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one Logfire connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'ManagedVariableCapability': Anonymous(
-        'the base every managed-variable capability derives from; each subclass answers for itself'
-    ),
     '_AgentControlOverrides': Anonymous(
         'never user-constructed: `AgentControl.for_agent` stitches exactly one alongside the control '
         'it shares state with, so there are as many of these as there are `AgentControl`s -- which is one'
