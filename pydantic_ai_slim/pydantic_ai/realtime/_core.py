@@ -1955,8 +1955,10 @@ class SessionCore:
                     self._follow_input(token, owed, pending)
                 case 'response':
                     self._follow_response(token, owed, pending)
-                case _:
+                case 'call':
                     self._follow_call(token, owed, pending)
+                case _:
+                    assert_never(token.kind)
         return frozenset(owed)
 
     def _follow_input(self, token: Owed, owed: set[Owed], pending: list[Owed]) -> None:
