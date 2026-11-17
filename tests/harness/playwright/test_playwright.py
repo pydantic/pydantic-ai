@@ -2439,6 +2439,63 @@ class TestPlaywrightBrowserLifecycle:
             tools = _toolset(page, session=session)
             await tools.tabs()
             assert looked_up == ['example.com', 'embed.example.org']
+        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        looked_up.clear()
+        # So does another session on the same browser: the record belongs to one session, and each run
+        # gets its own session (`test_for_run_isolates_state`).
+        other = PlaywrightBrowserSession(
+            cdp_url='http://localhost:9222',
+            cdp_context='default',
+            policy=EgressPolicy(blocked_domains=['blocked.example']),
+        )
+        async with other:
+            tools = _toolset(page, session=other)
+            await tools.tabs()
+            assert looked_up == ['example.com', 'embed.example.org']
+
+    async def test_default_context_admitted_document_does_not_exempt_later_requests_to_its_host(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        addresses = {'example.com': '93.184.216.34', 'embed.example.org': '93.184.216.34'}
+        looked_up: list[str] = []
+
+        async def resolve(host: str) -> tuple[str, ...]:
+            looked_up.append(host)
+            return (addresses[host],)
+
+        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+
+        def inherit(context: _FakeBrowserContext) -> None:
+            page = _FakePage(url='https://example.com/', title='Embedding')
+            page.frames.append(_FakeFrameContent(url='https://embed.example.org/'))
+            context.opened.insert(0, page)
+
+        cm = _install_fake_driver(monkeypatch, _FakePage(url='about:blank'))
+        _populate_default_context(monkeypatch, tabs=0, inherit=inherit)
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default')
+        async with session:
+            tools = PlaywrightBrowserToolset[None](session=session)
+            assert await tools.tabs() == '0 (active): Embedding -- https://example.com/'
+            assert looked_up == ['example.com', 'embed.example.org']
+            # The name now points inward, and the lookup cache has expired.
+            addresses['embed.example.org'] = '127.0.0.1'
+            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            looked_up.clear()
+            # The loaded document is not checked again, but every new request to its host is.
+            assert await tools.tabs() == '0 (active): Embedding -- https://example.com/'
+            assert looked_up == []
+            browser = cm.driver.chromium.browser
+            assert browser is not None
+            context = browser.contexts[0]
+            frame = _FakeRequestPage().main_frame
+            reload = await context.dispatch(_FakeRequest('https://embed.example.org/', navigation=True, frame=frame))
+            fetch = await context.dispatch(
+                _FakeRequest('https://embed.example.org/api', navigation=False, resource_type='fetch', frame=frame)
+            )
+            socket = await context.dispatch_websocket('wss://embed.example.org/live')
+            assert reload.aborted and fetch.aborted
+            assert socket.closed and not socket.connected
+            assert looked_up == ['embed.example.org']
 
     async def test_default_context_leaves_out_a_tab_whose_url_arrives_off_the_web(
         self, monkeypatch: pytest.MonkeyPatch
