@@ -121,6 +121,8 @@ from mcp.types import (
 )
 
 
+# On FastMCP 3 (MCP SDK v1), `context` is a `mcp.shared.context.RequestContext` and
+# the field below is `params.systemPrompt`.
 async def sampling_callback(
     context: ClientRequestContext, params: CreateMessageRequestParams
 ) -> CreateMessageResult | ErrorData:
