@@ -18,7 +18,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.tools import Tool
+from pydantic_ai.tools import DeferredToolResults, Tool
 from pydantic_ai_harness import (
     DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS,
     FileSystem,
@@ -146,7 +146,7 @@ class TestRequireVerification:
         capability = RequireVerification[None](exempt_paths=['notes/*'])
         result = await _agent(tmp_path, _write('README.md'), 'Done.', capability=capability).run('Update the docs')
 
-        assert _attempts(result.new_messages()) == [1, 2]
+        assert _attempts(result.new_messages()) == [1]
 
     async def test_an_edit_after_a_passing_check_makes_it_stale(self, tmp_path: Path) -> None:
         edit = ToolCallPart('edit_file', {'path': 'app.py', 'old_text': '1', 'new_text': '2'})
@@ -189,7 +189,7 @@ class TestRequireVerification:
     async def test_an_edit_command_alone_needs_verification(self, tmp_path: Path) -> None:
         result = await _agent(tmp_path, _run('ruff format .'), 'Done.').run('Format the code')
 
-        assert _attempts(result.new_messages()) == [1, 2]
+        assert _attempts(result.new_messages()) == [1]
 
     @pytest.mark.parametrize(
         'command',
@@ -215,6 +215,10 @@ class TestRequireVerification:
             'env CI=1 uv run pyright',
             'cd backend && pytest',
             'ruff check . && pyright',
+            'ruff format --check .',
+            'uv run black --check .',
+            'isort --check-only .',
+            'uv run pytest tests/black/ -k isort',
             'pnpm run test',
             'npx tsc --noEmit',
             'cargo test',
@@ -269,7 +273,7 @@ class TestRequireVerification:
     async def test_commands_that_can_hide_a_failure_do_not_count(self, tmp_path: Path, command: str) -> None:
         result = await _agent(tmp_path, _write(), _run(command), 'Done.').run('Fix the bug')
 
-        assert _attempts(result.new_messages()) == [1, 2]
+        assert _attempts(result.new_messages()) == [1]
 
     @pytest.mark.parametrize(
         'output',
@@ -288,7 +292,7 @@ class TestRequireVerification:
 
         result = await agent.run('Fix the bug')
 
-        assert _attempts(result.new_messages()) == [1, 2]
+        assert _attempts(result.new_messages()) == [1]
 
     @pytest.mark.parametrize(
         'output',
@@ -306,7 +310,7 @@ class TestRequireVerification:
 
         result = await agent.run('Fix the bug')
 
-        assert _attempts(result.new_messages()) == [1, 2]
+        assert _attempts(result.new_messages()) == [1]
 
     @pytest.mark.parametrize('output', ['{"numFailedTests": 0, "success": true}', 'collected 3 items\nStatus: ok'])
     async def test_run_command_output_is_read_by_its_trailer_only(self, tmp_path: Path, output: str) -> None:
@@ -452,7 +456,9 @@ class TestRequireVerification:
             _write(),
             _run('pytest -q'),
             'Done.',
+            _run('pytest -q'),
             'Still done.',
+            _run('pytest -q'),
             'Really done.',
             outputs=lambda command: '[exit code: 1]',
             extra=[hooks],
@@ -463,6 +469,66 @@ class TestRequireVerification:
         assert result.output == 'Really done.'
         assert _attempts(result.new_messages()) == [1, 2]
         assert [(event.attempts, event.failed_commands) for event in events] == [(2, ['pytest -q'])]
+
+    async def test_an_answer_without_a_tool_call_ends_the_redirects(self, tmp_path: Path) -> None:
+        events, hooks = _unverified()
+        agent = _agent(
+            tmp_path, _write(), 'Done.', 'The test database is down, so I could not run the tests.', extra=[hooks]
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert result.output == 'The test database is down, so I could not run the tests.'
+        assert _attempts(result.new_messages()) == [1]
+        assert [event.attempts for event in events] == [1]
+
+    async def test_an_edit_before_a_pause_is_verified_after_the_resume(self, tmp_path: Path) -> None:
+        agent = Agent[None, str | DeferredToolRequests](
+            _scripted(_write(), ToolCallPart('deploy', {}), 'Done.', _run('pytest -q'), 'Verified.'),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[Tool(lambda command: '(no output)', name='run_command', metadata=_SHELL)],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), RequireVerification()],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def deploy() -> str:
+            return 'Deployed.'
+
+        paused = await agent.run('Fix and deploy')
+        assert isinstance(paused.output, DeferredToolRequests)
+        [call] = paused.output.approvals
+
+        result = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+
+        assert result.output == 'Verified.'
+        assert _attempts(result.new_messages()) == [1]
+
+    async def test_a_resumed_run_without_an_earlier_edit_is_not_sent_back(self, tmp_path: Path) -> None:
+        agent = Agent[None, str | DeferredToolRequests](
+            _scripted(_write('README.md'), ToolCallPart('deploy', {}), 'Done.'),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), RequireVerification()],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def deploy() -> str:
+            return 'Deployed.'
+
+        paused = await agent.run('Update the docs and deploy')
+        assert isinstance(paused.output, DeferredToolRequests)
+        [call] = paused.output.approvals
+        result = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+
+        assert result.output == 'Done.'
+        assert _redirects(result.new_messages()) == []
 
     async def test_no_attempts_reports_the_unverified_end_at_once(self, tmp_path: Path) -> None:
         events, hooks = _unverified()
@@ -490,7 +556,7 @@ class TestRequireVerification:
         assert _redirects(result.new_messages()) == [('Run `just ci`.', 1), ('Run `just ci`.', 2)]
 
     async def test_each_run_starts_with_no_edits(self, tmp_path: Path) -> None:
-        agent = _agent(tmp_path, _write(), 'Done.', 'Done.', 'Done.', 'Nothing to change.')
+        agent = _agent(tmp_path, _write(), 'Done.', 'Done.', 'Nothing to change.')
         first = await agent.run('Fix the bug')
 
         second = await agent.run('Anything else?', message_history=first.all_messages())
@@ -583,7 +649,7 @@ class TestRequireVerification:
 
         result = await agent.run('Fix the bug')
 
-        assert _attempts(result.new_messages()) == [1, 2]
+        assert _attempts(result.new_messages()) == [1]
 
     async def test_reads_the_results_of_the_shell_tools(self, tmp_path: Path) -> None:
         capability = RequireVerification[None](verification_commands=[r'true\b', r'false\b'])

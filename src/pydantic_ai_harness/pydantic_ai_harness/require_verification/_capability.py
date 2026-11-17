@@ -13,7 +13,17 @@ from pydantic_ai import CallToolsNode, DeferredToolRequests, PendingModelRespons
 from pydantic_ai._capability_parts import check_operator_text
 from pydantic_ai.capabilities import AbstractCapability, AgentNode, CapabilityOrdering, NodeResult
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
-from pydantic_ai.messages import InstructionCapabilityPart, OperatorSource, OperatorText, ToolCallPart
+from pydantic_ai.messages import (
+    InstructionCapabilityPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    OperatorSource,
+    OperatorText,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai_harness._shell_command import shell_command
 from pydantic_ai_harness.file_system._tool_kinds import EDIT_FILE_KIND, WRITE_FILE_KIND
@@ -31,7 +41,8 @@ DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
 
 DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
     r'(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?:\S*/)?python3?\s+-m\s+)?(?:\S*/)?'
-    r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check)\b',
+    r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check'
+    r'|(?:ruff\s+format|black|isort)(?=[^;&|\n]*\s--(?:check|diff)))\b',
     r'(?:npm|pnpm|yarn|bun)'
     r'(?:\s+(?>workspace\s+\S+|-\S+(?:\s+(?!(?:run|test|lint|typecheck|check|build|workspace)\b)[^-\s]\S*)?))*'
     r'\s+(?:run\s+)?(?:test|lint|typecheck|check|build)\b',
@@ -43,7 +54,8 @@ DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
 """Regular expressions for the commands that count as verification, matched at the start of a command's steps."""
 
 DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
-    r'\b(?:ruff\s+format|black|isort|cargo\s+fmt|gofmt\s+-w)\b',
+    r'(?:^|[;&|(]\s*)(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run\s+)?(?:ruff\s+format|black|isort|cargo\s+fmt|gofmt\s+-w)\b'
+    r'(?![^;&|\n]*\s--(?:check|diff))',
     r'--(?:fix|write)\b',
     r'(?<![\w-])(?:sed|perl)(?:\s+-\w+)*\s+-\w*i',
     r'\bgit\s+(?:apply|am|checkout|cherry-pick|merge|mv|pull|rebase|reset|restore|revert|rm|stash|switch)\b',
@@ -70,6 +82,7 @@ _FAILED = (
     '[terminated by signal',
 )
 """The last line of a failed command's result from `Shell`'s tools and ACP's `run_command`."""
+_FILE_EDIT_KINDS = (WRITE_FILE_KIND.id, EDIT_FILE_KIND.id)
 _SUPERVISOR = re.compile(r'PID: \d+ \(supervisor\b')
 """The handles header of the `shell` tool's result, before its output, log, and status lines."""
 
@@ -130,6 +143,8 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
     _results: dict[str, bool] = field(default_factory=dict[str, bool], init=False, repr=False, compare=False)
     _attempts: int = field(default=0, init=False, repr=False, compare=False)
     _reported: bool = field(default=False, init=False, repr=False, compare=False)
+    _calls: int = field(default=0, init=False, repr=False, compare=False)
+    _calls_at_redirect: int = field(default=0, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.max_attempts < 0:
@@ -177,14 +192,44 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         result: Any,
     ) -> Any:
         """Record a successful edit or verification command."""
+        self._calls += 1
         edits_before = self._started.pop(call.tool_call_id, None)
-        if tool_def.tool_kind in (WRITE_FILE_KIND.id, EDIT_FILE_KIND.id):
-            path = args.get('path')
-            if not (isinstance(path, str) and any(fnmatch(path, pattern) for pattern in self.exempt_paths)):
+        if tool_def.tool_kind in _FILE_EDIT_KINDS:
+            if not self._exempt(args.get('path')):
                 self._mark_edit()
         elif (command := shell_command(tool_def, args)) is not None:
             self._record_command(command, edits_before, result)
         return result
+
+    def _exempt(self, path: object) -> bool:
+        return isinstance(path, str) and any(fnmatch(path, pattern) for pattern in self.exempt_paths)
+
+    def _edited_before_resume(self, messages: Sequence[ModelMessage], run_id: str | None) -> bool:
+        """Whether an earlier run in this turn, which paused for its caller, made a `FileSystem` edit."""
+        returned = {
+            part.tool_call_id
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        }
+        turn_start = max(
+            (
+                index
+                for index, message in enumerate(messages)
+                if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+            ),
+            default=0,
+        )
+        return any(
+            isinstance(part, ToolCallPart)
+            and part.tool_kind in _FILE_EDIT_KINDS
+            and part.tool_call_id in returned
+            and not self._exempt(part.args_as_dict().get('path'))
+            for message in messages[turn_start:]
+            if isinstance(message, ModelResponse) and message.run_id != run_id
+            for part in message.parts
+        )
 
     def _record_command(self, command: str, edits_before: int | None, result: object) -> None:
         unquoted = _QUOTED.sub('', command)
@@ -214,12 +259,14 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             and node.model_response.model_name is not None
             and isinstance(result, End)
             and not isinstance(result.data.output, DeferredToolRequests | PendingModelResponse)
-            and self._edits
+            and (self._edits or self._edited_before_resume(ctx.messages, ctx.run_id))
             and not (self._results and all(self._results.values()))
         ):
             return result
-        if self._attempts < self.max_attempts:
+        # A model that answers a redirect without calling a tool has explained a blocker: asking again repeats it.
+        if self._attempts < self.max_attempts and (not self._attempts or self._calls > self._calls_at_redirect):
             self._attempts += 1
+            self._calls_at_redirect = self._calls
             ctx.tracer.start_span(
                 'verification required', attributes={'require_verification.attempt': self._attempts}
             ).end()

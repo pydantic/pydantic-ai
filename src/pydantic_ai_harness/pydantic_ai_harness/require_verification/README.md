@@ -29,8 +29,8 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[FileSystem(), Shell(), 
 
 `RequireVerification` records what the agent's tool calls do during a run:
 
-- An **edit** is a successful [`FileSystem`](../file_system/) `write_file` or `edit_file` call, recognized by its tool kind whatever it is named, or a shell command matching `edit_commands`, such as `ruff format .`, `sed -i`, `git checkout`, `mv`, `rm`, an `sh -c`, `python -c`, or `node -e` script, or a `>` redirect. Edits that `write_file` or `edit_file` make to files matching `exempt_paths` don't count. Shell edit commands always count, since the file they touch isn't known.
-- A **check** is a shell command matching `verification_commands`, such as `pytest`, `uv run --no-sync pyright`, `.venv/bin/pytest`, `pnpm -r test`, or `cargo build`. The [`Shell`](../shell/) tool's result tells whether it passed.
+- An **edit** is a successful [`FileSystem`](../file_system/) `write_file` or `edit_file` call, recognized by its tool kind whatever it is named, or a shell command matching `edit_commands`, such as `ruff format .` (but not `ruff format --check .`), `sed -i`, `git checkout`, `mv`, `rm`, an `sh -c`, `python -c`, or `node -e` script, or a `>` redirect. Edits that `write_file` or `edit_file` make to files matching `exempt_paths` don't count. Shell edit commands always count, since the file they touch isn't known.
+- A **check** is a shell command matching `verification_commands`, such as `pytest`, `uv run --no-sync pyright`, `.venv/bin/pytest`, `ruff format --check .`, `pnpm -r test`, or `cargo build`. The [`Shell`](../shell/) tool's result tells whether it passed.
 
 Each edit makes every earlier check result stale. When the run would end after an edit, and checks have run since then, the latest run of each must have passed. Otherwise an instruction carrying `instructions` is added to the conversation and the model answers again, with its tools available. After `max_attempts` of these redirects in one run, the run ends anyway and reports it with a `CompletionUnverifiedEvent`.
 
@@ -93,6 +93,8 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[FileSystem(), Shell(), 
 - A redirect costs at least one more model request, more when the model runs checks during it, and counts toward [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) like any other request.
 - The instruction is a `VerificationRequiredPart`, an [`InstructionCapabilityPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.InstructionCapabilityPart) kind (a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice) whose `attempt` field holds the redirect number and never reaches the model. It keeps the default conversation scope, so it stays in the message history. Find redirects by `isinstance(part, VerificationRequiredPart)` (from `pydantic_ai_harness.require_verification`), not by their text.
 - Edits, check results, and attempts live in the instance `for_run` creates for each run, so each run starts with none and compaction does not reset them.
+- A run resumed after a pause for [deferred tools](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/), such as an approval, still knows about the `write_file` and `edit_file` edits made earlier in the same turn: they are read from the message history. Check results and shell edit commands from before the pause are not, so the resumed run is sent back if it edited code earlier in the turn and has not run a check since resuming.
+- A model that answers a redirect without calling a tool, such as by explaining a blocker, is not sent back again: the run ends and emits the `CompletionUnverifiedEvent`.
 
 Three kinds of run end without a redirect or an event:
 
