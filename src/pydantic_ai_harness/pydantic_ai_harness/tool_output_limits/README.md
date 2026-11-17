@@ -42,8 +42,8 @@ Both tools are bounded: `offset >= 0`, `read_tool_result`'s `limit` and `grep_to
 `context` and `max_matches` clamped to built-in caps, the joined output capped, and `pattern` is a
 literal substring (not a regex), so a model-supplied value cannot hang the host with catastrophic
 backtracking. Their own returns are exempt from reduction, so a query result is never itself
-spilled or truncated. With `FileSystem` on the agent, `read_file` takes its place for spills in the run's workspace, and its reads of
-spills are exempt too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's
+spilled or truncated. With `FileSystem` on the agent, `read_file` replaces `read_tool_result` for
+spills in the run's workspace, and its reads of spills are exempt too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's
 `load_capability` and `search_tools` returns are never reduced either: core reads them back from
 history to know which on-demand capabilities are loaded and which tools are revealed.
 

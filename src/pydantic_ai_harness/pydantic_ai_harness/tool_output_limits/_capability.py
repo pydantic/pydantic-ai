@@ -347,7 +347,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 unit: `'bytes'` slices raw bytes, for output without useful line breaks such as minified JSON;
                     `offset` and `limit` then count bytes, so pass a larger `limit` (up to 50,000).
             """
-            return await _read_slice(self._store_for(ctx), handle, offset, limit, from_end, pattern, unit)
+            store = self._store_for(ctx)
+            return await _read_slice(store, handle, offset, limit, from_end, pattern, unit, _reader(ctx, handle))
 
         async def grep_tool_result(
             ctx: RunContext[AgentDepsT],
@@ -1041,18 +1042,15 @@ async def _omit(page: _Page, entries: AsyncIterator[_Entry], start: int | None) 
 
 @dataclass(frozen=True)
 class _Reader:
-    """The tool a capped page points the model to for what it left out.
-
-    Without a `name`, the hints are arguments of the `read_tool_result` call that produced the page.
-    """
+    """The tool a capped page points the model to for what it left out, named as it is called in the run."""
 
     handle: str
-    name: str | None = None
+    name: str
     handle_arg: str = 'handle'
     by_bytes: bool = True
 
     def _call(self, args: str) -> str:
-        return f'{self.name}({self.handle_arg}={self.handle!r}, {args})' if self.name else args
+        return f'{self.name}({self.handle_arg}={self.handle!r}, {args})'
 
     def omitted(self, start: int, end: int) -> str:
         return f'context lines {start + 1}-{end + 1} omitted ({self._call(f"offset={start}, limit={end - start + 1}")})'
@@ -1065,7 +1063,7 @@ class _Reader:
 
 
 def _reader(ctx: RunContext[Any], handle: str) -> _Reader:
-    """The reader `grep_tool_result` names, as it is called in this run step."""
+    """The reader the spill query tools name, as it is called in this run step."""
     name = ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND)
     if name is None and (file_reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
         return _Reader(handle, file_reader, 'path', by_bytes=False)
@@ -1091,6 +1089,7 @@ async def _read_slice(
     from_end: bool,
     pattern: str | None,
     unit: _ReadUnit,
+    reader: _Reader,
 ) -> str:
     """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
 
@@ -1107,17 +1106,18 @@ async def _read_slice(
         raise ModelRetry("`pattern` filters lines, so it cannot be combined with `unit='bytes'`.")
     if unit == 'bytes':
         return await _guarded(handle, _byte_slice(store, handle, offset, min(limit, _MAX_READ_CHARS), from_end))
-    return await _guarded(handle, _line_slice(store, handle, offset, min(limit, _MAX_READ_LINES), from_end, pattern))
+    limit = min(limit, _MAX_READ_LINES)
+    return await _guarded(handle, _line_slice(store, handle, offset, limit, from_end, pattern, reader))
 
 
 async def _line_slice(
-    store: OverflowStore, handle: str, offset: int, limit: int, from_end: bool, pattern: str | None
+    store: OverflowStore, handle: str, offset: int, limit: int, from_end: bool, pattern: str | None, reader: _Reader
 ) -> str:
     total, window = await _matching_window(store, handle, pattern, offset, limit, from_end=from_end)
     first = max(0, max(0, total - offset) - limit) if from_end else offset
     page = await _fill(_aiter(('', line, index, True) for index, line in window))
     more = f'the next line is at offset={first + page.shown}, from_end=False' if page.shown < len(window) else ''
-    capped = await _capped(store, page, more, _Reader(handle))
+    capped = await _capped(store, page, more, reader)
     return '\n'.join([f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}]', *page.lines])
 
 
