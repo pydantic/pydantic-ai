@@ -49,7 +49,9 @@ class _Peer(PeerConnection):
 class InMemoryPeerNetwork:
     """Join several agents in one process. The network does not run turns or own their lifetime.
 
-    `Peers(network)` joins each agent under its `name` when the agent is built. Members stay joined, and their handles taken, for the network's lifetime. To retire a session, set its
+    `Peers(network)` joins each agent under its `name` when the agent is built.
+
+    Members stay joined, and their handles taken, for the network's lifetime. To retire a session, set its
     inbox's `accepting` to `False`, or create a new network.
     """
 

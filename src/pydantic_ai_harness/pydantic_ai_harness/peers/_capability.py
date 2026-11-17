@@ -156,6 +156,7 @@ class Peers(AbstractCapability[AgentDepsT]):
         if not isinstance(inbox, LocalPeerInbox):
             raise UserError('`InMemoryPeerNetwork` delivers to a `LocalPeerInbox`; pass one as `inbox`.')
         joined = replace(self, network=network.join(handle=handle, inbox=inbox), inbox=inbox, handle=None)
+        self._joined = [entry for entry in self._joined if entry[0]() is not None]
         self._joined.append((ref(agent), joined))
         return joined
 
