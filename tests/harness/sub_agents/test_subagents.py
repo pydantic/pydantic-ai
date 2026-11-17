@@ -992,6 +992,52 @@ Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable o
         assert retries == []
         assert _delegate_returns(result) == ['steer: use existing evidence']
 
+    async def test_on_model_error_return_keeps_cause(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_two_then_finish('plain', 'boomer'),
+            capabilities=[
+                SubAgents(
+                    agents=[
+                        SubAgent(boomer, name='plain', on_model_error='return'),
+                        SubAgent(boomer, on_failure='steer: decide', on_model_error='return'),
+                    ]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == []
+        assert _delegate_returns(result) == snapshot(
+            [
+                """\
+Sub-agent 'plain' failed: kaboom
+
+Treat this as a recoverable observation and decide from existing evidence.\
+""",
+                """\
+Sub-agent 'boomer' failed: kaboom
+
+steer: decide\
+""",
+            ]
+        )
+
+    async def test_on_model_error_retry_with_on_failure(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_n_then_finish('boomer', 1),
+            capabilities=[SubAgents(agents=[SubAgent(boomer, on_failure='steer: decide', on_model_error='retry')])],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == snapshot(["Sub-agent 'boomer' failed: kaboom"])
+        assert _delegate_returns(result) == snapshot([])
+
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
         parent: Agent[object, str] = Agent(

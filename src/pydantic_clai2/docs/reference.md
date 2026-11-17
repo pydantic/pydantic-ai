@@ -2145,7 +2145,7 @@ arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
 The model also manages its tasks: `list_tasks` lists them, `check_task` shows what a
-running one is doing, `message_task` steers a running one, and `cancel_task` stops
+running one is doing, `message_task` steers a running one or resumes a finished one, and `cancel_task` stops
 one. A child that needs a decision calls `ask_parent` and waits; the question shows
 as a `?` task row, and the parent answers it with `answer_task`. Like a report, a
 question continues an idle parent without a user prompt, and one queued on a turn
@@ -2572,14 +2572,21 @@ CLAI's own tools handle what comes next.
 
 CLAI also keeps what the other agent's harness added to the conversation. From
 Claude Code: messages you typed while the model worked, attached files,
-reminders, skill bodies, task notifications, and its compaction summary. From
-Codex: its developer instructions, environment, `AGENTS.md` and other context,
-and messages between its agents. They are marked as the harness's, so the
-transcript doesn't show them as your prompts and compaction doesn't treat them
-as your requests. A note opens the history saying it ran in the other agent, and
-another closes it saying it continues in CLAI, whose tools and instructions now
-apply. A Claude Code session keeps the name you or Claude Code gave it, and a
-Codex session the name in Codex's index.
+reminders, skill bodies, and task notifications. From Codex: its developer
+instructions, environment, `AGENTS.md` and other context, and messages between
+its agents. They are marked as the harness's, so the transcript doesn't show
+them as your prompts and compaction doesn't treat them as your requests. A note
+opens the history saying it ran in the other agent, and another closes it saying
+it continues in CLAI, whose tools and instructions now apply. A Claude Code
+session keeps the name you or Claude Code gave it, and a Codex session the name
+in Codex's index.
+
+A compaction summary Claude Code or Codex wrote is imported as a summary like
+the ones CLAI's own compaction writes, so CLAI's compaction later builds on it
+rather than summarizing it again. A Claude Code session starts at its latest
+compaction: the summary, then the messages Claude Code kept from before it, as
+Claude Code sent them. A Codex session keeps the history the summary replaced
+ahead of it.
 
 Codex encrypts some of what its models see so that only OpenAI's models can
 read it: reasoning, its compaction summaries, and messages between its agents.

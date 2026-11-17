@@ -29,6 +29,7 @@ from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
+from ._enqueue import within_ceiling
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import (
     DeferredToolRequests,
@@ -909,6 +910,23 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             )
         return parts, tool_user_content
 
+    def _tool_user_part(
+        self, call: _messages.ToolCallPart, content: str | Sequence[_messages.UserContent]
+    ) -> _messages.ModelRequestPart:
+        """The user-channel part for a tool's `ToolReturn.content`, held to its owning capability's authority.
+
+        A tool a capability contributes speaks with no more authority than the capability, as what it enqueues does: at
+        `'none'`, its content is data naming the capability.
+        """
+        part = _messages.UserPromptPart(content=content)
+        tool_def = self.tool_manager.get_tool_def(call.tool_name)
+        capability_id = None if tool_def is None else tool_def.capability_id
+        run_ctx = self.tool_manager.ctx
+        owner = None if capability_id is None or run_ctx is None else run_ctx.capabilities.get(capability_id)
+        if owner is None or capability_id is None:
+            return part
+        return within_ceiling(part, capability_id, owner._effective_authority)  # pyright: ignore[reportPrivateUsage]
+
     async def _call_tools(  # noqa: C901
         self,
         tool_calls: list[_messages.ToolCallPart],
@@ -919,7 +937,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_metadata: dict[str, dict[str, Any]],
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
-        user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
+        user_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
         deferred_calls_by_index: dict[int, _DeferredBucket] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
@@ -929,7 +947,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_parts, tool_user_content = result
             tool_parts_by_index[index] = tool_parts
             if tool_user_content:
-                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+                user_parts_by_index[index] = self._tool_user_part(tool_calls[index], tool_user_content)
 
             tool_part = tool_parts[0]
             assert isinstance(tool_part, _messages.ToolReturnPart)
@@ -1400,7 +1418,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         )
 
         function_parts: dict[int, _FunctionCallParts] = {}
-        function_user_parts: dict[int, _messages.UserPromptPart] = {}
+        function_user_parts: dict[int, _messages.ModelRequestPart] = {}
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
         function_events: dict[int, _messages.FunctionToolResultEvent] = {}
@@ -1449,7 +1467,9 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 tool_parts, tool_user_content = payload
                                 function_parts[index] = tool_parts
                                 if tool_user_content:
-                                    function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
+                                    function_user_parts[index] = self._tool_user_part(
+                                        self.tool_calls[index], tool_user_content
+                                    )
                                 tool_part = tool_parts[0]
                                 assert isinstance(tool_part, _messages.ToolReturnPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
