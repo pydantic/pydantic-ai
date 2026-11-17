@@ -94,7 +94,7 @@ async def test_tool_output_submission_ends_run_without_another_model_request():
 
     @agent.tool
     async def assemble(ctx: RunContext) -> str:
-        seen_defs.extend(ctx.output_tool_defs)
+        seen_defs.extend(ctx.output_tools.values())
         await ctx.submit_output('submit_invoice', {'order_id': 'ord_1', 'total': 42})
         return 'assembled'
 
@@ -121,7 +121,7 @@ async def test_union_submission_in_every_structured_mode(output_type: Any):
 
     @agent.tool
     async def assemble(ctx: RunContext) -> str:
-        seen_names.extend(d.name for d in ctx.output_tool_defs)
+        seen_names.extend(ctx.output_tools)
         await ctx.submit_output('final_result_Receipt', {'payment_id': 'pay_1'})
         return 'assembled'
 
@@ -136,7 +136,7 @@ async def test_native_single_output_and_text_output():
 
     @native.tool
     async def assemble(ctx: RunContext) -> str:
-        [tool_def] = ctx.output_tool_defs
+        [tool_def] = ctx.output_tools.values()
         assert tool_def.name == 'final_result'
         await ctx.submit_output('final_result', {'response': 7})
         return 'assembled'
@@ -147,7 +147,7 @@ async def test_native_single_output_and_text_output():
 
     @text.tool
     async def write(ctx: RunContext) -> str:
-        assert [d.name for d in ctx.output_tool_defs] == ['final_result']
+        assert list(ctx.output_tools) == ['final_result']
         await ctx.submit_output('final_result', {'response': 'the report'})
         return 'written'
 
@@ -159,7 +159,7 @@ async def test_text_output_alongside_output_tools():
 
     @agent.tool
     async def write(ctx: RunContext) -> str:
-        assert [d.name for d in ctx.output_tool_defs] == ['final_result', 'final_result_text']
+        assert list(ctx.output_tools) == ['final_result', 'final_result_text']
         await ctx.submit_output('final_result_text', {'response': 'plain text'})
         return 'written'
 
@@ -381,7 +381,7 @@ async def test_submit_output_misuse():
         await agent.run('go')
 
     ctx = RunContext(deps=None, model=FunctionModel(lambda m, i: ModelResponse(parts=[])), usage=RunUsage())
-    assert ctx.output_tool_defs == []
+    assert ctx.output_tools == {}
     with pytest.raises(UserError, match='can only be called during an agent run'):
         await ctx.submit_output('final_result', {})
 
@@ -447,7 +447,7 @@ class Refund(BaseModel):
     payment_id: str
 
 
-async def test_output_tool_defs_names_and_descriptions():
+async def test_output_tools_names_and_descriptions():
     agent = Agent(
         call_tool_then_reply('inspect'),
         output_type=[ToolOutput(Invoice, name='final_result_text'), str],
@@ -456,7 +456,7 @@ async def test_output_tool_defs_names_and_descriptions():
     seen: list[list[tuple[str, str | None]]] = []
 
     async def inspect(ctx: RunContext) -> str:
-        defs = ctx.output_tool_defs
+        defs = list(ctx.output_tools.values())
         seen.append([(d.name, d.description) for d in defs])
         last = defs[-1]
         await ctx.submit_output(
@@ -655,12 +655,12 @@ async def test_context_retained_past_the_end_of_its_run():
     gc.collect()
     [ctx] = retained
 
-    assert ctx.output_tool_defs == []
+    assert ctx.output_tools == {}
     with pytest.raises(UserError, match='The run this context belongs to has ended'):
         await ctx.submit_output('final_result', {'response': 'late'})
 
 
-async def test_output_tool_defs_reflect_prepare_output_tools():
+async def test_output_tools_reflect_prepare_output_tools():
     seen: list[list[str]] = []
     agent = Agent(
         call_tool_then_reply('inspect'),
@@ -670,7 +670,7 @@ async def test_output_tool_defs_reflect_prepare_output_tools():
 
     @agent.tool
     async def inspect(ctx: RunContext) -> str:
-        seen.append([tool_def.name for tool_def in ctx.output_tool_defs])
+        seen.append(list(ctx.output_tools))
         return 'inspected'
 
     await agent.run('go')
@@ -1094,7 +1094,7 @@ class SubmitBeforeTheFirstStep(AbstractCapability[None]):
         self.output_tool_names: list[str] = []
 
     async def submit(self, ctx: RunContext[None]) -> None:
-        self.output_tool_names = [d.name for d in ctx.output_tool_defs]
+        self.output_tool_names = list(ctx.output_tools)
         await ctx.submit_output('submit_invoice', {'order_id': self.hook, 'total': 1})
 
     async def before_run(self, ctx: RunContext[None]) -> None:
@@ -1160,7 +1160,7 @@ async def test_submission_before_the_first_step_to_a_hidden_output_tool_is_rejec
     assert raised == ["Output tool 'submit_receipt' is not available right now."]
 
 
-async def test_output_tool_defs_carry_what_prepare_output_tools_changed():
+async def test_output_tools_carry_what_prepare_output_tools_changed():
     seen: list[str | None] = []
 
     async def describe(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -1174,7 +1174,7 @@ async def test_output_tool_defs_carry_what_prepare_output_tools_changed():
 
     @agent.tool
     async def assemble(ctx: RunContext) -> str:
-        [tool_def] = ctx.output_tool_defs
+        [tool_def] = ctx.output_tools.values()
         seen.append(tool_def.description)
         await ctx.submit_output(tool_def.name, {'order_id': 'ord_1', 'total': 1})
         return 'assembled'
@@ -1202,7 +1202,7 @@ async def test_image_output_and_deferred_tool_requests_cannot_be_submitted(outpu
         async def before_model_request(
             self, ctx: RunContext[None], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            seen.append([d.name for d in ctx.output_tool_defs])
+            seen.append(list(ctx.output_tools))
             try:
                 await ctx.submit_output('DeferredToolRequests', {'calls': []})
             except ModelRetry as e:

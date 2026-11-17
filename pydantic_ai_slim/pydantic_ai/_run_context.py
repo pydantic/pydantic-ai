@@ -69,7 +69,7 @@ class OutputSubmitter(Protocol):
     """Backs [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] for one agent run."""
 
     @property
-    def tool_defs(self) -> list[ToolDefinition]: ...
+    def tools(self) -> dict[str, ToolDefinition]: ...
 
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None: ...
 
@@ -411,7 +411,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _output_submitter: OutputSubmitter | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
-    Backs [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs] and
+    Backs [`output_tools`][pydantic_ai.tools.RunContext.output_tools] and
     [`submit_output`][pydantic_ai.tools.RunContext.submit_output]. `None` in synthetic contexts that
     aren't backed by a running agent.
     """
@@ -879,8 +879,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
     @property
-    def output_tool_defs(self) -> list[ToolDefinition]:
-        """The outputs a tool can submit with [`submit_output`][pydantic_ai.tools.RunContext.submit_output], one per output type.
+    def output_tools(self) -> dict[str, ToolDefinition]:
+        """The outputs a tool can submit with [`submit_output`][pydantic_ai.tools.RunContext.submit_output], one per output type, keyed by name.
 
         With tool output they're the agent's output tools, as this step's
         [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hooks left
@@ -893,7 +893,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Temporal activity.
         """
         submitter = self._live_output_submitter
-        return [] if submitter is None else submitter.tool_defs
+        return {} if submitter is None else submitter.tools
 
     async def submit_output(self, tool_name: str, args: dict[str, Any]) -> None:
         """Submit the agent run's output, as if the model had called that output tool.
@@ -924,7 +924,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         be accepted.
 
         Args:
-            tool_name: The name of one of [`output_tool_defs`][pydantic_ai.tools.RunContext.output_tool_defs].
+            tool_name: The name of one of [`output_tools`][pydantic_ai.tools.RunContext.output_tools].
             args: The arguments, matching that definition's `parameters_json_schema`.
 
         Raises:
