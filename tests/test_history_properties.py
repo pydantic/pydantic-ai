@@ -13,6 +13,9 @@ test too.
 
 A property that fails on main for drawn histories is a known finding: `KNOWN_FINDINGS` leaves the damage that
 draws it out of that property's histories, and a strict expected failure on a hand-built reproducer pins it.
+
+The histories in `tests/history_cases.py` are fixed cases for two more properties: every request a history leads to
+starts with what the previous request settled, and a history dumped and loaded renders the same request.
 """
 
 from __future__ import annotations as _annotations
@@ -20,7 +23,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import os
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from typing import Literal, assert_never
 
@@ -30,6 +33,7 @@ from _pytest.mark import ParameterSet
 from hypothesis import HealthCheck, given, settings, strategies as st
 from pydantic import JsonValue
 
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -42,9 +46,14 @@ from pydantic_ai.messages import (
     UserPromptPart,
     repair_messages,
 )
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
+)
 
 from .conftest import try_import
+from .history_cases import HISTORIES, HistoryCase
 from .history_invariants import (
     WireBlock,
     WireMessage,
@@ -100,7 +109,9 @@ with try_import() as openai_imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
+    from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 # Hypothesis compares the global `random` state before and after each draw and notes this deprecation when it
 # changed. Its own `control.py` documents the false positive: a different thread touching `random` during a draw
@@ -166,6 +177,21 @@ def _openai_chat_model() -> OpenAIChatModel:
 
 async def _openai_chat_body(history: list[ModelMessage]) -> Body:
     model = _openai_chat_model()
+    parameters, messages = _prepare(model, history)
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters=parameters, model_settings=OpenAIChatModelSettings()
+    )
+    return _body(None, mapped)
+
+
+@cache
+def _openrouter_model() -> OpenRouterModel:
+    """Sends thinking back in a `reasoning` field (`openai_chat_send_back_thinking_parts='field'`)."""
+    return OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(api_key='test-key'))
+
+
+async def _openrouter_body(history: list[ModelMessage]) -> Body:
+    model = _openrouter_model()
     parameters, messages = _prepare(model, history)
     mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         messages, model_request_parameters=parameters, model_settings=OpenAIChatModelSettings()
@@ -280,6 +306,7 @@ async def _huggingface_body(history: list[ModelMessage]) -> Body:
 @dataclass(frozen=True)
 class MapperCase:
     id: str
+    model: Callable[[], Model]
     body: Callable[[list[ModelMessage]], Coroutine[object, object, Body]]
     wire: Callable[[JsonValue], list[WireMessage]]
     baseline: list[WireMessage]
@@ -330,6 +357,7 @@ def _baseline_turns(*, assistant: str, results: str, call_id: str = 'call_1') ->
 MAPPER_CASES = [
     MapperCase(
         'openai-chat',
+        _openai_chat_model,
         _openai_chat_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
@@ -339,6 +367,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'openai-responses',
+        _openai_responses_model,
         _openai_responses_body,
         openai_responses_wire,
         [
@@ -354,6 +383,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'anthropic',
+        _anthropic_model,
         _anthropic_body,
         anthropic_wire,
         _baseline_turns(assistant='assistant', results='user'),
@@ -363,6 +393,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'google',
+        _google_model,
         _google_body,
         google_wire,
         _baseline_turns(assistant='model', results='user'),
@@ -370,6 +401,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'bedrock',
+        _bedrock_model,
         _bedrock_body,
         bedrock_wire,
         _baseline_turns(assistant='assistant', results='user'),
@@ -379,6 +411,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'groq',
+        _groq_model,
         _groq_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
@@ -387,6 +420,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'mistral',
+        _mistral_model,
         _mistral_body,
         chat_completions_wire,
         # Mistral takes only 9-character alphanumeric ids, so its profile rewrites `call_1` to a stable hash.
@@ -395,6 +429,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'cohere',
+        _cohere_model,
         _cohere_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
@@ -402,6 +437,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'huggingface',
+        _huggingface_model,
         _huggingface_body,
         chat_completions_wire,
         _baseline_turns(assistant='assistant', results='tool'),
@@ -783,3 +819,157 @@ def test_mapped_text_is_not_empty(case: MapperCase, data: st.DataObject):
 def test_mapping_is_deterministic(case: MapperCase, data: st.DataObject):
     """P5: mapping a history again, or after a JSON round trip, gives the same body."""
     assert _check('deterministic', case, data) == []
+
+
+# --- hand-built histories ------------------------------------------------------------------------------
+#
+# Fixed cases from `tests/history_cases.py`, rendered for every mapper and for OpenRouter, which sends thinking back in
+# a `reasoning` field. They aren't drawn: each holds the record kinds `prepare_messages` translates or drops, in the
+# shapes a run stores them in.
+
+_OPENROUTER = MapperCase(
+    'openrouter',
+    _openrouter_model,
+    _openrouter_body,
+    chat_completions_wire,
+    _baseline_turns(assistant='assistant', results='tool'),
+    marks=_needs(openai_imports_successful, 'openai'),
+)
+
+HISTORY_CASE_TARGETS = [*MAPPER_CASES, _OPENROUTER]
+
+
+def history_case_params() -> list[ParameterSet]:
+    """Every hand-built history on every target, skipped where the target's package isn't installed."""
+    return [
+        pytest.param(history, case, id=f'{history.id}-{case.id}', marks=case.marks)
+        for history in HISTORIES
+        for case in HISTORY_CASE_TARGETS
+    ]
+
+
+@dataclass(frozen=True)
+class Rendered:
+    """One request a history leads to: what `prepare_messages` returned, and the provider body's messages."""
+
+    messages: list[JsonValue]
+    request_scoped_tail: int
+    """How many of the trailing request's last parts are request-scoped prompts, which later requests drop."""
+    body: list[JsonValue]
+
+
+def message_json(message: ModelMessage) -> dict[str, JsonValue]:
+    """`message` as JSON, without what no adapter sends: timestamps, metadata, and a request's `instructions`, its
+    system prompt, which adapters read from the trailing request alone."""
+    [dumped] = ModelMessagesTypeAdapter.dump_python([message], mode='json')
+    for key in ('instructions', 'timestamp', 'metadata'):
+        dumped.pop(key, None)
+    for part in dumped['parts']:
+        part.pop('timestamp', None)
+    return dumped
+
+
+async def _render(case: MapperCase, history: list[ModelMessage]) -> Rendered:
+    _, messages = _prepare(case.model(), history)
+    body = (await case.body(history)).messages
+    assert isinstance(body, list)
+    return Rendered(
+        messages=[message_json(message) for message in messages],
+        request_scoped_tail=len(_request_scoped_tail_texts(messages)),
+        body=body,
+    )
+
+
+_ANNOUNCEMENTS = {lookalike_note_announcement(system_role=False, sealed=sealed) for sealed in (False, True)}
+
+
+def _parts(message: JsonValue) -> list[JsonValue]:
+    assert isinstance(message, dict) and isinstance(message['parts'], list)
+    return message['parts']
+
+
+def _is_announcement(part: JsonValue) -> bool:
+    return isinstance(part, dict) and part.get('part_kind') == 'system-prompt' and part.get('content') in _ANNOUNCEMENTS
+
+
+def _without_new_announcement(earlier: Rendered, later: Rendered) -> Rendered:
+    """`later` without the framing announcement, when it joined the standing prompt after `earlier`.
+
+    With `'when_needed'`, on a model without mid-conversation system messages, the announcement goes ahead of the first
+    request's standing prompt at the first request whose history needs it, and stays there: the cached prefix changes
+    once, on purpose (`Model._announce_in_standing_prompt`). That's the one change to a settled message allowed.
+    """
+    later_first, *later_rest = later.messages
+    if any(_is_announcement(part) for part in _parts(earlier.messages[0])):
+        return later
+    first_parts = _parts(later_first)
+    if not (first_parts and _is_announcement(first_parts[0])):
+        return later
+    assert isinstance(later_first, dict)
+    return replace(later, messages=[{**later_first, 'parts': first_parts[1:]}, *later_rest])
+
+
+def _assert_settled_messages_kept(earlier: Rendered, later: Rendered) -> None:
+    """`later` renders every message `earlier` rendered the same, and the trailing request's parts as the start of
+    its own, so parts a later turn adds to it (such as a note ahead of carried reasoning) only extend it. The trailing
+    request's request-scoped prompts are left out: later requests drop them."""
+    *settled, trailing = earlier.messages
+    assert later.messages[: len(settled)] == settled
+    parts = _parts(trailing)[: len(_parts(trailing)) - earlier.request_scoped_tail]
+    later_trailing = later.messages[len(settled)]
+    assert isinstance(trailing, dict) and isinstance(later_trailing, dict)
+    assert {**later_trailing, 'parts': _parts(later_trailing)[: len(parts)]} == {**trailing, 'parts': parts}
+
+
+def _conversation(body: list[JsonValue]) -> list[JsonValue]:
+    """The body's items after the leading system ones: those carry the request's instructions, which an instruction
+    change rewrites by design, and which the cache-prefix tests cover."""
+    start = next(
+        (
+            i
+            for i, item in enumerate(body)
+            if not (isinstance(item, dict) and item.get('role') in ('system', 'developer'))
+        ),
+        len(body),
+    )
+    return body[start:]
+
+
+def _is_user_side(item: JsonValue) -> bool:
+    """Whether a body item is the request's side of the conversation, rather than a turn the model produced."""
+    assert isinstance(item, dict)
+    role = item.get('role')
+    if role is not None:
+        return role not in ('assistant', 'model')
+    # OpenAI Responses items without a role: everything but a tool result is the model's.
+    return item.get('type') == 'function_call_output'
+
+
+def _settled_body(body: list[JsonValue]) -> list[JsonValue]:
+    """The conversation items up to and including the last turn the model produced."""
+    conversation = _conversation(body)
+    last = max((i for i, item in enumerate(conversation) if not _is_user_side(item)), default=-1)
+    return conversation[: last + 1]
+
+
+@pytest.mark.parametrize(('history_case', 'case'), history_case_params())
+async def test_earlier_messages_render_the_same_in_every_later_request(history_case: HistoryCase, case: MapperCase):
+    """Each request starts with what the previous request settled: the prepared messages (see
+    `_assert_settled_messages_kept`) and the body up to its last assistant turn. Rendering a turn depends only on that
+    turn and what came before it, never on later ones, except for the framing announcement joining the standing
+    prompt once (see `_without_new_announcement`)."""
+    history = await history_case.history()
+    request_ends = [i + 1 for i, message in enumerate(history) if isinstance(message, ModelRequest)]
+    renderings = [await _render(case, history[:end]) for end in request_ends]
+    for earlier, later in zip(renderings, renderings[1:]):
+        _assert_settled_messages_kept(earlier, _without_new_announcement(earlier, later))
+        settled_body = _settled_body(earlier.body)
+        assert _conversation(later.body)[: len(settled_body)] == settled_body
+
+
+@pytest.mark.parametrize(('history_case', 'case'), history_case_params())
+async def test_round_trip_renders_the_same_request(history_case: HistoryCase, case: MapperCase):
+    """A history dumped and loaded with `ModelMessagesTypeAdapter` renders the same request bytes."""
+    history = await history_case.history()
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    assert await _render(case, loaded) == await _render(case, history)
