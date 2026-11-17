@@ -139,7 +139,7 @@ Approver = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 
 @dataclass
 class Permissions(AbstractCapability[AgentDepsT]):
-    """Ask before tool calls that write files or run shell commands, according to a permission mode.
+    """Ask before file writes and shell commands by permission mode, and allow, ask, or deny tool calls by rule.
 
     A call the mode asks about raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it
     joins the run's deferred approval flow: a
@@ -147,15 +147,14 @@ class Permissions(AbstractCapability[AgentDepsT]):
     `ask_permissions` puts it to a person inline, and without one the run ends with it in its
     [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
-    File writes are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by
-    their tool kind whatever they are named. Commands are the tools whose metadata declares
-    `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Other
-    tools are not checked, and neither are sub-agents' runs this capability does not reach: pass it in
-    `SubAgents(shared_capabilities=[...])` to check them too.
+    `rules` decide calls to any tool before the mode does: a matching `'allow'` rule runs the call, `'ask'`
+    holds it, and `'deny'` refuses it with a `ToolReturnPart` whose `outcome` is `'denied'`, even when it was
+    approved. Calls no rule matches follow the mode.
 
-    `rules` decide calls before the mode does: a matching `'allow'` rule runs the call, `'ask'` holds it,
-    and `'deny'` refuses it with a `ToolReturnPart` whose `outcome` is `'denied'`, even when it was approved.
-    Calls no rule matches follow the mode.
+    The mode checks file writes, the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`,
+    recognized by their tool kind whatever they are named, and commands, the tools whose metadata declares
+    `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Sub-agents'
+    runs this capability does not reach are not checked: pass it in `SubAgents(shared_capabilities=[...])`.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.

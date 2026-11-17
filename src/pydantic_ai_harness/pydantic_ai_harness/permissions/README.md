@@ -88,15 +88,15 @@ permissions = Permissions(
 
 A `PermissionRule` matches a call when every field it sets matches: `tool` is a glob for the tool name, `args` maps argument names to globs for their string values, and `command` is the words of a shell command. When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order, so a broad allow rule cannot override a deny rule.
 
-- **`'allow'`** runs the call without asking, even in `'read-only'` mode.
+- **`'allow'`** runs the call without asking, even in `'read-only'` mode or when it matches `ask_commands`.
 - **`'ask'`** holds the call like the mode does, with the rule's `reason` for the person deciding. A held call to a tool that neither writes files nor runs commands has the `action` `'call'` and its arguments as JSON for its `subject`.
 - **`'deny'`** refuses the call without running it, even when it was approved, for example by another capability's approval. The model gets a tool result with `outcome='denied'` saying a permission rule refused it, with the rule's `reason`.
 
 A `command` rule only matches tools that declare a shell command argument (see [Which calls are checked](#which-calls-are-checked)), and judges a compound command by each of its simple commands, split at `;`, `&&`, `||`, `|`, and `&`:
 
 - A command runs by rule only when an `'allow'` rule matches every simple command in it. An allow rule matches a simple command that starts with its words and has no redirection other than to `/dev/null` or a file descriptor, so `PermissionRule('allow', command='git status')` lets `ls && git status --short` run when `ls` is allowed too, but not `git status > ~/.bashrc` or `FOO=1 git status`.
-- An `'ask'` or `'deny'` rule matches a simple command that contains its words anywhere, so `sudo rm -rf /` and `ls; rm -rf /` match `'rm -rf'`, and its first word also matches a path ending in it, such as `/bin/rm`.
-- A command too complex to split, with command substitution (`$(...)`, backticks), process substitution, subshells, here-documents, line breaks, or unbalanced quotes, is checked word by word against the ask and deny rules. When none matches and an allow rule could have vouched for it, it asks.
+- An `'ask'` or `'deny'` rule matches a simple command that contains its words anywhere, including inside quotes, so `sudo rm -rf /`, `ls; rm -rf /`, and `sh -c "rm -rf /"` match `'rm -rf'`, and its first word also matches a path ending in it, such as `/bin/rm`.
+- A command too complex to split, with command or parameter substitution (`$(...)`, `${...}`, backticks), process substitution, subshells, here-documents, line breaks, or unbalanced quotes, is checked word by word, quotes removed. A rule never allows it: where an allow rule, including one for the whole tool, would have, it asks instead.
 
 An allow rule trusts everything after its words, so allowing `find` also allows `find -exec rm {} \;`: allow the narrowest commands you can. Deny rules match words, not behavior, so `rm -r -f` does not match `'rm -rf'`. Like `ask_commands`, rules are a convenience, not a sandbox.
 

@@ -18,7 +18,8 @@ PermissionVerdict = Literal['allow', 'ask', 'deny']
 _SEVERITY: dict[PermissionVerdict, int] = {'allow': 0, 'ask': 1, 'deny': 2}
 _SEPARATORS = frozenset({';', '&', '&&', '|', '||', '|&'})
 _OPERATOR_CHARS = frozenset('();<>|&')
-_UNSPLITTABLE = ('$(', '`', '<(', '>(', '\n')
+_UNSPLITTABLE = ('$(', '${', '`', '<(', '>(', '\n')
+_LOOSE_SPLIT = re.compile(r'[\s;&|()<>`${}]+')
 _UNSPLITTABLE_OPERATOR = re.compile(r'[()]|<<|;;')
 _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in range(10))})
 
@@ -109,6 +110,11 @@ def _segments(command: str) -> list[_Segment] | None:
     return [segment for segment in segments if segment.words]
 
 
+def _loose(words: Iterable[str]) -> list[str]:
+    """`words` split again at whitespace and shell punctuation, so a quoted command such as `sh -c '...'` shows."""
+    return [part for word in words for part in _LOOSE_SPLIT.split(word) if part]
+
+
 def _contains(words: Sequence[str], rule: Sequence[str]) -> bool:
     head, rest = rule[0], list(rule[1:])
     return any(
@@ -121,7 +127,7 @@ def _matches_segment(rule: PermissionRule, segment: _Segment) -> bool:
     words = _words(rule.command or '')
     if rule.verdict == 'allow':
         return not segment.redirected and segment.words[: len(words)] == words
-    return _contains(segment.words, words)
+    return _contains(_loose(segment.words), words)
 
 
 def _strictest(rules: Iterable[PermissionRule]) -> PermissionRule | None:
@@ -138,22 +144,16 @@ _UNSPLITTABLE_RULE = PermissionRule(
 
 
 def _unsplittable_rule(rules: Sequence[PermissionRule], command: str) -> PermissionRule | None:
-    """Match the words of a command too complex to split against the `'ask'` and `'deny'` rules.
-
-    When none matches but an `'allow'` rule could have vouched for the command, it asks.
-    """
-    words = re.split(r'[\s;&|()<>`$]+', command)
-    restrictive = _strictest(
-        rule for rule in rules if rule.verdict != 'allow' and _contains(words, _words(rule.command or ''))
-    )
-    if restrictive is not None or all(rule.verdict != 'allow' for rule in rules):
-        return restrictive
-    return _UNSPLITTABLE_RULE
+    """Match a command too complex to split word by word, quotes removed, asking where a rule would allow it."""
+    words = _loose([re.sub(r'[\'"\\]', '', command)])
+    matched = _strictest(rule for rule in rules if _contains(words, _words(rule.command or '')))
+    return _UNSPLITTABLE_RULE if matched is not None and matched.verdict == 'allow' else matched
 
 
-def _command_rule(rules: Sequence[PermissionRule], command: str) -> PermissionRule | None:
+def _command_rule(
+    rules: Sequence[PermissionRule], command: str, segments: list[_Segment] | None
+) -> PermissionRule | None:
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
-    segments = _segments(command)
     if segments is None:
         return _unsplittable_rule(rules, command)
     deciders = [_strictest(rule for rule in rules if _matches_segment(rule, segment)) for segment in segments]
@@ -173,10 +173,12 @@ def decide(
         if fnmatchcase(tool_name, rule.tool)
         and all(isinstance(args.get(name), str) and fnmatchcase(args[name], glob) for name, glob in rule.args.items())
     ]
-    command_rules = [rule for rule in applicable if rule.command is not None]
     found = [rule for rule in applicable if rule.command is None]
-    if command is not None and command_rules:
-        decided = _command_rule(command_rules, command)
-        if decided is not None:
-            found.append(decided)
-    return _strictest(found)
+    if command is None:
+        return _strictest(found)
+    segments = _segments(command)
+    decided = _command_rule([rule for rule in applicable if rule.command is not None], command, segments)
+    rule = _strictest([*found, decided] if decided is not None else found)
+    if segments is None and rule is not None and rule.verdict == 'allow':
+        return _UNSPLITTABLE_RULE
+    return rule

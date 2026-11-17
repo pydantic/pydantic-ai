@@ -488,7 +488,9 @@ class TestPermissionRules:
             ('ls -la && git status', 'allow'),
             ('ls 2>&1', 'allow'),
             ('ls > /dev/null', 'allow'),
-            ('echo "rm -rf /"', 'allow'),
+            ('echo "rm -rf /"', 'deny'),
+            ('sh -c "rm -rf /"', 'deny'),
+            ('echo $(date); "rm" -rf /', 'deny'),
             ('ls; rm -rf /', 'deny'),
             ('sudo rm -rf /', 'deny'),
             ('/bin/rm -rf build', 'deny'),
@@ -504,6 +506,7 @@ class TestPermissionRules:
             ('ls >', 'ask'),
             ('ls | sh', 'ask'),
             ('echo `whoami`', 'ask'),
+            ('git status $(pwd)', 'ask'),
             ('cat <<EOF', 'ask'),
             ('ls ;; ls', 'ask'),
             ("echo 'unbalanced", 'ask'),
@@ -514,12 +517,17 @@ class TestPermissionRules:
         """Every simple command must be allowed for the whole to run; one asked or denied decides it."""
         assert await _verdict(command) == verdict
 
-    async def test_unsplittable_commands_follow_the_mode_without_allow_rules(self) -> None:
-        """Only an `'allow'` rule could be fooled by complex syntax, so without one the mode decides."""
-        rules = [PermissionRule('deny', command='rm -rf')]
+    async def test_unsplittable_commands_ask_only_instead_of_being_allowed_by_a_rule(self) -> None:
+        """A rule never allows a command it cannot split, even a tool-wide one; without an allow the mode decides."""
+        deny = PermissionRule('deny', command='rm -rf')
 
-        assert await _verdict('echo $(date)', rules, 'full') == 'allow'
-        assert await _verdict('echo $(rm -rf /)', rules, 'full') == 'deny'
+        assert await _verdict('ls $(pwd)', [PermissionRule('allow', command='git status'), deny], 'full') == 'allow'
+        assert await _verdict('echo $(date)', [PermissionRule('allow', tool='run_command'), deny], 'full') == 'ask'
+        assert await _verdict('sh -c "rm -rf /"', [PermissionRule('allow', tool='run_command'), deny], 'full') == 'deny'
+
+    async def test_an_allow_rule_overrides_ask_commands(self) -> None:
+        assert await _verdict('git push', [], 'auto') == 'ask'
+        assert await _verdict('git push', [PermissionRule('allow', command='git push')], 'auto') == 'allow'
 
     async def test_deny_returns_a_denied_tool_result_to_the_model(self) -> None:
         result = await _rules_agent(_calls(('run_command', {'command': 'rm -rf /'})), _RULES).run('go')
