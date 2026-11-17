@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
-from types import AsyncGeneratorType, TracebackType
+from types import AsyncGeneratorType, NoneType, TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -7846,7 +7846,7 @@ async def test_stream_cancelled_at_any_point_leaves_no_task_behind(
             raise error
 
     capabilities: list[AbstractCapability[None]] = [HandlesErrors()] if primed else []
-    agent = Agent(TestModel(), capabilities=capabilities)
+    agent = Agent(TestModel(), deps_type=NoneType, capabilities=capabilities)
 
     async def consume() -> None:
         with capture_run_messages() as messages:
