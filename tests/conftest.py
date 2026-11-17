@@ -565,9 +565,14 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
     ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
     ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
-    ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
-    ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # The harness reads its own package metadata once per process (the lookup is cached) to name its version in
+    # client attribution metadata: the You.com `X-Client-Info` header and the MongoDB connection handshake.
+    ('os.stat', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    # PyMongo checks for `/.dockerenv` with a sync `Path.exists` whenever it builds pool options, including when an
+    # `AsyncMongoClient` opens its topology on the event loop, and offers no way to skip the check.
+    ('os.stat', 'pymongo/pool_options.py', 'get_container_env_info'),
     # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
     # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
     # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.

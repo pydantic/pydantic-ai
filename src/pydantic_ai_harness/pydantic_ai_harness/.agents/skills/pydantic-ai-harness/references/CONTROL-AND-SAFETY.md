@@ -647,6 +647,10 @@ agent = Agent(
   as a lasting `SystemPromptPart` re-sent on every later request (one more part per firing, so bound it
   with `interval`/`max_fires`); use it for guidance that must outlast its step, instructions for text
   that holds on every step, and the default `'request'` for per-step nudges or changing values.
+  `skip_unchanged=True` (requires `scope='conversation'`) skips a firing while a copy of the same text
+  is still in the history the model sees, across runs too, and records it again once compaction drops it.
+  List any `ProcessHistory`/compaction that drops messages before `SystemReminders`, or a trimmed
+  copy still suppresses the firing.
 - `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
   on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.

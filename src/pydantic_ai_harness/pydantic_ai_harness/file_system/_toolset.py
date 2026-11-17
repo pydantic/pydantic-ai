@@ -621,10 +621,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         }
         for name in FILE_SYSTEM_TOOL_NAMES:
             if name in self._tools:
-                # Approval must run in the workflow before the durable workspace write activity.
-                metadata = {'temporal': False} if name in {'write_file', 'edit_file', 'create_directory'} else None
+                changes = name in {'write_file', 'edit_file', 'create_directory'}
                 self.add_function(
-                    registrations[name], name=name, metadata=metadata, tool_kind=FILE_SYSTEM_TOOL_KINDS[name]
+                    registrations[name],
+                    name=name,
+                    # Approval must run in the workflow before the durable workspace write activity.
+                    metadata={'temporal': False} if changes else None,
+                    tool_kind=FILE_SYSTEM_TOOL_KINDS[name],
+                    # A change can depend on an earlier call in the same response, like a write into a new directory.
+                    sequential=changes,
                 )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

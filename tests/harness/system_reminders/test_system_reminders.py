@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -244,6 +244,10 @@ class TestReminderValidation:
     def test_zero_max_fires_raises(self) -> None:
         with pytest.raises(ValueError, match='max_fires must be >= 1'):
             Reminder('t', max_fires=0)
+
+    def test_skip_unchanged_requires_conversation_scope(self) -> None:
+        with pytest.raises(ValueError, match="`skip_unchanged` requires `scope='conversation'`"):
+            Reminder('t', tag=None, skip_unchanged=True)
 
 
 class TestRenderContent:
@@ -1393,6 +1397,64 @@ class TestEndToEnd:
         # Each request starts with the one before it: the lasting copies are appended, never moved or dropped.
         for previous, current in zip(seen, seen[1:]):
             assert current[: len(previous)] == previous
+
+    async def test_unchanged_lasting_reminder_is_not_sent_again(self) -> None:
+        """A `skip_unchanged` reminder is recorded once across chained runs, and again once its copy is gone."""
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        tests = Reminder[None]('Run the tests.', tag=None, scope='conversation', skip_unchanged=True)
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            deps_type=type(None),
+            capabilities=[
+                SystemReminders[None](
+                    reminders=[tests, tests, Reminder('Be brief.', tag=None, scope='conversation', max_fires=1)]
+                )
+            ],
+        )
+
+        history: list[ModelMessage] = []
+        for prompt in ('one', 'two', 'three'):
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+        await agent.run('four', message_history=history[2:])
+        await agent.run('five', message_history=[*history, ModelResponse(parts=[CompactionPart(content='earlier')])])
+
+        assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1, 1, 1, 2]
+        assert [_sent_texts(messages).count('<system>Be brief.</system>') for messages in seen] == [1, 2, 3, 3, 4]
+
+    async def test_unchanged_reminder_is_recorded_again_after_a_history_processor_listed_before_it_trims_it(
+        self,
+    ) -> None:
+        """A `ProcessHistory` listed before `SystemReminders` trims the history the skip check reads."""
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        def keep_last(messages: list[ModelMessage]) -> list[ModelMessage]:
+            return messages[-1:]
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            deps_type=type(None),
+            capabilities=[
+                ProcessHistory[None](keep_last),
+                SystemReminders[None](
+                    reminders=[Reminder('Run the tests.', tag=None, scope='conversation', skip_unchanged=True)]
+                ),
+            ],
+        )
+
+        history: list[ModelMessage] = []
+        for prompt in ('one', 'two'):
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [1, 1]
 
     @pytest.mark.parametrize(('interval', 'firings'), [(None, [10, 20]), (1, list(range(1, 22))), (8, [8, 16])])
     async def test_llm_reminder_history_grows_by_one_record_per_firing(
