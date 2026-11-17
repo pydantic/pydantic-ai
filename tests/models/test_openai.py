@@ -33,6 +33,7 @@ from pydantic_ai import (
     ModelHTTPError,
     ModelProfile,
     ModelRequest,
+    ModelRequestRejectedError,
     ModelResponse,
     ModelRetry,
     ModelServerError,
@@ -57,7 +58,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.exceptions import ContentFilterError, OutputTokenLimitExceeded
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     InstructionPart,
@@ -2630,6 +2631,220 @@ async def test_openai_store_true(allow_model_requests: None):
     # Verify the store parameter was passed to the mock
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs.get('store') is True
+
+
+class _Forecast(BaseModel):
+    city: str
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('tool_kind', ['function', 'output'])
+async def test_chat_completions_tools_with_reasoning_rejected_before_send(
+    allow_model_requests: None, tool_kind: Literal['function', 'output'], stream: bool
+) -> None:
+    """GPT-6 rejects any tool while reasoning is on over Chat Completions, so the guard fires before sending.
+
+    A unit test: the recorded 400 is pinned by
+    `test_chat_completions_function_tools_with_reasoning_provider_400_without_flag`, and this asserts that no request
+    is made, which a cassette can't show. Output tools go out as function tools, and the API rejects them the same way.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='unused', role='assistant')))
+    m = OpenAIChatModel('gpt-6-luna', provider=OpenAIProvider(openai_client=mock_client))
+    if tool_kind == 'function':
+        agent = Agent(m)
+
+        @agent.tool_plain
+        def get_temperature(city: str) -> str:
+            return f'{city}: 21°C'  # pragma: no cover
+
+    else:
+        agent = Agent(m, output_type=_Forecast)
+
+    with pytest.raises(ModelRequestRejectedError) as exc_info:
+        if stream:
+            async with agent.run_stream('What is the temperature in Tokyo?'):
+                pass  # pragma: no cover
+        else:
+            await agent.run('What is the temperature in Tokyo?')
+
+    assert str(exc_info.value) == snapshot(
+        "OpenAI rejects tools, output tools included, while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or disable reasoning with `thinking=False` instead."
+    )
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_chat_completions_tools_with_reasoning_rejection_falls_back(allow_model_requests: None) -> None:
+    """`FallbackModel` falls back on the guard's error by default, as it does on the API's 400.
+
+    A unit test: the guard fires before any request, so there is nothing to record.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='unused', role='assistant')))
+    primary = OpenAIChatModel('gpt-6-luna', provider=OpenAIProvider(openai_client=mock_client))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(FallbackModel(primary, backup))
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return f'{city}: 21°C'  # pragma: no cover
+
+    result = await agent.run('What is the temperature in Tokyo?')
+
+    assert result.output == 'from backup'
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+@pytest.mark.parametrize(
+    'model_name, thinking_false_remedy',
+    [
+        pytest.param('gpt-6-luna', True, id='gpt-6-luna'),
+        pytest.param('gpt-6-sol', True, id='gpt-6-sol'),
+        pytest.param('gpt-6.1-terra', True, id='gpt-6.1-terra'),
+        # On these, `thinking=False` maps to the lowest effort, so it is not a way out.
+        pytest.param('gpt-6-astra', False, id='gpt-6-astra'),
+        pytest.param('gpt-6.1-sol', False, id='gpt-6.1-sol'),
+    ],
+)
+async def test_chat_completions_function_tools_reasoning_error_remedy_copy_per_id(
+    allow_model_requests: None, model_name: str, thinking_false_remedy: bool
+) -> None:
+    """The error always names `OpenAIResponsesModel`, suggesting `thinking=False` only where 'none' is accepted.
+
+    A unit test: the guard fires before any request, so there is nothing to record.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='unused', role='assistant')))
+    m = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    with pytest.raises(ModelRequestRejectedError, match='OpenAIResponsesModel') as exc_info:
+        await agent.run('echo')
+
+    assert ('thinking=False' in str(exc_info.value)) == thinking_false_remedy
+
+
+async def test_chat_completions_function_tools_explicit_effort_error_names_effort_none(
+    allow_model_requests: None,
+) -> None:
+    """With an explicit `openai_reasoning_effort`, which wins over `thinking`, the error names `'none'` for it instead.
+
+    Setting it lets the tools through. A unit test of the request shape: the guard fires before any request, and live,
+    gpt-6-luna accepts a tool with `reasoning_effort='none'`.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
+    m = OpenAIChatModel('gpt-6-luna', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    with pytest.raises(ModelRequestRejectedError) as exc_info:
+        await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low', thinking=False))
+
+    assert str(exc_info.value) == snapshot(
+        "OpenAI rejects tools, output tools included, while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or set `openai_reasoning_effort='none'` instead."
+    )
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+    result = await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='none'))
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('reasoning_effort') == 'none'
+    assert kwargs.get('tools')
+
+
+@pytest.mark.parametrize(
+    'model_name, thinking_false_escapes',
+    [
+        pytest.param('gpt-6-luna', True, id='gpt-6-luna'),
+        pytest.param('gpt-6-sol', True, id='gpt-6-sol'),
+        pytest.param('gpt-6.1-terra', True, id='gpt-6.1-terra'),
+        # `thinking=False` resolves to the lowest effort here, so the guard must still fire.
+        pytest.param('gpt-6-astra', False, id='gpt-6-astra'),
+        pytest.param('gpt-6.1-sol', False, id='gpt-6.1-sol'),
+    ],
+)
+async def test_chat_completions_function_tools_thinking_false_escapes_on_none_supported_id(
+    allow_model_requests: None, model_name: str, thinking_false_escapes: bool
+) -> None:
+    """`thinking=False` lets function tools through where 'none' is accepted, and never where efforts are pinned.
+
+    A unit test of the request shape: live, these models accept tools with `reasoning_effort='none'`, and reject
+    them with `'low'`, which is what `thinking=False` sends on the pinned-effort models.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
+    m = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, capabilities=[Thinking(effort=False)])
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    if thinking_false_escapes:
+        result = await agent.run('echo')
+        assert result.output == 'done'
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs.get('reasoning_effort') == 'none'
+        assert kwargs.get('tools')
+    else:
+        with pytest.raises(ModelRequestRejectedError, match='OpenAIResponsesModel'):
+            await agent.run('echo')
+        assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_chat_completions_function_tools_unflagged_id_unaffected(allow_model_requests: None) -> None:
+    """An unflagged reasoning model keeps sending function tools with reasoning on.
+
+    A unit test of the request shape: live, gpt-5.2 accepts a function tool with `reasoning_effort='low'`.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hello', role='assistant')))
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    result = await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
+    assert result.output == 'hello'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('tools')
+    assert kwargs.get('reasoning_effort') == 'low'
+
+
+async def test_chat_completions_function_tools_with_reasoning_provider_400_without_flag(
+    allow_model_requests: None, openai_api_key: str
+) -> None:
+    """With the flag off, the request goes out and the API's 400 surfaces.
+
+    This is the rejection the flag exists for, recorded live: gpt-6-luna, one function tool, default reasoning.
+    The flag is off on the shared profile OpenAI-compatible endpoints reuse, so they reach the API this way.
+    """
+    m = OpenAIChatModel(
+        'gpt-6-luna',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False),
+    )
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return f'{city}: 21°C'  # pragma: no cover
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('What is the temperature in Tokyo?')
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == snapshot(
+        {
+            'message': "Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.",
+            'type': 'invalid_request_error',
+            'param': 'reasoning_effort',
+            'code': None,
+        }
+    )
 
 
 async def test_user_id(allow_model_requests: None, openai_api_key: str):
@@ -5345,7 +5560,7 @@ async def test_openai_native_output_cut_off_by_max_tokens(
     prompt = 'List the 20 largest cities in the world.'
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(20\) exceeded while generating structured output, resulting in incomplete JSON\.',
     ) as exc_info:
         if stream:
@@ -6611,7 +6826,8 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
     ),
-    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
+    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field,
+    # so it goes back as tags in `content` and the request carries no field to backfill.
     AutoThinkingBackfillCase(
         id='responses_reasoning_id',
         history=[
@@ -6626,7 +6842,7 @@ AUTO_THINKING_BACKFILL_CASES = [
         ],
         assistant_turns=snapshot(
             [
-                {'tool_calls': ['get_weather'], 'rs_0123abcd': 'Paris first.'},
+                {'tool_calls': ['get_weather']},
                 {'tool_calls': ['get_weather']},
             ]
         ),
@@ -6662,8 +6878,9 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
 
     DeepSeek in thinking mode 400s on a tool-calling assistant turn after the last user message that omits
     `reasoning_content`, and a generic OpenAI-compatible provider leaves the mode at `'auto'`. The negative
-    cases pin what stays unchanged: earlier user turns, a request carrying no thinking field or two of them,
-    and a key that isn't a Chat thinking field. A mock transport stands in for a cassette because the claim is
+    cases pin what stays unchanged: earlier user turns, and a request carrying no thinking field or two of
+    them. Thinking whose id isn't a Chat thinking field goes back as tags in `content`, so those requests
+    carry no field to backfill. A mock transport stands in for a cassette because the claim is
     the request each synthetic history produces, which no provider response affects;
     `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill` is the live counterpart.
     """
@@ -6699,6 +6916,82 @@ async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: Aut
             extra = {key: value for key, value in sent.items() if key not in ('role', 'content', 'tool_calls')}
             assistant_turns.append({'tool_calls': tool_names, **extra})
     assert assistant_turns == case.assistant_turns
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+@pytest.mark.parametrize(
+    'thinking,profile,replayed',
+    [
+        pytest.param(
+            _thinking('Paris first.', id='rs_0123abcd'),
+            None,
+            snapshot([{'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}]),
+            id='summary',
+        ),
+        pytest.param(
+            ThinkingPart(content='', id='rs_0123abcd', signature='<encrypted>', provider_name='openai'),
+            None,
+            snapshot([{'role': 'assistant', 'content': 'Rain in Paris.'}]),
+            id='encrypted_only',
+        ),
+        pytest.param(
+            _thinking('Paris first.', id='rs_0123abcd'),
+            OpenAIModelProfile(openai_chat_thinking_field='reasoning_text'),
+            snapshot([{'role': 'assistant', 'content': '<think>\nParis first.\n</think>\n\nRain in Paris.'}]),
+            id='configured_field',
+        ),
+        pytest.param(
+            _thinking('Paris first.', id='rs_0123abcd'),
+            OpenAIModelProfile(mimics_assistant_message_formatting=True),
+            snapshot(
+                [
+                    {'role': 'user', 'content': '<assistant_thinking>\nParis first.\n</assistant_thinking>'},
+                    {'role': 'assistant', 'content': 'Rain in Paris.'},
+                ]
+            ),
+            id='user_turn',
+        ),
+    ],
+)
+async def test_auto_mode_replayed_responses_reasoning(
+    allow_model_requests: None,
+    thinking: ThinkingPart,
+    profile: OpenAIModelProfile | None,
+    replayed: list[dict[str, JsonValue]],
+):
+    """`'auto'` sends a replayed `OpenAIResponsesModel` reasoning item back as tags, never as a field named by its id.
+
+    Responses stores a reasoning item as a `ThinkingPart` whose id is the item id (`rs_...`), and both models share
+    the `'openai'` system, but Chat Completions has no such field. A profile that names its own thinking field
+    sends the item as tags too, because the id doesn't match that field, and a profile with
+    `mimics_assistant_message_formatting` sends those tags in a user turn ahead of the assistant message. The assertion
+    leaves out system messages and the two prompts. A mock transport stands in for a cassette
+    for the reason `test_auto_mode_thinking_backfill` gives.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')).model_dump(mode='json'),
+        )
+
+    history: list[ModelMessage] = [
+        _WEATHER_PROMPT,
+        ModelResponse(parts=[thinking, TextPart('Rain in Paris.')], provider_name='openai'),
+    ]
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'deepseek-v4-flash',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+            profile=profile,
+        )
+        await Agent(model).run('What about London?', message_history=history)
+
+    body = TypeAdapter(dict[str, JsonValue]).validate_json(request_bodies[0])
+    assert [msg for msg in json_objects(body['messages']) if msg['role'] != 'system'][1:-1] == replayed
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
@@ -7961,6 +8254,31 @@ async def test_openai_chat_refusal_falls_back_with_model_fallback(allow_model_re
 
     assert result.output == 'from backup'
     assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('gpt-4o', 'rejected')]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_chat_cut_off_response_with_model_fallback(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """`ModelFallback` falls back by default when a response reaches `max_tokens`; a streamed one is accepted as is."""
+    m = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)], model_settings=ModelSettings(max_tokens=5))
+    prompt = 'Describe the history of Paris in three paragraphs.'
+
+    if stream:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            async with agent.run_stream(prompt) as result:
+                output = await result.get_output()
+        assert output == snapshot('Paris, the capital of')
+        assert result.response.finish_reason == 'length'
+    else:
+        result = await agent.run(prompt)
+        assert result.output == 'from backup'
+        assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [
+            ('gpt-4.1-mini-2025-04-14', 'rejected')
+        ]
 
 
 async def test_openai_chat_streamed_refusal_with_model_fallback(allow_model_requests: None):
