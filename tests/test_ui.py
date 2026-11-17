@@ -1850,6 +1850,53 @@ async def test_reinject_system_prompt_capability_preserves_existing():
     assert [p.content for p in sys_parts] == ['First agent']
 
 
+async def test_reinject_system_prompt_capability_spares_request_only_system_part():
+    """A `SystemPromptPart` another capability added to the current request only is left alone.
+
+    The request messages carry a system prompt but the persistent history doesn't, so the
+    no-op must still fire and the agent's configured prompt must not be prepended.
+    """
+
+    @dataclass
+    class AddRequestPrompt(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            first_request = message(request_context.messages, ModelRequest)
+            request_context.messages = [
+                ModelRequest(parts=[SystemPromptPart(content='Request-only prompt'), *first_request.parts]),
+                *request_context.messages[1:],
+            ]
+            return request_context
+
+    @dataclass
+    class CaptureRequestPrompts(AbstractCapability[None]):
+        seen: list[str] = field(default_factory=list)
+
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request = message(request_context.messages, ModelRequest)
+            self.seen.extend(p.content for p in request.parts if isinstance(p, SystemPromptPart))
+            return request_context
+
+    capture = CaptureRequestPrompts()
+    agent = Agent(model=TestModel(), system_prompt='Server prompt')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(parts=[TextPart(content='Hello')]),
+    ]
+
+    await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[AddRequestPrompt(), ReinjectSystemPrompt(), capture],
+    )
+
+    assert capture.seen == ['Request-only prompt']
+
+
 async def test_adapter_server_mode_accepts_per_run_reinject_system_prompt():
     """A caller may supply their own reinjector for the run without tripping over the adapter's.
 
@@ -1878,26 +1925,33 @@ async def test_adapter_server_mode_accepts_per_run_reinject_system_prompt():
     assert [p.content for p in sys_parts] == ['Server prompt']
 
 
-async def test_adapter_server_mode_with_non_replacing_agent_reinjector():
-    """Server mode stays authoritative when the agent carries a non-replacing reinjector.
-
-    A bare `ReinjectSystemPrompt()` leaves an existing `SystemPromptPart` alone, so if the adapter
-    let it stand in for its own, a stale prompt in the server-side history would win.
-    """
+async def test_ui_adapter_spares_trusted_history_system_prompts_under_server_mode():
+    """Server mode preserves every trusted system prompt part in explicit history."""
     agent = Agent(model=TestModel(), system_prompt='Server prompt', capabilities=[ReinjectSystemPrompt()])
     adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
 
+    trusted_system_parts = [
+        SystemPromptPart(content='Trusted prompt'),
+        SystemPromptPart(content='Trusted extra prompt'),
+    ]
     history: list[ModelMessage] = [
-        ModelRequest(parts=[SystemPromptPart(content='Stale prompt'), UserPromptPart(content='Earlier')]),
-        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+        ModelRequest(parts=[trusted_system_parts[0], UserPromptPart('Earlier')]),
+        ModelResponse(parts=[TextPart('Earlier reply')]),
+        ModelRequest(parts=[trusted_system_parts[1], UserPromptPart('Later')]),
+        ModelResponse(parts=[TextPart('Later reply')]),
     ]
 
     events = [event async for event in adapter.run_stream_native(message_history=history)]
     run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
 
-    first_request = message(run_result_event.result.all_messages(), ModelRequest)
-    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
-    assert [p.content for p in sys_parts] == ['Server prompt']
+    system_parts = [
+        part
+        for history_message in run_result_event.result.all_messages()
+        if isinstance(history_message, ModelRequest)
+        for part in history_message.parts
+        if isinstance(part, SystemPromptPart)
+    ]
+    assert system_parts == trusted_system_parts
 
 
 async def test_adapter_server_mode_with_deferred_agent_reinjector():
@@ -2055,9 +2109,9 @@ async def test_adapter_server_mode_keeps_mid_run_system_prompts():
     run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
 
     assert len(requests) == 2
-    assert _contents(requests[1]) == snapshot(['Server prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(requests[1]) == snapshot(['Stale prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
     assert _contents(run_result_event.result.all_messages()) == snapshot(
-        ['Server prompt', 'Earlier', 'Go', 'Mid-run steering']
+        ['Stale prompt', 'Earlier', 'Go', 'Mid-run steering']
     )
 
 

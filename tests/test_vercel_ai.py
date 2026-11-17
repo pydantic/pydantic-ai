@@ -15246,3 +15246,46 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+async def test_vercel_ui_adapter_spares_trusted_history_system_prompts_under_server_mode():
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai.request_types import (
+        SubmitMessage,
+        TextUIPart,
+        UIMessage,
+    )
+
+    agent = Agent(model=TestModel(), system_prompt='Server prompt')
+    adapter = VercelAIAdapter(
+        agent,
+        SubmitMessage(
+            id='test-request',
+            messages=[
+                UIMessage(id='client-system', role='system', parts=[TextUIPart(text='Client prompt')]),
+                UIMessage(id='user', role='user', parts=[TextUIPart(text='Hello')]),
+            ],
+        ),
+    )
+    trusted_system_parts = [
+        SystemPromptPart(content='Trusted prompt'),
+        SystemPromptPart(content='Trusted extra prompt'),
+    ]
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[*trusted_system_parts, UserPromptPart('Earlier')]),
+        ModelResponse(parts=[TextPart('Earlier reply')]),
+    ]
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+            async for _ in adapter.encode_stream(adapter.run_stream(message_history=history)):
+                pass
+
+    system_parts = [
+        part
+        for history_message in messages
+        if isinstance(history_message, ModelRequest)
+        for part in history_message.parts
+        if isinstance(part, SystemPromptPart)
+    ]
+    assert system_parts == trusted_system_parts

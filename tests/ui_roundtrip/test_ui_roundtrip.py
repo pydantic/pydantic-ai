@@ -757,11 +757,6 @@ _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
 )
-_REINJECTED_SYSTEM_PROMPT = (
-    "in `manage_system_prompt='server'` the adapter reinjects the agent's system prompt with "
-    '`ReinjectSystemPrompt(replace_existing=True)`, which also replaces one enqueued in an earlier run of the '
-    'stored history; #10389 kept only the ones of the current run; tracked on #11184'
-)
 
 
 def _gaps(reason: str, *keys: GapKey) -> dict[GapKey, str]:
@@ -776,7 +771,7 @@ _UNANSWERED_STORED_TAIL = (
     "from the client, which merges it with its new message into one request carrying only the new message's UI "
     "id, so `manage_message_history='server'` can't tell it was resubmitted; tracked on #11031"
 )
-_PREFIX_MOVING_GAPS = frozenset({_REINJECTED_SYSTEM_PROMPT})
+_PREFIX_MOVING_GAPS = frozenset({_SERVER_SYSTEM_PROMPT})
 """Gaps that rewrite history the model already saw, rather than only adding to it."""
 
 _ALL_SERVER_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
@@ -809,7 +804,6 @@ SCENARIOS = [
         setup=_enqueue_system_prompt,
         gaps={
             **_gaps(_SERVER_SYSTEM_PROMPT, *_ALL_WIRE),
-            **_gaps(_REINJECTED_SYSTEM_PROMPT, *_ALL_SERVER_WIRE),
         },
     ),
     Scenario(id='tool_call', script=_tool_call_script, setup=_get_weather),
@@ -1563,16 +1557,13 @@ async def test_conversation_store_regenerate_after_reload(protocol: Protocol, js
     assert [len(messages) for messages in seen] == [1, 1]
 
 
-def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
-    """Keeping the history on the server leaves out every loss a client round trip has, but one.
+def test_ui_roundtrip_reinject_spares_trusted_server_history_system_prompt() -> None:
+    """Server-held history preserves trusted prompts that client round trips can lose.
 
-    The records a client can't be trusted to send back (#11184) never leave the server in that mode: append-mode
-    instruction records, `no_output` feedback in the system voice, and activity records `@ag-ui/client` drops. So
-    no scenario records a `server_wire` gap except two that the stored history itself causes: the earlier-run
-    enqueued system prompt, which the adapter's own `ReinjectSystemPrompt(replace_existing=True)` replaces even in
-    the stored history (tracked on #11184), and an unanswered request the stored history ends with, which the client
-    sends again (tracked on #11031).
-    `test_server_held_history_wire_request` holds every other scenario to the server-only requests.
+    Client-unsafe records still need server-held history (#11184). The only known server-wire gap
+    is an unanswered request at the end of stored history, which the client sends again (#11031).
+    The enqueued system prompt is preserved by the adapter's non-replacing reinjector; it remains a
+    client-wire gap because client-owned history cannot be trusted to return it.
     """
     client_wire_gaps = {scenario.id for scenario in SCENARIOS for key in scenario.gaps if key[0] == 'wire'}
     server_wire_gaps = {
@@ -1581,10 +1572,7 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
         for key, reason in scenario.gaps.items()
         if key[0] == 'server_wire'
     }
-    assert server_wire_gaps == {
-        'enqueued_system_prompt': _REINJECTED_SYSTEM_PROMPT,
-        'withdrawn_settings_change': _UNANSWERED_STORED_TAIL,
-    }
+    assert server_wire_gaps == {'withdrawn_settings_change': _UNANSWERED_STORED_TAIL}
     assert sorted(client_wire_gaps - server_wire_gaps.keys()) == snapshot(
         [
             'appended_instructions',
@@ -1595,6 +1583,7 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
             'compaction_boundary',
             'compaction_boundary_appended_instructions',
             'enqueued_messages',
+            'enqueued_system_prompt',
             'forged_framework_voice',
             'mid_run_tool_addition',
             'no_output_feedback',
