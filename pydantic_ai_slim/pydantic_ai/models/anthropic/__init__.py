@@ -4394,8 +4394,9 @@ def _support_tool_forcing(
 def __getattr__(name: str) -> object:
     if name == 'DEPRECATED_ANTHROPIC_MODELS':
         warnings.warn(
-            '`DEPRECATED_ANTHROPIC_MODELS` is deprecated and will be removed in v3. For the models Anthropic has '
-            'retired, see https://platform.claude.com/docs/en/about-claude/model-deprecations.',
+            '`DEPRECATED_ANTHROPIC_MODELS` is deprecated and will be removed in v3, as Pydantic AI no longer uses it. '
+            'Keep your own list of retired model ids, from '
+            'https://platform.claude.com/docs/en/about-claude/model-deprecations.',
             PydanticAIDeprecationWarning,
             stacklevel=2,
         )
