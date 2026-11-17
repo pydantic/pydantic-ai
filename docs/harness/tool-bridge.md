@@ -28,14 +28,14 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ToolBridge()])
 
 `tool_call` takes the arguments as a JSON object string rather than a nested object, because some models send nested free-form objects as `null`. An empty string is read as `{}`.
 
-A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs.
+A tool added, removed or changed mid-run changes what `tool_search` finds, not the tool definitions sent to the provider. A tool reached through the bridge is validated and run through the same path as a direct call: argument validation, tool hooks, `ModelRetry`, approval and usage limits apply to it as to any tool, and an unknown name or invalid arguments ask the model to retry. Both `tool_call` and the bridged tool count as tool calls, and `tool_calls_limit` is checked for both before the bridged tool runs. A retry the bridged tool asks for is a retry of `tool_call`: it's limited by `tool_call`'s `max_retries`, and the tool's `ctx.retry` counts it. If any bridged tool is `sequential`, so is `tool_call`.
 
 ## Options
 
 - `tools` (default `'all'`): which tools to bridge, as a list of names or a `(ctx, tool_def) -> bool` callable, sync or async. The rest stay visible to the model as normal tools.
 - `search`: ranks the bridged tools for a query, with the signature of a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc]. Defaults to the keyword matching [`ToolSearch`](../capabilities/tool-search.md) uses.
 - `max_results` (default `10`): the most tools one `tool_search` returns.
-- `max_retries` (default `3`): retries for each dispatcher tool, spent on unknown tool names and invalid arguments.
+- `max_retries` (default `3`): retries for each dispatcher tool, spent on unknown tool names, invalid arguments and retries the bridged tools ask for.
 
 ## What stays native
 

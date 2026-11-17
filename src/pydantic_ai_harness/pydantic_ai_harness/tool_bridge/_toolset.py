@@ -96,7 +96,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     """Maximum number of `tool_search` results."""
 
     max_retries: int = 3
-    """Retries for each dispatcher tool, spent on unknown tool names and invalid arguments."""
+    """Retries for each dispatcher tool, spent on unknown tool names, invalid arguments and bridged tools' retries."""
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Return the dispatcher tools plus the tools that aren't bridged."""
@@ -108,12 +108,19 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
                 bridged[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=False))
             else:
                 native[name] = tool
+        # `sequential` only decides how calls are scheduled, so changing it leaves the provider's tool list as it was.
+        sequential = any(tool.tool_def.sequential for tool in bridged.values())
         for name, (description, schema, validator) in _DISPATCHERS.items():
             if name in native:
                 raise UserError(f'Tool name {name!r} is reserved for `ToolBridge`. Rename the tool or bridge it.')
             native[name] = _DispatcherTool(
                 toolset=self,
-                tool_def=ToolDefinition(name=name, description=description, parameters_json_schema=schema),
+                tool_def=ToolDefinition(
+                    name=name,
+                    description=description,
+                    parameters_json_schema=schema,
+                    sequential=sequential and name == CALL_TOOL_NAME,
+                ),
                 max_retries=self.max_retries,
                 args_validator=validator,
                 bridged=bridged,
@@ -170,13 +177,19 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     async def _call(
         self, ctx: RunContext[AgentDepsT], name: str, args_json: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
     ) -> Any:
-        """Run a bridged tool through a nested `ToolManager`, so its validation and hooks apply as to a direct call."""
+        """Run a bridged tool through a nested `ToolManager`, so its validation and hooks apply as to a direct call.
+
+        A retry the tool asks for is a retry of `tool_call`, so the tool sees that call's retry count as its own.
+        """
         parent = ctx.tool_manager
         if parent is None:
             raise UserError(
                 "`ToolBridgeToolset` needs the run's tool manager, so bridged calls run through tool hooks."
             )
-        manager = ToolManager(toolset=self.wrapped, root_capability=parent.root_capability, ctx=ctx, tools=bridged)
+        nested_ctx = replace(ctx, retries={**ctx.retries, name: ctx.retry})
+        manager = ToolManager(
+            toolset=self.wrapped, root_capability=parent.root_capability, ctx=nested_ctx, tools=bridged
+        )
         call = ToolCallPart(tool_name=name, args=args_json or '{}')
         reserved = reserve_nested_tool_call(ctx)
         try:

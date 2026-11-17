@@ -9,7 +9,7 @@ from logfire.testing import CaptureLogfire
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
-from pydantic_ai.exceptions import ApprovalRequired, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -321,3 +321,42 @@ class TestToolBridge:
 
         with pytest.raises(UserError, match="needs the run's tool manager"):
             await toolset.call_tool('tool_call', {'name': '_get_weather', 'args_json': '{}'}, ctx, tools['tool_call'])
+
+    async def test_bridged_tool_sees_its_retries(self):
+        attempts: list[int] = []
+
+        def flaky(ctx: RunContext[None]) -> str:
+            """Fail on the first attempt."""
+            attempts.append(ctx.retry)
+            if ctx.retry == 0:
+                raise ModelRetry('try again')
+            return 'ok'
+
+        model = _scripted(
+            [_call('tool_call', name='flaky', args_json='{}'), _call('tool_call', name='flaky', args_json='{}')]
+        )
+        agent = Agent(model, tools=[flaky], capabilities=[ToolBridge()])
+
+        result = await agent.run('go')
+
+        assert attempts == [0, 1]
+        assert _returns(result.all_messages()) == ['try again', 'ok']
+
+    async def test_sequential_bridged_tool_makes_tool_call_sequential(self):
+        tool_defs: list[ToolDefinition] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_defs.extend(info.function_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond), tools=[Tool(_get_weather, sequential=True), _get_time], capabilities=[ToolBridge()]
+        )
+
+        await agent.run('hi')
+
+        assert {tool_def.name: tool_def.sequential for tool_def in tool_defs} == {
+            'tool_search': False,
+            'tool_describe': False,
+            'tool_call': True,
+        }
