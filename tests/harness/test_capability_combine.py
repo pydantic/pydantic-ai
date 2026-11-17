@@ -61,6 +61,7 @@ from pydantic_ai_harness import (
     BenchmarkInstructions,
     Coder,
     CompactOnRequest,
+    CurrentTime,
     Planning,
     PruneToolResults,
     RelevanceCompaction,
@@ -217,6 +218,10 @@ def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
+def _check_current_time(merged: CurrentTime[None]) -> None:
+    assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
+
+
 def _check_sub_agents(merged: Any) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
@@ -324,6 +329,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one fixed text; two would state it twice',
         lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
         _check_benchmark_instructions,
+    ),
+    'CurrentTime': Combines(
+        'one statement of the time per id; the later configuration wins',
+        lambda: (
+            CurrentTime[None](timezone='Europe/Amsterdam'),
+            CurrentTime[None](timezone='Asia/Tokyo', precision='hour'),
+        ),
+        _check_current_time,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),

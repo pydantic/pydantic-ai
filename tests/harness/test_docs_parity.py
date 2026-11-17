@@ -194,6 +194,7 @@ _CAPABILITY_PAGE_META = {
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
+    'current-time.md': ('current_time', 'Current Time'),
     'subagents.md': ('sub_agents', 'Subagents'),
     'peers.md': ('peers', 'Peers'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
