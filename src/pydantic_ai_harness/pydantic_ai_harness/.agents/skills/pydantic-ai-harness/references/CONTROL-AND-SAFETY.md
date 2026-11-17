@@ -899,11 +899,12 @@ print([part.content for part in parts if isinstance(part, ToolReturnPart)])
 #> ['`divide` raised ZeroDivisionError: division by zero']
 ```
 
-- `format_error(tool_name, error) -> str` replaces the text, for example to hide internals.
+- `format_error(tool_name, error) -> str` replaces the text, for example to hide internals;
+  `exceptions=(TimeoutError, ...)` reports only those types (default `(Exception,)`), the rest propagate.
 - No limit of its own and the tool stays available; `UsageLimits` stop a model that keeps failing.
 - `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass
-  through, and a tool that exhausts its `retries` still raises `UnexpectedModelBehavior` (`Coder` reports
-  those instead). Output tools and argument validation aren't affected.
+  through; `UsageLimitExceeded` and `UserError` still end the run, and so does a tool that exhausts its
+  `retries` (`Coder` reports those instead). Output tools and argument validation aren't affected.
 - A `ToolGuardrail` `result_guard` screens the reported text; `on_tool_execute_error` hooks see a failed
   call, not the exception. With several, the last listed formats the error. Emits no spans.
 

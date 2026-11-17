@@ -393,7 +393,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
-    'ReportToolErrors': Anonymous('only a hook; the last listed formats the error and the others pass it on'),
+    'ReportToolErrors': Anonymous(
+        'a wrapper toolset; the innermost (last listed) formats the error and outer ones see a ToolFailed'
+    ),
     'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
     'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),

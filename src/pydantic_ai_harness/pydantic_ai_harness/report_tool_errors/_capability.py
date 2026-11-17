@@ -14,14 +14,25 @@ from pydantic_ai.exceptions import (
     RunCancelled,
     SkipToolExecution,
     ToolFailed,
+    UsageLimitExceeded,
+    UserError,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 
 __all__ = ['ReportToolErrors']
 
-_PASS_THROUGH = (ModelRetry, ToolFailed, ApprovalRequired, CallDeferred, SkipToolExecution, RunCancelled)
-"""Exceptions with their own meaning to core, which a tool raises on purpose or core already reports."""
+_PASS_THROUGH = (
+    ModelRetry,
+    ToolFailed,
+    ApprovalRequired,
+    CallDeferred,
+    SkipToolExecution,
+    RunCancelled,
+    UsageLimitExceeded,
+    UserError,
+)
+"""Signals a tool raises on purpose, a cancellation core already reports, and errors no retry can fix."""
 
 
 def _describe(tool_name: str, error: Exception) -> str:
@@ -35,7 +46,8 @@ class ReportToolErrors(AbstractCapability[AgentDepsT]):
     The exception becomes a `ToolFailed`, as if the tool had raised one itself. The model sees the tool name, the
     exception type and its message, and decides whether to call the tool again, try another way, or give up. There
     is no limit of its own: the run's `UsageLimits` bound a model that keeps calling a failing tool. `ModelRetry`,
-    `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution` and `RunCancelled` keep their usual meaning.
+    `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled`, `UsageLimitExceeded` and
+    `UserError` keep their usual meaning.
 
     ```python
     from pydantic_ai import Agent
@@ -51,13 +63,16 @@ class ReportToolErrors(AbstractCapability[AgentDepsT]):
     The default names the tool, the exception type and its message.
     """
 
+    exceptions: tuple[type[Exception], ...] = (Exception,)
+    """The exception types to report. Any other exception propagates and ends the run, as without the capability."""
+
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        return _ReportErrorsToolset(toolset, self.format_error)
+        return _ReportErrorsToolset(toolset, self)
 
 
 @dataclass
 class _ReportErrorsToolset(WrapperToolset[AgentDepsT]):
-    format_error: Callable[[str, Exception], str]
+    report: ReportToolErrors[AgentDepsT]
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -66,5 +81,5 @@ class _ReportErrorsToolset(WrapperToolset[AgentDepsT]):
             return await super().call_tool(name, tool_args, ctx, tool)
         except _PASS_THROUGH:
             raise
-        except Exception as error:
-            raise ToolFailed(self.format_error(name, error)) from error
+        except self.report.exceptions as error:
+            raise ToolFailed(self.report.format_error(name, error)) from error

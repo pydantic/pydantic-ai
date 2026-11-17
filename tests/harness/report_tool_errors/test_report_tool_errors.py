@@ -9,7 +9,13 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    ToolFailed,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -57,6 +63,14 @@ def _agent(model: FunctionModel, *capabilities: AbstractCapability[None]) -> Age
     def guarded() -> str:
         raise ApprovalRequired
 
+    @agent.tool_plain
+    def misconfigured() -> str:
+        raise UserError('missing API key setting')
+
+    @agent.tool_plain
+    def delegate() -> str:
+        raise UsageLimitExceeded('The whole tree is out of budget')
+
     return agent
 
 
@@ -95,6 +109,17 @@ class TestReportToolErrors:
 
         result = _agent(_scripted([_divide('c1', 0)]), ReportToolErrors(format_error=hide_internals)).run_sync('go')
         assert _tool_results(result.all_messages()) == snapshot([('c1', 'divide failed (ZeroDivisionError)', 'failed')])
+
+    def test_exceptions_narrows_what_is_reported(self) -> None:
+        report = ReportToolErrors[None](exceptions=(TimeoutError,))
+        with pytest.raises(ZeroDivisionError):
+            _agent(_scripted([_divide('c1', 0)]), report).run_sync('go')
+
+    @pytest.mark.parametrize(('tool_name', 'error'), [('misconfigured', UserError), ('delegate', UsageLimitExceeded)])
+    def test_setup_errors_and_exhausted_budgets_still_end_the_run(self, tool_name: str, error: type[Exception]) -> None:
+        agent = _agent(_scripted([ToolCallPart(tool_name, {}, tool_call_id='c1')]), ReportToolErrors())
+        with pytest.raises(error):
+            agent.run_sync('go')
 
     def test_the_last_listed_instance_formats_the_error(self) -> None:
         first = ReportToolErrors[None](format_error=lambda tool_name, error: 'first')

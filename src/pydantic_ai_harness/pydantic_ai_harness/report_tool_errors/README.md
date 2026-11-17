@@ -53,12 +53,20 @@ def hide_internals(tool_name: str, error: Exception) -> str:
 report = ReportToolErrors(format_error=hide_internals)
 ```
 
+To report only some exceptions, pass `exceptions`. Any other exception ends the run as it would without the capability, so a programming error such as a `KeyError` still fails fast:
+
+```python
+from pydantic_ai_harness import ReportToolErrors
+
+report = ReportToolErrors(exceptions=(TimeoutError, ConnectionError))
+```
+
 ## How it works
 
 `ReportToolErrors` wraps the agent's toolset and turns an exception from a tool into a [`ToolFailed`](https://pydantic.dev/docs/ai/api/pydantic-ai/exceptions/#pydantic_ai.exceptions.ToolFailed), as if the tool had raised it, so the rest of the agent treats the call like any other failed call:
 
 - The tool stays available and nothing counts the failures: the model decides whether to call it again. [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits), such as `request_limit`, stop a model that keeps calling a failing tool.
-- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution` and `RunCancelled` pass through unchanged.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred` and `SkipToolExecution` pass through unchanged, and so does `RunCancelled` from a sub-agent, which core already reports. `UsageLimitExceeded` and `UserError` still end the run: a spent budget or a setup bug is not something the model can work around.
 - A tool that raises `ModelRetry` more often than its `retries` allow still ends the run with `UnexpectedModelBehavior`, so a tool's retry limit keeps working. [Coder](../coder/) reports those to the model instead.
 - Every function tool is covered, including MCP tools and tools other capabilities add. Output tools and argument validation errors aren't.
 
