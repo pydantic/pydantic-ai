@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import anyio
 import pytest
 from boxd import NotFoundError, PermissionDeniedError
@@ -28,6 +30,8 @@ from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, Unsuppo
 
 from ..display_fakes import look_click_then_finish, screen
 from .fake_boxd import APIStatusError, FakeBoxd
+
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 async def _started(host: FakeBoxd) -> BoxdSandboxBackend:
