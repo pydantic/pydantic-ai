@@ -4,6 +4,10 @@ The Playwright API surface is mocked throughout: no real Chromium is launched.
 An in-memory page double (`_FakePage`) backs the toolset, and a fake Playwright
 driver chain backs the `wrap_run` lifecycle, so the suite runs in CI with only
 the `playwright` Python package installed (no browser binary).
+
+None of these is a VCR test: the agents run on `TestModel` or no model at all, so
+there is no provider request to record, and Playwright drives the browser over its
+driver connection, which cassettes do not capture.
 """
 
 from __future__ import annotations
