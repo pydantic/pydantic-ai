@@ -9,7 +9,7 @@ import posixpath
 import sys
 import warnings
 from collections import deque
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
@@ -851,8 +851,8 @@ async def _read_slice(
 
     `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
     the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text. The payload is streamed
-    and every matching line counted, keeping only the `offset + limit` lines the window needs.
+    capped, so one call can never return an unbounded amount of text. Every matching line is
+    counted, but only the lines the window needs are kept.
     """
     if offset < 0:
         raise ModelRetry('`offset` must be >= 0.')
@@ -896,18 +896,17 @@ async def _matching_window(
     """
     total = 0
     kept: deque[str] = deque(maxlen=min(offset + limit, sys.maxsize) if from_end else limit)
-    async with aclosing(_payload_lines(store, handle)) as lines:
-        async for line in lines:
-            if pattern is None or pattern in line:
-                total += 1
-                if from_end or offset < total <= offset + limit:
-                    kept.append(line)
+    async with aclosing(_payload_lines(store, handle)) as batches:
+        async for batch in batches:
+            matching = batch if pattern is None else [line for line in batch if pattern in line]
+            kept.extend(matching if from_end else matching[max(0, offset - total) : max(0, offset + limit - total)])
+            total += len(matching)
     window = list(kept)
     return total, window[: max(0, len(window) - offset)] if from_end else window
 
 
-async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[str]:
-    """Yield a stored payload's lines as `str.splitlines` splits its UTF-8 text, decoding chunk by chunk."""
+async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[list[str]]:
+    """Yield a stored payload's lines as `str.splitlines` splits its UTF-8 text, one decoded chunk's lines at a time."""
     decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
     pieces: list[str] = []
     cr = ''
@@ -916,19 +915,19 @@ async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[st
             text = cr + decoder.decode(chunk)
             # A trailing CR waits for the next chunk, which may start with the LF of a CRLF.
             cr = '\r' if text.endswith('\r') else ''
-            for line in _complete_lines(text.removesuffix(cr), pieces):
-                yield line
-    for line in _complete_lines(cr + decoder.decode(b'', final=True), pieces):
-        yield line
-    if pieces:
-        yield ''.join(pieces)
+            yield _complete_lines(text.removesuffix(cr), pieces)
+    lines = _complete_lines(cr + decoder.decode(b'', final=True), pieces)
+    yield [*lines, ''.join(pieces)] if pieces else lines
 
 
-def _complete_lines(text: str, pieces: list[str]) -> Iterator[str]:
-    """Yield the lines `text` completes, keeping its unterminated end in `pieces`."""
-    for part in text.splitlines(keepends=True):
-        line = part.splitlines()[0]
-        pieces.append(line)
-        if line != part:
-            yield ''.join(pieces)
-            pieces.clear()
+def _complete_lines(text: str, pieces: list[str]) -> list[str]:
+    """Return the lines `text` completes, keeping its unterminated end in `pieces`."""
+    lines = text.splitlines()
+    # The last line is unterminated when `text` ends with it: `splitlines` yields an empty line only before a break.
+    end = lines.pop() if lines and lines[-1] and text.endswith(lines[-1]) else None
+    if pieces and lines:
+        lines[0] = ''.join(pieces) + lines[0]
+        pieces.clear()
+    if end is not None:
+        pieces.append(end)
+    return lines
