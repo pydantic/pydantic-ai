@@ -822,6 +822,23 @@ async def test_a_failed_submission_reaches_every_request_in_the_batch() -> None:
     assert [_prompt_of(error.conversation) for error in (first, second)] == ['one', 'two']
 
 
+async def test_a_failed_submission_whose_error_cant_be_copied_still_reaches_every_request() -> None:
+    class _CodedError(ModelAPIError):
+        def __init__(self, code: int) -> None:
+            super().__init__('test', f'batch creation failed with {code}')
+
+    error = _CodedError(7)
+
+    class FailingBatchModel(TestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            raise error
+
+    agent = Agent(FailingBatchModel(), capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
+    results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+
+    assert results == [error, error]
+
+
 async def test_a_failed_submission_that_isnt_a_run_error_reaches_every_request_as_is() -> None:
     error = RuntimeError('batch creation failed')
 

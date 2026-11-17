@@ -310,7 +310,12 @@ def _fail_each(requests: Sequence[_Queued], error: Exception) -> None:
 def _own_copy(error: BaseException) -> BaseException:
     if not isinstance(error, AgentRunError):
         return error
-    copied = copy.copy(error)
+    try:
+        copied = copy.copy(error)
+    except Exception:
+        # A subclass whose `__init__` doesn't take what its `__reduce__` gives can't be copied; sharing the
+        # error beats leaving the other requests' runs waiting forever.
+        return error
     copied.__cause__, copied.__context__ = error.__cause__, error.__context__
     return copied.with_traceback(error.__traceback__)
 
