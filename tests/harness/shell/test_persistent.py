@@ -267,6 +267,14 @@ class TestShellTool:
         await shell(tmp_path, {'command': command}, capabilities=[recorder], secret_env={'TMP_TOKEN': secret})
         assert recorder.output == ' ' * 4090 + '[REDACTED:TMP_TOKEN]\n[REDACTED:TMP_TOKEN]'
 
+    async def test_events_never_end_on_part_of_a_secret_at_the_cap(self, tmp_path: Path) -> None:
+        """Output past the events' cap is not emitted; a secret's start just before it is not emitted either."""
+        secret = 'sk-test-value-123456789'
+        recorder = Recorder()
+        command = 'printf "%15991s%s" "" "$TMP_TOKEN"'
+        await shell(tmp_path, {'command': command}, capabilities=[recorder], secret_env={'TMP_TOKEN': secret})
+        assert recorder.output == ' ' * (16000 - len(secret) + 1)
+
     async def test_large_sparse_log_is_not_scanned(self, tmp_path: Path) -> None:
         recorder = Recorder()
         script = 'import os; os.ftruncate(1, 1 << 32)'

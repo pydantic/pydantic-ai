@@ -140,7 +140,9 @@ class _CommandOutput(Generic[AgentDepsT]):
     async def finish(self) -> None:
         if self.ctx is None:
             return
-        tail = self._masked(self.decoder.decode(b'', final=True), final=True)
+        # Held text is complete only if the whole log was read: at the cap it may be a secret's start, so it is dropped.
+        whole = self.emitted < _OUTPUT_TAIL_BYTES
+        tail = self._masked(self.decoder.decode(b'', final=True), final=whole) if whole else ''
         if tail:
             await self.ctx.emit(CommandOutputEvent(text=tail))
         clears = await self._clears()
