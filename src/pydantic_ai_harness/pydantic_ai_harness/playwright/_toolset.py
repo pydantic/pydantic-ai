@@ -1315,8 +1315,8 @@ class PlaywrightBrowserSession:
         that failed is retried on the next call rather than handing the dropped tab back,
         whatever URL it shows by then.
         """
-        left = [page for page in self.pages if self._is_off_web(page.url)]
-        for page in left:
+        left = [(page, url) for page in self.pages if (url := self._off_web_document(page)) is not None]
+        for page, _ in left:
             # Every listener `_wire_page` added, so the tab reports nothing more.
             for event, handler in (
                 ('popup', self._on_popup),
@@ -1335,7 +1335,7 @@ class PlaywrightBrowserSession:
             await self._bounded(self.open_tab())
         if not left:
             return
-        raise BrowserUnavailableError(self._off_web_tab_message([page.url for page in left]))
+        raise BrowserUnavailableError(self._off_web_tab_message([url for _, url in left]))
 
     async def _validate_default_context_pages(self, pages: Sequence[_Page]) -> None:
         """Check loaded documents before listeners or tools can expose their contents.
@@ -1361,9 +1361,10 @@ class PlaywrightBrowserSession:
     async def _check_inherited_frame(self, frame: _Frame, *, top_level: bool) -> None:
         """Refuse the call when `frame` holds a document the policy blocks, or has no URL to check yet.
 
-        A top-level page outside the web is refused whatever the policy says: in this
-        mode such a tab holds the profile's own state, such as its history or an
-        extension's UI, and no request the policy could judge loaded it.
+        A document outside the web, top-level or a subframe other than an inline one, is
+        refused whatever the policy says: in this mode it holds the profile's own state,
+        such as its history or an extension's UI, and no request the policy could judge
+        loaded it.
         """
         if not frame.url:
             # CDP can expose a cross-origin frame before its URL is populated.
@@ -1382,7 +1383,7 @@ class PlaywrightBrowserSession:
             # Chromium's error page holds nothing from the origin that failed to load, and an
             # inline subframe's document came from a page this check covers, not a request.
             return
-        if top_level and self._is_off_web(frame.url):
+        if self._is_off_web(frame.url):
             # Reached when the URL arrived during the wait above: the next call leaves the tab out.
             raise BrowserUnavailableError(self._off_web_tab_message([frame.url]))
         admitted = (frame.url, top_level)
@@ -1438,9 +1439,10 @@ class PlaywrightBrowserSession:
             # The inherited pages keep running while the checks below wait on a lookup or a
             # loading frame, so the guards go on first.
             await self._install_guards(context)
-            # A tab outside the web, such as the browser's own start page, is left out whatever the
-            # policy says, rather than failing every attach to a browser that opened on it.
-            pages = [page for page in context.pages if not self._is_off_web(page.url)]
+            # A tab showing anything outside the web, such as the browser's own start page or an
+            # extension's frame, is left out whatever the policy says, rather than failing every
+            # attach to a browser that opened on one.
+            pages = [page for page in context.pages if self._off_web_document(page) is None]
             if len(pages) > _MAX_TABS:
                 raise BrowserUnavailableError(
                     f'The default CDP context has more than {_MAX_TABS} tabs. Close some first.'
@@ -1478,6 +1480,19 @@ class PlaywrightBrowserSession:
             f'A tab in the default CDP context is showing a page the agent cannot read ({pages}). The agent '
             'stops using that tab, which stays open in the browser. Retry the call.'
         )
+
+    def _off_web_document(self, page: _Page) -> str | None:
+        """The URL of the first document in `page` the session never exposes, or `None` when there is none.
+
+        That is a top-level page outside the web, or a subframe outside it other than an
+        inline one. Extensions inject such frames into the pages they run on, such as a
+        password manager's menu, and the frame holds the extension's own UI, which
+        `snapshot` would read along with the page.
+        """
+        for index, frame in enumerate(page.frames):
+            if self._is_off_web(frame.url) and (index == 0 or not frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)):
+                return frame.url
+        return None
 
     @staticmethod
     def _is_off_web(url: str) -> bool:

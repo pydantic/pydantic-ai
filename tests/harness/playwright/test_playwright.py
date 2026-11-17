@@ -2301,6 +2301,10 @@ _BLOCKED_DOCUMENT_PLACEMENTS: dict[str, Callable[[_FakeBrowserContext, str], Non
 }
 """Where a policy-blocked document sits in the inherited default context, given its URL."""
 
+_EXTENSION_FRAME = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/inline/menu.html'
+_EXTENSION_FRAME_ORIGIN = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop'
+"""A frame an extension injects into the pages it runs on, and how the session names it."""
+
 _POLICIES_FOR_BROWSER_PAGES = [
     pytest.param(EgressPolicy(allowed_domains=['example.com']), id='allowlist'),
     # The suite's resolver answers every name, so the default policy admits `chrome://version/` as host `version`.
@@ -2709,6 +2713,49 @@ class TestPlaywrightBrowserLifecycle:
         assert context.pages[1].url == 'about:blank' and context.pages[1].popup_events == ['popup']
         assert not start.closed and not start.handlers and start.goto_calls == []
         assert start.url == start_url
+
+    @pytest.mark.parametrize('policy', _POLICIES_FOR_BROWSER_PAGES)
+    async def test_default_context_leaves_out_a_tab_an_extension_framed(
+        self, monkeypatch: pytest.MonkeyPatch, policy: EgressPolicy
+    ) -> None:
+        # A password manager's menu, injected into the page it fills: the frame is the extension's UI.
+        signed_in = _FakePage(url='https://example.com/', title='ACCOUNT', body='ACCOUNT')
+        signed_in.frames.append(_FakeFrameContent(url=_EXTENSION_FRAME, text='SAVED_LOGINS'))
+        cm = _install_fake_driver(monkeypatch, signed_in)
+        _populate_default_context(monkeypatch, tabs=1)
+        agent = Agent(
+            TestModel(call_tools=['get_text', 'snapshot', 'tabs']),
+            capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222', cdp_context='default', policy=policy)],
+        )
+        reported = _tool_results(await agent.run('inspect the existing browser'))
+        assert 'Hello body' in reported
+        assert 'SAVED_LOGINS' not in reported and 'ACCOUNT' not in reported
+        assert 'blocked by the browser policy' not in reported
+        browser = cm.driver.chromium.browser
+        assert browser is not None
+        assert browser.contexts[0].pages[0] is signed_in
+        assert not signed_in.closed and not signed_in.handlers and signed_in.goto_calls == []
+
+    @pytest.mark.parametrize('policy', _POLICIES_FOR_BROWSER_PAGES)
+    async def test_default_context_stops_using_a_tab_once_an_extension_frames_it(
+        self, monkeypatch: pytest.MonkeyPatch, policy: EgressPolicy
+    ) -> None:
+        page = _FakePage(url='https://example.com/', body='Allowed content')
+        cm = _install_fake_driver(monkeypatch, page)
+        _populate_default_context(monkeypatch, tabs=1)
+        session = PlaywrightBrowserSession(cdp_url='http://localhost:9222', cdp_context='default', policy=policy)
+        async with session:
+            tools = PlaywrightBrowserToolset[None](session=session)
+            assert await tools.get_text() == 'Allowed content'
+            page.frames.append(_FakeFrameContent(url=_EXTENSION_FRAME, text='SAVED_LOGINS'))
+            refused = await tools.snapshot()
+            assert f'showing a page the agent cannot read ({_EXTENSION_FRAME_ORIGIN}).' in refused
+            assert 'SAVED_LOGINS' not in refused and 'blocked by the browser policy' not in refused
+            assert await tools.get_text() == 'Hello body'
+            browser = cm.driver.chromium.browser
+            assert browser is not None
+            assert session.pages == [browser.contexts[0].pages[1]]
+        assert not page.closed and page.goto_calls == [] and not any(page.handlers.values())
 
     async def test_default_context_lists_and_counts_only_the_tabs_it_adopts(
         self, monkeypatch: pytest.MonkeyPatch

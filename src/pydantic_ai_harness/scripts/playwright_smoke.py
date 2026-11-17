@@ -7,7 +7,7 @@ it after installing the browser binary to verify the real integration end to end
     playwright install chromium
     uv run python scripts/playwright_smoke.py
 
-It exercises the public `PlaywrightBrowser` surface and checks fourteen things:
+It exercises the public `PlaywrightBrowser` surface and checks fifteen things:
 
 - lazy launch plus a real navigation to https://example.com (prints the title),
 - the allowlist bounce (a disallowed host returns an error result, not content),
@@ -45,6 +45,10 @@ It exercises the public `PlaywrightBrowser` surface and checks fourteen things:
   policy that refuses it and one that admits it: the run leaves that tab out,
   works in a blank tab of its own, and the browser page is still open and unread
   when the run disconnects,
+- a default context where an extension frames the pages it runs on: a tab carrying
+  the extension's frame is left out at attach under a refusing and an admitting
+  policy, and a tab the agent opens that gets one is dropped with an error, all
+  without the frame's text reaching the model,
 - clean teardown: each scenario runs its own capability, whose `wrap_run` closes
   the browser when the run ends. After it prints `all checks passed`, confirm no
   Chromium lingered, e.g. `pgrep -fl chromium` shows nothing this script started.
@@ -480,6 +484,90 @@ async def _check_cdp_default_context_browser_page() -> None:
     print('cdp default context browser page ok -- browser page left out, run used a blank tab, page left open')
 
 
+_EXTENSION_MANIFEST = b"""{"manifest_version": 3, "name": "Frame injector", "version": "1.0",
+ "content_scripts": [{"matches": ["https://example.com/*"], "js": ["inject.js"]}],
+ "web_accessible_resources": [{"resources": ["frame.html"], "matches": ["https://example.com/*"]}]}"""
+_EXTENSION_SCRIPT = b"""const frame = document.createElement('iframe');
+frame.src = chrome.runtime.getURL('frame.html');
+document.body.appendChild(frame);"""
+_EXTENSION_SECRET = 'EXTENSION_MENU_SECRET'
+
+
+async def _check_cdp_default_context_extension_frame() -> None:
+    """A default-context tab carrying an extension's frame is never read.
+
+    The mocked suite cannot answer this: it turns on what Chromium reports for a
+    frame an extension injects, which no request the route guard sees loads. An
+    unpacked extension frames https://example.com, as a password manager frames a
+    login form. Under a policy that refuses the frame's unresolvable host and one
+    that admits it, the inherited tab is left out at attach, so `snapshot` cannot
+    return the frame's text, and a tab the agent navigates there is dropped with an
+    error once the frame appears, after which the run carries on in a blank tab.
+    """
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    with TemporaryDirectory() as user_data_dir, TemporaryDirectory() as extension:
+        for name, content in (
+            ('manifest.json', _EXTENSION_MANIFEST),
+            ('inject.js', _EXTENSION_SCRIPT),
+            ('frame.html', f'<p>{_EXTENSION_SECRET}</p>'.encode()),
+        ):
+            with open(f'{extension}/{name}', 'wb') as file:
+                file.write(content)
+        async with async_playwright() as pw:
+            # Extensions load in the full Chromium build, not the default headless shell.
+            default_context = await pw.chromium.launch_persistent_context(
+                user_data_dir,
+                channel='chromium',
+                headless=True,
+                args=[
+                    f'--remote-debugging-port={port}',
+                    f'--disable-extensions-except={extension}',
+                    f'--load-extension={extension}',
+                ],
+            )
+            try:
+                (owner_page,) = default_context.pages
+                await owner_page.goto('https://example.com/')
+                for _ in range(50):
+                    if any(frame.url.startswith('chrome-extension://') for frame in owner_page.frames):
+                        break
+                    await asyncio.sleep(0.1)
+                else:
+                    raise AssertionError('the test extension never framed the page')
+                for policy in (EgressPolicy(), EgressPolicy(block_private_addresses=False)):
+                    for opened in default_context.pages[1:]:
+                        await opened.close()
+                    attached = PlaywrightBrowser[object](
+                        cdp_url=f'http://127.0.0.1:{port}', cdp_context='default', policy=policy
+                    )
+                    listed, snapshot = await _run_tools(attached, [('tabs', {}), ('snapshot', {})])
+                    assert 'example.com' not in listed and 'about:blank' in listed, (policy, listed)
+                    assert _EXTENSION_SECRET not in snapshot and 'blocked by the browser policy' not in snapshot, (
+                        snapshot
+                    )
+                    assert not owner_page.is_closed() and owner_page.url == 'https://example.com/', owner_page.url
+                for opened in default_context.pages[1:]:
+                    await opened.close()
+                await owner_page.goto('about:blank')
+                attached = PlaywrightBrowser[object](
+                    cdp_url=f'http://127.0.0.1:{port}', cdp_context='default', policy=EgressPolicy()
+                )
+                navigated, refused, listed = await _run_tools(
+                    attached,
+                    [('navigate', {'url': 'https://example.com/'}), ('snapshot', {}), ('tabs', {})],
+                    pause=2.0,
+                )
+                assert _EXTENSION_SECRET not in navigated + refused + listed, (navigated, refused, listed)
+                assert 'cannot read (chrome-extension://' in refused, refused
+                assert 'example.com' not in listed and 'about:blank' in listed, listed
+                assert not owner_page.is_closed() and owner_page.url == 'https://example.com/', owner_page.url
+            finally:
+                await default_context.close()
+    print('cdp default context extension frame ok -- framed tab left out at attach, dropped mid-run, never read')
+
+
 async def _serve_html(body: bytes) -> tuple[asyncio.Server, int]:
     """Serve a fixed HTML body over HTTP on a loopback port."""
 
@@ -742,6 +830,7 @@ async def _main() -> None:
     await _check_cdp_attach()
     await _check_cdp_default_context()
     await _check_cdp_default_context_browser_page()
+    await _check_cdp_default_context_extension_frame()
     print('all checks passed')
 
 
