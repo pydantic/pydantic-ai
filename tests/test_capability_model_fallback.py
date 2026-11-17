@@ -3449,3 +3449,36 @@ async def test_an_appended_instruction_change_is_recorded_for_the_model_fallen_b
             )
         ]
     )
+
+
+async def test_a_resumed_continuation_that_falls_back_gets_its_own_settings_and_the_recorded_instructions():
+    """A failed continuation's fallback is sent the settings resolved for it, and the instructions the turn was sent."""
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def respond(name: str, *, fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append((name, info.instructions, (info.model_settings or {}).get('temperature')))
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart('fresh')])
+
+        return FunctionModel(fn, model_name=name)
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        return {'temperature': {'step': 0.1, 'pinned': 0.5, 'next': 0.9}[ctx.model.model_name]}
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        return f'You are {ctx.model.model_name}.'  # pragma: no cover
+
+    pinned = respond('pinned', fail=True)
+    agent = Agent(
+        FunctionModel(failure, model_name='step'),
+        instructions=instructions,
+        model_settings=settings,
+        capabilities=[ModelFallback(pinned, respond('next', fail=False))],
+    )
+    suspended = _suspended_history(pinned.model_id)[-1]
+    history = [ModelRequest(parts=[UserPromptPart('x')], instructions='Recorded.'), suspended]
+    result = await agent.run(message_history=history)
+    assert result.output == 'fresh'
+    assert sent == snapshot([('pinned', 'Recorded.', 0.5), ('next', 'Recorded.', 0.9)])
