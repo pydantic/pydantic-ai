@@ -356,7 +356,8 @@ extension pages, `file:`, `data:`, `blob:`) is left out whatever the policy, and
 non-web frame other than an inline `srcdoc`/`data:`/`blob:` one, such as an extension's injected
 `chrome-extension://` UI (use a profile whose extensions do not inject frames); for a tracked tab that
 moves to one or gets such a frame, the call that finds it returns an error naming the page by its scheme and host only, and
-the agent stops using that tab, which stays open in the browser. Loaded tabs and frames must pass the egress policy
+the agent stops using that tab, which stays open in the browser. A frame that appears during a call can still be
+captured by that call's `snapshot` or `screenshot_on_navigate` image; the next call drops the tab. Loaded tabs and frames must pass the egress policy
 (each document once, at most five seconds per call; a call that runs out asks the model to retry), and new service-worker
 registrations are refused; downloads follow the browser's settings.
 Playwright routes service-worker requests through the guards unless
