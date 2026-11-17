@@ -6,6 +6,7 @@ area:agent	The Agent class and run loop: instructions, deps, retries, cancellati
 area:agentic-workflows	This repo's own agentic workflows and bots: runs, incidents, quotas. Engine code is area:gh-aw.
 area:caching	Prompt caching, cache retention, cached-token usage, and cache-bust detection.
 area:capabilities	The capability framework: lifecycle, loading, composition, hooks. Not any single capability.
+area:clai2-web-ui	The clai2 web UI: its web plugin, front end, and npm dependencies (src/pydantic_clai2/web-ui).
 area:codemode	CodeMode: model-written scripts, the tools they call, their limits, and interpreter state.
 area:compaction	Message-history reduction: summarization, retention rules, token budgets, and compaction strategies.
 area:conversation-store	Stored conversations: `Conversation`, `ConversationStore`, backends, UI adapter `conversation_store`
@@ -36,8 +37,9 @@ area:streaming	run_stream, event streams, StreamedResponse, and part deltas.
 area:temporal	Temporal durable execution integration
 area:thinking	ThinkingPart, ThinkingLevel, and provider thinking settings.
 area:tools	Function tools and toolsets: schemas, ToolDefinition, prepare, tool search, ToolManager.
-area:ui-adapters	UI event streams: UIAdapter base, AG-UI, Vercel AI protocol, web chat UI (pydantic_ai.ui).
+area:ui-adapters	UI event streams: UIAdapter base, AG-UI, Vercel AI protocol (pydantic_ai.ui).
 area:usage	RequestUsage, RunUsage, UsageLimits, genai-prices, and cost reporting.
+area:web-chat-ui	The built-in web chat UI: Agent.to_web(), clai web, pydantic_ai.ui._web, docs/web.md.
 area:workspaces	Command and file APIs: paths, mounts, working directories, and local or remote workspace access.
 attention-delivered	A delivered channel escalation is waiting for GitHub state cleanup
 attention-escalated	The maintainer attention request is cooling down after escalation
@@ -137,7 +139,6 @@ provider:openai-codex	OpenAI Codex subscription provider: OAuth, requests, respo
 provider:openai-compatible	OpenAI-compatible vendors without their own label, the shared OpenAI classes, custom base_url.
 provider:openrouter	OpenRouter provider integration, configuration, and model support.
 provider:snowflake	Snowflake Cortex provider integration, authentication, and model support.
-provider:system-one	System One API provider integration, configuration, and model support.
 provider:typesafe	TypeSafe/Jev provider integration, configuration, and model support.
 provider:xai	xAI provider integration, configuration, and model support.
 provider:zai	Z.ai (GLM) provider integration, configuration, and model support.

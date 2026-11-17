@@ -216,7 +216,7 @@ Choose the `area:` and `provider:` topic labels this way:
   Choose the subsystem whose code changes, not the API a reporter called.
   A Harness capability built on a core concept takes that concept's area.
   An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`, which does not count toward the two.
-  A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment.
+  A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment. The exception is `area:clai2-web-ui`, for a `pkg:clai2` change to its web UI.
 - Apply zero to two `provider:` labels, only when the behavior depends on a vendor endpoint. Leave them off when the change reproduces with `TestModel`.
 - Label a provider adapter's request or response mapping `area:models`. Label any other adapter change with the area of the feature it implements, such as `area:thinking` or `area:streaming`.
 - For an OpenAI-compatible vendor, apply `provider:<vendor>` when the catalog has one.
