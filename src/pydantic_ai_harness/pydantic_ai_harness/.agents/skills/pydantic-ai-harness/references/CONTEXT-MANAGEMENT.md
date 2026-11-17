@@ -436,8 +436,8 @@ tools sit behind them and however they change mid-run: `tool_search(query)` retu
 and descriptions, `tool_describe(name)` returns the description and `parameters_json_schema`, and
 `tool_call(name, args_json)` runs the tool with its arguments as a JSON object string. Bridged calls
 go through the normal tool path (validation, hooks, approval, usage), and both `tool_call` and the
-bridged tool count as tool calls. A bridged tool's `ModelRetry` is a retry of `tool_call` (its
-`max_retries`; the tool sees it as `ctx.retry`), and a `sequential` bridged tool makes `tool_call` sequential.
+bridged tool count as tool calls. A bridged tool's retries count under its own name (its `ctx.retry` and
+`max_retries`) and also spend a `tool_call` retry; a `sequential` bridged tool makes `tool_call` sequential.
 
 ```python
 from pydantic_ai import Agent

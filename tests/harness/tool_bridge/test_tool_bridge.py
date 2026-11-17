@@ -18,7 +18,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
 )
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
-from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -152,7 +152,7 @@ class TestToolBridge:
                 _call('tool_call', name='_get_weather', args_json='not json'),
             ]
         )
-        agent = Agent(model, tools=[_get_weather], capabilities=[ToolBridge()])
+        agent = Agent(model, tools=[_get_weather], capabilities=[ToolBridge()], retries=2)
 
         result = await agent.run('weather?')
 
@@ -344,14 +344,29 @@ class TestToolBridge:
             return 'ok'
 
         model = _scripted(
-            [_call('tool_call', name='flaky', args_json='{}'), _call('tool_call', name='flaky', args_json='{}')]
+            [
+                _call('tool_call', name='nope', args_json='{}'),
+                _call('tool_call', name='flaky', args_json='{}'),
+                _call('tool_call', name='flaky', args_json='{}'),
+            ]
         )
-        agent = Agent(model, tools=[flaky], capabilities=[ToolBridge()])
+        agent = Agent(model, tools=[Tool(flaky, max_retries=1)], capabilities=[ToolBridge()])
 
         result = await agent.run('go')
 
         assert attempts == [0, 1]
-        assert _returns(result.all_messages()) == ['try again', 'ok']
+        assert _returns(result.all_messages())[1:] == ['try again', 'ok']
+
+    async def test_bridged_tool_max_retries(self):
+        def flaky() -> str:
+            """Always fail."""
+            raise ModelRetry('try again')
+
+        model = _scripted([_call('tool_call', name='flaky', args_json='{}')] * 3)
+        agent = Agent(model, tools=[Tool(flaky, max_retries=1)], capabilities=[ToolBridge(max_retries=5)])
+
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'flaky' exceeded max retries count of 1"):
+            await agent.run('go')
 
     async def test_sequential_bridged_tool_makes_tool_call_sequential(self):
         tool_defs: list[ToolDefinition] = []

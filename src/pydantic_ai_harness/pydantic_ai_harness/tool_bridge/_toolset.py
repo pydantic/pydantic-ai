@@ -11,7 +11,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.capabilities import ToolSearchFunc
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tool_manager import (
     ToolManager,
@@ -52,7 +52,7 @@ class _Description(TypedDict):
     parameters_json_schema: dict[str, Any]
 
 
-def _dispatcher(description: str, args: type[Any]) -> tuple[str, dict[str, Any], SchemaValidatorProt]:
+def _dispatcher(description: str, args: type[object]) -> tuple[str, dict[str, Any], SchemaValidatorProt]:
     adapter = TypeAdapter(args)
     return description, adapter.json_schema(), adapter.validator  # pyright: ignore[reportReturnType]
 
@@ -166,7 +166,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
                 description=tool_def.description,
                 parameters_json_schema=tool_def.parameters_json_schema,
             )
-        return await self._call(ctx, target.tool_def.name, tool_args['args_json'], tool.bridged)
+        return await self._call(ctx, target, tool_args['args_json'], tool.bridged)
 
     async def _search(
         self, ctx: RunContext[AgentDepsT], query: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
@@ -180,21 +180,24 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         return matches[: self.max_results]
 
     async def _call(
-        self, ctx: RunContext[AgentDepsT], name: str, args_json: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
+        self,
+        ctx: RunContext[AgentDepsT],
+        target: ToolsetTool[AgentDepsT],
+        args_json: str,
+        bridged: dict[str, ToolsetTool[AgentDepsT]],
     ) -> Any:
         """Run a bridged tool through a nested `ToolManager`, so its validation and hooks apply as to a direct call.
 
-        A retry the tool asks for is a retry of `tool_call`, so the tool sees that call's retry count as its own.
+        The tool's retries are counted under its own name in the run's tool manager, as for a direct call,
+        so its `ctx.retry` and `max_retries` see only its own failures.
         """
         parent = ctx.tool_manager
         if parent is None:
             raise UserError(
                 "`ToolBridgeToolset` needs the run's tool manager, so bridged calls run through tool hooks."
             )
-        nested_ctx = replace(ctx, retries={**ctx.retries, name: ctx.retry})
-        manager = ToolManager(
-            toolset=self.wrapped, root_capability=parent.root_capability, ctx=nested_ctx, tools=bridged
-        )
+        name = target.tool_def.name
+        manager = ToolManager(toolset=self.wrapped, root_capability=parent.root_capability, ctx=ctx, tools=bridged)
         call = ToolCallPart(tool_name=name, args=args_json or '{}')
         reserved = reserve_nested_call(ctx)
         # The `tool_call` running this counts only once it returns, so it is pending too: concurrent
@@ -203,11 +206,27 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         ctx.usage.tool_calls += reserved
         reserved *= 2
         try:
-            return await manager.handle_call(
+            result = await manager.handle_call(
                 call, approved=ctx.tool_call_approved, metadata=ctx.tool_call_metadata, wrap_validation_errors=False
             )
+        except ModelRetry as exc:
+            _count_failure(parent, ctx, target, exc)
+            raise
         except ValidationError as exc:
+            _count_failure(parent, ctx, target, exc)
             errors = exc.errors(include_url=False, include_context=False)
             raise ModelRetry(f'Invalid arguments for tool {name!r}: {errors}') from exc
         finally:
             ctx.usage.tool_calls -= reserved
+        parent.succeeded_tools.add(name)
+        return result
+
+
+def _count_failure(
+    parent: ToolManager[AgentDepsT], ctx: RunContext[AgentDepsT], target: ToolsetTool[AgentDepsT], exc: Exception
+) -> None:
+    """Count a failed bridged call against the bridged tool, as the run counts a failed direct call."""
+    name = target.tool_def.name
+    if ctx.retries.get(name, 0) >= target.max_retries:
+        raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {target.max_retries}') from exc
+    parent.failed_tools.add(name)
