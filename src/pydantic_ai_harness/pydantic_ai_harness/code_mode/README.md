@@ -745,12 +745,42 @@ host-clock calls happen again during replay; changing their results can change w
 workflow schedules and cause a `NondeterminismError`. Put external reads, writes, clock access, and
 other side effects in wrapped tools so Temporal records them as activities. Replay may not flag
 changed arguments when the same activity remains at the same history position, so replay validation
-is not a substitute for this boundary. Temporal activity timeouts apply to nested tools, not pure
-computation inside `run_code`. The workflow waits while the sandbox computes, and Temporal fails a
-workflow task that does not yield within 2 seconds, so move heavier computation into a tool.
+is not a substitute for this boundary. When `run_code` runs in workflow code, the workflow waits
+while the sandbox computes, and Temporal fails a workflow task that does not yield within 2 seconds.
+Move heavier computation into a tool, or run turns as activities on a remote worker as described below.
 Clock, environment, and randomness calls reach `os_access` on the workflow's own thread, so a
 handler can answer `datetime.now()` with `workflow.now()` and stay replay-safe. File calls are
 answered by Monty from the mounts first and reach the handler on another thread.
+
+### Remote turns as activities
+
+With a remote `monty_sandbox` whose Monty server stores sessions, Code Mode runs each turn as its own
+activity. A turn is the part of a snippet between two nested tool calls. The server saves the session
+after each turn and returns an ID, and the next turn starts from that ID in whichever worker runs it.
+Computation in the sandbox then no longer counts against the workflow task's 2-second limit, and
+replay reads each turn's result from history instead of connecting to the server.
+
+This needs an `id` on `CodeMode`, which names the turn activity:
+
+```python {test="skip"}
+CodeMode(id='code', monty_sandbox='https://monty.example.com')
+```
+
+Code Mode keeps running `run_code` in workflow code, as described above, when any of these holds:
+
+- `CodeMode` has no `id`.
+- The server stores no sessions. The first turn reports this without running anything.
+- `os_access` is set: the handler may call `temporalio.workflow` APIs, which work only in workflow code.
+- A `mount` uses `'overlay'` mode, the default. Monty does not keep overlay writes in a stored session.
+  Use `'read-only'` or `'read-write'` mounts to run turns as activities. The activity worker reads
+  them, so their directories must exist wherever turn activities run.
+- The workflow started before this version of Code Mode, so its history replays as it was recorded.
+
+Each turn uses the `activity_config` you pass to `TemporalDurability`. Its `start_to_close_timeout`
+bounds one turn, and its retry policy retries a turn that failed to reach the server. A retry starts
+from the same stored ID, so it runs the turn again from the same state. When the retries run out, the
+workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as syntax errors,
+exceptions, and time limits, are returned to the model as model retries, as they are outside Temporal.
 
 ## Observability
 

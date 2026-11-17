@@ -236,6 +236,14 @@ reads, writes, and clock access in wrapped tools (which become activities), not 
 Inside a Temporal workflow `max_duration_seconds` is disabled (memory and suspension caps still apply) and a
 workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
 
+With a remote `monty_sandbox` whose server stores sessions and `CodeMode(id=...)`, each turn (the code
+between two nested tool calls) runs as its own activity instead, so sandbox computation does not count
+against the 2 seconds and replay reads turn results from history. Runs stay workflow-side without an
+`id`, against a server that stores nothing, with `os_access` set, with an `'overlay'` mount (the
+default mode; use `'read-only'` or `'read-write'`), or when the workflow started before this change.
+Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
+the workflow with `ActivityError`.
+
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory
 errors fail the workflow task instead: Temporal retries the task while the workflow remains running,
