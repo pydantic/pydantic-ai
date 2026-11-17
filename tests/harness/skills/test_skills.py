@@ -37,6 +37,7 @@ from pydantic_ai_harness import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning import ArtifactFinding, ArtifactScanResult
 from pydantic_ai_harness.skills import Skills, SkippedSkill
 from tests.harness.conftest import IsStr
+from tests.harness.file_system.test_windows_paths import DriveBackend
 from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend, RunOnlyWorkspaceBackend
 
 
@@ -1208,6 +1209,17 @@ class TestSkillFiles:
             *[IsStr(regex=r".*is outside the directory of skill 'guide'.*")] * 2,
             IsStr(regex=r".*Give a path relative to the directory of skill 'guide'.*"),
         ]
+
+    async def test_a_drive_path_is_refused_on_windows(self, tmp_path: Path) -> None:
+        _write_guide(tmp_path / 'project' / 'skills')
+
+        results = await _read(
+            Skills('skills', workspace=DriveBackend(tmp_path), read_files=True),
+            None,
+            [('guide', 'C:references\\guide.md')],
+        )
+
+        assert results == [IsStr(regex=r".*Give a path relative to the directory of skill 'guide'.*")]
 
     async def test_dot_dot_climbs_from_a_symlink_s_target(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'skills', 'guide', files={'notes.md': 'Inside.'})
