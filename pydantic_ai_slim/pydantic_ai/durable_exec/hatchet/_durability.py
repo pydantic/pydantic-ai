@@ -195,6 +195,7 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         # Shared with the bound copies `for_agent()` makes, so `workflows` on the instance the user holds lists
         # the tasks of every agent it's attached to.
         self._registered_tasks: list[Standalone[TaskInput, TaskOutput]] = []
+        self._bound_agent_names: list[str] = []
         self._event_stream = (
             HatchetEventStream() if event_stream is True else event_stream if event_stream is not False else None
         )
@@ -217,6 +218,8 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
             )
 
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        if self.name not in self._bound_agent_names:
+            self._bound_agent_names.append(self.name)
         if self._deps_type is None:
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
         self._deps_adapter = TypeAdapter(self._deps_type)
@@ -410,6 +413,14 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', event=AgentRunResultEvent(result)
             )
 
+    async def _publish_terminal_error(self, ctx: RunContext[AgentDepsT], error: BaseException) -> None:
+        config = self._event_stream
+        topic = self._run_topic()
+        if config is not None and topic is not None:
+            await publish_event(
+                self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', error=f'{type(error).__name__}: {error}'
+            )
+
     def stream_agent_events(
         self,
         workflow_run_id: str,
@@ -435,9 +446,22 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 'This `HatchetDurability` has no `event_stream`, so its runs publish no events to subscribe to. '
                 'Pass `event_stream=True` to publish them.'
             )
-        topic = config.topic(self.name, workflow_run_id)
+        topic = config.topic(self._stream_agent_name(), workflow_run_id)
         subscription = self.hatchet.streams.aio_subscribe(topic, namespace=config.namespace, cursor=cursor)
         return HatchetAgentRunEvents(subscription, output_type=output_type)
+
+    def _stream_agent_name(self) -> str:
+        """The agent whose topic `stream_agent_events` reads: this capability's, once it's attached to one agent."""
+        if self.name:
+            return self.name
+        if len(self._bound_agent_names) == 1:
+            return self._bound_agent_names[0]
+        if not self._bound_agent_names:
+            raise UserError('`HatchetDurability` must be attached to an agent before its events can be streamed.')
+        raise UserError(
+            f"This `HatchetDurability` is attached to agents {self._bound_agent_names!r}, so it can't tell whose "
+            'events to stream. Use a `HatchetDurability` per agent, or pass `name=` to it.'
+        )
 
 
 class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
@@ -456,3 +480,8 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
     async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
         await self._durability._publish_terminal_event(ctx, result)  # pyright: ignore[reportPrivateUsage]
         return result
+
+    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
+        """End subscribers' iteration when the run fails, as no result event will: a topic outlives its runs."""
+        await self._durability._publish_terminal_error(ctx, error)  # pyright: ignore[reportPrivateUsage]
+        raise error

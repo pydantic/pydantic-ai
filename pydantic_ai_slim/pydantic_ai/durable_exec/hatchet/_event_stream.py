@@ -63,7 +63,11 @@ class HatchetEventStream:
 class _StreamMessage(Generic[OutputDataT]):
     id: str
     """Identifies the message across replays of the durable task, so a consumer yields it once."""
-    event: Annotated[AgentStreamEvent | AgentRunResultEvent[OutputDataT], pydantic.Discriminator('event_kind')]
+    event: (
+        Annotated[AgentStreamEvent | AgentRunResultEvent[OutputDataT], pydantic.Discriminator('event_kind')] | None
+    ) = None
+    error: str | None = None
+    """Set on the terminal message of a run that failed, which has no result to carry."""
 
 
 _publish_adapter: TypeAdapter[_StreamMessage[Any]] = TypeAdapter(_StreamMessage[Any])
@@ -75,9 +79,10 @@ async def publish_event(
     topic: str,
     *,
     message_id: str,
-    event: AgentStreamEvent | AgentRunResultEvent[Any],
+    event: AgentStreamEvent | AgentRunResultEvent[Any] | None = None,
+    error: str | None = None,
 ) -> None:
-    message = _StreamMessage[Any](id=message_id, event=event)
+    message = _StreamMessage[Any](id=message_id, event=event, error=error)
     await hatchet.streams.aio_publish(topic, _publish_adapter.dump_json(message), namespace=config.namespace)
 
 
@@ -134,7 +139,8 @@ class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent
     A durable [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events]: it yields the run's
     [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s in order, ending with the
     [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the result, while the run itself
-    executes on a Hatchet worker. A durable task that runs the agent more than once publishes a terminal event
+    executes on a Hatchet worker. A run that fails publishes no result: the iterator then ends early, with the
+    failure in `error`. A durable task that runs the agent more than once publishes a terminal event
     per run, so this iterator ends at the first; resume from its `cursor` to read the next run's events.
     """
 
@@ -146,6 +152,7 @@ class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent
         self._seen: set[str] = set()
         self._cursor: str | None = None
         self._result: AgentRunResult[OutputDataT] | None = None
+        self._error: str | None = None
         self._done = False
 
     @property
@@ -157,6 +164,14 @@ class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent
     def result(self) -> AgentRunResult[OutputDataT] | None:
         """The run's result, once the terminal event has been yielded."""
         return self._result
+
+    @property
+    def error(self) -> str | None:
+        """Why the run failed, if the iterator ended without a result because it did.
+
+        The durable task's own result says how it ended, including a failure after the run published its result.
+        """
+        return self._error
 
     def __aiter__(self) -> HatchetAgentRunEvents[OutputDataT]:
         return self
@@ -176,7 +191,13 @@ class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent
                 # A replayed durable task published this event again.
                 continue
             self._seen.add(message.id)
+            if message.error is not None:
+                self._error = message.error
+                self._done = True
+                await self.aclose()
+                raise StopAsyncIteration
             event = message.event
+            assert event is not None
             if isinstance(event, AgentRunResultEvent):
                 self._result = event.result
                 self._done = True
