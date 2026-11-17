@@ -86,9 +86,13 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
     the candidate about to serve it, so the model's own message preparation and token counting, and
     any preparation a capability does there, are redone per model instead of inherited. (The built-in
-    compaction capabilities still run once per step, in `before_model_request`.) The request step
-    itself is not repeated: `before_model_request` and `wrap_model_request` run once, and the model
-    never sees a retry prompt.
+    compaction capabilities still run once per step, in `before_model_request`.) The instructions and
+    model settings, including capabilities'
+    [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] and
+    [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings], are resolved
+    again for each model after the first, with that model as `ctx.model`, and history records the ones
+    the model that answered was sent. The request step itself is not repeated: `before_model_request`
+    and `wrap_model_request` run once, and the model never sees a retry prompt.
 
     With `sticky=True`, a conversation that fell back stays on the model that answered, in later
     steps and later runs continuing its message history, so the provider's prompt cache keeps

@@ -42,6 +42,7 @@ from ...exceptions import (
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import ModelResponse
+from .._retry_after import model_error_retry_after
 from .._utils import mark_streamed_before_failing, streamed_before_failing
 
 _DETAILS_KEY = 'pydantic_ai_model_error'
@@ -154,7 +155,7 @@ def model_errors_as_application_errors(
     except ModelAPIError as error:
         details = _crossing_details(error)
         retryable = not isinstance(error, non_retryable)
-        next_retry_delay = _next_retry_delay(error.retry_after) if retryable and error.retry_after is not None else None
+        next_retry_delay = _next_retry_delay(error) if retryable else None
         if retryable and not details and next_retry_delay is None:
             raise
         raise ApplicationError(
@@ -197,7 +198,7 @@ def _crossing_details(error: ModelAPIError) -> tuple[dict[str, Any], ...]:
     return (detail,)
 
 
-def _next_retry_delay(retry_after: float) -> timedelta:
+def _next_retry_delay(error: ModelAPIError) -> timedelta | None:
     """The delay before the next attempt for a provider's `retry_after`, capped at the retry policy's `maximum_interval`.
 
     Temporal waits a `next_retry_delay` instead of the interval its retry policy computes, so the policy's
@@ -207,7 +208,8 @@ def _next_retry_delay(retry_after: float) -> timedelta:
     """
     policy = (activity.info().retry_policy if activity.in_activity() else None) or RetryPolicy()
     maximum_interval = policy.maximum_interval or policy.initial_interval * 100
-    return timedelta(seconds=min(retry_after, maximum_interval.total_seconds()))
+    delay = model_error_retry_after(error, maximum=maximum_interval.total_seconds())
+    return None if delay is None else timedelta(seconds=delay)
 
 
 _ERROR_CATEGORIES = (
