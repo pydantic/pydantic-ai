@@ -22,7 +22,7 @@ from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinki
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ...capabilities.abstract import AbstractCapability
-from ...exceptions import ModelRequestRejectedError, UserError
+from ...exceptions import UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -882,7 +882,7 @@ def _build_extra_body(
     return merged
 
 
-def _extra_body_thinking(model_settings: ModelSettings) -> dict[str, object] | None:
+def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, object] | None:
     """The `thinking` object a caller hand-rolled in `extra_body`, if any.
 
     `extra_body` is how a caller reaches a field the installed SDK cannot type yet, so it can carry
@@ -1573,12 +1573,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile = self.profile
         merged = merge_model_settings(self.settings, model_settings) or {}
 
+        # Only the typed setting is checked. Budget thinking in `extra_body['thinking']` is sent as is: the API rejects
+        # it with a 400, which `FallbackModel` and `ModelFallback` fall back on. A check before sending would stop other
+        # callers: the agent runs this method for structured output outside the request `ModelFallback` watches, and
+        # `model_request_batch` returns a request's 400 in its place rather than failing the whole batch.
         if (
             profile.get('anthropic_disallows_budget_thinking', False)
             and (anthropic_thinking := merged.get('anthropic_thinking'))
             and anthropic_thinking.get('type') == 'enabled'
-            # A caller's `extra_body` thinking is what reaches the wire: `_reject_extra_body_budget_thinking` judges it.
-            and _extra_body_thinking(merged) is None
         ):
             raise UserError(
                 f'{self.model_name!r} does not support '
@@ -1618,25 +1620,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ):
             prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
-
-    def _reject_extra_body_budget_thinking(self, model_settings: AnthropicModelSettings) -> None:
-        """Reject budget-based `extra_body` thinking on a model that requires adaptive thinking.
-
-        The API returns a 400 for it, so this raises that 400's category while the request is built, where
-        `FallbackModel`, `ModelFallback` and `except ModelAPIError` handle it as they handle the 400. It can't run in
-        `prepare_request`: for structured output, the agent also calls that before the request `ModelFallback` watches.
-        """
-        if (
-            self.profile.get('anthropic_disallows_budget_thinking', False)
-            and (thinking := _extra_body_thinking(model_settings)) is not None
-            and thinking.get('type') == 'enabled'
-        ):
-            raise ModelRequestRejectedError(
-                self.model_name,
-                f'{self.model_name!r} does not support '
-                "`extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`. "
-                "Remove `extra_body['thinking']` or set it to `{'type': 'adaptive'}`.",
-            )
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
@@ -1880,7 +1863,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         *,
         compaction: BetaCompactionConfigParam | None = None,
     ) -> _PreparedMessagesCreate:
-        self._reject_extra_body_budget_thinking(model_settings)
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -2308,7 +2290,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
-        self._reject_extra_body_budget_thinking(model_settings)
         # Anthropic docs: https://platform.claude.com/docs/en/api/messages/count_tokens
         # The wire `tools` list keeps client-side tools like `MemoryTool`, which contribute real tokens, and the
         # server tools where `anthropic_count_tokens_accepts_server_tools` says the endpoint takes them. Verified

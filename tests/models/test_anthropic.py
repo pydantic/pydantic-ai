@@ -38,7 +38,6 @@ from pydantic_ai import (
     ModelMessage,
     ModelOverloadedError,
     ModelRequest,
-    ModelRequestRejectedError,
     ModelResponse,
     ModelRetry,
     NativeToolCallPart,
@@ -91,10 +90,8 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
-from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
@@ -2537,25 +2534,17 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
         await agent.run('Hello')
 
 
-@pytest.mark.parametrize(
-    'thinking_settings',
-    [
-        pytest.param({'anthropic_thinking': {'type': 'disabled'}}, id='anthropic_thinking'),
-        pytest.param({'thinking': False}, id='unified_thinking'),
-        pytest.param({'extra_body': {'thinking': {'type': 'disabled'}}}, id='extra_body'),
-    ],
-)
+@pytest.mark.parametrize('unified', [False, True], ids=['anthropic_thinking', 'unified_thinking'])
 @pytest.mark.parametrize('effort', ['xhigh', 'max'])
 async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
-    allow_model_requests: None, effort: Literal['xhigh', 'max'], thinking_settings: AnthropicModelSettings
+    allow_model_requests: None, effort: Literal['xhigh', 'max'], unified: bool
 ):
     """Claude Opus 5 caps effort at `high` once thinking is explicitly disabled.
 
     Verified live: `claude-opus-5` returns a 400 (`output_config.effort 'xhigh' is not supported
     when thinking is disabled on this model`) for `xhigh` and `max`, while `claude-opus-4-8`
     accepts the same combination. We surface it as a `UserError` before sending the request.
-    Unified `thinking=False` sends the same `{'type': 'disabled'}` on Opus 5, which thinks by default,
-    and `extra_body` thinking reaches the wire as is.
+    Unified `thinking=False` sends the same `{'type': 'disabled'}` on Opus 5, which thinks by default.
     """
     c = completion_message(
         [BetaTextBlock(text='Hello!', type='text')],
@@ -2563,16 +2552,21 @@ async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
     )
     mock_client = MockAnthropic.create_mock(c)
 
-    settings: AnthropicModelSettings = {**thinking_settings, 'anthropic_effort': effort}
+    settings = (
+        AnthropicModelSettings(thinking=False, anthropic_effort=effort)
+        if unified
+        else AnthropicModelSettings(anthropic_thinking={'type': 'disabled'}, anthropic_effort=effort)
+    )
     model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
 
     with pytest.raises(UserError, match='does not support `anthropic_effort='):
         await Agent(model).run('Hello')
 
     # A caller's `extra_body` thinking is what reaches the wire, so it decides.
-    adaptive_settings: AnthropicModelSettings = {**settings, 'extra_body': {'thinking': {'type': 'adaptive'}}}
     overridden = AnthropicModel(
-        'claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=adaptive_settings
+        'claude-opus-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings={**settings, 'extra_body': {'thinking': {'type': 'adaptive'}}},
     )
     assert (await Agent(overridden).run('Hello')).output == 'Hello!'
 
@@ -6959,121 +6953,56 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     assert kwargs.get('output_config') is OMIT
 
 
-_TYPED_BUDGET_THINKING_REJECTED = (
-    "does not support `anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`. "
-    "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
-)
-_EXTRA_BODY_BUDGET_THINKING_REJECTED = (
-    "does not support `extra_body={'thinking': {'type': 'enabled', 'budget_tokens': ...}}`. "
-    "Remove `extra_body['thinking']` or set it to `{'type': 'adaptive'}`."
-)
-
-
-@pytest.mark.parametrize(
-    ('settings', 'message', 'error'),
-    [
-        pytest.param(
-            {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}},
-            _TYPED_BUDGET_THINKING_REJECTED,
-            UserError,
-            id='anthropic_thinking',
-        ),
-        pytest.param(
-            {'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
-            _EXTRA_BODY_BUDGET_THINKING_REJECTED,
-            ModelRequestRejectedError,
-            id='extra_body',
-        ),
-        pytest.param(
-            {
-                'anthropic_thinking': {'type': 'adaptive'},
-                'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
-            },
-            _EXTRA_BODY_BUDGET_THINKING_REJECTED,
-            ModelRequestRejectedError,
-            id='extra_body_over_adaptive',
-        ),
-    ],
-)
-@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5'])
-async def test_anthropic_opus_47_rejects_budget_thinking(
-    allow_model_requests: None,
-    model_name: str,
-    settings: AnthropicModelSettings,
-    message: str,
-    error: type[UserError | ModelRequestRejectedError],
-):
-    """Claude Opus 4.7 and later reject budget-based thinking with a 400, so we raise before sending.
-
-    `extra_body` thinking raises that 400's category, so `FallbackModel` falls back on it as on the 400; the typed
-    setting keeps raising `UserError`. See https://platform.claude.com/docs/en/build-with-claude/extended-thinking.
-    """
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None, model_name: str):
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaTextBlock(text='4', type='text')],
             usage=BetaUsage(input_tokens=10, output_tokens=1),
         )
     )
-    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
-
-    with pytest.raises(error) as exc_info:
-        await Agent(m).run('What is 2+2?')
-    assert str(exc_info.value) == f"'{model_name}' {message}"
-    with pytest.raises(error):
-        await m.count_tokens([ModelRequest.user_text_prompt('What is 2+2?')], None, ModelRequestParameters())
-    assert get_mock_chat_completion_kwargs(mock_client) == []
-
-    # A caller's `extra_body` thinking is what reaches the wire, so it decides.
-    overridden = AnthropicModel(
-        model_name,
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings={**settings, 'extra_body': {'thinking': {'type': 'adaptive'}}},
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
-    assert (await Agent(overridden).run('What is 2+2?')).output == '4'
 
-    # Opus 4.6 has the flag off, so the same settings go through untouched.
-    allowed = AnthropicModel(
-        'claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
-    )
-    assert (await Agent(allowed).run('What is 2+2?')).output == '4'
+    with pytest.raises(UserError, match=f"'{model_name}' does not support"):
+        await agent.run('What is 2+2?')
 
 
-@pytest.mark.parametrize('structured', [False, True], ids=['str_output', 'structured_output'])
-@pytest.mark.parametrize('fallback', ['FallbackModel', 'ModelFallback'])
-async def test_anthropic_extra_body_budget_thinking_rejection_falls_back(
-    allow_model_requests: None, fallback: str, structured: bool
-) -> None:
-    """`FallbackModel` and `ModelFallback` fall back on the guard's error by default, as they do on the API's 400.
+async def test_anthropic_extra_body_budget_thinking_reaches_api(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """Budget thinking in `extra_body['thinking']` is sent as is, and the API's 400 comes back as a `ModelHTTPError`.
 
-    Structured output resolves its output mode through `prepare_request` before the request attempt that
-    `ModelFallback` watches, so the guard has to run on the request path. A unit test: the guard fires before any
-    request, so there is nothing to record.
+    Only typed `anthropic_thinking` is checked before sending. `FallbackModel` and `ModelFallback` fall back on the 400,
+    while a check before sending would stop `ModelFallback` with structured output, and fail a whole
+    `model_request_batch` instead of returning the 400 in that request's place.
     """
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}),
+    )
 
-    class Answer(BaseModel):
-        answer: int
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('What is 2+2?')
 
-    mock_client = MockAnthropic.create_mock(
-        completion_message(
-            [BetaTextBlock(text='unused', type='text')], usage=BetaUsage(input_tokens=1, output_tokens=1)
+    assert (exc_info.value.status_code, exc_info.value.body) == snapshot(
+        (
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.',
+                },
+                'request_id': 'req_011Ch9EAuo6tvE72oqfMtLyV',
+            },
         )
     )
-    primary = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings={'extra_body': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}},
-    )
-    backup = TestModel()
-    output_type = Answer if structured else str
-    if fallback == 'FallbackModel':
-        agent = Agent(FallbackModel(primary, backup), output_type=output_type)
-    else:
-        agent = Agent(primary, output_type=output_type, capabilities=[ModelFallback(backup)])
-
-    result = await agent.run('What is 2+2?')
-
-    assert result.output == (Answer(answer=0) if structured else 'success (no tool calls)')
-    assert get_mock_chat_completion_kwargs(mock_client) == []
+    assert single_request_body(vcr)['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
