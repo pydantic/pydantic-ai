@@ -396,6 +396,7 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
         provider_details: dict[str, Any] = {
             'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25',
             **anthropic_caller_provider_details(item.caller),
+            **tool_search_extra_input_provider_details(tool_args, item.name),
         }
         return NativeToolSearchCallPart(
             provider_name=provider_name,
@@ -453,6 +454,17 @@ def normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str)
     return {'queries': queries}
 
 
+def tool_search_extra_input_provider_details(tool_args: dict[str, Any] | None, tool_name: str) -> dict[str, Any]:
+    """Keep the input fields that `ToolSearchArgs` has no slot for, such as `limit`, for replay.
+
+    Replay has to send the exact input the model gave: a thinking block that follows the search is bound
+    to it, and Anthropic rejects the thinking signature if a field is missing.
+    """
+    wire_key = 'pattern' if tool_name == 'tool_search_tool_regex' else 'query'
+    extra_input = {key: value for key, value in (tool_args or {}).items() if key != wire_key}
+    return {'extra_input': extra_input} if extra_input else {}
+
+
 def finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> NativeToolSearchCallPart:
     """Finalize a streamed tool-search call's args.
 
@@ -476,7 +488,14 @@ def finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> N
     # input key (`pattern` vs `query`) is honored.
     strategy = (part.provider_details or {}).get('strategy')
     tool_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
-    return replace(part, args=normalize_tool_search_args(parsed, tool_name))
+    return replace(
+        part,
+        args=normalize_tool_search_args(parsed, tool_name),
+        provider_details={
+            **(part.provider_details or {}),
+            **tool_search_extra_input_provider_details(parsed, tool_name),
+        },
+    )
 
 
 def map_tool_search_tool_result_block(
