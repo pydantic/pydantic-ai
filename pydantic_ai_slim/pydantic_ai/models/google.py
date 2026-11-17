@@ -74,6 +74,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
+    _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -767,10 +768,12 @@ class GoogleModel(Model[Client]):
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
         The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model (verified live 2026-11-04),
-        while Google Cloud accepts them for the models `google_model_profile` says do.
+        while Google Cloud accepts them for the models `google_model_profile` says do. Google Cloud also reads more
+        image and document media types than the Gemini API.
         """
         if self._is_google_cloud:
-            return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=False))
+            profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=False))
+            return _with_google_cloud_media_types(profile)
         return merge_profile(
             profile, GoogleModelProfile(google_supports_batch_api=True, google_supports_penalties=False)
         )
