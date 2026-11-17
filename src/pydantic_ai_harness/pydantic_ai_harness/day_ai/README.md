@@ -8,6 +8,23 @@ signed-in user's workspace.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Day AI: CRM records and meeting context through Day AI's MCP server
+    accDescr: Inside your agent, the model calls tools of the DayAI capability, prefixed day_ai_, and gets their results. Your auth function gives the capability a token for each run. The capability sends tools/call requests with an OAuth Bearer token to the Day AI MCP server at day.ai/api/mcp and gets the results back.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        dayai["DayAI()<br/>day_ai_&lt;tool&gt;"]:::capability
+    end
+    server["Day AI MCP server<br/>day.ai/api/mcp"]:::external
+    model <-->|"tool call, result"| dayai
+    auth -->|"token for each run"| dayai
+    dayai <-->|"tools/call,<br/>OAuth Bearer token"| server
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Before you start
 
 Day AI MCP needs a paid Day AI Agent tier; the tools and limits of your tier and
@@ -105,9 +122,40 @@ before you put tokens there.
 
 The capability's `id` defaults to `day_ai`, so `defer_loading=True` works
 without one. To add more than one `DayAI` to an agent, give each a distinct `id`
-and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/),
-since their tool names are the same; two that share an `id` but differ raise an
-error.
+and `tool_prefix`; two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `day_ai_` prefix, as in
+`day_ai_<tool>`, so they don't collide with other tools on the agent. Set
+`tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names
+the server gives them.
+
+A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
+`capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
+prefix included.
+
+## Upgrading
+
+`DayAI` used to give the agent the server's tool names unprefixed. They now
+reach the agent as `day_ai_<tool>`. Code that refers to them by name, such as a
+`filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs
+the new names. A rule that no longer matches stops applying, so an approval rule
+or guardrail that named an old tool lets its calls through without approval or
+checks until you update it. Pass `tool_prefix=None` to keep the old names. If you
+wrapped `DayAI` in
+[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid
+collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it
+adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses
+  it recorded, and their tool calls use the old names, so a run started before
+  the change that calls a `DayAI` tool after it no longer replays. Activity and
+  step names come from the capability's `id`, which is unchanged. Let those runs
+  finish, keep `tool_prefix=None` until they have, or deploy the change with
+  [Temporal worker
+  versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)
+  or a new DBOS application version.
 
 ## Tool selection and approval
 
@@ -140,7 +188,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one with a
 proxy or MCP handlers. The client then owns the URL and authentication, so
 passing `client` together with `auth` raises an error.
@@ -154,8 +202,7 @@ credentials](#per-user-credentials) to connect each user separately.
 
 `DayAI` emits no spans of its own. Core's
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/)
-already records each Day AI tool call as a tool span, and connecting makes no
-decision worth a span of its own.
+already records each Day AI tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -186,5 +233,3 @@ from pydantic_ai_harness import DayAI
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[DayAI])
 ```
-
-Pass `custom_capability_types` so the loader can create `DayAI` from the file.

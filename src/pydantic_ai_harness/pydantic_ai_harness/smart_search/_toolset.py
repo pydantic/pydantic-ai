@@ -12,8 +12,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
+from pydantic_ai_harness.smart_search._chunks import Chunk
 from pydantic_ai_harness.smart_search._index import MAX_CACHED_INDEXES, SnippetIndexes
-from pydantic_ai_harness.smart_search._judge import JudgeModel
+from pydantic_ai_harness.smart_search._judge import JudgeModel, judge
 from pydantic_ai_harness.smart_search._search import (
     DEFAULT_CANDIDATES,
     MAX_CANDIDATES,
@@ -144,7 +145,7 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
             try:
                 result = await search_code(
                     ctx,
-                    model,
+                    self._judge,
                     query,
                     directory,
                     indexes=self._indexes,
@@ -152,7 +153,6 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
                     limit=limit,
                     candidates=candidates,
                     threshold=self._threshold,
-                    concurrency=self._concurrency,
                     span=span,
                 )
             except WorkspaceError as error:
@@ -174,3 +174,6 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
                     }
                 )
             return result
+
+    async def _judge(self, ctx: RunContext[AgentDepsT], query: str, chunks: list[Chunk]) -> list[float | None]:
+        return await judge(ctx, self._model, query, chunks, concurrency=self._concurrency)

@@ -193,13 +193,18 @@ Of the shared settings:
   rest: the agent keeps every tool of the run attached, and the conversation leaves the others out.
   A choice that forces a tool call (`'required'`, or a list of tool names) raises, as on the other
   providers.
-- `turn_detection` cannot be configured: ElevenLabs' server-side turn model is always on, so any
-  value other than `True` raises. There is no [push-to-talk](turns.md#push-to-talk).
-- `input_transcription_model=None` raises: ASR drives the agent pipeline and cannot be disabled.
-- `reconnect` raises: a dropped connection ends the session, and a reconnect policy would silently start a
-  conversation that remembers nothing.
+- `turn_detection=False` raises: ElevenLabs' server-side turn model is always on, so there is no
+  [push-to-talk](turns.md#push-to-talk). The [`TurnDetection`][pydantic_ai.realtime.TurnDetection] knobs
+  are ignored; tune turn-taking on the agent's `conversation_config.turn` instead.
+- `input_transcription_model` is ignored: ASR drives the agent pipeline, so input is always transcribed,
+  even with `None`.
+- `reconnect` is ignored with an
+  [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]: a conversation can't be
+  resumed, so a dropped connection ends the session rather than starting one that remembers nothing.
 - `max_tokens`, `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation
-  surface and are ignored, matching the [shared settings contract](overview.md#shared-settings).
+  surface and are ignored, matching the [shared settings contract](overview.md#shared-settings);
+  `parallel_tool_calls=False` warns with an
+  [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
 
 ### Audio formats
 
@@ -218,6 +223,23 @@ model = ElevenLabsAgentsRealtimeModel(
 ```
 
 Telephony (`ulaw_8000`) agents are not supported.
+
+### Speech timestamps
+
+ElevenLabs times each character the agent says, which
+[`output_speech_timestamps=True`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps]
+turns into a timestamp per word (see [Speech timestamps](audio.md#speech-timestamps)), punctuation included:
+
+```python
+from pydantic_ai.realtime.elevenlabs_agents import ElevenLabsAgentsRealtimeModelSettings
+
+timed_words = ElevenLabsAgentsRealtimeModelSettings(output_speech_timestamps=True)
+```
+
+Audio tags such as `[laughs]` are timed as words of their own, which go with the tags removed from the transcript
+(see [Provider-specific quirks](#provider-specific-quirks)). A barge-in cuts the message's timestamps down to the
+words ElevenLabs says were heard, and its
+[`interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] is where the first word not heard starts.
 
 ### Tool synchronization
 
@@ -274,16 +296,17 @@ parameter's description only when the local schema declares one.
 | Audio format | Full feature support | Mono PCM16; rates are fixed per agent (16 kHz default) and validated at connect, see [Audio formats](#audio-formats) |
 | Text output | Limited parameter support | `output_modality='text'` maps to the text-only override, which needs its toggle on the agent |
 | Image input | Unsupported | [`send()`][pydantic_ai.realtime.RealtimeSession.send] rejects images with a `UserError` |
-| Manual turns | Unsupported | ElevenLabs' server-side turn model owns turn-taking; `turn_detection` must stay `True` |
+| Manual turns | Unsupported | ElevenLabs' server-side turn model owns turn-taking; `turn_detection=False` raises |
 | Explicit interruption/truncation | Unsupported | ElevenLabs [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent`; `interrupt()` raises |
 | Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
-| Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
+| Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model` is ignored |
+| Speech timestamps | Full feature support | Per word, see [Speech timestamps](#speech-timestamps) |
 | Native tools | Unsupported | None can be configured from the session; configure [local fallbacks](tools.md#native-tools) for web capabilities. The agent's own MCP tool calls are recorded as `NativeToolCallPart`s named `mcp_server:<server id>` |
 | Async tool calls | Unsupported | The agent waits for each tool result (see [concurrent tool execution](tools.md#concurrent-tool-execution)) |
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
 | Context window | Limited parameter support | Known only once the agent reports `context_usage`: `session.context_window_used` then gives the share of the LLM's context in use (see [Usage and cost](#usage-and-cost)) |
 | Session duration | Limited parameter support | Capped by the agent's [maximum conversation duration](https://elevenlabs.io/docs/eleven-agents/customization/conversation-flow) (600 s by default, up to 7,200 s, set on the agent, not per conversation); at the cap the session gets a non-recoverable `RealtimeSessionErrorEvent` and raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] |
-| State-restoring reconnect | Unsupported | A dropped connection ends the session, and `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
+| State-restoring reconnect | Unsupported | A dropped connection ends the session, and `reconnect` is ignored with a warning, see [Provider session limits](lifecycle.md#provider-session-limits) |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
@@ -344,7 +367,8 @@ itself closes has none), and the live connection has it as
   reply, which can name only the latest. (Text sent while the agent speaks usually cuts it off, and the next reply
   answers it.)
 - [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
-  its next turn on, without stopping or replying.
+  its next turn on, without stopping or replying. So is a [system prompt](turns.md#system-prompts) sent with
+  `respond=False`, `<system>`-tagged.
 - A response's parallel tool calls each run as soon as they arrive.
 - With `elevenlabs_agents_tool_sync='off'`, client tools registered on the ElevenLabs side with
   `expects_response: false` are fire-and-forget: the session still runs them, but their results are never sent
@@ -443,12 +467,13 @@ the [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeMo
 a `UserError`, as ElevenLabs only supports semantic VAD. ElevenLabs accepts and then ignores the other
 OpenAI fields, so Pydantic AI doesn't send them: `openai_voice` (use `elevenlabs_voice`),
 `openai_input_noise_reduction`, `openai_output_speed`, `openai_truncation`, and `openai_prune_tool_items`.
-Of the shared settings, `parallel_tool_calls` and `thinking` are ignored the same way.
+Of the shared settings, `parallel_tool_calls` and `thinking` are ignored the same way, and
+`parallel_tool_calls=False` warns with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], as on a standard model.
 
 [Input transcription](audio.md#input-transcription) is always on: each spoken turn's transcript arrives whole
 once the turn is committed, usually after the reply has started. It takes no model, so
-`input_transcription_model` only accepts `'auto'` (the default); `None` still leaves transcripts on, and any
-other value raises a `UserError`.
+`input_transcription_model` is ignored: `None` still leaves transcripts on, and a pinned model ID has no effect.
 
 ### Feature support and limitations
 
@@ -463,7 +488,7 @@ other value raises a `UserError`.
 | Input transcription | Limited parameter support | Always on, with whole-turn transcripts; no transcription model to choose |
 | Native tools | Unsupported | ElevenLabs offers MCP tools, which Pydantic AI does not expose yet |
 | Async tool calls | Unsupported | The model answers the user while a [tool runs](tools.md#concurrent-tool-execution), but then abandons the call, see [Provider-specific quirks](#eleven-realtime-quirks) |
-| Usage | Unsupported | ElevenLabs reports no usage, so token counts are zero and `usage.cost` is `None` |
+| Usage | Unsupported | ElevenLabs reports no usage, so token counts are zero, [`unmeasured_requests`][pydantic_ai.usage.UsageBase.unmeasured_requests] counts these responses, and `usage.cost` is `None` |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new session; in-flight media is lost |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),

@@ -60,6 +60,7 @@ _INVALID_WIRE_BOUNDARIES = [
     pytest.param(CompactionPart(content='foreign', provider_name='anthropic'), 'openai', id='foreign-provider'),
     pytest.param(CompactionPart(provider_name='openai'), 'openai', id='openai-without-encrypted-content'),
     pytest.param(CompactionPart(provider_name='anthropic'), 'anthropic', id='anthropic-without-content'),
+    pytest.param(CompactionPart(content='', provider_name='anthropic'), 'anthropic', id='anthropic-empty-content'),
 ]
 
 

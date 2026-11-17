@@ -24,7 +24,7 @@ class Caching(AbstractCapability[Any]):
 
     - `True`: Enable prompt caching with the provider's default retention.
     - `False`: Disable library-managed prompt caching.
-    - `'5m'`/`'30m'`/`'1h'`: Enable prompt caching with a specific retention, snapped to the nearest
+    - `'5m'`/`'30m'`/`'1h'`/`'12h'`: Enable prompt caching with a specific retention, snapped to the nearest
       tier the provider supports.
     """
 

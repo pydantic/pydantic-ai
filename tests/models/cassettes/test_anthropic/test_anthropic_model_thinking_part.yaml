@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "206"
+      - "243"
       content-type:
       - application/json
       host:
@@ -19,17 +19,19 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
           - text: How do I cross the street?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
+        output_config:
+          effort: max
         stream: true
         thinking:
-          type: enabled
-          budget_tokens: 1024
+          type: adaptive
+          display: summarized
   response:
     status: 200
     headers:
@@ -41,10 +43,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=250
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-4b2fd5198cb06499c0192759fd4bef95-d53bd474f784e07b-01
+      - 00-8f46b5a0e66cbaa1b7e5f1ce88ac274f-9dd6ce2d3b420efa-01
       transfer-encoding:
       - chunked
       vary:
@@ -53,321 +57,435 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY86N7So5nDSVMmT1gBt","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":43,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}           }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFHGLzG9KoGJyuCsGCH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":16,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}    }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}          }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"This"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"This is a simple, practical"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is a straight"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" safety question, so I should give"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"forward safety"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" clear step-by-step gu"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" question about crossing the"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"idance: find a crossw"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" street. I"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"alk, stop at the cur"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" should provide clear"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"b, look both"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", helpful guidance"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" directions, use pedestr"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" on how to safely cross a"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ian signals, and make eye"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" street."}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" contact with drivers before cr"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Eo0DCpsBCBIYAipA69qyFi+sCo412EDny7YyS6bZCGAzKzIWQDi9+JvIkWrWp4Ln1nTCZk0bi+3+xTP29JUvmQwNsKw6B9ZbLhwRsjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB3Onv1QYSDKQh/pzKmKY3KNFRkxoMG0gjmaHZ364EjyD8IjAvY2ourooz1iaUcZzAgdPqsJg/1hUvJ8gC+htkUhMZaVrj8g7aQ2MeMK+3hBiG3SMqngHljUCYwl57tiMhfA/T55G+H7CQkUOpTTxnyDrnTbe1vHtaOVRukxsGeKYqa/8HnYHQD8x9H3mnnjy+KBj8GJyShxpSUCSv55If0NlHR2HiUT6MNCqWStfKsP9Ac5+jllBRcs8zfIgtvq6bNZbXiscyscYjV2T1OlQiBMPbbdksZTUHMiegl0mDlUwP1DY8fgR6fL88F9dy73fWLCE3bRgB"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ossing."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"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"}    }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0     }
+        data: {"type":"content_block_stop","index":0               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}     }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Here's"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"# How to"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" how to cross the street safely:"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Cross the Street"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n##"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Safely\n\n**"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Basic"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"1. Choose a good"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Steps"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" spot**\n- Use a"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n1. **Find"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crosswalk or inters"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a safe crossing spot"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ection with"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a signal if poss"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - Use"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ible.\n- If"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crosswalks,"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" there"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" inters"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ections, or pedest"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"n't one, pick a sp"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"rian signals"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ot with a"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" when"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" clear view of tra"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" available\n   -"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ffic in both directions,"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Avoid crossing between"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" away from curves"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" parked cars or on"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", h"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" curves"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ills, or parked v"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n2. **Stop"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ehicles that"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" at the cur"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" block sight l"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"b/"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ines.\n\n**2. St"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"edge"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"op at the curb or"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n   - Don"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" edge**\n- St"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t step"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"and a step"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" into"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" back from the cur"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the street yet"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"b,"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n3. **Look"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" not in"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" left"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the road.\n\n**3."}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", right, then"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Check"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" left again**\n   - Keep"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" looking"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sign"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" while"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"al ("}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"if there"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cross"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is one)**\n- **"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n4. **Wait"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Walk sign"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for traffic"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"al ("}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to clear**\n   - Make"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"walking person):** You"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" eye contact with drivers if possible"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" may"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - Ob"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cross, but still"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ey traffic signals if"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" look"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" present"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for tur"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n5"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ning cars.\n- **"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". **Walk"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Fl"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ashing h"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" don't run**\n   - Cross"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"and or count"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stead"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"down:** Don"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ily and predict"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t start crossing."}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ably\n   - Stay"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" If you're"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" alert"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" already in the street"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for turning"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", ke"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" vehicles\n\n## Additional"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ep going.\n- **Sol"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Tips\n\n- **Put"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"id hand:** Wait"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" away"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\n**4. Look and"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" di"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" listen**\n- Look **"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"stractions**"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"left, right, then"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" -"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" left again**"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" no"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". In"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" phones or"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" left"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" headphones while"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-dri"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing\n- **At"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ving countries like"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" night"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the UK,"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", wear"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Austral"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" visible"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ia, and Japan, start"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"/"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" by"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"reflective clothing**\n- **Watch"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" looking right"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for vehicles"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" backing"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Also"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" up or"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" check for c"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" turning**\n- **"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ars turning into"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Teach"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" your"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" children**"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" path"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to always"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n- Take out"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cross with"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" your ear"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" an"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"b"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" adult or"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"uds or"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" follow"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" l"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" these"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ower the"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" rules"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" volume,"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nIs"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and put your phone away."}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" there a specific crossing situation"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**5. Make eye"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you're dealing"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" contact**\n- Make"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" with ("}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sure drivers see you and"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"like a busy intersection"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stopping before you step"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" rural"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" out.\n\n**6. C"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" road, or something"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ross prom"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" else)?"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ptly**\n- Walk"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" don't run,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and keep sc"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"anning for"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" traffic as you go."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- On multi-lane ro"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ads, watch for a"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" car in"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" one lane st"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"opping while another car"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" pass"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"es in the next l"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ane.\n\n**7. Be"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ext"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ra careful at night or"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" in bad weather**\n-"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Wear light or"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" re"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"flective clothing,"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and give"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" dr"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ivers more room"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to stop.\n\n---"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nIf you're"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" as"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"king for"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a specific situation (te"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"aching a child, crossing"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" without sign"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"als, accessibility need"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"s, or tra"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ffic r"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ules in a partic"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ular country), let"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" me know and I can"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tailor the advice."}           }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1}
+        data: {"type":"content_block_stop","index":1      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":43,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":277,"output_tokens_details":{"thinking_tokens":32}}          }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":16,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":834,"output_tokens_details":{"thinking_tokens":316}}}
 
         event: message_stop
-        data: {"type":"message_stop"      }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-09-29T17:26:57.530234+00:00
+  recorded_at: 2026-10-25T16:10:21.423527+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -375,11 +493,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2103"
+      - "4292"
       content-type:
       - application/json
       host:
@@ -387,7 +505,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -395,53 +513,57 @@ interactions:
             type: text
         - role: assistant
           content:
-          - thinking: >-
-              This is a straightforward safety question about crossing the street. I should
-              provide clear, helpful guidance on how to safely cross a street.
+          - thinking: |+
+              This is a simple, practical safety question, so I should give clear step-by-step guidance: find a crosswalk, stop at the curb, look both directions, use pedestrian signals, and make eye contact with drivers before crossing.
+
             signature: >-
-              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
+              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
             type: thinking
           - text: |-
-              Here's how to cross the street safely:
+              # How to Cross the Street Safely
 
-              ## Basic Steps
+              **1. Choose a good spot**
+              - Use a crosswalk or intersection with a signal if possible.
+              - If there isn't one, pick a spot with a clear view of traffic in both directions, away from curves, hills, or parked vehicles that block sight lines.
 
-              1. **Find a safe crossing spot**
-                 - Use crosswalks, intersections, or pedestrian signals when available
-                 - Avoid crossing between parked cars or on curves
+              **2. Stop at the curb or edge**
+              - Stand a step back from the curb, not in the road.
 
-              2. **Stop at the curb/edge**
-                 - Don't step into the street yet
+              **3. Check the signal (if there is one)**
+              - **Walk signal (walking person):** You may cross, but still look for turning cars.
+              - **Flashing hand or countdown:** Don't start crossing. If you're already in the street, keep going.
+              - **Solid hand:** Wait.
 
-              3. **Look left, right, then left again**
-                 - Keep looking while you cross
+              **4. Look and listen**
+              - Look **left, right, then left again**. In left-driving countries like the UK, Australia, and Japan, start by looking right.
+              - Also check for cars turning into your path.
+              - Take out your earbuds or lower the volume, and put your phone away.
 
-              4. **Wait for traffic to clear**
-                 - Make eye contact with drivers if possible
-                 - Obey traffic signals if present
+              **5. Make eye contact**
+              - Make sure drivers see you and are stopping before you step out.
 
-              5. **Walk, don't run**
-                 - Cross steadily and predictably
-                 - Stay alert for turning vehicles
+              **6. Cross promptly**
+              - Walk, don't run, and keep scanning for traffic as you go.
+              - On multi-lane roads, watch for a car in one lane stopping while another car passes in the next lane.
 
-              ## Additional Tips
+              **7. Be extra careful at night or in bad weather**
+              - Wear light or reflective clothing, and give drivers more room to stop.
 
-              - **Put away distractions** - no phones or headphones while crossing
-              - **At night, wear visible/reflective clothing**
-              - **Watch for vehicles backing up or turning**
-              - **Teach children** to always cross with an adult or follow these rules
+              ---
 
-              Is there a specific crossing situation you're dealing with (like a busy intersection, rural road, or something else)?
+              If you're asking for a specific situation (teaching a child, crossing without signals, accessibility needs, or traffic rules in a particular country), let me know and I can tailor the advice.
             type: text
         - role: user
           content:
           - text: Considering the way to cross the street, analogously, how do I cross the river?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
+        output_config:
+          effort: max
         stream: true
         thinking:
-          type: enabled
-          budget_tokens: 1024
+          type: adaptive
+          display: summarized
   response:
     status: 200
     headers:
@@ -453,10 +575,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=101
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f39f3b84ab6b323d33f43305a3113204-84fe406d86e76043-01
+      - 00-f3594246b0ef5d099af56011e8d4f7ec-cd510c88409efe05-01
       transfer-encoding:
       - chunked
       vary:
@@ -465,552 +589,1146 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY86uvdpYCawM9h4jHW6","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":307,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}       }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPFHuo19mQmv2upCJmxu","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":877,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}           }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking for"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I'm mapping the street"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" an"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"-crossing fram"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" anal"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ework onto river cr"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ogy between"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ossing: fin"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" crossing a street and crossing a river."}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ding a saf"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" This is an"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"e sp"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" interesting question"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ot like a bridge or "}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ford inst"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" asks"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ead of a crosswalk"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me to think about the similar"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", assessing depth and current"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" principles"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" spe"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" but"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ed,"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" adapted"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" checking weather and up"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"stream conditions inst"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" a"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ead of tra"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" different context."}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ffic signals, and watching"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nLet me think about the"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for hazards like debris or"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" key parall"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" strainers the"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"els:\n- Street"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" way one"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" crossing: safety"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" would look"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", finding"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" and listen for c"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ars."} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" right spot, looking for"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" haz"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Then I'm filling in"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ards,"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the actual techn"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" timing"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ique—"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":","}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"commun"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" method"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"icating a plan, facing"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" of crossing\n- River crossing: similar"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" upstream while"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" considerations"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" wading with a pole for"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" but"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" balance, cr"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" adapted"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ossing at a"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to water"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" downstream angle,"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nI should provide practical"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" choosing w"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" advice"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ide sh"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"allow ri"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" crossing"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ffles over d"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" a river safely."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"angerous sp"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Es8FCpsBCBIYAipAwOMgDScktpRxOxezSKZlgDv0BuZLzd16JKHtifEj7Gexjinz1tHPsfOKFpDV5Ps2AcRHhy9FLlJ+2nrqsaKvxDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB5env1QYSDOBsWwrA73Lhj5+pyRoM6yekk9bgiyOJWJKAIjBkzvQqpD2HN5Er+Xl6x18dSGuhTbDp7woRb0n2yIbwHSfOfZqVxdpNt8oj63ienHkq4APsDBEEUy7tLmZ0f4AmaHZER9BX9jH4+bYtPUGkBf+oF1a8j0T6v5tNpbG/4aNREh4tmpwYserqz+BiQHNPcnAFJNY9tNrifTHAl8e8xxMOxrTnZOi9SRf8dn/cuVvYbqa5dF7C28GhB1qdEyDaeuzUT1kMbtPytC1sWys4Keo4fpR9lULQynVL95Tt7UBjjjYymstvig2TYrIeBf7ha58fx13WmdM1iX2PnIIaCw6D0euszAwrTavz59RMvovTDcU5A5dQHWRXSB/7BsHu0nxfxSONrcVkgtM/lEraaj81zMXifj72/PRSob4FLzRPZTp1jTasCGJUwJzg6pjOdIBkUqaMrbxc4MLdocLPOkV9jtKiOMMB3VIVqp2Xt+85w9P6WqWJhB4TlT0vOYzOewIt454F+8wA0Jq35w0G2Bt3s4nvPDFxAKFAv5heaaTXE5X3AlmidVb6RlyDPq8+rVzq02tcMjJQicfj4i9nNNNjXJsl+NolxFw3pinctxUezmkNiUZNGto0OI1jsy9ZYWdnJessWUqzBayTmralzFgqpGr/+hxTYBnfdDJlzr9ljuHdkfffNvnAslNXxp0/KGGgcrldzp7G7YEYt4sg8c/8wZlFi2xE+P7yEHg/vEoHoiMYAQ=="}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ots near"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" waterfalls, and kn"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"owing what to do if you f"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"all (float feet-first,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" avoid standing in"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" fast water"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"). I'm plan"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ning to keep the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" same numbered,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" analogy-driven format as"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" before"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", p"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"airing each"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" street"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"-crossing step with its river"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" equivalent,"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" like sw"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"apping \"look left,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" right, left\" for \"look up"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"stream, downstream, up"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"stream.\""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I'm now"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" drafting the act"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ual structure:"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" choosing the cross"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ing spot ("}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" \""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"crosswalk\"), st"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"opping to"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" scout the ed"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ge,"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" and checking con"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ditions like weather and water level"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" before committing."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I'm emphasizing"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that r"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ivers don't yield the"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" way tra"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ffic does, so care"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ful site"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" selection and"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" scouting matter even"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" more than on a street."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Then I'"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"m working through the rem"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"aining steps—wat"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ching and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" listening upstream and downst"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ream for h"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"azards, commun"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"icating the plan with a part"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ner, and preparing gear"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" by"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" keeping shoes on,"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" lo"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"osening p"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ack straps, and secur"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ing valuables before ent"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ering the water."}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Next I'd"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" cover cr"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ossing techn"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ique it"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"self: mo"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ving deliberately with"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" small"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" sh"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"uffling"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" steps,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ma"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"intaining three points of contact"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":", and using group"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" formations with"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the strongest person"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" upstream. I"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'d also note"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" what to do if someone falls"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" in—floating fe"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"et-first on the back r"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ather than tr"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ying to stand—"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"and mention bo"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ats"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" or"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" r"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"afts as saf"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"er alternatives to"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" swimming."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I'"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"m now"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" th"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"inking about structure"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":": wh"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ether to open"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with a compact street"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"-to-river analogy table"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" or"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" we"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ave the comparison into each step"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'s"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" parentheses, and de"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ciding to keep the whole"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" th"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ing concise r"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ather than overly long."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" should also include a safety note —"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" something"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" like even knee-deep f"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"ast-"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"moving water can knock an"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" adult off their feet —"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to reinforce how"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" dangerous crossings"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" can be, then move"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to writing the final answ"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"er."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"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"}     }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0  }
+        data: {"type":"content_block_stop","index":0     }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Great"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"# How to Cross a"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" analogy! Here's how the"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" River"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" principles"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nThe"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" translate"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" big"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":\n\n## Finding"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" difference is that a river won"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Your"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t st"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \""}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"op for you. There"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Cross"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are no signals and"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"w"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" no drivers y"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"alk\"\n\n**Street:**"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ielding, so cho"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Use"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"osing the right"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" marked"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing matters even"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crosswalks"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" more.\n\n**"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n**River:** Look"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"1. Choose a good sp"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for established"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ot (find the crosswal"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" points:"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Bridges or"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" foot"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"bridges ("}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"the"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" saf"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"est \""}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"crossw"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"alk\")\n- Marked"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" f"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ords or shallow"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" areas\n- Stepping"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stones"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Ferry"}   }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cross"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ings\n\n## Ass"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"essing Before"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" You Cross\n\n**Street"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":** Look for traffic"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n**River:**"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Assess the"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" water:"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- **"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Depth"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" - Can"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you wade"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", or"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" do"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you need a"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" boat/"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"bridge"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"?\n- **Current speed"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** - Is it safe or"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" too"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" fast?\n- **Width"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** - How"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" far"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" must"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you go?\n- **Bottom"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" conditions"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** - Rocky"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", mud"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"dy, stable"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"?\n\n## Safe"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Crossing Methods"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n1"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". **Bridge"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"/ferry"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** (like"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" using"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a cross"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"walk -"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"k)**\n- The"}    }
 
         event: content_block_delta
         data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" saf"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"est!)"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"est option is a **bridge"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n2. **Wade"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", ferry, or established "}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" through"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ford**."}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" shallow"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" If"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" areas"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" one"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** - use"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" re"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stick"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"as"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"onably close, go there"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" balance"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" even if it's a det"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" shuffle"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"our.\n- If you must"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" feet"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" wade, look for a **"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":","}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"wide, shallow, sl"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" face"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ow section** with g"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" upstream"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"entle banks on both sides"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n3. **Stepping stones**"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" - test"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Avoid narr"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" stability"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ow chutes, which"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" first"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n4. **Swim"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" usually deeper and faster"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" than they look, and the outside"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" - only"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of bends, where"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" if you're a"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" water"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" strong swimmer and"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is deep and ban"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ks are"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s safe"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" undercut. Also"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n5. **Boat"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" avoid sp"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"/"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ots just"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"raft** - for"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" above rapids, waterf"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" wider"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"alls, or f"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"/"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"allen trees.\n\n**2"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"deeper rivers"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". Stop at the ed"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n## Key"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ge (w"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Safety"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ait at the curb)**"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Rules"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- Scout before"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n- **Never cross flo"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" st"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"oded or"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"epping in. Watch the"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" fast-moving water**\n- **"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" current"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Don"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for a"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t cross"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" few minutes,"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" alone"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" toss in"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** if"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a stick to g"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" possible"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"auge speed, and plan"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- **"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" your ent"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Wear"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ry and exit points"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" appropriate"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\n**3. Check the"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" footwear**"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \"signals\""}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n- **"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" water"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Green"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cross"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" light"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ings\n- **Keep"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":** The"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ess"}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" water is low"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"entials dry"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", clear, and sl"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** ("} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ow, and you can see the b"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"use"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ottom.\n- **Red"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" waterproof bags"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" light:** The"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":")\n- **Know"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" water is muddy, rising"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" your limits** - when"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", or car"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" in doubt, find"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"rying debris, there"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" another"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" has been rec"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" way\n\nWhat"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ent rain or sn"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" type"}  }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"owmelt upstream,"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of river crossing"}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" or a"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are you planning"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" dam might release"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"?"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" water"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". Wait or turn back"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n- Rivers f"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ed by snowmelt are"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" us"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ually lowest in the mor"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ning.\n\n**4. Look"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and listen (upstream,"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" downstream, upstream)"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n- Check"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" up"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"stream for flo"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ating deb"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ris or surges.\n-"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Check downstream for what happens"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" if you fall, like rap"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ids, log"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"jams, or dr"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"op"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-offs.\n- R"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"umbling or"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cl"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"un"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"king sounds may be"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" bo"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ulders rolling along the b"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ottom,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a sign of d"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"angerous current.\n\n**5"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". Communicate (make"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" eye contact)**\n-"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Don"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t cross alone if"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you can av"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"oid it. Tell some"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"one your plan, and agree"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" on sign"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"als with"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" your"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" group"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\n**6. Prep"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"are**\n- Ke"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ep your"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" shoes on for"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" gr"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ip and prot"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ection.\n- Unbu"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ckle your"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" pack's hip belt and"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" ch"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"est strap so you can shed"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it quickly.\n-"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Put elect"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ronics and"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" valuables in dry bags"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n- Use a trek"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"king pole or s"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"turdy stick."}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**7. Cross de"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"liberately (walk, don"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t run)**\n- Face"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sl"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ightly upstream and"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" move"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" with"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" small,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sideways sh"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"uffling"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" steps,"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" angling a"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" little downstream.\n-"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Keep **"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"three points of contact**"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" (two feet and your pole"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":") at all times.\n- In"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a group, link"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" up in"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a line or"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" t"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ight c"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"luster with"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the strongest person"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" upstream.\n\n**8."}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" If you fall**\n-"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" "}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Ditch your pack,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" lie"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" on your back with"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" your feet p"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ointing"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" downstream, and ang"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"le to"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ward shore.\n- Don"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t try to stand in f"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ast water"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", because a tr"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"apped foot can p"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ull you under"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\n**9. Know"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" when"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" not"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to cross**\n- If"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the water is above your"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" knees and moving fast,"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" don"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t w"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ade it. Wal"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"k upstream to"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" look"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for a saf"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"er sp"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ot, wait for"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the level"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" to drop, or turn around"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\nIf"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you t"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ell me the"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" k"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ind of river and"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" how"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you're"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" tra"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"veling (hiking, dri"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ving, bo"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ating"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", or a city"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" river), I can give"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" more specific advice."} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1 }
+        data: {"type":"content_block_stop","index":1       }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":307,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":440,"output_tokens_details":{"thinking_tokens":98}}        }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":877,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2879,"output_tokens_details":{"thinking_tokens":1928}}           }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"    }
 
-  recorded_at: 2026-09-29T17:27:09.632588+00:00
+  recorded_at: 2026-10-25T16:10:47.160280+00:00

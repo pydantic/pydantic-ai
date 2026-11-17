@@ -322,9 +322,9 @@ def _target_model(
     gemini_api_key: str,
 ) -> Model:
     if target == 'T1':
-        return AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+        return AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     if target == 'T2':
-        return AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+        return AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     if target == 'T3':
         return OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
     if target == 'T4':
@@ -1146,7 +1146,7 @@ async def test_anthropic_live_delta_preserves_the_warmed_cache_prefix(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ) -> None:
     """Two live Opus requests let the cassette prefix checker guard a delta after a warmed turn."""
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     tool = ToolDefinition(
         name=_TOOL_NAME,
         description='Look up an exchange rate.',
@@ -1633,7 +1633,7 @@ async def test_delta_wire_shape_survives_anthropic_google_anthropic_hops(
     assert [tool.get('name') for tool in third['tools']][-2:] == ['a_tool', 'b_tool']
     google_contents = generate.call_args.kwargs['contents']
     announcement = TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`b_tool`, `a_tool`')
-    assert json.dumps(google_contents, default=str).count(f'<system>{announcement}</system>') == 1
+    assert json.dumps(google_contents, default=str).count(f'{announcement}</system>') == 1
 
 
 async def test_truncated_reveal_omits_anthropic_channel(allow_model_requests: None) -> None:
@@ -1811,7 +1811,7 @@ def test_standing_system_prompt_stays_ahead_of_sorted_tool_returns() -> None:
     ]
 
 
-_ANNOUNCEMENT = f'<system>{TOOL_AVAILABILITY_ANNOUNCEMENT.format(names="`first_tool`")}</system>'
+_ANNOUNCEMENT = '<system>' + TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`first_tool`') + '</system>'
 
 
 @pytest.mark.parametrize(

@@ -665,7 +665,7 @@ async def test_speech_while_tool_ran_hands_off(
     after the call (Anthropic) or alongside it (Chat), which both accept.
     """
     if provider == 'anthropic':
-        model: Model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+        model: Model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     elif provider == 'openai-responses':
         model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
     else:

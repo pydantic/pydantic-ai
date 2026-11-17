@@ -11,13 +11,33 @@ Run your agent's commands and file edits in a [smolvm](https://github.com/smol-m
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Smol Sandbox: your agent's commands run in a local smolvm microVM
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command and gets results. Via ctx.workspace, the SmolSandbox capability hands the run a VM, a smolvm microVM on the same machine with its own kernel and filesystem, reached through smolmachines in your process. The VM has no network access by default, unless allow_internet_access=True.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        sandbox["SmolSandbox()<br/>hands the run a VM"]:::capability
+        vm["smolvm microVM<br/>own kernel and<br/>filesystem"]:::external
+    end
+    network["network access, unless<br/>allow_internet_access=True"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sandbox
+    sandbox <-->|"smolmachines,<br/>in your process"| vm
+    vm -.-x|"none by default"| network
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[smol,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
-The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 smolmachines ships wheels for macOS on Apple silicon and for Linux on x86_64 and aarch64 (glibc 2.34 or newer). On Linux, the user running the agent needs read and write access to `/dev/kvm`. See [Platforms](#platforms).
 
@@ -59,7 +79,7 @@ For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) 
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
@@ -209,6 +229,8 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 | `allow_internet_access` | Whether a new VM has unrestricted outbound network access, from this machine's network. Default: `False`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the VM's own (`/` without an image). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Platforms
 

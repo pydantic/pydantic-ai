@@ -150,7 +150,7 @@ SKIP_REASONS: dict[tuple[str, Scenario], SkipReason] = {
 MODEL_CONFIGS: dict[str, tuple[str, Any]] = {
     'openai': ('gpt-5-mini', openai_available),
     'openai_responses': ('gpt-5-mini', openai_available),
-    'anthropic': ('claude-sonnet-4-5', anthropic_available),
+    'anthropic': ('claude-sonnet-5', anthropic_available),
     'groq': ('meta-llama/llama-4-scout-17b-16e-instruct', groq_available),
     'mistral': ('mistral-large-latest', mistral_available),
     'google': ('gemini-2.5-flash', google_available),
@@ -173,7 +173,11 @@ def create_model(
     elif provider == 'openai_responses':
         return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
     elif provider == 'anthropic':
-        return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']))
+        # Sonnet 5 thinks by default, which would turn the output rows' `CityInfo` into Native Output and leave
+        # their output tool unforced. Thinking off keeps them on the forced Tool Output choice this matrix pins.
+        return AnthropicModel(
+            model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']), settings={'thinking': False}
+        )
     elif provider == 'groq':
         return GroqModel(model_name, provider=GroqProvider(api_key=api_keys['groq']))
     elif provider == 'mistral':

@@ -1,14 +1,13 @@
 """Cross-history-replay coverage for the Google provider rename.
 
 `GoogleProvider.name` returns `'google'` / `'google-cloud'` post-rename, but historical
-`ModelMessage` records may have `provider_name='google-gla'` / `'google-vertex'`. The Google
-model class accepts both via the `_GEMINI_API_PROVIDER_NAMES` / `_GOOGLE_CLOUD_PROVIDER_NAMES` sets, so
-replay still routes thinking signatures and built-in tool parts correctly. These tests pin
-that contract.
+`ModelMessage` records may have `provider_name='google-gla'` / `'google-vertex'`. Those names map to
+the `google` and `google-cloud` canonical systems, so `GoogleModel.accepts_stateless_artifacts` still
+routes thinking signatures and built-in tool parts correctly. These tests pin that contract.
 
-The pre-v2 names were transport-derived, so the set follows the client's transport rather than the
-current `name`, and the two can disagree when a pre-built client is passed to either provider. Each
-model therefore replays its transport's alias and drops the other transport's, whose signatures it
+The pre-v2 names were transport-derived, and the canonical system follows the client's transport rather
+than the current `name`, and the two can disagree when a pre-built client is passed to either provider.
+Each model therefore replays its transport's alias and drops the other transport's, whose signatures it
 could not use anyway.
 
 TODO: generalize this into a cross-module history-replay test suite (V2-RULES rule 21).
@@ -89,11 +88,9 @@ def test_history_with_legacy_provider_name_still_routes_thinking_signature(
         provider_name=historical_provider_name,
     )
 
-    accepted = model._matching_provider_names
-    assert historical_provider_name in accepted
-    assert current_provider_name in accepted
+    assert model.accepts_stateless_artifacts(response, response.parts[0])
 
-    content = _content_model_response(response, accepted)
+    content = _content_model_response(response, model.accepts_stateless_artifacts)
     assert content is not None
     parts = content.get('parts') or []
     text_part = next(p for p in parts if p.get('text') == 'final')
@@ -134,8 +131,7 @@ def test_history_with_legacy_provider_name_still_replays_builtin_tool_parts(
         provider_name=historical_provider_name,
     )
 
-    accepted = model._matching_provider_names
-    content = _content_model_response(response, accepted)
+    content = _content_model_response(response, model.accepts_stateless_artifacts)
     assert content is not None
     parts = content.get('parts') or []
     assert any('executable_code' in p for p in parts)
@@ -161,10 +157,8 @@ def test_history_from_the_other_transport_does_not_replay_its_signature(
     The positive cases above pin which alias replays; this pins that the other transport's alias
     does not, so re-widening the set back to both families can't go unnoticed.
 
-    What this cannot pin: the v2 names carry no transport, so a `'google'`-stamped history minted on
-    the Gemini Developer API still replays on a Vertex-backed `GoogleProvider` (and the mirror for
-    `'google-cloud'`). That ambiguity is inherent to the v2 names, not introduced by keying on the
-    transport — the pre-v2 aliases are the only part of the stamp that identifies one.
+    The v2 names carry no transport, so for those the response's `canonical_system` decides, or for an
+    older history its `provider_url`: see `tests/test_canonical_system.py`.
     """
     model = model_factory()
     assert model.system == current_provider_name
@@ -178,10 +172,9 @@ def test_history_from_the_other_transport_does_not_replay_its_signature(
         provider_name=foreign_provider_name,
     )
 
-    accepted = model._matching_provider_names
-    assert foreign_provider_name not in accepted
+    assert not model.accepts_stateless_artifacts(response, response.parts[0])
 
-    content = _content_model_response(response, accepted)
+    content = _content_model_response(response, model.accepts_stateless_artifacts)
     assert content is not None
     parts = content.get('parts') or []
     text_part = next(p for p in parts if p.get('text') == 'final')

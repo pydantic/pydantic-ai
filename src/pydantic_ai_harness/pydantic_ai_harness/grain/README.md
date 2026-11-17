@@ -9,6 +9,28 @@ signed-in user can see, and create clips and tag meetings unless you set
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Grain: meetings, transcripts and notes through Grain's MCP server
+    accDescr: Your agent's model calls tools prefixed grain_ and gets results. The Grain capability gets a token for each run from your auth function, sends tools/call with an OAuth Bearer token to the Grain MCP server at api.grain.com/_/mcp, and with read_only=True drops tools not marked read-only. As the run starts, the server rejects an invalid or expired token with 401 and the run raises.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        grain["Grain()<br/>grain_&lt;tool&gt;"]:::capability
+    end
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    server["Grain MCP server<br/>api.grain.com/_/mcp"]:::external
+    expired["invalid or expired token:<br/>401, the run raises"]:::blocked
+    model <-->|"tool call, result"| grain
+    auth -->|"token for each run"| grain
+    grain <-->|"tools/call,<br/>OAuth Bearer token"| server
+    grain -.-x|"drops"| dropped
+    server -.-x|"rejects when<br/>the run starts"| expired
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Before you start
 
 Grain MCP works on every Grain plan. The deal and coaching tools need the
@@ -107,10 +129,43 @@ longer valid.
 
 The capability's `id` defaults to `grain`, so `defer_loading=True` works
 without one. To use two Grain accounts in one agent, give each `Grain` its own
-`id` and wrap them in
-[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since
-their tool names are the same. Two that share an `id` but differ raise an
+`id` and `tool_prefix`. Two that share an `id` but differ raise an
 error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `grain_` prefix, as in
+`grain_<tool>`, so they don't collide with other tools on the agent. Set
+`tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names
+the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so
+the prefix does not change what it keeps. A [toolset
+wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
+`capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
+prefix included.
+
+## Upgrading
+
+`Grain` used to give the agent the server's tool names unprefixed. They now
+reach the agent as `grain_<tool>`. Code that refers to them by name, such as a
+`filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs
+the new names. A rule that no longer matches stops applying, so an approval rule
+or guardrail that named an old tool lets its calls through without approval or
+checks until you update it. Pass `tool_prefix=None` to keep the old names. If you
+wrapped `Grain` in
+[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid
+collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it
+adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses
+  it recorded, and their tool calls use the old names, so a run started before
+  the change that calls a `Grain` tool after it no longer replays. Activity and
+  step names come from the capability's `id`, which is unchanged. Let those runs
+  finish, keep `tool_prefix=None` until they have, or deploy the change with
+  [Temporal worker
+  versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)
+  or a new DBOS application version.
 
 ## Tool selection and approval
 
@@ -194,5 +249,3 @@ from pydantic_ai_harness import Grain
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Grain])
 ```
-
-Pass `custom_capability_types` so the loader can create `Grain` from the file.

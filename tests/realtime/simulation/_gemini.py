@@ -280,6 +280,12 @@ class _ServerSession:
     """All the audio the session received, which `voice_activity` offsets point into."""
     user_turn: str | None = None
     async_batches: list[_AsyncBatch] = field(default_factory=list[_AsyncBatch])
+    replayed_into: bool = False
+    """A fresh session dialed after a drop (no resumption handle), which the client replays its conversation into:
+    what it sends again is already part of the conversation, not new input."""
+    awaits_initial_history: bool = False
+    """The setup asked to send initial history (`history_config`): the next content is that, which the model doesn't
+    answer."""
 
 
 class GeminiServer:
@@ -321,7 +327,15 @@ class GeminiServer:
             self.truth.tool_calls[call_id].cancelled_by_server = True
         self._orphaned_calls.clear()
         self.truth.connections += 1
-        self.sessions.append(_ServerSession(socket=socket, known_calls=known))
+        history = config.history_config
+        self.sessions.append(
+            _ServerSession(
+                socket=socket,
+                known_calls=known,
+                replayed_into=handle is None and bool(self.sessions),
+                awaits_initial_history=history is not None and bool(history.initial_history_in_client_content),
+            )
+        )
         return socket
 
     def patch(self, provider: GoogleProvider) -> Any:
@@ -368,6 +382,17 @@ class GeminiServer:
             self.truth.add_input((video.data or b'')[-8:].decode(errors='replace'), 'image')
 
     def on_client_content(self, session: _ServerSession, turns: list[gt.Content], turn_complete: bool) -> None:
+        # Reached by a replay with tool rounds, which only randomized exploration drives.
+        if session.awaits_initial_history:  # pragma: lax no cover
+            # The conversation, as the session's initial history: nothing new, and nothing for the model to answer.
+            session.awaits_initial_history = False
+            return
+        if session.replayed_into and (replayed := self._replayed_turns(turns)) is not None:
+            # The client replays what it sent before; with `turn_complete`, it asks again for the reply to those
+            # turns (the drop lost it), which the model now gives.
+            if turn_complete:
+                session.triggers.extend(replayed)
+            return
         text = ''.join(part.text or '' for turn in turns for part in turn.parts or [])
         self.truth.add_input(text, 'text' if turn_complete else 'context', solicits=turn_complete)
         if turn_complete:
@@ -376,6 +401,21 @@ class GeminiServer:
             if self.behavior.cuts_off_reply and (self.behavior.text_cuts_off_reply or not awaiting):
                 self._barge_in(session)
             session.triggers.append(text)
+
+    def _replayed_turns(self, turns: list[gt.Content]) -> list[str] | None:
+        """The keys of the inputs `turns` replays, if they're all a replay of what the client sent before.
+
+        The model's own turns, and a user turn with no text (a tool result, say), are part of a replay too.
+        """
+        keys: list[str] = []
+        for turn in turns:
+            text = ''.join(part.text or '' for part in turn.parts or [])
+            if turn.role != 'user' or not text:
+                continue
+            if self.truth.input(text) is None:
+                return None
+            keys.append(text)
+        return keys
 
     def on_tool_response(self, session: _ServerSession, responses: list[gt.FunctionResponse]) -> None:
         for response in responses:
@@ -748,10 +788,10 @@ class GeminiSimulation(Simulation):
         return GoogleRealtimeModel(self.behavior.model, provider=self._provider, profile=profile)
 
     def model_settings(self) -> RealtimeModelSettings:
-        settings: GoogleRealtimeModelSettings = {
-            'google_input_transcription': self.behavior.input_transcription,
-            'async_tool_calls': self.behavior.async_tool_calls,
-        }
+        settings: GoogleRealtimeModelSettings = {'google_input_transcription': self.behavior.input_transcription}
+        # Off is the default, so only `True` is set: an always-async model warns about an explicit `False`.
+        if self.behavior.async_tool_calls:
+            settings['async_tool_calls'] = True
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
         return settings
 

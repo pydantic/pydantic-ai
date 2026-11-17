@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     AgentInstructionSource,
     BinaryContent,
+    CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionId,
@@ -32,6 +33,8 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    OperatorSource,
+    OperatorText,
     RetryFeedbackPart,
     RetryInfo,
     SpeechPart,
@@ -41,6 +44,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -49,8 +53,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SUMMARY_PREFIX
+from pydantic_ai_harness.compaction._summary import summary_request
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -70,6 +76,7 @@ from pydantic_ai_harness.step_persistence import (
     SqliteStepStore,
     StepPersistence,
 )
+from pydantic_ai_harness.system_reminders import ReminderPart
 from tests.conftest import legacy_retry_prompt_part
 
 
@@ -183,6 +190,63 @@ class TestSnapshotHistorySource:
 
         history = await SnapshotHistorySource(store).run_history(run_id='r1')
         assert history == [original, reply, follow_up]
+
+    async def test_a_compaction_part_summary_is_skipped(self) -> None:
+        store = InMemoryStepStore()
+        original = _user('the ZEBRA passphrase is 42')
+        reply = _reply('noted')
+        summary = summary_request('older context')
+        follow_up = _user('what was it again?')
+        await _seed_run(store, 'r1', [original, reply], [summary, reply, follow_up])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history == [original, reply, follow_up]
+
+    async def test_a_legacy_summary_merged_with_a_user_turn_keeps_the_turn(self) -> None:
+        """Continuing a history merges the old summary's request with real turns; only the summary is dropped."""
+        store = InMemoryStepStore()
+        merged = ModelRequest(
+            parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}older context'), UserPromptPart('the HERON detail')]
+        )
+        await _seed_run(store, 'r1', [merged, _reply('ok')])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert [[part.part_kind for part in message.parts] for message in history] == [['user-prompt'], ['text']]
+        assert 'HERON' in await _search(SnapshotHistorySource(store), 'HERON')
+
+    async def test_a_harness_system_prompt_that_opens_like_a_summary_stays_searchable(self) -> None:
+        """A system prompt a harness capability marked with its `origin`, such as a lasting reminder, is never a summary."""
+        store = InMemoryStepStore()
+        reminder = ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content=f'{SUMMARY_PREFIX}the KESTREL rule',
+                    metadata={'origin': 'pydantic-ai-harness.system_reminders.reminder.v1'},
+                )
+            ]
+        )
+        prompt = _user('go on')
+        await _seed_run(store, 'r1', [prompt, reminder, _reply('ok')])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history[:2] == [prompt, reminder]
+
+    async def test_an_empty_compaction_part_adds_nothing_to_search(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [ModelRequest(parts=[CompactionPart(content=''), UserPromptPart('the OSPREY')])])
+
+        assert 'OSPREY' in await _search(SnapshotHistorySource(store), 'OSPREY')
+
+    async def test_an_app_authored_compaction_part_stays_searchable(self) -> None:
+        """Only the summaries `SummarizingCompaction` wrote are artifacts; an application's own is content."""
+        store = InMemoryStepStore()
+        prompt = _user('go on')
+        app = ModelRequest(parts=[CompactionPart(content='the PELICAN plan'), UserPromptPart('continuing')])
+        await _seed_run(store, 'r1', [prompt, app])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history == [prompt, app]
+        assert 'PELICAN' in await _search(SnapshotHistorySource(store), 'PELICAN')
 
     async def test_repeated_identical_messages_keep_distinct_positions(self) -> None:
         store = InMemoryStepStore()
@@ -1046,8 +1110,8 @@ class TestSearchScope:
 Found 1 match(es) for 'DELTATAIL' in 1 persisted messages:
 
 [score: 0.3 | run: r1]
-[0] System: ...cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar DELTATAIL
-</context>\
+[0] System: ... cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar DELTATAIL
+</pyai:context>\
 """)
 
     async def test_max_matches_and_context_lines_honored(self) -> None:
@@ -1184,6 +1248,30 @@ class TestConfigValidation:
         await _seed_run(store, 'r1', [_user(f'needle entry {i} filler') for i in range(5)])
         with pytest.raises(ValueError, match='max_matches must be non-negative'):
             await _search(SnapshotHistorySource(store), 'needle', max_matches=-1)
+
+
+class TestCapabilityPartsAreSearchable:
+    """What a capability told the model is conversation, so it is indexed, labeled with its kind rather than as the user's."""
+
+    async def test_a_background_tool_result_is_indexed_and_labeled_with_its_kind(self) -> None:
+        result = BackgroundToolResultPart(
+            content='the QUOKKA figures are in',
+            source=ToolResultSource(tool_name='fetch_report', tool_call_id='call-1'),
+            tool_name='fetch_report',
+            tool_call_id='call-1',
+        )
+        history: list[ModelMessage] = [_user('start the report'), ModelRequest(parts=[result])]
+        rendered = await _search(_StubSource({'r1': history}), 'QUOKKA')
+        assert '[background_tools.tool_result]: the QUOKKA figures are in' in rendered
+        assert 'User: the QUOKKA' not in rendered
+
+    async def test_a_request_scoped_capability_part_is_not_indexed(self) -> None:
+        """A request-scoped part applied to its own request only, so it is not conversation."""
+        reminder = ReminderPart(
+            content=OperatorText('Mind the WOMBAT budget.'), source=OperatorSource(), scope='request'
+        )
+        history: list[ModelMessage] = [ModelRequest(parts=[reminder])]
+        assert 'No matches' in await _search(_StubSource({'r1': history}), 'WOMBAT')
 
 
 class TestSpeechIsSearchable:
@@ -1338,11 +1426,11 @@ Found 2 match(es) for 'ORCHID' in 4 persisted messages:
         assert rendered == snapshot("""\
 Found 1 match(es) for 'FINISHED' in 6 persisted messages:
 
-[score: 1.0 | run: r2]
+[score: 0.9 | run: r2]
 [2] Tool [finish]: ok
-System: <context id="agent:state">
+System: <pyai:context id="agent:state">
 status FINISHED
-</context>\
+</pyai:context>\
 """)
         assert (await _search(source, 'HERON')).count('[score:') == 1
         # The request that carries the change is indexed whole, so its tool return repeats once.

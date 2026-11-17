@@ -58,6 +58,8 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
         'context_window': None,
         # `vad_score` events exist but there is no speech start/stop pair.
         'emits_input_speech_events': False,
+        # Every audio chunk times each of its characters (`audio_event.alignment`), which the adapter groups into words.
+        'output_speech_timestamp_granularity': 'word',
         # ElevenLabs' defaults: `asr.user_input_audio_format` defaults to `pcm_16000`, and the
         # matching output default. Both are fixed per agent (not per conversation); the connect
         # handshake echoes the actual formats and the adapter raises when they disagree with the
@@ -89,6 +91,9 @@ def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_image_input': False,
         # User and assistant text items seed the conversation, which reconnect relies on too.
         'supports_session_seeding': True,
+        # A mid-session `system` message is accepted, but the model doesn't act on it (checked live: a note sent as a
+        # `system` message was used in none of three runs, and in all three runs as `<system>`-tagged user text).
+        'supports_system_messages': False,
         'supports_seeding_images': False,
         # Seeded user audio becomes an empty text part, and an assistant item needs a non-empty text part.
         'supports_seeding_audio': False,

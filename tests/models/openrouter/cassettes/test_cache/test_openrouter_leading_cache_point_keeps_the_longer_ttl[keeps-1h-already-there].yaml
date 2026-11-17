@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        model: anthropic/claude-sonnet-4.6
+        model: anthropic/claude-sonnet-5.5
         stream: false
         messages:
         - role: user
@@ -44,7 +44,9 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -60,10 +62,10 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792024695-XPq3q7FvFM5S0BQPrxqN
+        id: gen-1793763659-M0aDsWqOHwhsffbIXpjP
         object: chat.completion
-        created: 1792024695
-        model: anthropic/claude-sonnet-4.6
+        created: 1793763659
+        model: anthropic/claude-sonnet-5.5
         provider: Anthropic
         system_fingerprint: null
         service_tier: default
@@ -74,14 +76,25 @@ interactions:
           native_finish_reason: end_turn
           message:
             role: assistant
-            content: Done.
+            content: done
             refusal: null
-            reasoning: null
+            reasoning: |+
+              I'm going to reply with just the word "done," since that's the instruction in front of me. There's no incident report to deal with, so that's the whole response.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                I'm going to reply with just the word "done," since that's the instruction in front of me. There's no incident report to deal with, so that's the whole response.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                CAQSxAYKEAgTGAI4AUIIdGhpbmtpbmcSDJhRZQsteCJHPRKJxxoMugXVbhjbWAELD3NYIjClpPSg+06YHaF2rSHBcGGSWv+6JDce93UTJruH3CHH0rHjGmmUi6N9QwGEBSsbbCwq4QVqkFtpramUpZMXESA+LJNghcVJ1WwxQLgsoJ7QjGeEhe8WN8SydBjEWpyDdKKyAuEv3Sr7WOn//SfQyriEat1t3uC7F4BCkVnsDbX3kjZp4KlhKG96kGphUwYuzt/ACDeIC9AmCBsmUSGFaH70+8vD6kAP6F2/IXWza6mTUQU//DSctlbDYemg/Azc8VD0Uq+DefcMgJz1C0OgudW1qeg4TrTMzDvujyXuGMgQjJzOaqT3Ia/+2cDTRN76VIPq8FM9lTjubfHBnaXUJy4t0TIXHAC42T1sOfMOvrQ8G98XZCagL7oBqSvqKnzd4L3En0c3VeoDFk4Zis7mBjhiypcHT6DoaIWpOnNTjq8XtslOF5reNYhNh6Ki2TppuqdKqkuxUD+e1IeSMBOCGGR+ktCFzBN2WCLFKty4Yr1vum7slvIXDn18tgMsDRHxNO5b4X/FxIwIpvX4YpzjGvH4o1eSDHfPsoqZd+cKWP6peX/ykNsE9qBJYU2uCFgT8egyj8kPw/aDH+PJUv9/A/VWadP9kmzydGBFd4aZok20br2ScPEnE7jCNaXC8DieJNied7ZWroFxJxcXZMnQwVKDVggY3/Tcqf++ZmADBlmUFoGU8+ZfTGccG3bvs9E2waS0QXqe0O2QW39bBGC2dUwSr6F3HzEHEUh+8+2y/1NCUta7t4DuJJD2ODLfU6XjpjpbdnBgTDNpN9FLklRbsJt1mkx2jazdUYnLyrfKF6OK3jAwhZeT1y3GnsnTzQlCOi13+srj0mHp+emOsAkCnFYqVf1l/NYlqzWhHckF/wDQrR+KMCEOkwnAT0lbXH+QQcAfguL0LxNK1od0kNRlj+2KfEmbJsyJqdf+WkNChENhbgphKHX05lNIkJ1G2muzLbw/Oh7R1ncCGHLP9yLzxSj74mdmWJM+0tfv5P+dxjY9RedqtNwS8kacB//nubm7Ix9sG5gOpLOODl+DGe6IGhVsTd2g/xgB.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS41LTIwMjYwOTI4fGFudGhyb3BpYyJ9
         usage:
-          prompt_tokens: 34
-          completion_tokens: 5
-          total_tokens: 39
-          cost: 0.000177
+          prompt_tokens: 40
+          completion_tokens: 50
+          total_tokens: 90
+          cost: 0.00058
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -89,11 +102,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.000177
-            upstream_inference_prompt_cost: 0.000102
-            upstream_inference_completions_cost: 0.000075
+            upstream_inference_cost: 0.00058
+            upstream_inference_prompt_cost: 0.00008
+            upstream_inference_completions_cost: 0.0005
           completion_tokens_details:
-            reasoning_tokens: 0
+            reasoning_tokens: 47
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-15T00:38:17.002159+00:00
+  recorded_at: 2026-11-04T03:41:01.591767+00:00

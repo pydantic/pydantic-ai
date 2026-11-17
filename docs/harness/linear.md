@@ -8,6 +8,27 @@ Let an agent read and change Linear issues, projects, teams, and comments throug
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Linear: issue, project and comment tools from Linear's MCP server
+    accDescr: Inside your agent, the model calls tools of the Linear capability, such as linear_list_issues, and gets their results. Your auth function gives the capability a token for each run. The capability calls the Linear MCP server with a Bearer token, at mcp.linear.app/mcp by default and at mcp.linear.app/mcp/readonly with read_only=True.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        linear["Linear()<br/>linear_list_issues,<br/>linear_&lt;tool&gt;"]:::capability
+    end
+    subgraph server["Linear MCP server"]
+        full["mcp.linear.app/mcp"]:::external
+        readonly["mcp.linear.app/mcp/readonly"]:::external
+    end
+    model <-->|"tool call, result"| linear
+    auth -->|"token for each run"| linear
+    linear <-->|"Bearer token,<br/>by default"| full
+    linear <-->|"Bearer token,<br/>read_only=True"| readonly
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Install and connect
 
 ```bash
@@ -67,11 +88,23 @@ With durable execution such as Temporal, read the token from the run's deps, not
 
 ## Multiple connections
 
-The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. With `None` or `''` it still connects under `linear`, but that `Linear` is not combined with others. To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
+The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. With `None` or `''` it still connects under `linear`, but that `Linear` is not combined with others. To use two Linear accounts in one agent, give each `Linear` its own `id` and `tool_prefix`. Two with the same `id` but different settings raise when the agent is built.
 
 ## Provider settings
 
 `read_only=True` connects to Linear's read-only endpoint instead of the full one. OAuth token scopes can limit access further.
+
+## Tool names
+
+The agent sees each of the server's tools under the `linear_` prefix, as in `linear_list_issues`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`Linear` used to give the agent the server's tool names unprefixed. A tool such as `list_issues` now reaches the agent as `linear_list_issues`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches stops applying, so an approval rule or guardrail that named an old tool lets its calls through without approval or checks until you update it. Pass `tool_prefix=None` to keep the old names. If you wrapped `Linear` in [PrefixTools](../capabilities/prefix-tools.md) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `Linear` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or deploy the change with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a new DBOS application version.
 
 ## Tool selection and approval
 
@@ -100,7 +133,7 @@ Pass `client` (a FastMCP client or transport) to control the connection yourself
 
 The server's own instructions, including those of a `client`'s server, are added to the agent's instructions. Pass `include_instructions=False` to leave them out.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](../capabilities/prefix-tools.md).
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 
 ## Telemetry
 

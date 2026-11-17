@@ -16,6 +16,29 @@ follow `parallel_execution_mode`, which runs them one at a time by default (see
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: pgtask Durability: pick up a crashed run where it left off
+    accDescr: In attempt 1, the worker finishes a model request and a tool call, and each is saved to Postgres as a pgtask step. The worker then crashes during the next model request, before that step is saved. pgtask runs the task again: the PGTaskDurability capability returns the stored results of the saved steps with no model or tool call, and then the next model request runs live.
+    subgraph first["Worker, attempt 1"]
+        done["model request, tool call<br/>each one finishes"]
+        crash["next model request<br/>worker crashes before<br/>the step is saved"]:::blocked
+    end
+    steps[("Postgres<br/>pgtask steps")]:::external
+    subgraph retry["Task run again"]
+        replay["PGTaskDurability()<br/>returns stored results,<br/>no model or tool call"]:::capability
+        live["next model request<br/>runs live"]
+    end
+    done -.-x crash
+    done -->|"each saved as a step"| steps
+    crash -.->|"pgtask runs<br/>the task again"| replay
+    steps -->|"saved steps"| replay
+    replay --> live
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Installation
 
 uv:
@@ -92,6 +115,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
 | `{name}__model.request` | a model request |
 | `{name}__model.request_stream` | a streamed model request |
 | `{name}__model.compact_messages` | a request asking the model to shorten the message history |
+| `{name}__model.count_tokens` | a token count ahead of a model request, with `count_tokens_before_request` |
 | `{name}__model.cancel_suspended_response` | cancelling a response the model provider is still working on in the background |
 | `{name}__capability__{capability_id}.{operation}` | work added by another capability |
 | `{name}__function_toolset__{id}.validate_args` | checking a tool's arguments with its `args_validator` |
@@ -130,6 +154,10 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   fine.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
+- Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), submitting a request and each check on its batch are
+  saved steps, but the waits between checks are plain sleeps: the task has to keep running for as
+  long as the batch takes, within its timeout, and a recovered run sleeps again through the waits
+  it already did.
 
 ## Running tools at the same time
 

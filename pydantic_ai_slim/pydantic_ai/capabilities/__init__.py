@@ -35,6 +35,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .batch_model_requests import BatchModelRequests
 from .caching import Caching
 from .capability import Capability
 from .citations import Citations
@@ -49,6 +50,7 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
 from .mcp import MCP, MCPAuthorizationTokenFunc
+from .model_fallback import ModelFallback
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -56,6 +58,7 @@ from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
+from .request_input import RequestInput  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RequestInput
 from .resolve_model_id import ModelIdResolver, ResolveModelId
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
@@ -64,6 +67,7 @@ from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+from .windows_workspace import WindowsWorkspace
 from .wrapper import WrapperCapability
 from .x_search import XSearch
 
@@ -79,6 +83,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        BatchModelRequests,
         Caching,
         Citations,
         RaiseContentFilterError,
@@ -88,6 +93,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Instrumentation,
         LocalWorkspace,
         MCP,
+        ModelFallback,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
@@ -98,6 +104,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Toolset,
         WebFetch,
         WebSearch,
+        WindowsWorkspace,
         XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
@@ -135,6 +142,7 @@ __all__ = [
     'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'BatchModelRequests',
     'Caching',
     'Capability',
     'Citations',
@@ -153,6 +161,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
     'Thinking',
@@ -165,11 +174,13 @@ __all__ = [
     'UseThreadExecutor',
     'WebFetch',
     'WebSearch',
+    'WindowsWorkspace',
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',
     'DynamicCapability',
     'durable_operation',
+    'RequestInput',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',

@@ -58,10 +58,14 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
+    BenchmarkInstructions,
     Coder,
+    CompactOnRequest,
     Planning,
+    PruneToolResults,
     RelevanceCompaction,
     Researcher,
+    SlidingWindowCompaction,
     SpendLimits,
     SSHWorkspace,
     StepPersistence,
@@ -73,9 +77,10 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.sub_agents import AgentOverride
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
@@ -188,6 +193,14 @@ def _check_system_reminders(merged: Any) -> None:
     assert [r.content for r in merged.reminders] == ['first', 'second']
 
 
+def _check_compact_on_request(merged: Any) -> None:
+    assert merged.max_per_run == 2
+
+
+def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
+    assert merged.placeholder == '[second]'
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -198,6 +211,10 @@ def _check_advisor(merged: Any) -> None:
 
 def _check_background_tools(merged: Any) -> None:
     assert callable(merged.tools)
+
+
+def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
+    assert merged.id == 'benchmark_instructions'
 
 
 def _check_sub_agents(merged: Any) -> None:
@@ -254,10 +271,23 @@ COMBINE_POLICY: dict[str, Policy] = {
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',
         lambda: (
-            SystemReminders[Any](reminders=[Reminder('first')]),
-            SystemReminders[Any](reminders=[Reminder('second')]),
+            SystemReminders[Any](reminders=[Reminder('first', tag=None)]),
+            SystemReminders[Any](reminders=[Reminder('second', tag=None)]),
         ),
         _check_system_reminders,
+    ),
+    'CompactOnRequest': Combines(
+        'one `compact_context` tool per agent, and two strategies for one request would compact twice',
+        lambda: (
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=1),
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
+        ),
+        _check_compact_on_request,
+    ),
+    'PruneToolResults': Combines(
+        'one `prune_tool_result` tool per agent',
+        lambda: (PruneToolResults[None](placeholder='[first]'), PruneToolResults[None](placeholder='[second]')),
+        _check_prune_tool_results,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
@@ -290,26 +320,50 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
         _check_background_tools,
     ),
+    'BenchmarkInstructions': Combines(
+        'one fixed text; two would state it twice',
+        lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
+        _check_benchmark_instructions,
+    ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
+    '_CoderGuidance': Rejected(
+        'Coder-local guidance; its `coder_instructions` id is set per instance, so a second copy raises rather than merging'
+    ),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
+    '_SetToolStrict': Anonymous('Coder-local strict default; it only fills a `strict` still unset, so the first wins'),
+    '_ReportExhaustedRetries': Anonymous(
+        'Coder-local retry reporting; whichever sees the exhausted retry turns it into a tool failure, and the other passes that on'
+    ),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
-    'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'OpenSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'DockerContainer': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'DockerSandbox': Anonymous('deprecated alias of `DockerContainer`, and combines the same way'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'KubernetesSandbox': Anonymous(
+        'two coexist; the first supplies the run workspace, as core picks the first supplier'
+    ),
+    'RenderSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'BoxdSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BoxLiteSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
-    'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
+    'BubblewrappedWorkspace': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
     'DelegationReports': Anonymous(
         'one per task owner and conversation; each delivers only its own reports, so several coexist'
     ),
+    'TaskLink': Anonymous('the abstract base of the links below; never attached itself'),
+    'LocalTaskLink': Anonymous('`SubAgents(task_control=TaskControl())` attaches one to each task run it starts'),
+    '_WorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run it serves'),
+    '_ForwardingWorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run that forwards its events'),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
@@ -317,14 +371,16 @@ COMBINE_POLICY: dict[str, Policy] = {
     'InputGuardrail': Anonymous('several guards is the design'),
     'OutputGuardrail': Anonymous('several guards is the design'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
+    'StreamGuardrail': Anonymous('several guards is the design'),
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
+    'Permissions': Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would'),
     'ManagedPrompt': Anonymous(
         'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
     ),
     'LogfireMCP': Narrows(
-        'one Logfire connection per id; two that differ need their own ids and PrefixTools',
+        'one Logfire connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'RepoContext': Anonymous('one per workspace root'),
@@ -336,6 +392,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
+    'ToolBudgets': Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
+    'RefineOutput': Anonymous('only a hook; each counts its own rounds and adds its instructions to a round'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
@@ -344,6 +403,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'AbsurdDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
+    ),
+    'AzureDurableTaskDurability': Rejected(
+        'an agent accepts only one durable execution engine; core rejects a second before binding'
     ),
     'PGTaskDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
@@ -358,6 +420,13 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
         lambda cls: (cls(answerer=_decline), cls(answerer=None)),
     ),
+    'Peers': Narrows(
+        'one peer network per id; merging two networks would widen who receives messages',
+        lambda cls: (
+            cls(network=InMemoryPeerNetwork().join(handle='a')),
+            cls(network=InMemoryPeerNetwork().join(handle='b')),
+        ),
+    ),
     'Shell': Collides(
         'its toolset registers `run_command` and friends under fixed names',
         lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
@@ -371,7 +440,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(), cls(cache=False)),
     ),
     'Notion': Narrows(
-        'one Notion connection per id; two that differ need their own ids and PrefixTools',
+        'one Notion connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'PyaiDocs': Narrows(
@@ -387,34 +456,35 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(allowed_services=['s3']), cls(allowed_services=['sqs'])),
     ),
     'Linear': Narrows(
-        'one Linear connection per id; two that differ need their own ids and PrefixTools',
+        'one Linear connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'Ordinal': Narrows(
-        'one Ordinal connection per id; two that differ need their own ids and PrefixTools',
+        'one Ordinal connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'Grain': Narrows(
-        'one Grain connection per id; two that differ need their own ids and PrefixTools',
+        'one Grain connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'DayAI': Narrows(
-        'one DayAI connection per id; two that differ need their own ids and PrefixTools',
+        'one DayAI connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'PostHog': Narrows(
-        'one PostHog connection per id; two that differ need their own ids and PrefixTools',
+        'one PostHog connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'Pylon': Narrows(
-        'one Pylon connection per id; two that differ need their own ids and PrefixTools',
+        'one Pylon connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
+    'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
-    'SmartSearch': Collides(
-        'its toolset registers `smart_search` under a fixed name, and its judge `model` decides which '
-        'provider receives the source, so merging two could send it somewhere neither chose'
+    'SmartSearch': Narrows(
+        'one `smart_search` tool per id, and its judge `model` decides which provider receives the source',
+        lambda cls: (cls('test'), cls('other')),
     ),
     'PlaywrightBrowser': Narrows(
         'one browser per id, and its egress settings are an access boundary',
@@ -431,12 +501,16 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),
     ),
+    'Pixeltable': Narrows(
+        'one Pixeltable catalog configuration per id, and its table allowlist is an access boundary',
+        lambda cls: (cls(tables=['app']), cls(tables=['app.docs'])),
+    ),
     'ExaSearch': Narrows(
         'one Exa search configuration per id, and its domain lists are an access boundary',
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
     ),
     'GitHub': Narrows(
-        'one GitHub connection per id; two that differ need their own ids and PrefixTools',
+        'one GitHub connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'YouResearch': Narrows(
@@ -447,8 +521,12 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one You.com search configuration per id, and its domain lists are an access boundary',
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
     ),
+    'KeenableSearch': Narrows(
+        'one Keenable search configuration per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(), cls(num_results=3)),
+    ),
     'Slack': Narrows(
-        'one Slack connection per id; two that differ need their own ids and PrefixTools',
+        'one Slack connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
 }
@@ -534,7 +612,7 @@ def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch:
 
     # Any module the walk visits will do; the class it defines is re-exported elsewhere, so what
     # is under test is that the *import failure* is recorded as skipped rather than propagated.
-    a_capability_module = 'pydantic_ai_harness.subagents._capability'
+    a_capability_module = 'pydantic_ai_harness.sub_agents._capability'
 
     def wrapped_in_user_error() -> Exception:
         """What a capability raises when it builds something needing a missing extra at import.
@@ -713,11 +791,14 @@ def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_set
 
     Not a VCR test: `combine` makes no request.
     """
-    first = LLMReminder[Any](model=TestModel(settings={'temperature': 0.0}))
-    second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
+    first = LLMReminder[Any](interval=10, model=TestModel(settings={'temperature': 0.0}))
+    second = LLMReminder[Any](interval=10, model=TestModel(settings={'temperature': 1.0}))
 
     merged = SystemReminders.combine(
-        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+        [
+            SystemReminders[Any](dynamic_reminders=[first]),
+            SystemReminders[Any](dynamic_reminders=[second]),
+        ]
     )
 
     assert isinstance(merged, SystemReminders)

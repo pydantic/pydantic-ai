@@ -11,13 +11,32 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: E2B Sandbox: your agent's commands run in an E2B cloud sandbox
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. Via ctx.workspace, E2BSandbox's get_workspace gives the run an E2B cloud sandbox over the E2B API with E2B_API_KEY, paused at its timeout and killed by destroy(ref). A later run reattaches with the WorkspaceRef in the message history or result.workspace.ref and resumes the sandbox if paused.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        e2b["E2BSandbox()<br/>get_workspace gives<br/>the run an E2B sandbox"]:::capability
+    end
+    sandbox["E2B cloud sandbox<br/>paused at its timeout,<br/>killed by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| e2b
+    ref -.->|"a later run reattaches<br/>and resumes it if paused"| e2b
+    e2b <-->|"E2B API, E2B_API_KEY"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[e2b,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -71,7 +90,7 @@ For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Shell(), FileSystem()])
@@ -119,11 +138,50 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Which capability would you add next, and where would it live?', workspace=ref)
 ```
 
-The ref holds no credentials, so the process that reattaches needs `E2B_API_KEY` too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
+The ref holds no credentials, so the process that reattaches needs them too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
 
-`template` and `allow_internet_access` only shape a new sandbox. `sandbox_timeout` also applies when you reattach, and `working_dir` and `env` apply to every command.
+`template`, `allow_internet_access` and `network` only shape a new sandbox. `sandbox_timeout` also applies when you reattach, and `working_dir` and `env` apply to every command.
 
 Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox)` to a run, with `E2BSandboxBackend` from `pydantic_ai_harness.e2b_sandbox`. `E2BSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
+
+## Use different credentials for each user
+
+`E2BSandbox(client=E2B(api_key=...))` sets one client for the capability, in place of `E2B_API_KEY` and the rest of the environment. The environment holds one key for the whole process, so it can't serve several users at once. When each user has their own E2B account, supply the workspace from a capability of your own, which builds the client from the run's `deps`:
+
+```python {names="defined"}
+from dataclasses import dataclass
+
+from e2b import E2B
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
+
+
+@dataclass
+class User:
+    e2b_api_key: str
+
+
+@dataclass
+class UsersE2B(AbstractCapability[User]):
+    def get_workspace(self, ctx: RunContext[User], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if ref is not None and ref.provider != 'e2b':
+            return None
+        if not ctx.deps.e2b_api_key:  # E2B would fall back to `E2B_API_KEY`
+            raise ValueError('This user has no E2B API key.')
+        return E2BSandboxBackend(client=E2B(api_key=ctx.deps.e2b_api_key), ref=ref)
+
+
+agent = Agent('{{ anthropic:large }}', deps_type=User, capabilities=[UsersE2B(), Coder()])
+```
+
+E2B's client falls back to `E2B_API_KEY` when its key is empty or `None`. If that variable is set where your app runs, a user with no key would run on that account, so check for a key before building the client, as above.
+
+Under [Temporal](../durable_execution/temporal.md), `deps` are serialized for every activity, which puts a key on them in the workflow's history. Put a user ID there instead, and have `get_workspace` look that user's key up on the worker. A client itself can't be on `deps` there at all.
+
+Destroy a user's sandbox with that user's key, as in `await E2BSandbox(client=E2B(api_key=user.e2b_api_key)).destroy(ref)`. A client for another account may not find the sandbox, and a sandbox that isn't found returns quietly, so it would keep running and billing with no error.
 
 ## Prepare a sandbox before the run
 
@@ -162,6 +220,38 @@ if __name__ == '__main__':
 
 The `finally` kills the sandbox even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
+## Keep a token out of the sandbox
+
+Pass `network` to have E2B add a token to the sandbox's requests itself, so the token is never inside the sandbox. `network` takes E2B's own network options and passes them on unchanged. Here `gh` and `git push` work as the token's owner, while `echo $GH_TOKEN` in the sandbox prints `placeholder`:
+
+```python {names="defined"}
+import base64
+
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+token = '...'  # a GitHub token, such as the output of `gh auth token`
+basic = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+sandbox = E2BSandbox(
+    env={'GH_TOKEN': 'placeholder'},  # `gh` sends a token only when one is set; the proxy replaces it
+    network={
+        'rules': {
+            'github.com': [{'transform': {'headers': {'Authorization': f'Basic {basic}'}}}],  # git over HTTPS
+            'api.github.com': [{'transform': {'headers': {'Authorization': f'token {token}'}}}],  # gh
+            'uploads.github.com': [{'transform': {'headers': {'Authorization': f'token {token}'}}}],
+        }
+    },
+)
+```
+
+E2B adds the header as each request leaves the sandbox, replacing any header with the same name. E2B calls this [public beta](https://docs.e2b.dev/sandbox/internet-access), so it may change.
+
+- Only HTTPS requests get the header. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- If you also set `allow_out` or `allow_internet_access=False`, add each host in `rules` to `allow_out`, or its requests are blocked.
+- The agent can't see the token, but it can use it for anything the token allows.
+- List only hosts that never send request headers back in a response, or a command could read the token there.
+- An attached sandbox keeps its rules. To change them, for example to swap the token, call `update_network` on `await backend.get_sandbox()`. It replaces all network options at once.
+- To keep the token out of the request that creates the sandbox too, save the whole header value as an E2B secret and use `e2b.Secret.fill(name)` as the value.
+
 ## Preview a dev server
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` applies, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
@@ -179,12 +269,14 @@ async def kill_sandbox(ref: WorkspaceRef) -> None:
     await E2BSandbox().destroy(ref)
 ```
 
-`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
+`E2BSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` kills by ID with the instance's `client`, without attaching. This kills a paused sandbox too, without resuming it. A sandbox you don't kill is paused when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
 
 A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
 
 ```python
 from typing import Any
+
+import anyio
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
@@ -198,7 +290,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await E2BSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await E2BSandbox().destroy(ctx.workspace.ref)
     raise error
 
 
@@ -209,11 +304,15 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 
 | Option | What it does |
 | --- | --- |
+| `client` | An `e2b.E2B`, for its API key and other connection settings. Default: `None`, `E2B_API_KEY` and the rest of the environment. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
+| `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). A spec cannot set it. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
@@ -222,7 +321,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 Install the `temporal` extra too:
 
 ```bash
-pip/uv-add "pydantic-ai-harness[e2b,anthropic,temporal]"
+pip/uv-add "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.
@@ -275,6 +374,10 @@ Removing a capability while workflows using it are still running changes their r
 ## Telemetry
 
 `E2BSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox also logs `Created E2B sandbox <id>` at INFO on the `pydantic_ai_harness.e2b_sandbox._backend` logger, so the id is on record even if the run ends before it is stored.
+
+## Further reading
+
+- [Run Pydantic AI coding agents in E2B sandboxes](https://pydantic.dev/articles/pydantic-ai-e2b-sandboxes) (Pydantic): a coding agent in an E2B sandbox
 
 ## API reference
 

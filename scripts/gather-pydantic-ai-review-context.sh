@@ -33,17 +33,20 @@ if [ "${1:-}" = "--partition-files" ]; then
 
   # Keep the historical ordering files for consumers that use them. Resolve
   # equal-size ties by path so assignments do not depend on GitHub API order.
+  # Generated files match the per-file diff split's pattern. jq's `$` also
+  # matches before a final newline and its `.` skips one, so `\z` and `(?s)`
+  # give it awk's meaning.
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by(.filename) | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/az.txt"
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by(.filename) | reverse | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/za.txt"
 
   PARTITIONS=$(jq '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename]) as $files
     | ($files | length) as $file_count
     | ([$files[] | (.additions // 0) + (.deletions // 0)] | add // 0) as $diff_lines
@@ -74,7 +77,7 @@ if [ "${1:-}" = "--partition-files" ]; then
   # Existing largest.txt remains the ordered source used for first-pass
   # assignments. Assign each next-largest file to the least-loaded delegate.
   jq -r '
-    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    [.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)]
     | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename])
     | .[].filename
   ' "$FILES_JSON" > "$ORDERINGS_DIR/largest.txt"
@@ -93,7 +96,7 @@ _TMP_FILES=()
 track_tmp() { _TMP_FILES+=("$1"); }
 cleanup_tmp() {
   for f in "${_TMP_FILES[@]:-}"; do
-    [ -n "$f" ] && rm -f "$f"
+    [ -n "$f" ] && rm -rf "$f"
   done
 }
 trap cleanup_tmp EXIT
@@ -235,19 +238,6 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
 [ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
 
-# Review verdicts are in neither file above: `review-comments.txt` holds only
-# inline threads, `pr-comments.txt` only issue comments. Every gh-aw reviewer here
-# posts as `github-actions[bot]`, so each one tells its own reviews apart by the
-# first line of the body. Non-fatal: the diffs below matter more than this file.
-echo "  - Bot reviews"
-gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-  | jq -rs '
-      [add[] | select(.user.login == "github-actions[bot]")] | sort_by(.submitted_at) | .[]
-      | "\(.submitted_at) \(.state) at \(.commit_id): \((.body // "") | split("\n") | (.[0] // "") | rtrimstr("\r") | if . == "" then "(no body)" else . end)"
-    ' > "$CTX/bot-reviews.txt" \
-  || echo "(Could not list reviews)" > "$CTX/bot-reviews.txt"
-[ -s "$CTX/bot-reviews.txt" ] || echo "(No reviews from github-actions[bot])" > "$CTX/bot-reviews.txt"
-
 # Related issues: extract issue numbers from PR body
 echo "  - Related issues"
 PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body')
@@ -267,9 +257,11 @@ done > "$CTX/related-issues.txt"
 echo "  - Fetching base branch for function-context diffs"
 BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
 MERGE_BASE=""
+BASE_SHA=""
 if [ -n "$BASE_REF" ]; then
   if git fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
     MERGE_BASE=$(git merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
+    BASE_SHA=$(git rev-parse FETCH_HEAD 2>/dev/null || echo "")
   fi
 fi
 if [ -n "$MERGE_BASE" ]; then
@@ -281,34 +273,111 @@ fi
 # Per-file diffs with function context (excluding generated files)
 echo "  - Per-file diffs (excluding generated files)"
 mkdir -p "$CTX/diff"
+# Without the `python` driver, -W extends a Python hunk to its whole top-level
+# class. A PR's `.gitattributes` still takes precedence over this file. The
+# callers run the PR's own copy of this script, so the PR controls this diff
+# either way. --no-ext-diff and --no-textconv keep a `.gitattributes` from
+# selecting a command.
+PY_ATTRIBUTES=$(mktemp)
+track_tmp "$PY_ATTRIBUTES"
+echo '*.py diff=python' > "$PY_ATTRIBUTES"
 if [ -n "$MERGE_BASE" ]; then
   # -W (--function-context) shows the full function body around each change,
   # so the reviewer can see the function signature and surrounding logic without
-  # needing to read the full source file separately.
-  git diff -W --no-color "$MERGE_BASE" HEAD
+  # needing to read the full source file separately. core.quotePath=false keeps a non-ASCII path
+  # unquoted, so its header names it.
+  git -c core.attributesFile="$PY_ATTRIBUTES" -c core.quotePath=false diff -W --no-color --no-ext-diff --no-textconv "$MERGE_BASE" HEAD
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
-fi | awk -v dir="$CTX/diff" '
-  /^diff --git/ {
+fi | LC_ALL=C awk -v dir="$CTX/diff" '
+  # Reads the C-style quoted path git writes for a path holding a quote, a
+  # backslash or a control character. The API diff also quotes a non-ASCII
+  # path. s starts at the opening quote; qend is set to the closing quote, or 0
+  # when there is none. Under LC_ALL=C, %c turns each octal escape into its byte.
+  function unquote(s,    out, i, c, k) {
+    out = ""
+    for (i = 2; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "\"") { qend = i; return out }
+      if (c == "\\") {
+        c = substr(s, ++i, 1)
+        k = index("abtnvfr", c)
+        if (k) c = sprintf("%c", k + 6)
+        else if (c ~ /[0-7]/) {
+          k = c * 64 + substr(s, i + 1, 1) * 8 + substr(s, i + 2, 1)
+          c = sprintf("%c", k)
+          i += 2
+        }
+      }
+      out = out c
+    }
+    qend = 0
+    return ""
+  }
+
+  # Names the held file from its new (b/) path, so renamed files match the
+  # GitHub API .filename field, then writes its held lines. "diff --git" alone
+  # is ambiguous: a crafted "z b/src.py" reads as "src.py". A rename or copy
+  # names its new path in the extended header; any other header repeats one
+  # path P as "a/P b/P", or quoted as "\"a/P\" \"b/P\"", so P is its first half.
+  function open_held(    rest, n, i) {
+    if (fname == "") {
+      rest = substr(held[1], 12)
+      n = (length(rest) - 5) / 2
+      if (substr(rest, 1, 3) == "\"a/") {
+        fname = unquote(rest)
+        fname = (qend && substr(rest, qend + 1) == (" \"b/" substr(rest, 4, qend - 3))) ? substr(fname, 3) : ""
+      } else if (n == int(n) && n > 0 && substr(rest, 1, 2) == "a/" && substr(rest, n + 3, 3) == " b/" \
+          && substr(rest, 3, n) == substr(rest, n + 6))
+        fname = substr(rest, 3, n)
+    }
+    # Generated files are each `uv.lock` and the `.yaml` cassettes under a
+    # `cassettes/` directory below the root. The pattern ends the path, so a
+    # real file cannot hide from review by naming either.
+    skip = (fname == "" || fname ~ /(^|\/)uv\.lock$|\/cassettes\/.*\.yaml$/)
+    if (!skip) {
+      # Percent-encode `%`, `/` and a leading `.`: each path gets one readable,
+      # non-hidden name that no other path shares. Encoding a backslash, tab,
+      # newline and carriage return too leaves nothing for the index to escape.
+      safe = fname
+      gsub(/%/, "%25", safe)
+      gsub(/\\/, "%5C", safe)
+      gsub(/\t/, "%09", safe)
+      gsub(/\n/, "%0A", safe)
+      gsub(/\r/, "%0D", safe)
+      gsub(/\//, "%2F", safe)
+      sub(/^\./, "%2E", safe)
+      outfile = dir "/" safe ".diff"
+      # A typechange diffs its path twice, as a deletion and then an addition.
+      # Truncating each name only on its first open keeps both.
+      if (!(outfile in opened)) { printf "" > outfile; close(outfile); opened[outfile] = 1 }
+      for (i = 1; i <= nheld; i++) print held[i] >> outfile
+    }
+    nheld = 0
+  }
+
+  /^diff --git / {
+    if (nheld) open_held()
     # Close previous file to avoid running out of file descriptors
     if (outfile) close(outfile)
     outfile = ""
-
-    # Extract new (b/) filename from "diff --git a/path b/path"
-    # Uses b/ side so renamed files match the GitHub API .filename field
-    fname = $0
-    sub(/^.* b\//, "", fname)
-
-    skip = (fname ~ /uv\.lock/ || fname ~ /\/cassettes\//)
-    if (!skip) {
-      # Sanitize path: replace / with __, strip leading dots to avoid hidden files
-      safe = fname
-      gsub(/\//, "__", safe)
-      sub(/^\.+/, "", safe)
-      outfile = dir "/" safe ".diff"
-    }
+    fname = ""
+    nheld = 1
+    held[1] = $0
+    next
   }
-  !skip && outfile { print > outfile }
+  nheld && /^(rename|copy) to / {
+    fname = $0
+    sub(/^(rename|copy) to /, "", fname)
+    if (substr(fname, 1, 1) == "\"") fname = unquote(fname)
+  }
+  nheld && /^(old mode|new mode|deleted file mode|new file mode|copy from|copy to|rename from|rename to|similarity index|dissimilarity index|index) / {
+    held[++nheld] = $0
+    next
+  }
+  nheld { open_held() }
+  !skip && outfile { print >> outfile }
+  END { if (nheld) open_held() }
 '
 
 # Annotate commentable diff lines with source line numbers (NL:/OL: prefixes)
@@ -402,9 +471,9 @@ FILES_JSON=$(mktemp)
 track_tmp "$FILES_JSON"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
   | jq -s 'add // []' > "$FILES_JSON"
-jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("/"; "__") | gsub("^\\.+"; "")) + ".diff"] | @tsv' "$FILES_JSON" \
+jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("%"; "%25") | gsub("\\\\"; "%5C") | gsub("\t"; "%09") | gsub("\n"; "%0A") | gsub("\r"; "%0D") | gsub("/"; "%2F") | sub("^\\."; "%2E")) + ".diff"] | @tsv' "$FILES_JSON" \
   | while IFS=$'\t' read -r fname counts diffname; do
-    if echo "$fname" | grep -qE 'uv\.lock|/cassettes/'; then
+    if echo "$fname" | grep -qE '(^|/)uv\.lock$|/cassettes/.*\.yaml$'; then
       printf '%s\t%s\n' "$fname" "$counts"
     else
       printf '%s\t%s\tdiff/%s\n' "$fname" "$counts" "$diffname"
@@ -420,15 +489,54 @@ mkdir -p "$CTX/file-orderings"
 
 # PR size summary — file count and total diff lines. The prompt uses this to
 # pick a single-pass vs fan-out review strategy.
-FILE_COUNT=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)] | length' "$FILES_JSON")
-DIFF_LINES=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not) | (.additions // 0) + (.deletions // 0)] | add // 0' "$FILES_JSON")
+FILE_COUNT=$(jq '[.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not)] | length' "$FILES_JSON")
+DIFF_LINES=$(jq '[.[] | select(.filename | test("(?s)(^|/)uv\\.lock\\z|/cassettes/.*\\.yaml\\z") | not) | (.additions // 0) + (.deletions // 0)] | add // 0' "$FILES_JSON")
 printf '%s files, %s diff lines (excluding generated files)\n' "$FILE_COUNT" "$DIFF_LINES" > "$CTX/pr-size.txt"
 rm -f "$FILES_JSON"
 
+# Core definitions the durable engines depend on that this PR changes, found as the
+# `durable-exec-label` job in `.github/workflows/bots.yml` finds them: with the base branch's
+# classifier and manifest, never this checkout's copies, so a PR's edits to either take effect
+# only once merged.
+# Written only when there are any. Non-fatal: without it the reviewer has less context.
+echo "  - Durable-exec contract entries"
+DURABLE_EXEC_AGENTS_MD=pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md
+DURABLE_EXEC_GATE=$(mktemp -d)
+track_tmp "$DURABLE_EXEC_GATE"
+durable_exec_touched() {
+  local path
+  mkdir -p "$DURABLE_EXEC_GATE/scripts" || return 1
+  for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
+    gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" \
+      > "$DURABLE_EXEC_GATE/$path" || return 1
+  done
+  python3 -I "$DURABLE_EXEC_GATE/scripts/durable_exec_contract.py" \
+    --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$(git rev-parse HEAD)"
+}
+if [ -n "$BASE_SHA" ] && TOUCHED=$(durable_exec_touched); then
+  if [ "$(jq '[.[] | length] | add // 0' <<<"$TOUCHED")" -gt 0 ]; then
+    {
+      echo "# Durable-exec contract entries this PR touches"
+      echo ""
+      echo "The base branch's \`scripts/durable_exec_contract.py --touched\` placed this PR's changed lines in"
+      echo "these entries of \`scripts/durable_exec_contract.json\`: core definitions a durable engine"
+      echo "depends on, each with its kinds, its engines and the engine sites that depend on it."
+      echo "\`agents-md.txt\` carries \`${DURABLE_EXEC_AGENTS_MD}\`, whose section \"Core changes that"
+      echo "engines depend on\" says what to check."
+      echo ""
+      jq -r 'to_entries[] | .key as $file | .value | to_entries[]
+        | "- `\($file)::\(.key)`: \(.value.kinds | join(", ")); engines: \(.value.engines | join(", "))",
+          (.value.sites[] | "  - `\(.)`")' <<<"$TOUCHED"
+    } > "$CTX/durable-exec-contract.md"
+  fi
+else
+  echo "    Could not classify the PR against the durable-exec contract (skipping)"
+fi
+
 # Gather AGENTS.md files relevant to the PR — the repo-root file (always,
-# when present) plus any per-directory AGENTS.md whose directory has changed
-# files in this PR.
-echo "  - AGENTS.md files (repo-root + changed directories)"
+# when present), any per-directory AGENTS.md whose directory has changed
+# files in this PR, and the durable_exec one when the PR touches a contract entry.
+echo "  - AGENTS.md files (repo-root + changed directories + touched durable-exec contract)"
 > "$CTX/agents-md.txt"
 {
   if [ -f ./AGENTS.md ]; then
@@ -438,7 +546,9 @@ echo "  - AGENTS.md files (repo-root + changed directories)"
   fi
   for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md | sed 's|^\./||' | sort); do
     dir=$(dirname "$agents_file")
-    if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
+    if { grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null \
+         || { [ "$agents_file" = "$DURABLE_EXEC_AGENTS_MD" ] && [ -f "$CTX/durable-exec-contract.md" ]; }; } \
+      && [ -f "$agents_file" ]; then
       echo "=== ${agents_file} ==="
       cat "$agents_file"
       echo ""
@@ -527,7 +637,9 @@ the surrounding code before posting.
   reasons differ deliberately across providers. Check the provider's
   SDK docs (or recent commits in `pydantic_ai/models/<provider>.py`)
   before asserting a "bug".
-- **Cassettes / `uv.lock` / generated files** — never review.
+- **Generated files** — never review a `uv.lock`, a `.yaml` cassette under a
+  `cassettes/` directory below the root, or another generated file. Review
+  every other file under `cassettes/` like any source file.
 - **Theoretical performance** — `O(n²)` is only a problem if `n` is
   realistically large in this use case. Don't flag without evidence of
   real-world impact.
@@ -767,6 +879,44 @@ gate, so it may branch on the transport. Also don't flag existing code that the
 diff only touches and that already diverges, such as a one-line fix inside a
 deeply nested mapper or next to an inline gate on `main`: aligning it is its
 own PR.
+
+### Example 8 — durable-exec contract
+
+Trigger: `.review-context/durable-exec-contract.md` exists. Each entry in it is
+a core definition a durable engine imports, overrides, reads or projects, with
+the engine sites that depend on it. Durable engines run the agent across
+activity, step or task boundaries and replay workflow code, so a broken site
+fails only inside a durable run, never in a plain `Agent` test. A broken site
+with a concrete trigger is HIGH.
+
+**Flag this (HIGH):**
+```python
+# Entry `models/__init__.py::Model.request`, override sites in TemporalModel,
+# DBOSModel, PrefectModel and DurableModel
+async def request(self, messages, model_settings, model_request_parameters, *, run_context=None):
+```
+*Why:* Each listed site overrides `Model.request` with the old signature, so
+once core passes `run_context=`, a durable run raises `TypeError` in the
+engine's model. Ask for every override to take the new parameter, and for a
+workflow-level test that runs a request through an engine. The same goes for a
+renamed or retyped field that an engine serializes or reads, a field that a
+`projected_field` site copies across a boundary, and a projected field that
+becomes a read-only property, which `ModelRequestContextProjection.build_context`
+assigns.
+
+**Don't flag this:**
+```python
+# Entry `models/__init__.py::infer_model`, import sites in durable_exec/_base.py
+# and TemporalModel._infer_model
+if provider == 'acme':
+    return AcmeModel(model_name)
+```
+*Why:* The sites call `infer_model(name)` and use the `Model` it returns. Its
+signature and return contract are unchanged and nothing new crosses a durable
+boundary, so the sites still hold and no workflow-level test is needed. Also
+don't flag an entry whose sites the diff already updates and tests, or a
+missing entry: the manifest is the contract this check reads, not something to
+second-guess.
 
 ## Sub-agent finding format
 

@@ -593,7 +593,7 @@ _(This example is complete, it can be run "as is")_
 
 [`DeferredLoadingToolset`][pydantic_ai.toolsets.DeferredLoadingToolset] wraps a toolset and marks its tools for deferred loading, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
 
-[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. It applies to `Tool` instances too; only a function added with `defer_loading=False` opts out. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
 
 ```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
@@ -602,6 +602,8 @@ from pydantic_ai.mcp import MCPToolset
 mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('{{ openai:medium }}', toolsets=[mcp.defer_loading()])
 ```
+
+Deferred loading hides each tool individually, and the model searches for the ones it needs. To instead hide a group of tools behind a workflow or skill, so they only appear once the model loads it along with its instructions, pass the toolset to an [on-demand capability](capabilities/on-demand.md#hide-tools-until-loaded). Use tool search for a large catalog of independent tools; use an on-demand capability when tools belong to a workflow that the model opts into as a unit.
 
 ### Including Return Schemas
 

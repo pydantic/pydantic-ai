@@ -2,11 +2,17 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Generator, Iterable
+import warnings
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
+from .exceptions import UnsupportedSettingWarning
 from .settings import ModelSettingName
+
+if TYPE_CHECKING:
+    from .realtime.settings import RealtimeModelSettingName
 
 GUARANTEE_SETTINGS: dict[ModelSettingName, str] = {
     'timeout': ' Use `request_timeout` instead, which Pydantic AI enforces for every model.',
@@ -21,6 +27,9 @@ GUARANTEE_SETTINGS: dict[ModelSettingName, str] = {
 These change what a request guarantees, so ignoring one silently would surprise the user. The other settings are
 tuning knobs that a model ignores silently, so the same settings work across models.
 """
+
+_TOOL_CALL_GUARANTEES = frozenset({'parallel_tool_calls', 'async_tool_calls'})
+"""Settings that are a guarantee only when `False` and the request offers function tools."""
 
 SUPPRESSED_WARNINGS: ContextVar[frozenset[ModelSettingName]] = ContextVar(
     'unsupported_setting_warnings_suppressed', default=frozenset()
@@ -51,3 +60,32 @@ def suppress_warnings(
         yield
     finally:
         SUPPRESSED_WARNINGS.reset(token)
+
+
+def warn_unsupported_settings(
+    model_id: str,
+    settings: Mapping[str, object],
+    unsupported: Iterable[str],
+    *,
+    has_function_tools: bool,
+    guarantees: Mapping[ModelSettingName, str] | Mapping[RealtimeModelSettingName, str] = GUARANTEE_SETTINGS,
+    stacklevel: int = 3,
+) -> None:
+    """Warn about each set setting in `guarantees` that the model `model_id` ignores (`unsupported`).
+
+    Shared by `Model.prepare_request` and the realtime session, which passes its own `guarantees`, so both
+    follow the same rule.
+    """
+    unsupported = frozenset(unsupported)
+    suppressed = SUPPRESSED_WARNINGS.get()
+    for name, hint in guarantees.items():
+        if name not in settings or name not in unsupported or name in suppressed:
+            continue
+        # For these, only `False` is a guarantee, and only one about how function tools are called.
+        if name in _TOOL_CALL_GUARANTEES and (settings.get(name) is not False or not has_function_tools):
+            continue
+        warnings.warn(
+            f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}',
+            UnsupportedSettingWarning,
+            stacklevel=stacklevel,
+        )

@@ -1,3 +1,5 @@
+import hashlib
+import re
 from collections.abc import Callable
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
@@ -5,13 +7,23 @@ from typing import Any, TypeGuard
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
 from prefect.utilities.hashing import hash_objects
+from prefect.utilities.importtools import to_qualified_name
 from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
+from pydantic_ai.messages import CapabilityPart, CapabilitySource
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
+_BINARY_KEY = '__pydantic_ai_binary__'
+
+
+class _ProjectedDict(dict[str, Any]):
+    """Keep generated binary encodings and escaped keys unchanged across projection passes.
+
+    Prefect serializes this as an ordinary JSON object; the type is only an in-memory marker.
+    """
 
 
 def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
@@ -52,7 +64,7 @@ def _cacheable_value(value: Any) -> Any:
         if hash_objects(value, raise_on_failure=False) is not None:
             return value
         if _is_dict(value):
-            return {key: exclude_non_serializable(item) for key, item in value.items()}
+            return _map_container(value, exclude_non_serializable)
         if _is_list(value):
             return [exclude_non_serializable(item) for item in value]
         if _is_tuple(value):
@@ -61,7 +73,9 @@ def _cacheable_value(value: Any) -> Any:
             return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
         return _NON_SERIALIZABLE
 
-    return exclude_non_serializable(projected)
+    # Expanding a model can expose bytes the first projection didn't reach. Keep any dataclasses
+    # exposed alongside them intact, including their type and per-run fields, as the fallback did.
+    return _hash_binary_values(exclude_non_serializable(projected))
 
 
 def _replace_run_context(
@@ -161,6 +175,32 @@ def _replace_run_context(
 _CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id', 'conversation_id'})
 """Framework dataclass fields excluded from cache key computation as they vary per-run."""
 
+_CAPABILITY_PART_EXCLUDED_FIELDS = frozenset({'timestamp', 'record_id'})
+"""A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s per-record fields, which never reach the model.
+
+Excluded on every kind, which is usually defined outside `pydantic_ai`; the kind's own fields stay in the key.
+"""
+
+_SYNTHETIC_CAPABILITY_ID = re.compile(r'<[a-z0-9_]+:[0-9a-f]{6}>')
+"""The key a run gives a capability with no `id`, which differs every run (`_synthetic_capability_id`)."""
+
+
+def _normalized_field_value(obj: object, name: str, value: Any, *, is_framework: bool) -> Any:
+    """`value` with an id the framework generates per run replaced by a fixed stand-in."""
+    if not isinstance(value, str):
+        return value
+    if is_framework and name == 'tool_call_id' and value.startswith(TOOL_CALL_ID_PREFIX):
+        return '<framework-generated>'
+    if (
+        name == 'capability_id'
+        and isinstance(obj, CapabilityPart | CapabilitySource)
+        and _SYNTHETIC_CAPABILITY_ID.fullmatch(value)
+    ):
+        # Stamped on a capability part, or its source, by a capability with no `id`: it never reaches the model, and
+        # only tells that run's capabilities apart.
+        return '<unnamed-capability>'
+    return value
+
 
 def _strip_cache_excluded_fields(
     obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
@@ -175,25 +215,39 @@ def _strip_cache_excluded_fields(
         result: dict[str, Any] = {}
         module = type(obj).__module__
         is_framework = module == 'pydantic_ai' or module.startswith('pydantic_ai.')
-        excluded_fields = _CACHE_EXCLUDED_FIELDS if is_framework else ()
+        excluded_fields: frozenset[str] = _CACHE_EXCLUDED_FIELDS if is_framework else frozenset()
+        if isinstance(obj, CapabilityPart):
+            excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
         for f in fields(obj):
             if f.name not in excluded_fields:
-                value = getattr(obj, f.name)
-                if (
-                    is_framework
-                    and f.name == 'tool_call_id'
-                    and isinstance(value, str)
-                    and value.startswith(TOOL_CALL_ID_PREFIX)
-                ):
-                    value = '<framework-generated>'
+                value = _normalized_field_value(obj, f.name, getattr(obj, f.name), is_framework=is_framework)
                 result[f.name] = _strip_cache_excluded_fields(value)
-        return result
+        return _project_dict(result, lambda item: item)
     elif _is_dict(obj):
-        return {k: _strip_cache_excluded_fields(v) for k, v in obj.items()}
+        return _map_container(obj, _strip_cache_excluded_fields)
     elif _is_list(obj):
         return [_strip_cache_excluded_fields(item) for item in obj]
     elif _is_tuple(obj):
         return tuple(_strip_cache_excluded_fields(item) for item in obj)
+    return _hash_binary_values(obj)
+
+
+def _hash_binary_values(obj: Any) -> Any:
+    """Normalize binary values in plain containers without expanding models or dataclasses."""
+    if _is_container(obj):
+        return _map_container(obj, _hash_binary_values)
+    if isinstance(obj, bytes | bytearray):
+        try:
+            obj.decode()
+        except UnicodeDecodeError:
+            # Prefect's JSON encoder decodes these as UTF-8, so binary content like an image pushes
+            # `hash_objects` onto its `cloudpickle` fallback, where the key depends on which objects
+            # the payload shares as well as on their values (see `_replace_toolset_tools`). A digest
+            # stays on the JSON path. Ordinary dict keys in this namespace are escaped below,
+            # so a caller-supplied descriptor cannot replay a binary input's result.
+            return _ProjectedDict(
+                {_BINARY_KEY: {'__class__': to_qualified_name(type(obj)), 'sha256': hashlib.sha256(obj).hexdigest()}}
+            )
     return obj
 
 
@@ -202,12 +256,28 @@ def _is_container(obj: Any) -> bool:
 
 
 def _map_container(container: Any, project: Callable[[Any], Any]) -> Any:
-    """Apply `project` to each item of a list/tuple/dict, preserving the container type."""
+    """Project container items and escape reserved dictionary keys once."""
     if _is_dict(container):
-        return {key: project(item) for key, item in container.items()}
+        return _project_dict(container, project)
     if _is_tuple(container):
         return tuple(project(item) for item in container)
     return [project(item) for item in container]
+
+
+def _project_dict(container: dict[str, Any], project: Callable[[Any], Any]) -> dict[str, Any]:
+    result = {key: project(item) for key, item in container.items()}
+    if isinstance(container, _ProjectedDict):
+        return _ProjectedDict(result)
+    if any(isinstance(key, str) and key.startswith(_BINARY_KEY) for key in result):
+        # Escape the whole prefix, including already-prefixed caller keys, to avoid moving
+        # the collision to another ordinary dict. The marker prevents escaping twice.
+        return _ProjectedDict(
+            {
+                _BINARY_KEY + key if isinstance(key, str) and key.startswith(_BINARY_KEY) else key: item
+                for key, item in result.items()
+            }
+        )
+    return result
 
 
 def _replace_toolset_tools(

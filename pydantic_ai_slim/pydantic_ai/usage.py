@@ -6,15 +6,23 @@ from copy import copy
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
-from typing import Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import SchemaSerializer, core_schema
+from typing_extensions import deprecated
 
 from . import _utils
+from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
+from ._removed_names import removed_names_getattr
+from ._warnings import (
+    CostNotFoundWarning,
+    PydanticAIDeprecationWarning,
+    UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning,
+)
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -40,6 +48,36 @@ def _usage_serializer(usage_type: type[object]) -> SchemaSerializer:
 class _UsageSerializerDescriptor:
     def __get__(self, instance: object, owner: type[object]) -> SchemaSerializer:
         return _usage_serializer(owner)
+
+
+def _validate_usage(
+    value: Any, inner: core_schema.ValidatorFunctionWrapHandler, *, reserved_names: frozenset[str]
+) -> UsageBase:
+    if isinstance(value, dict):
+        value_dict = cast(dict[str, Any], value)
+        input_value = _with_legacy_defaults(value_dict)
+    else:
+        value_dict = None
+        input_value = cast(object, value)
+
+    result = inner(input_value)
+    assert isinstance(result, UsageBase)
+    if value_dict is not None:
+        for key, item in value_dict.items():
+            if key not in reserved_names:
+                setattr(result, key, item)
+    return result
+
+
+def _with_legacy_defaults(value: dict[str, Any]) -> dict[str, Any]:
+    """A copy of stored usage data, with the empty `details` and `None` token counts older versions stored defaulted."""
+    input_value = value.copy()
+    if not value.get('details'):
+        input_value['details'] = {}
+    for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
+        if field_name not in value and legacy_name in value and value[legacy_name] is None:
+            input_value[legacy_name] = 0
+    return input_value
 
 
 def _serialize_usage(
@@ -159,6 +197,9 @@ class UsageBase:
     Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
     model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost. Models released
     after your install can be priced by calling [`update_in_background()`][pydantic_ai.prices.update_in_background].
+
+    Requests made through the [Pydantic AI Gateway](../gateway.md#request-cost) use the cost the gateway reported,
+    when it reports one.
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -175,25 +216,7 @@ class UsageBase:
         extra_serializer = SchemaSerializer(core_schema.any_schema())
 
         def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
-            if isinstance(value, dict):
-                value_dict = cast(dict[str, Any], value)
-                input_value = value_dict.copy()
-                if not value_dict.get('details'):
-                    input_value['details'] = {}
-                for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
-                    if field_name not in value_dict and legacy_name in value_dict and value_dict[legacy_name] is None:
-                        input_value[legacy_name] = 0
-            else:
-                value_dict = None
-                input_value = cast(object, value)
-
-            result = inner(input_value)
-            assert isinstance(result, UsageBase)
-            if value_dict is not None:
-                for key, item in value_dict.items():
-                    if key not in reserved_names:
-                        setattr(result, key, item)
-            return result
+            return _validate_usage(value, inner, reserved_names=reserved_names)
 
         def serialize(
             value: UsageBase,
@@ -265,18 +288,17 @@ class UsageBase:
             details['cache_audio_read_tokens'] = self.cache_audio_read_tokens
         if self.output_audio_tokens:
             details['output_audio_tokens'] = self.output_audio_tokens
-        if details:
-            prefix = 'gen_ai.usage.details.'
-            for key, value in details.items():
-                # Never emit a `details` entry whose name collides with a first-class token attribute: the
-                # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
-                # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
-                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
-                    continue
-                # Zero is a meaningful value, but a `None` would be an invalid OTel attribute value.
-                # Provider data can contain None despite the annotation.
-                if value is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                    result[prefix + key] = value
+        prefix = 'gen_ai.usage.details.'
+        for key, value in details.items():
+            # Never emit a `details` entry whose name collides with a first-class token attribute: the
+            # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
+            # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
+            if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
+                continue
+            # Zero is a meaningful value, but a `None` would be an invalid OTel attribute value.
+            # Provider data can contain None despite the annotation.
+            if value is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                result[prefix + key] = value
         return result
 
     def __repr__(self):
@@ -361,6 +383,7 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
+        cost = gateway_reported_cost(data)
         extraction_error: Exception | None = None
         for provider_id, provider_api_url in iter_provider_references(
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
@@ -375,7 +398,12 @@ class RequestUsage(UsageBase):
 
             try:
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
-                return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+                request_usage = cls(
+                    **{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details
+                )
+                if cost is not None:
+                    request_usage.cost = cost
+                return request_usage
             except Exception as e:
                 extraction_error = e
 
@@ -385,7 +413,7 @@ class RequestUsage(UsageBase):
                 UsageExtractionFailedWarning,
                 stacklevel=2,
             )
-        return cls(details=details)
+        return cls(details=details, cost=cost)
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -396,14 +424,17 @@ class RunUsage(UsageBase):
     """
 
     requests: int = 0
-    """Number of model responses the agent acted on, one per step of the agent loop.
+    """Number of model responses committed to the run's history, one per step of the agent loop.
+
+    That includes a response the run stopped on before acting on it, because it crossed a token or cost limit.
 
     This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
     lower than the number of requests sent to the provider: attempts a
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, the continuation requests that
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability moved on from, the continuation requests that
     complete a suspended response, and retries made by the provider SDK or HTTP transport aren't counted.
-    The tokens and cost of a response a `FallbackModel` rejected, and of continuation requests, are still added
-    to this usage. The attempts before a response are listed in its
+    The tokens and cost of a rejected response, and of continuation requests, are still added to this usage.
+    The attempts before a response are listed in its
     [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts].
     """
 
@@ -467,6 +498,18 @@ class RunUsage(UsageBase):
         new_usage.cost = self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None
         return new_usage
 
+    @deprecated(
+        '`usage` is a property, not a method: use `.usage` instead of `.usage()`.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def __call__(self) -> RunUsage:
+        """Return this usage, so that V1-style `result.usage()` keeps working, with a deprecation warning.
+
+        Without this, the call raises `TypeError: 'RunUsage' object is not callable`, which code that wraps
+        its usage accounting in `except Exception` turns into silently zero usage.
+        """
+        return self
+
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     if incr_usage.cost is not None:
@@ -514,7 +557,7 @@ class UsageLimits:
     cost_limit: Decimal | None = None
     """The maximum cost allowed in USD."""
     request_limit: int | None = 50
-    """The maximum number of model responses the agent acts on, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
+    """The maximum number of model responses committed to the run's history, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
 
     This bounds the number of turns of the agent loop, not the number of requests sent to the provider: attempts a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, continuation requests, and
@@ -694,3 +737,12 @@ class UsageLimits:
             )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_REMOVED_IN_V2 = {
+    'Usage': "use `RunUsage` for a run's usage, or `RequestUsage` for a single request's.",
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

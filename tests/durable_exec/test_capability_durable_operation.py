@@ -4,7 +4,7 @@ import copy
 import gc
 import re
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -12,23 +12,30 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_core import PydanticSerializationError
 
-from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
+from pydantic_ai import Agent, AgentStreamEvent, FinalResultEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
+    BatchModelRequests,
+    CombinedCapability,
     FileUnderstanding,
     Instrumentation,
+    ModelFallback,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     WrapperCapability,
     WrapRunHandler,
     durable_operation,
 )
+from pydantic_ai.capabilities.abstract import AgentModel
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityMethodDeclaration,
     CapabilityOperationParams,
     CapabilityOperationResult,
     ModelRequestContextProjection,
@@ -42,30 +49,41 @@ from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOp
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import (
     CapabilityEvent,
     DocumentUrl,
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
     StreamedResponse,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models._batch_model import BatchedModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from .preamble_text import (
+    RunAndStreamResult,
+    StructuredOutput,
+    plain_run_and_stream,
+    preamble_text_agents,
+    run_and_stream,
+)
 
 with try_import() as logfire_installed:
     from logfire.testing import CaptureLogfire
@@ -170,7 +188,7 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
 
     replay_capability_operations = False
 
-    def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
+    def __init__(self, *, models: Mapping[str, Model] | None = None) -> None:
         super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.recorded_results: dict[str, Any] = {}
@@ -302,6 +320,31 @@ def test_a_second_durable_engine_is_refused_at_construction() -> None:
     assert bound == []
 
 
+@pytest.mark.parametrize('wrap', [False, True], ids=['bare', 'wrapped'])
+def test_a_durable_engine_inside_a_capability_group_is_refused(wrap: bool) -> None:
+    """A deferred group can't hold the engine that has to wrap every toolset the agent has."""
+    bound: list[str] = []
+    engine: AbstractCapability[Any] = _BindLoggingDurability(bound)
+    with pytest.raises(UserError) as exc_info:
+        Agent(
+            TestModel(),
+            name='grouped_engine',
+            capabilities=[
+                CombinedCapability(
+                    [WrapperCapability(engine) if wrap else engine],
+                    id='infra',
+                    description='Infra.',
+                    defer_loading=True,
+                )
+            ],
+        )
+    assert str(exc_info.value) == snapshot(
+        "`_BindLoggingDurability` is inside capability 'infra', but a durable execution engine must be passed to "
+        'the agent directly, so it can wrap every toolset the agent has.'
+    )
+    assert bound == []
+
+
 async def test_two_durable_engines_for_one_run_are_refused_before_either_binds() -> None:
     bound: list[str] = []
     agent = Agent(TestModel(), name='two_engines')
@@ -393,6 +436,64 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
     assert not any('__capability__' in name for name, _ in durability.calls)
 
 
+async def test_capability_operation_maps_serialization_failure() -> None:
+    """The engine's backend receives the error that `serialization_failure` maps an unserializable result to."""
+
+    class TerminalFailure(Exception):
+        pass
+
+    backend_errors: list[Exception] = []
+
+    def serialization_failure(exc: Exception) -> TerminalFailure:
+        return TerminalFailure()
+
+    class SerializationBackend(_RecordingBackend):
+        async def execute(
+            self,
+            *,
+            operation_id: DurableOperationId,
+            name: str,
+            body: Callable[[], Awaitable[object]],
+            cache_key: tuple[object, ...],
+            config: object,
+        ) -> object:
+            try:
+                return await super().execute(
+                    operation_id=operation_id, name=name, body=body, cache_key=cache_key, config=config
+                )
+            except Exception as exc:
+                backend_errors.append(exc)
+                raise
+
+    class SerializationDurability(RecordingDurability):
+        engine_spec = replace(RecordingDurability.engine_spec, serialization_failure=serialization_failure)
+
+        def get_durable_operation_backend(self) -> SerializationBackend:
+            return SerializationBackend(self)
+
+    class NonSerializableCapability(AbstractCapability[None]):
+        id = 'non_serializable'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.read(ctx=ctx)
+
+        @durable_operation('read')
+        async def read(self, ctx: RunContext[None]) -> object:
+            return object()
+
+    agent = Agent(
+        TestModel(),
+        deps_type=type(None),
+        name='serialization_failure',
+        capabilities=[NonSerializableCapability(), SerializationDurability()],
+    )
+    with pytest.raises(TerminalFailure) as exc_info:
+        await agent.run('test')
+
+    assert backend_errors == [exc_info.value]
+    assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
+
+
 async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
     events: list[str] = []
     built_models: list[LifecycleTrackingModel] = []
@@ -430,6 +531,77 @@ async def test_capability_operation_registered_model_id_swap_does_not_manage_mod
 
     assert (await agent.run('test')).output == 'from-registered'
     assert events == ['request']
+
+
+async def test_fallback_attempts_dispatch_through_durable_operations() -> None:
+    """Each attempt `ModelFallback` moves to runs as a durable model operation, never inline in workflow code."""
+
+    def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    durability = RecordingDurability(models={'registered': TestModel(custom_output_text='from-fallback')})
+    agent = Agent(
+        FunctionModel(failing),
+        name='fallback_durable',
+        capabilities=[ModelFallback('registered'), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-fallback'
+    assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
+        ['fallback_durable__model.request', 'fallback_durable__model.request.registered']
+    )
+
+
+async def test_model_fallback_supplies_the_model_of_a_durable_agent_without_one() -> None:
+    """An agent with no model of its own can be made durable when `ModelFallback` supplies its first candidate."""
+
+    def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    models: dict[str, Model] = {
+        'primary': FunctionModel(failing),
+        'secondary': TestModel(custom_output_text='from-secondary'),
+    }
+    durability = RecordingDurability(models=models)
+    agent = Agent(name='model_less_durable', capabilities=[ModelFallback('primary', 'secondary'), durability])
+
+    assert (await agent.run('test')).output == 'from-secondary'
+    assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
+        ['model_less_durable__model.request.primary', 'model_less_durable__model.request.secondary']
+    )
+
+
+@dataclass
+class _SuppliesRegisteredModel(AbstractCapability[Any]):
+    """A capability of the user's own that supplies the agent's model."""
+
+    def get_model(self) -> AgentModel[Any] | None:
+        return 'registered'
+
+
+@pytest.mark.parametrize(
+    'supplier',
+    [
+        pytest.param(lambda: SelectModel(lambda ctx: 'registered'), id='select_model'),
+        pytest.param(_SuppliesRegisteredModel, id='custom_get_model'),
+        pytest.param(lambda: WrapperCapability(wrapped=SelectModel(lambda ctx: 'registered')), id='wrapped'),
+    ],
+)
+async def test_a_capability_supplies_the_model_of_a_durable_agent_without_one(
+    supplier: Callable[[], AbstractCapability[Any]],
+) -> None:
+    durability = RecordingDurability(models={'registered': TestModel(custom_output_text='from-registered')})
+    agent = Agent(name='capability_model_durable', capabilities=[supplier(), durability])
+
+    assert (await agent.run('test')).output == 'from-registered'
+    assert [name for name, _ in durability.calls if '__model.' in name] == [
+        'capability_model_durable__model.request.registered'
+    ]
+
+
+def test_a_durable_agent_without_a_model_or_a_capability_that_supplies_one_is_rejected() -> None:
+    with pytest.raises(UserError, match='needs to have a `model` in order to be used with recording'):
+        Agent(name='model_less', capabilities=[RecordingDurability()])
 
 
 async def test_resolved_request_model_records_are_released_with_their_models() -> None:
@@ -574,6 +746,97 @@ async def test_durable_model_scope_does_not_manage_registered_models() -> None:
 
     assert default_events == ['request']
     assert registered_events == ['request', 'stream-enter', 'stream-exit']
+
+
+async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them() -> None:
+    """Text streamed before a tool call isn't the final result under any engine built on the base capability.
+
+    `DurableModel.request_stream` replays the unit's response against the parameters the unit's model prepared, in
+    which `'auto'` has resolved to tool output, so the replay finds the same final result as a plain run, and both
+    run methods replay the response's parts as the model streamed them.
+    """
+    durable = [await run_and_stream(agent) for agent in preamble_text_agents(RecordingDurability)]
+    assert durable == await plain_run_and_stream()
+    assert durable == snapshot(
+        [
+            RunAndStreamResult(
+                run_output='Paris',
+                stream_output='Paris',
+                final_result_tool_names=['final_result'],
+                run_responses=[
+                    [
+                        TextPart(content='Let me look that up.'),
+                        ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
+                    ],
+                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                ],
+                stream_responses=[
+                    [
+                        TextPart(content='Let me look that up.'),
+                        ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
+                    ],
+                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                ],
+            ),
+            RunAndStreamResult(
+                run_output='Paris',
+                stream_output='Paris',
+                final_result_tool_names=['final_result'],
+                run_responses=[
+                    [
+                        TextPart(content='Preamble text.'),
+                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                    ]
+                ],
+                stream_responses=[
+                    [
+                        TextPart(content='Preamble text.'),
+                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                    ]
+                ],
+            ),
+        ]
+    )
+
+
+async def _preamble_text_before_output_tool_then_failure(
+    _messages: list[ModelMessage], _info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield 'Preamble text.'
+    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_1')}
+    raise ModelAPIError('function', 'stream broke')
+
+
+async def test_durable_stream_replay_classifies_a_failed_stream_as_the_unit_prepared_it() -> None:
+    """A stream that fails after text and a tool call replays them as the unit's model classified them, then raises.
+
+    The unit hands back what the stream produced before it failed, and the replay classifies those parts against the
+    parameters the unit's model prepared, so the run sees the same final result before the error as a plain run.
+    """
+
+    async def final_result_tool_names_until_failure(agent: Agent[object, StructuredOutput]) -> list[str | None]:
+        tool_names: list[str | None] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                if isinstance(event, FinalResultEvent):
+                    tool_names.append(event.tool_name)
+
+        with pytest.raises(ModelAPIError, match='stream broke'):
+            await agent.run('hello', event_stream_handler=handler)
+        return tool_names
+
+    def agent(capabilities: list[AbstractCapability[object]]) -> Agent[object, StructuredOutput]:
+        return Agent(
+            FunctionModel(stream_function=_preamble_text_before_output_tool_then_failure),
+            name='durability_preamble_text_then_failure',
+            output_type=StructuredOutput,
+            capabilities=capabilities,
+        )
+
+    durable = await final_result_tool_names_until_failure(agent([RecordingDurability()]))
+    assert durable == await final_result_tool_names_until_failure(agent([]))
+    assert durable == snapshot(['final_result'])
 
 
 async def test_durable_model_scope_manages_inferred_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1512,6 +1775,20 @@ def test_decorated_capability_requires_explicit_stable_id() -> None:
         Agent(TestModel(), name='missing_id', capabilities=[MissingId(), RecordingDurability()])
 
 
+def test_capability_can_opt_its_id_less_instances_out_of_binding() -> None:
+    class OptionalId(AbstractCapability[Any]):
+        _durable_operations_need_id = False
+
+        @durable_operation('operation')
+        async def operation(self, ctx: RunContext[Any]) -> None:
+            pass  # pragma: no cover
+
+    agent = Agent(TestModel(), name='optional_id', capabilities=[OptionalId(), RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert durability._bound_capability_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
 def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     class Duplicate(AbstractCapability[Any]):
         id = 'duplicate'
@@ -1533,6 +1810,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_wrapper_model',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
@@ -1544,7 +1822,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None
@@ -1663,6 +1941,35 @@ async def test_decorated_model_request_hook_round_trips_request_only_mutation() 
     assert isinstance(sent_request, ModelRequest)
     assert isinstance(sent_request.parts[0], UserPromptPart)
     assert sent_request.parts[0].content == 'replaced'
+
+
+class RecordModelInBeforeModelRequest(AbstractCapability[Any]):
+    id = 'record_model'
+
+    def __init__(self) -> None:
+        self.models: list[Model] = []
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.models.append(request_context.model)
+        return request_context
+
+
+async def test_decorated_model_request_hook_sees_the_model_before_capabilities_wrap_it() -> None:
+    """Model wrappers apply after the `before_model_request` hooks, in the durable unit too."""
+    recorder = RecordModelInBeforeModelRequest()
+    batching = BatchModelRequests(**FAST_BATCH_SETTINGS)
+    agent = Agent(
+        TestModel(call_tools=[]), name='record_model', capabilities=[recorder, batching, RecordingDurability()]
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert recorder.models
+    assert not any(isinstance(model, BatchedModel) for model in recorder.models)
 
 
 async def test_custom_model_request_operation_round_trips_request_only_projection() -> None:
@@ -1879,6 +2186,67 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
     assert declaration.ctx_parameter == 'run_context'
     assert declaration.model_request_hook
     assert not collect_capability_operations(Operations())['calculate'].model_request_hook
+
+
+def _define_prepare_capabilities() -> tuple[type[AbstractCapability[Any]], type[AbstractCapability[Any]]]:
+    """Define the classes afresh, as Temporal's sandbox does each time it re-imports a workflow module."""
+
+    class Prepare(AbstractCapability[Any]):
+        id = 'prepare'
+
+        @durable_operation('before_model_request')
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [ModelRequest(parts=[UserPromptPart('prepared')])]
+            return request_context
+
+    class PrepareWithNote(AbstractCapability[Any]):
+        id = 'prepare_with_note'
+
+        @durable_operation('rewrite')
+        async def rewrite(self, ctx: RunContext[Any], request: ModelRequestContext, note: str) -> ModelRequestContext:
+            raise NotImplementedError
+
+    return Prepare, PrepareWithNote
+
+
+async def test_model_request_operation_schema_is_reused_when_the_capability_is_redefined() -> None:
+    """Building an agent with a durable `before_model_request` reuses the request projection's schema.
+
+    Generating that schema covers every message type, and a module-level agent in a Temporal workflow
+    module is rebuilt on every workflow run.
+    """
+
+    def build_agent() -> Agent[None, str]:
+        prepare, _ = _define_prepare_capabilities()
+        return Agent(TestModel(), name='prepare', capabilities=[prepare(), RecordingDurability()])
+
+    def declaration(agent: Agent[None, str]) -> CapabilityMethodDeclaration:
+        durability = RecordingDurability.from_agent(agent)
+        assert durability is not None
+        return durability._capability_declarations[('prepare', 'before_model_request')]  # pyright: ignore[reportPrivateUsage]
+
+    first_agent = build_agent()
+    second_agent = build_agent()
+    first, second = declaration(first_agent), declaration(second_agent)
+
+    assert first.function is not second.function
+    assert second.schema.validator is first.schema.validator
+    assert second.schema.function is not first.schema.function
+
+    await second_agent.run('test')
+    durability = RecordingDurability.from_agent(second_agent)
+    assert durability is not None
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'prepare__model.request')
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'prepared'
+
+    # An operation that also takes a user-typed argument rebuilds its schema every time.
+    rewrites = [collect_capability_operations(_define_prepare_capabilities()[1]())['rewrite'] for _ in range(2)]
+    assert rewrites[0].schema.validator is not rewrites[1].schema.validator
 
 
 def test_recording_config_has_no_per_tool_override() -> None:
@@ -2171,7 +2539,6 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'capability_durable_operations',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
     instance = DBOS(config=config)
     DBOS.launch()

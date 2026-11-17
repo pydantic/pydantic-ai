@@ -16,6 +16,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from types import MethodType
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
+from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -38,9 +39,11 @@ from pydantic_ai.capabilities import (
     ReinjectSystemPrompt,
     Thinking,
     ToolSearch,
+    Toolset,
     UseThreadExecutor,
     WebFetch,
     WebSearch,
+    WindowsWorkspace,
     XSearch,
 )
 from pydantic_ai.capabilities._merge import merge_capability_fields
@@ -158,6 +161,12 @@ def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
     assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
+def _windows_workspaces() -> tuple[WindowsWorkspace[Any], WindowsWorkspace[Any]]:
+    # Built as if on Windows, which they need; combining them touches no backend.
+    with patch('pydantic_ai.workspaces.windows._on_windows', return_value=True):
+        return WindowsWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), WindowsWorkspace('/second')
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -240,6 +249,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
         _check_local_workspace,
     ),
+    'WindowsWorkspace': Combines(
+        'the later configuration replaces the earlier one whole, as with `LocalWorkspace`',
+        _windows_workspaces,
+        _check_local_workspace,
+    ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
         lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
@@ -265,8 +279,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'Toolset': Anonymous('one per toolset'),
     'Hooks': Anonymous('several hook bundles compose'),
     'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
+    'RequestInput': Anonymous('deprecated alias of `HandleDeferredToolCalls`, chained the same way'),
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
+    'ModelFallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),
+    'BatchModelRequests': Anonymous(
+        'each instance is its own batching pool; a model already batched is not batched again'
+    ),
     'ProcessHistory': Anonymous('history processors stack'),
     'ProcessEventStream': Anonymous('event-stream processors stack'),
     'PrepareTools': Anonymous('tool preparers stack'),
@@ -275,6 +294,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'IncludeToolReturnSchemas': Anonymous('one per `ToolSelector`; several selectors compose'),
     'DeferredCapabilityLoader': Anonymous('auto-injected only when absent'),
     'PendingMessageDrainCapability': Anonymous('auto-injected only when absent'),
+    '_GroupMember': Anonymous('internal: dispatches a deferred group member, never registered'),
 }
 
 
@@ -1145,6 +1165,100 @@ async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> No
     await agent.run('hi', capabilities=[WebSearch(allowed_domains=['run.example'])])
 
     assert seen == snapshot([[WebSearchTool(allowed_domains=['run.example'])]])
+
+
+async def test_a_run_level_group_replaces_the_agent_level_group_whole() -> None:
+    """A deferred `CombinedCapability` is one capability, so a run-level one with its `id` replaces all its members.
+
+    The replaced group's members are gone with it, so a member id the new group reuses for a
+    different class is not a clash.
+    """
+
+    def agent_tool() -> str:
+        return 'agent'  # pragma: no cover
+
+    def run_tool() -> str:
+        return 'run'  # pragma: no cover
+
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(sorted(tool.name for tool in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'group'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def group(*members: AbstractCapability[Any]) -> CombinedCapability[Any]:
+        return CombinedCapability(list(members), id='group', description='Group.', defer_loading=True)
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[group(Capability(id='member', tools=[agent_tool]))])
+
+    await agent.run('hi', capabilities=[group(Toolset(FunctionToolset([run_tool]), id='member'))])
+
+    assert seen == [['load_capability'], ['load_capability', 'run_tool']]
+
+
+async def test_a_deferred_group_passed_again_at_run_level_loads_once() -> None:
+    """The same deferred group object on the agent and the run is one capability, loaded with all its members."""
+
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(sorted(tool.name for tool in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'group'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    group = CombinedCapability(
+        [Capability(id='member', tools=[lookup])], id='group', description='Group.', defer_loading=True
+    )
+
+    await Agent(FunctionModel(model_fn), capabilities=[group]).run('hi', capabilities=[group])
+
+    assert seen == [['load_capability'], ['load_capability', 'lookup']]
+
+
+def test_a_wrapper_repeated_in_one_layer_still_combines_what_it_wraps() -> None:
+    """`combine` may keep the last repeat as it is, and then what it wraps still takes part in combining."""
+
+    @dataclass(kw_only=True)
+    class Mergeable(WrapperCapability[object]):
+        id: str | None = 'mergeable'
+
+    wrapped = Mergeable(CombinedCapability([WebSearch(allowed_domains=['wrapped.example'])]))
+    agent = Agent(TestModel(), capabilities=[wrapped, wrapped, WebSearch(allowed_domains=['sibling.example'])])
+
+    native_tools = [tool for tool in agent.root_capability.get_native_tools() if isinstance(tool, WebSearchTool)]
+    assert native_tools == [WebSearchTool(allowed_domains=['wrapped.example', 'sibling.example'])]
+
+
+def test_an_occurrence_inside_a_removed_wrapper_does_not_outrank_an_earlier_one() -> None:
+    """A repeat that goes away with its removed wrapper leaves the earlier occurrence as the one that survives."""
+
+    @dataclass(kw_only=True)
+    class Inner(WrapperCapability[object]):
+        id: str | None = 'inner'
+
+    @dataclass(kw_only=True)
+    class Outer(WrapperCapability[object]):
+        id: str | None = 'outer'
+
+    inner = Inner(CombinedCapability([WebSearch(allowed_domains=['inner.example'])]))
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            inner,
+            Outer(CombinedCapability([inner])),
+            Outer(CombinedCapability([Thinking()])),
+            WebSearch(allowed_domains=['sibling.example']),
+        ],
+    )
+
+    native_tools = [tool for tool in agent.root_capability.get_native_tools() if isinstance(tool, WebSearchTool)]
+    assert native_tools == [WebSearchTool(allowed_domains=['inner.example', 'sibling.example'])]
 
 
 @pytest.mark.parametrize('wrapper_depth', [0, 1, 2])

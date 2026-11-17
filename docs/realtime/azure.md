@@ -87,7 +87,7 @@ available as audio.
 ## Browser WebRTC and Microsoft Entra ID
 
 Azure OpenAI supports the same browser WebRTC flow as OpenAI — the audio flows browser ↔ Azure directly
-while your backend runs a control-plane **sideband**. See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)
+while your backend runs a control-plane **sideband**. See [Deployment](deployment.md#browser-webrtc-server-sideband)
 for the topology, and use
 [`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] /
 [`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] as on OpenAI,
@@ -118,7 +118,7 @@ for the same filtering.
     [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] /
     [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent], so a
     listening/speaking indicator can be driven from the server rather than reconstructed in the browser
-    (see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
+    (see [Deployment](deployment.md#browser-webrtc-server-sideband)).
 
 Azure requests authenticate with the resource's API key by default. To use **Microsoft Entra ID**
 instead — so no API key is involved, e.g. when the resource is locked to managed identity — pass a
@@ -267,6 +267,27 @@ default voice. See Microsoft's
 [voice reference](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to#audio-output-through-azure-text-to-speech)
 for the available voices and fields.
 
+### Speech timestamps
+
+Voice Live times each word the model says with
+[`output_speech_timestamps=True`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps]
+(see [Speech timestamps](audio.md#speech-timestamps)), but only in an Azure voice: a standard, HD, or
+custom voice set with `azure_voice_live_voice`, or a cascade model's default voice. With an OpenAI voice,
+an `azure-realtime-native` voice, or a native-audio model's default voice, Voice Live accepts the setting
+and then sends no timestamps, so the session warns with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] as it opens. Punctuation
+comes as words of its own.
+
+```python
+from pydantic_ai.realtime.azure import AzureRealtimeModelSettings
+
+timed_words = AzureRealtimeModelSettings(
+    azure_voice_live=True, azure_voice_live_voice='en-US-AvaNeural', output_speech_timestamps=True
+)
+```
+
+The GA realtime API doesn't time speech.
+
 ### Which models use which API
 
 `azure_voice_live` isn't always needed: `AzureRealtimeModel` routes by model. The two APIs overlap but
@@ -329,6 +350,7 @@ model = AzureRealtimeModel(
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
 | Native tools | Unsupported | The API offers remote MCP servers (plus Foundry tools and agents on Voice Live) but no web or file search; Pydantic AI doesn't expose the MCP support yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)), so configure [local fallbacks](tools.md#native-tools) |
 | Browser WebRTC | Limited parameter support | [GA only](#browser-webrtc-and-microsoft-entra-id) |
+| Speech timestamps | Limited parameter support | Per word, on [Voice Live with an Azure voice](#speech-timestamps) only |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 

@@ -9,6 +9,26 @@ changes. The key you connect with decides what those tools can reach.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: PostHog: analytics, SQL and feature flags through PostHog's MCP server
+    accDescr: Inside your agent, the model calls tools of the PostHog capability, such as posthog_posthog, and gets their results. Your auth function gives the capability a key for each run. The capability calls the PostHog MCP server at mcp.posthog.com/mcp with a Bearer token, a ?features= query and x-posthog-read-only, and with read_only=True the server drops the tools that make changes.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        posthog["PostHog()<br/>posthog_posthog,<br/>posthog_&lt;tool&gt;"]:::capability
+    end
+    server["PostHog MCP server<br/>mcp.posthog.com/mcp"]:::external
+    dropped["tools that make<br/>changes, with<br/>read_only=True"]:::blocked
+    model <-->|"tool call, result"| posthog
+    auth -->|"key for each run"| posthog
+    posthog <-->|"Bearer token,<br/>?features= query,<br/>x-posthog-read-only"| server
+    server -.-x|"drops"| dropped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Before you start
 
 Create a personal API key with the MCP Server preset
@@ -103,9 +123,7 @@ With durable execution such as Temporal, read the key from the run's deps rather
 than from a global, since the function may run in another process. The
 capability's `id` defaults to `posthog`, so `defer_loading=True` works without
 one. To add more than one `PostHog` to an agent, give each a distinct `id` and
-wrap them in
-[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since
-their tool names are the same; two that share an `id` but differ raise an error.
+`tool_prefix`; two that share an `id` but differ raise an error.
 
 ## Provider settings
 
@@ -120,6 +138,44 @@ agent drives with commands, so narrow what it can reach on the server:
 
 The key's scopes, and the organizations and projects it can reach, still decide
 what the agent can access.
+
+## Tool names
+
+The agent sees each of the server's tools under the `posthog_` prefix, as in
+`posthog_<tool>`, so they don't collide with other tools on the agent. The
+command-driven `posthog` tool the server offers by default is `posthog_posthog`.
+Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the
+names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so
+the prefix does not change what it keeps. `features` names PostHog feature
+groups, which the server selects before any prefix applies. A [toolset
+wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
+`capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
+prefix included.
+
+## Upgrading
+
+`PostHog` used to give the agent the server's tool names unprefixed. They now
+reach the agent as `posthog_<tool>`, so the command-driven `posthog` tool the
+server offers by default is now `posthog_posthog`. Code that refers to them by
+name, such as a `filtered()` wrapper, an approval rule, or a
+`ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches
+stops applying, so an approval rule or guardrail that named an old tool lets its
+calls through without approval or checks until you update it. Pass
+`tool_prefix=None` to keep the old names. If you wrapped `PostHog` in
+[PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid
+collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it
+adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses
+  it recorded, and their tool calls use the old names, so a run started before
+  the change that calls a `PostHog` tool after it no longer replays. Activity
+  and step names come from the capability's `id`, which is unchanged. Let those
+  runs finish, keep `tool_prefix=None` until they have, or deploy the change
+  with [Temporal worker
+  versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)
+  or a new DBOS application version.
 
 ## Tool selection and approval
 
@@ -148,7 +204,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one
 pointing at a PostHog MCP server you run for a self-hosted instance, a proxy, or
 MCP handlers. The client then owns the URL and authentication, so passing
@@ -168,8 +224,7 @@ credentials](#per-user-credentials) to connect each user separately.
 
 `PostHog` emits no spans of its own. Core's
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/)
-already records each PostHog tool call as a tool span, and connecting makes no
-decision worth a span of its own.
+already records each PostHog tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -202,5 +257,3 @@ from pydantic_ai_harness import PostHog
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[PostHog])
 ```
-
-Pass `custom_capability_types` so the loader can create `PostHog` from the file.

@@ -274,7 +274,7 @@ def test_apply_builds_an_escaped_digest_and_defers_labeling(tmp_path: Path):
         issue(7, state='closed'),
         issue(7, updated_at='2026-08-25T09:00:00Z'),
         issue(7, labels=[digest.FEATURE_LABELS[0], digest.CONSIDERED_LABEL]),
-        issue(7, labels=['pydanty:bug']),
+        issue(7, labels=['bug']),
     ],
 )
 def test_apply_skips_items_that_changed_after_selection(tmp_path: Path, current: dict[str, Any]):
@@ -387,3 +387,18 @@ def test_workflow_pick_limit_matches_the_host_limit():
     assert 'feature_digest.py snapshot' in text
     # Labels must only land after the Slack post: delivery failure keeps picks.
     assert text.index('slackapi/slack-github-action') < text.index('feature_digest.py finalize')
+
+
+@pytest.mark.parametrize('label', ['feature', 'integration-request'])
+def test_feature_and_integration_requests_are_eligible(tmp_path: Path, label: str):
+    snapshot = snapshot_file(tmp_path, [candidate(7)])
+    picks = picks_file(tmp_path, [pick(7)])
+    client = FakeClient(issues={7: issue(7, labels=[label])})
+    _, payload, surfaced = digest.apply_picks(client, picks, snapshot, now=NOW)
+    assert surfaced == [7]
+    assert payload is not None
+
+
+def test_feature_query_includes_every_supported_category():
+    query = digest.eligible_query()
+    assert all(f'"{label}"' in query for label in digest.FEATURE_LABELS)

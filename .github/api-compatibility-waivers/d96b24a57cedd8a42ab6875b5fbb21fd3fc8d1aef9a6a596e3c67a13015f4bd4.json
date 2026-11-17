@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "Adds `RetryFeedbackPart` and the legacy retry translations (#8094) and `CompactionPart` (#10573) to `ModelRequestPart`; the version policy permits new message parts, and every existing member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10573"
+}

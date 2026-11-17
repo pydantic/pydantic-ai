@@ -1,8 +1,8 @@
 ---
-description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+description: "Deploy a Pydantic AI realtime voice agent: connect browsers and phone calls via WebRTC, a WebSocket relay or a Twilio bridge, and host the long-lived sessions on your server."
 ---
 
-# Connecting a frontend
+# Deployment
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
 not straight to the provider. How audio travels between the device and the model depends on the
@@ -15,6 +15,9 @@ client and the provider:
   provider, including Gemini Live, xAI, and ElevenLabs Agents: the browser streams audio to your backend, which owns the
   media bridge.
 - **[SIP / telephony bridge](#siptelephony-bridge)** — for phone calls, via a telephony provider.
+
+[Hosting the backend](#hosting) covers what the server running these sessions needs: long-lived
+connections, routing, timeouts, and draining on deploy.
 
 In every setup the session — with its [tools](tools.md), [history](history.md), and
 [usage limits](observability.md#usage-and-limits) — runs on your backend. Wiring a browser straight
@@ -97,9 +100,8 @@ indicators, and [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] 
 outbound WebRTC audio buffer so [barge-in](turns.md#barge-in) stops playback. GPT-Live emits neither
 event and doesn't support `interrupt()` (see
 [its feature support](openai.md#gpt-live-feature-support-and-limitations)). A dropped sideband
-follows the same [reconnect](lifecycle.md#reconnecting) rules (except on GPT-Live, whose sideband
-is not reconnected), with one wrinkle covered there: a clean close is treated as the browser
-hanging up.
+follows the same [reconnect](lifecycle.md#reconnecting) rules, with one wrinkle covered there: a
+clean close is treated as the browser hanging up.
 
 Closing a sideband session, or leaving its `async with` block, only detaches your server: the
 browser's call stays up, and billed, until the browser hangs up. To end the call from the server,
@@ -173,3 +175,57 @@ queued by the session or buffered in the browser.
 Terminate the phone call with a telephony provider such as Twilio, then build the service that
 connects its media stream (e.g. Twilio Media Streams over WebSocket) to the backend session,
 transcoding between the line's codec and PCM16.
+
+## Hosting the backend {#hosting}
+
+A realtime session is not a request. It is a task that holds a WebSocket to the provider open for the
+whole call (on a [WebRTC sideband](#browser-webrtc-server-sideband), the control-plane WebSocket),
+next to the client's own connection in the [relay](#browser-backend-websocket-relay) and telephony
+setups. Each [`session()`][pydantic_ai.agent.AgentRealtime.session] opens its own provider connection,
+and one process can run many sessions on its event loop. Unlike a
+[standard agent](../production.md#deploy), where any instance can continue any conversation, a call
+lives in the process that holds it: its provider connection, running tools, and (on Gemini) resumption
+handles, which [can't be moved to another process](https://github.com/pydantic/pydantic-ai/issues/7302).
+
+A WebSocket stays on the instance that accepted it, so the relay needs no extra routing; if your app
+splits one call across several requests, route them to the instance holding the session. A client that
+reconnects elsewhere gets a new provider session; to carry the conversation over, store
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] and
+[seed](history.md#seeding-a-session) the new session with it.
+
+In the relay and telephony setups, where the client's connection is the request, set the platform's
+request or connection timeout above your longest call. Providers cap a connection's
+duration too, and a `reconnect` policy survives that cap on most of them (see
+[provider session limits](lifecycle.md#provider-session-limits)), but nothing recovers the client's
+connection when your platform cuts it: in the relay above, the browser socket closing ends the session.
+Enforce your own maximum call length with a [watchdog](lifecycle.md#ending-a-call) instead, ending a
+sideband call as described below.
+
+Scale on concurrent calls rather than request rate; a relay also carries every call's audio through
+the backend, so watch its bandwidth and CPU. A deploy has to drain: stop sending new calls to an
+instance and let its sessions finish before it exits, which can take far longer than the few seconds of
+shutdown grace many platforms give by default. To end calls sooner, end them deliberately; on a
+sideband that means [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up], because a sideband
+whose process exits without hanging up leaves the browser's call up, and billed, with no agent behind
+it (see [the sideband section](#browser-webrtc-server-sideband) and
+[Ending a call](lifecycle.md#ending-a-call)).
+
+Long-running compute fits this directly: containers or VMs behind a load balancer that supports
+WebSockets. Platforms that cap requests work within their limits: Cloud Run, for example, counts a
+relay's WebSocket against its request timeout, which can be raised to an hour, so a longer call has to
+continue on a new connection and session. Request-scoped functions don't fit. With AWS Lambda behind
+an Amazon API Gateway WebSocket API, API Gateway holds the client's connection but invokes the function
+once per message, so no invocation lives long enough to hold the provider connection between messages.
+The session has to run on long-lived compute instead. API Gateway can still front it, but then you
+build the routing yourself: a registry that sends each message to the instance holding that call's
+session, audio base64-encoded in text frames (it rejects binary ones) and sent back through its
+`@connections` API, and a connection that closes after ten idle minutes or two hours.
+
+[Browser WebRTC](#browser-webrtc-server-sideband) takes media off your servers: audio flows directly
+between the browser and the provider, and your backend carries only the sideband. But in the
+[offer handler above](#browser-webrtc-server-sideband), the sideband runs as a background task after
+the handler has returned the SDP answer, so no request or connection stays open for the call and the
+platform can't see it. Give the sideband CPU outside requests (on Cloud Run, instance-based rather than
+the default request-based billing) or run it on a worker or VM; scale on your own count of live
+sideband tasks, since request metrics show an idle instance; and on shutdown, wait for the tasks in
+`sideband_tasks` or hang up their calls before the process exits.

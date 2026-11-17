@@ -327,8 +327,13 @@ class OpenAICodexProvider(OAuthCredentialsProvider[OpenAICodexCredentials]):
         return _PROVIDER_NAME
 
     @property
+    def canonical_system(self) -> str:
+        # The Codex backend and the OpenAI API accept each other's encrypted reasoning and compaction items.
+        return 'openai'
+
+    @property
     def base_url(self) -> str:
-        return _CODEX_BASE_URL
+        return self._base_url
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
@@ -342,6 +347,7 @@ class OpenAICodexProvider(OAuthCredentialsProvider[OpenAICodexCredentials]):
         credentials: OpenAICodexCredentials | None = None,
         *,
         credential_source: OpenAICodexCredentialSource | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -356,17 +362,21 @@ class OpenAICodexProvider(OAuthCredentialsProvider[OpenAICodexCredentials]):
                 are persisted between runs; see
                 [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource].
                 Mutually exclusive with `credentials`.
+            base_url: The base URL to use for requests, if not provided, the Codex backend will be used.
+                Credentials are injected on requests to its origin (host and port), which must be served over HTTPS.
             openai_client: An existing `AsyncOpenAI` client to use as-is. Opts out of credential
-                injection entirely; `credentials`, `credential_source`, and `http_client` must
-                be `None`.
+                injection entirely; `credentials`, `credential_source`, `base_url`, and `http_client`
+                must be `None`.
             http_client: An existing `httpx2.AsyncClient` to use. Must be dedicated to this
                 provider (no auth of its own): the provider attaches its credential-injecting auth to it, and
                 sharing a client between providers would mix their credentials. The auth only
-                injects credentials on HTTPS requests to the Codex host, so the client can safely
+                injects credentials on HTTPS requests to the `base_url` origin, so the client can safely
                 be reused for other destinations.
         """
         if openai_client is None and credentials is None and credential_source is None:
             credentials = _read_codex_cli_credentials()
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or _CODEX_BASE_URL
         super().__init__(
             credentials, credential_source=credential_source, openai_client=openai_client, http_client=http_client
         )

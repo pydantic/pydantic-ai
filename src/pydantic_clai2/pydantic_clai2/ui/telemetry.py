@@ -48,7 +48,7 @@ class _Sink:
 
 _sinks: list[_Sink] = []
 """Subscribed instances, newest last; handled errors go to the newest, UI telemetry to the newest with `ui_events`."""
-_emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
+_EMITTING: ContextVar[bool] = ContextVar('_EMITTING', default=False)
 """Set while a UI record is handed to its sink, which is when Logfire scrubs it: `keep_names` checks it."""
 
 
@@ -103,11 +103,11 @@ def parent_span(root: Span | None) -> Generator[None]:
 
 @contextmanager
 def _exempt() -> Generator[None]:
-    token = _emitting.set(True)
+    token = _EMITTING.set(True)
     try:
         yield
     finally:
-        _emitting.reset(token)
+        _EMITTING.reset(token)
 
 
 def prompt_text(text: str) -> dict[str, Attribute]:
@@ -163,7 +163,7 @@ def log_error(
             set_error_status(current, error, include_content=False)
 
 
-class UiSpan:
+class UISpan:
     """The open span, if anything is subscribed; `set` adds what is only known at the end, such as a cancel."""
 
     def __init__(self, span: logfire.LogfireSpan | None) -> None:
@@ -177,7 +177,7 @@ class UiSpan:
 
 
 @contextmanager
-def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
+def span(msg_template: str, /, **attributes: Attribute) -> Generator[UISpan]:
     """Time a UI interaction that contains others, such as a command that opens a menu.
 
     Spans nest: a menu opened by a command, and the setting it changes, land under that command's span.
@@ -186,16 +186,16 @@ def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
     """
     sink = _newest()
     if sink is None:
-        yield UiSpan(None)
+        yield UISpan(None)
         return
     with parent_span(sink.root()):
         with _exempt():
             opened = _open(sink.instance, msg_template, attributes).__enter__()
-        ui = UiSpan(opened)
+        ui = UISpan(opened)
         try:
             yield ui
-        except BaseException as error:
-            ui.set('error', type(error).__name__)
+        except BaseException as exc:
+            ui.set('error', type(exc).__name__)
             raise
         finally:
             with _exempt():
@@ -247,10 +247,27 @@ def keep_names(match: logfire.ScrubMatch) -> object:
     session bug"). Everything else, including every agent span, is scrubbed as usual.
     """
     if (
-        _emitting.get()
+        _EMITTING.get()
         and len(match.path) == 2
         and match.path[0] in ('attributes', 'message')
         and (match.path[1] in NAMES or match.path[1] == PROMPT)
     ):
         return match.value
     return None
+
+
+# TODO(v3): remove the `UiSpan` alias and this `__getattr__`.
+def __getattr__(name: str) -> object:
+    if name == 'UiSpan':
+        import warnings
+
+        from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            '`UiSpan` has been renamed to `UISpan`. '
+            'Update your imports; this deprecated alias will be removed in a future release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return UISpan
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

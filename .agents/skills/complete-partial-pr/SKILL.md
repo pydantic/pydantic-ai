@@ -60,6 +60,7 @@ Skip `CLAUDE.local.md` entirely; it is per-worktree state with no policy-base co
 - `agent_docs/pydantic-ai-slim.md` (**Ownership** section) and `pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md` for the affected feature group
 - `pydantic_ai_slim/pydantic_ai/{profiles,providers,models}/AGENTS.md`, `pydantic_ai_slim/pydantic_ai/AGENTS.md`, and the **Design Rules** section of `agent_docs/pydantic-ai-slim.md` for layer ownership
 - the root `CLAUDE.md` / `AGENTS.md` ethos ("channel your inner Samuel Colvin") and `agent_docs/index.md` for review tells
+- [pushing-commits-to-the-repo](../pushing-commits-to-the-repo/SKILL.md) for the PR lifecycle after implementation
 
 On a contribution you did not author, read the repository instructions above — `CLAUDE.md` /
 `AGENTS.md`, every directory `AGENTS.md`, and everything under `agent_docs/` — from a policy-base
@@ -100,7 +101,7 @@ If the investigation spans multiple surfaces or subagents, create a short workin
 Use `gh` for GitHub context.
 
 ```bash
-gh pr view <PR> --json number,title,url,state,body,author,headRepository,headRepositoryOwner,headRefName,maintainerCanModify,baseRefName,comments,reviews,closingIssuesReferences
+gh pr view <PR> --json number,title,url,state,body,author,headRepository,headRepositoryOwner,headRefName,baseRefName,comments,reviews,closingIssuesReferences
 ```
 
 Read linked issues, PR comments, review threads, and CI context. If the work item is an issue with no PR, inspect the linked branch or proposed patch if one exists.
@@ -109,10 +110,9 @@ For fork PRs, record:
 
 - `headRepository.nameWithOwner`
 - `headRefName`
-- `maintainerCanModify`
 - whether a plain `git push` targets the actual PR branch
 
-Never force push. If updating a contributor PR and `maintainerCanModify` allows it, push to the contributor's PR branch. If not, create a separate branch and report the limitation.
+For contributor PRs, follow [adopt-pr](../adopt-pr/SKILL.md) for push targeting and access failures.
 
 ### 3. Reconstruct The Pain Point
 
@@ -202,8 +202,6 @@ PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright <changed-file.py>
 
 Escalate to broader checks only when the blast radius warrants it.
 
-After code changes, run `/review-branch` unless the change is documentation-only or the user explicitly asks for a narrower pass.
-
 ### 9. Communicate And Push
 
 Before pushing, verify the remote target:
@@ -213,6 +211,9 @@ git remote -v
 git branch -vv
 git status --short --branch
 ```
+
+Follow [pushing-commits-to-the-repo](../pushing-commits-to-the-repo/SKILL.md) through review,
+push, current-head checks, feedback, and final metadata. That skill owns review selection.
 
 If posting a GitHub comment, summarize:
 

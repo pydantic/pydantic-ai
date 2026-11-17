@@ -22,7 +22,7 @@ from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners, picked, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import full_terminal, menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import KeyHandler, slash_search
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 _NOTE = (
     'Only names are displayed. Values are entered masked.\n'
