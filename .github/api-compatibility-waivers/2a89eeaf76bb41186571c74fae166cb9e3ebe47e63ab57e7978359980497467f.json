@@ -1,5 +1,0 @@
-{
-  "against": "v2.69.0",
-  "reason": "The `jwt` entry's header segment no longer takes `-`, which base64url-encoded JSON contains only where the header holds `>` or `~`; every other entry is unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13770"
-}

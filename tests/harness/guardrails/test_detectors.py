@@ -232,9 +232,15 @@ class TestSecretRedaction:
 
         assert redact_secrets(f'{prefix}{jwt}').replacement == f'{prefix}[redacted:jwt]'
 
-    def test_a_jwt_whose_header_segment_holds_a_hyphen_is_not_matched(self):
-        """The header segment takes no `-`; `{"alg":"HS256","kid":"a>"}` encodes to one."""
+    def test_a_jwt_whose_header_segment_holds_a_hyphen_is_removed(self):
+        """`{"alg":"HS256","kid":"a>"}` encodes with a `-`, which the header segment takes."""
         jwt = 'eyJhbGciOiJIUzI1NiIsImtpZCI6ImE-In0.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
+
+        assert redact_secrets(f'k={jwt}').replacement == 'k=[redacted:jwt]'
+
+    def test_a_header_segment_holding_dash_eyj_is_not_matched(self):
+        """The cost of the linear scan: a `-` directly before `eyJ` ends the header segment."""
+        jwt = 'eyJhbGciOi-eyJIUzI1NiJ9.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
 
         assert redact_secrets(jwt).action == 'allow'
 
