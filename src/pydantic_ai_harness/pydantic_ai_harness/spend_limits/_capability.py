@@ -26,7 +26,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.spend_limits._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
 from pydantic_ai_harness.spend_limits._events import SpendBudgetStatus, SpendRecordedEvent
 from pydantic_ai_harness.spend_limits._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
-from pydantic_ai_harness.spend_limits._snapshot import BudgetStatus, SpendSnapshot, Spent, money_precision
+from pydantic_ai_harness.spend_limits._snapshot import BudgetStatus, Spent, money_precision
 from pydantic_ai_harness.spend_limits._store import (
     BatchSpendStore,
     InMemorySpendStore,
@@ -377,19 +377,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         accrued = await self._accrue_boundaries(keyed, response, token, boundaries, usd=usd, priced=priced)
         statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
 
-        snapshot = SpendSnapshot(
-            model=response.model_name,
-            usage=response.usage,
-            usd=usd,
-            priced=priced,
-            budgets=tuple(statuses),
-        )
         await ctx.emit(
             SpendRecordedEvent(
-                model=snapshot.model,
-                usage=snapshot.usage,
-                usd=snapshot.usd,
-                priced=snapshot.priced,
+                model=response.model_name,
+                usage=response.usage,
+                usd=usd,
+                priced=priced,
                 failed_attempt=failed_attempt,
                 budgets=tuple(
                     SpendBudgetStatus(
@@ -407,7 +400,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                         warning=status.warning,
                         exhausted=status.exhausted,
                     )
-                    for status in snapshot.budgets
+                    for status in statuses
                 ),
             )
         )
@@ -498,8 +491,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     )
                 warnings.warn(warning_message, UnpricedModelWarning, stacklevel=3)
             return None
-        # Raised last, after the store is updated and has seen the
-        # response. The request happened and its tokens were really spent, so
+        # Raised last, after the store has recorded the response. The request happened and its tokens were really spent, so
         # dropping them would leave a token ceiling understating what the
         # model was asked to do, and an audit that skipped exactly the
         # unpriced responses would be missing the ones worth knowing about.

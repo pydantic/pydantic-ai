@@ -44,7 +44,6 @@ from pydantic_ai_harness.compaction import (
     DEFAULT_CONTEXT_WINDOW,
     ClampOversizedMessages,
     ClearToolResults,
-    ContextUsage,
     ContextUsageMeasuredEvent,
     DeduplicateFileReads,
     ReportContextUsage,
@@ -1031,11 +1030,6 @@ class TestLimitWarnerFraction:
 # ---------------------------------------------------------------------------
 # Usage reporting
 # ---------------------------------------------------------------------------
-
-
-class TestContextUsage:
-    def test_fraction_is_used_over_window(self):
-        assert ContextUsage(used_tokens=250, window_tokens=1_000, resolved=True).fraction == 0.25
 
 
 class TestReportContextUsage:

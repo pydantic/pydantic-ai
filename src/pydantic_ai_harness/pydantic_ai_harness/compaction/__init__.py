@@ -18,7 +18,7 @@ from pydantic_ai_harness.compaction._manual import compact_now
 from pydantic_ai_harness.compaction._pinning import PinSource, is_pinned, pin, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
-from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
+from pydantic_ai_harness.compaction._report_context_usage import ReportContextUsage
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
@@ -37,7 +37,6 @@ __all__ = [
     'ClearToolResults',
     'CompactOnRequest',
     'CompactionStrategy',
-    'ContextUsage',
     'ContextUsageMeasuredEvent',
     'REPORT_CONTEXT_USAGE_EVENTS',
     'RelevanceCompaction',

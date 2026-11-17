@@ -784,8 +784,6 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 
 ::: pydantic_ai_harness.compaction.ReportContextUsage
 
-::: pydantic_ai_harness.compaction.ContextUsage
-
 ::: pydantic_ai_harness.compaction.pin
 
 ::: pydantic_ai_harness.compaction.PinSource

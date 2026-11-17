@@ -377,8 +377,6 @@ Source: [`pydantic_ai_harness/spend_limits/`](https://github.com/pydantic/pydant
 
 ::: pydantic_ai_harness.spend_limits.Budget
 
-::: pydantic_ai_harness.spend_limits.SpendSnapshot
-
 ::: pydantic_ai_harness.spend_limits.BudgetStatus
 
 ::: pydantic_ai_harness.spend_limits.Spent

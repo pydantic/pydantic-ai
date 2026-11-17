@@ -376,7 +376,7 @@ The fields above are what `SpendLimits.from_spec` names in its signature, which 
 
 ## API
 
-`SpendLimits`, `Budget`, `SpendSnapshot`, `BudgetStatus`, `Spent`, `BatchSpendStore`,
+`SpendLimits`, `Budget`, `BudgetStatus`, `Spent`, `BatchSpendStore`,
 `SpendEntry`, `InMemorySpendStore`, `RedisSpendStore`, `PostgresSpendStore`, `SpendLimitExceeded`,
 `UnpricedModelError`, and `UnpricedModelWarning` are exported from
 `pydantic_ai_harness.spend_limits`. Signatures and defaults are rendered from the source on the

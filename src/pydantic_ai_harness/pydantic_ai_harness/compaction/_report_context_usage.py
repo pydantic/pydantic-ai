@@ -22,36 +22,6 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 
-@dataclass(frozen=True)
-class ContextUsage:
-    """A single reading of how full the context is."""
-
-    used_tokens: int
-    """Estimated tokens in the message history about to be sent.
-
-    Counted by `estimate_context_tokens`: the provider-reported usage of the most recent model
-    response (tool schemas included) plus an estimate of messages and newly revealed tool schemas
-    added since. With no reported usage, message text falls back to the character heuristic;
-    schemas named by availability deltas are still estimated from the pending request
-    parameters, but other tool schemas remain outside that heuristic.
-    """
-
-    window_tokens: int
-    """Context window the reading is measured against."""
-
-    resolved: bool
-    """Whether `window_tokens` is the model's real window or the fallback.
-
-    A gauge can render an unresolved window differently -- the percentage is a guess when
-    the model is not in the pricing registry.
-    """
-
-    @property
-    def fraction(self) -> float:
-        """`used_tokens` as a fraction of the window."""
-        return self.used_tokens / self.window_tokens
-
-
 @dataclass
 class ReportContextUsage(AbstractCapability[AgentDepsT]):
     """Report context usage to the application before each model request.
@@ -106,7 +76,7 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
         """Reset the request correction even when the caller reuses a run ID."""
         reset_compaction_reclaim()
 
-    def _measure(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> ContextUsage:
+    def _measure(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> ContextUsageMeasuredEvent:
         """Build a reading for the request as it stands."""
         messages: list[ModelMessage] = list(request_context.messages)
         used = estimate_context_tokens(
@@ -117,14 +87,15 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
         if has_context_usage_anchor(messages):
             used = max(used - get_compaction_reclaim(ctx), 0)
         if self.context_window is not None:
-            return ContextUsage(used_tokens=used, window_tokens=self.context_window, resolved=True)
-        # Resolved from the request's model rather than the run's: a capability may replace
-        # `ModelRequestContext.model`, and the gauge should track where the request goes.
-        window = resolve_context_window(request_context.model)
-        return ContextUsage(
-            used_tokens=used,
-            window_tokens=window if window is not None else self.fallback_context_window,
-            resolved=window is not None,
+            window, resolved = self.context_window, True
+        else:
+            # Resolved from the request's model rather than the run's: a capability may replace
+            # `ModelRequestContext.model`, and the gauge should track where the request goes.
+            model_window = resolve_context_window(request_context.model)
+            resolved = model_window is not None
+            window = model_window if model_window is not None else self.fallback_context_window
+        return ContextUsageMeasuredEvent(
+            used_tokens=used, window_tokens=window, resolved=resolved, fraction=used / window
         )
 
     async def before_model_request(
@@ -133,13 +104,5 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Measure the pending history and emit it."""
-        reading = self._measure(ctx, request_context)
-        await ctx.emit(
-            ContextUsageMeasuredEvent(
-                used_tokens=reading.used_tokens,
-                window_tokens=reading.window_tokens,
-                resolved=reading.resolved,
-                fraction=reading.fraction,
-            )
-        )
+        await ctx.emit(self._measure(ctx, request_context))
         return request_context

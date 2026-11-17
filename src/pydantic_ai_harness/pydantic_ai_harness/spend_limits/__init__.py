@@ -10,7 +10,7 @@ from pydantic_ai_harness.spend_limits._exceptions import (
 )
 from pydantic_ai_harness.spend_limits._postgres import PostgresSpendStore
 from pydantic_ai_harness.spend_limits._redis import RedisClient, RedisSpendStore
-from pydantic_ai_harness.spend_limits._snapshot import BudgetStatus, SpendSnapshot, Spent
+from pydantic_ai_harness.spend_limits._snapshot import BudgetStatus, Spent
 from pydantic_ai_harness.spend_limits._store import BatchSpendStore, InMemorySpendStore, SpendEntry
 
 __all__ = [
@@ -28,7 +28,6 @@ __all__ = [
     'SpendRecordedEvent',
     'SpendLimits',
     'SpendLimitExceeded',
-    'SpendSnapshot',
     'Spent',
     'SPEND_LIMITS_EVENTS',
     'UnpricedModelError',
