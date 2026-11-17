@@ -2215,24 +2215,21 @@ async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
 
 
 @pytest.mark.parametrize(
-    ('model_name', 'settings', 'expected_request', 'expected_part_kinds'),
+    ('settings', 'expected_request', 'expected_part_kinds'),
     [
         pytest.param(
-            'qwen/qwen3.8-flash',
             OpenRouterModelSettings(),
             {'tool_choice': 'auto', 'reasoning': None},
             snapshot(['thinking', 'tool-call']),
             id='qwen-flash-thinking-by-default',
         ),
         pytest.param(
-            'qwen/qwen3.8-flash',
             OpenRouterModelSettings(thinking='low'),
             {'tool_choice': 'auto', 'reasoning': {'effort': 'low', 'enabled': True}},
             snapshot(['thinking', 'tool-call']),
             id='qwen-flash-thinking',
         ),
         pytest.param(
-            'qwen/qwen3.8-flash',
             OpenRouterModelSettings(thinking=False),
             {'tool_choice': 'required', 'reasoning': {'effort': 'none'}},
             snapshot(['tool-call']),
@@ -2244,7 +2241,6 @@ async def test_openrouter_tool_choice_on_routes_that_reject_forcing_while_reason
     allow_model_requests: None,
     openrouter_api_key: str,
     request_capture: RequestCapture,
-    model_name: str,
     settings: OpenRouterModelSettings,
     expected_request: dict[str, Any],
     expected_part_kinds: list[str],
@@ -2255,7 +2251,7 @@ async def test_openrouter_tool_choice_on_routes_that_reject_forcing_while_reason
     forcing goes out as `auto`. With thinking disabled it accepts `'required'`.
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
-    model = OpenRouterModel(model_name, provider=provider)
+    model = OpenRouterModel('qwen/qwen3.8-flash', provider=provider)
 
     response = await model_request(
         model,
