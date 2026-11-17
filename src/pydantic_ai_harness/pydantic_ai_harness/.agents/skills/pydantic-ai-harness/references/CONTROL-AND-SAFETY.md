@@ -911,7 +911,7 @@ print(agent.run_sync('Explain the change').output)
 
 When a run would end after an edit (a `FileSystem` `write_file`/`edit_file` call, matched by tool kind, or a
 shell command matching `edit_commands`) and the latest run of every check since then (a shell command
-matching `verification_commands`) did not pass, adds a system prompt telling the model to run its checks or
+matching `verification_commands`) did not pass, adds an instruction telling the model to run its checks or
 explain the blocker. Up to `max_attempts=2` times per run; after that the run ends and emits a
 `CompletionUnverifiedEvent` (`attempts`, `failed_commands`), dispatched immediately so `Hooks.on.event`
 listeners get it before the run returns; at most once per run.
@@ -928,14 +928,14 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 - Commands come from tools whose metadata sets `code_arg_language='shell'` and `code_arg_name`, as
   `Shell`'s do. A check is an `&&`-joined step of the last `;`/newline statement that starts with a
   `verification_commands` match (`cd pkg; pytest` counts, `pytest; echo done` does not). `|`, `||`,
-  background `&`, command substitution, and `exit`/`exec`/`return` disqualify it; `2>&1` and single-quoted
+  background `&`, command substitution, and `exit`/`exec`/`return` disqualify it; `2>&1` and quoted
   text are ignored. Pass/fail is read from `Shell`'s `[exit code: N]`/timeout/file-limit trailer, the `shell`
   tool's `exit_code`, or ACP's `[exited with code N]`/`[terminated by signal S]` (other formats pass); a background or still-running command never counts and clears that
   command's earlier result. A check that an edit in a parallel call of the same response overtook
   records nothing. `edit_commands` match outside quotes (defaults include formatters, `--fix`, `sed -i`,
   `git checkout`/`stash`/..., `mv`/`cp`/`rm`, `sh -c`, and `>` except `->`, `>&`, `/dev/null`).
-- The redirect is a `SystemPromptPart`; find it by
-  `metadata['origin'] == 'pydantic-ai-harness.require_verification.v1'` (with `attempt`), never by text.
+- The redirect is a `VerificationRequiredPart` (an `InstructionCapabilityPart` from
+  `pydantic_ai_harness.require_verification`, with `attempt`); find it by `isinstance`, never by text.
 - State is per run (`for_run`); hooks run in workflow code under Temporal, DBOS, and Prefect. Skipped like
   `RefineOutput`: deferred or pending output, output from no model request, and `run_stream()`.
 - Emits `verification required` (`require_verification.attempt`) and `completion unverified`

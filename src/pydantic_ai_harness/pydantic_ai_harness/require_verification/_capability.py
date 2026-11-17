@@ -10,10 +10,11 @@ from fnmatch import fnmatch
 from typing import Any
 
 from pydantic_ai import CallToolsNode, DeferredToolRequests, PendingModelResponse, RunContext
+from pydantic_ai._capability_parts import check_operator_text
 from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import SystemPromptPart, ToolCallPart
+from pydantic_ai.messages import InstructionCapabilityPart, OperatorSource, OperatorText, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai_harness.file_system._tool_kinds import EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_ai_harness.require_verification._events import CompletionUnverifiedEvent
@@ -49,15 +50,11 @@ DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
 )
 """Regular expressions for the commands that count as edits, searched for anywhere outside quoted strings."""
 
-_ORIGIN = 'pydantic-ai-harness.require_verification.v1'
-"""The `origin` in the `metadata` of the `SystemPromptPart` a redirect is delivered as."""
-
 _ASSIGNMENTS = re.compile(r'^(?:env\s+)?(?:\w+=\S*\s+)*')
-_MASKING = re.compile(r'[|&`]|\$\(')
+_MASKING = re.compile(r'[|&]')
 _STATEMENT_SEPARATOR = re.compile(r'[;\n]')
 _SHORT_CIRCUIT = re.compile(r'(?<![\w-])(?:exit|exec|return)\b')
 _FD_DUPLICATION = re.compile(r'(?<!\d)\d*[<>]&(?:\d+|-)')
-_SINGLE_QUOTED = re.compile(r"'[^']*'")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _FAILED = (
     '[exit code:',
@@ -72,13 +69,28 @@ _RUNNING = ('Status: ', 'ID: ')
 
 
 @dataclass(kw_only=True)
+class VerificationRequiredPart(
+    InstructionCapabilityPart, namespace='require_verification', name='verification_required'
+):
+    """The instruction `RequireVerification` adds to the conversation when it sends the run back to verify.
+
+    Its `content` is the capability's `instructions`, in the application's voice. Find redirects in history by this
+    type.
+    """
+
+    attempt: int
+    """Which of the run's redirects it is, from 1. Never sent to the model."""
+
+
+@dataclass(kw_only=True)
 class RequireVerification(AbstractCapability[AgentDepsT]):
     """Send the agent back to verify its code edits before the run ends.
 
     A successful `FileSystem` `write_file` or `edit_file` call, or a shell command matching
     `edit_commands`, is an edit and makes earlier verification results stale. A shell command matching
     `verification_commands` records whether it passed. When the run would end after an edit and the
-    latest run of every verification command since then did not pass, a system prompt carrying
+    latest run of every verification command since then did not pass, a
+    [`VerificationRequiredPart`][pydantic_ai_harness.require_verification.VerificationRequiredPart] carrying
     `instructions` is added and the model answers again, up to `max_attempts` times per run. A run that
     still ends unverified emits a `CompletionUnverifiedEvent`.
 
@@ -121,6 +133,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             self._edit = tuple(re.compile(pattern) for pattern in self.edit_commands)
         except re.error as error:
             raise UserError(f'RequireVerification has an invalid command pattern: {error}') from error
+        check_operator_text(self.instructions, what='`RequireVerification.instructions`')
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> RequireVerification[AgentDepsT]:
         """Return a fresh instance, so runs don't share their edits, results, or attempts."""
@@ -189,8 +202,10 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             ctx.tracer.start_span(
                 'verification required', attributes={'require_verification.attempt': self._attempts}
             ).end()
-            metadata = {'origin': _ORIGIN, 'attempt': self._attempts}
-            ctx.enqueue(SystemPromptPart(self.instructions, metadata=metadata), priority='when_idle')
+            redirect = VerificationRequiredPart(
+                content=OperatorText(self.instructions), source=OperatorSource(), attempt=self._attempts
+            )
+            ctx.enqueue(redirect, priority='when_idle')
         elif not self._reported:
             # Something else, like `RefineOutput`, can still continue the run: report its first unverified end once.
             self._reported = True
@@ -213,9 +228,12 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         The exit status is the last `;`- or newline-separated statement's, so the check must be in it,
         joined only by `&&` to the rest of that statement.
         """
-        text = _FD_DUPLICATION.sub('', _SINGLE_QUOTED.sub("''", command))
+        if _SHORT_CIRCUIT.search(command) or '$(' in command or '`' in command:
+            return False
+        # Separators and pipes inside quotes are literal text, not shell syntax.
+        text = _FD_DUPLICATION.sub('', _QUOTED.sub("''", command))
         statements = [statement for statement in _STATEMENT_SEPARATOR.split(text) if statement.strip()]
-        if not statements or _SHORT_CIRCUIT.search(text):
+        if not statements:
             return False
         steps = [_ASSIGNMENTS.sub('', step.strip(), count=1) for step in statements[-1].split('&&')]
         if any(_MASKING.search(step) for step in steps):

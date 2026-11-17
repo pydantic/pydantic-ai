@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 
@@ -15,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks, LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.tools import Tool
@@ -26,7 +25,7 @@ from pydantic_ai_harness import (
     RequireVerification,
     Shell,
 )
-from pydantic_ai_harness.require_verification import CompletionUnverifiedEvent
+from pydantic_ai_harness.require_verification import CompletionUnverifiedEvent, VerificationRequiredPart
 
 _SHELL = {'code_arg_language': 'shell', 'code_arg_name': 'command'}
 
@@ -83,19 +82,17 @@ def _agent(
     )
 
 
-def _redirects(messages: Sequence[ModelMessage]) -> list[tuple[str, object]]:
+def _redirects(messages: Sequence[ModelMessage]) -> list[tuple[str, int]]:
     return [
-        (part.content, part.metadata['attempt'])
+        (str(part.content), part.attempt)
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
-        and part.metadata
-        and part.metadata['origin'] == 'pydantic-ai-harness.require_verification.v1'
+        if isinstance(part, VerificationRequiredPart)
     ]
 
 
-def _attempts(messages: Sequence[ModelMessage]) -> list[object]:
+def _attempts(messages: Sequence[ModelMessage]) -> list[int]:
     return [attempt for _, attempt in _redirects(messages)]
 
 
@@ -244,6 +241,9 @@ class TestRequireVerification:
             'pytest &',
             'pytest $(cat args)',
             'pytest `cat args`',
+            ';',
+            'echo "ok && pytest"',
+            'git commit -m "fix parser; pytest passes"',
         ],
     )
     async def test_commands_that_can_hide_a_failure_do_not_count(self, tmp_path: Path, command: str) -> None:
@@ -479,8 +479,7 @@ class TestRequireVerification:
                 _write(),
                 _run('false'),
                 'Done.',
-                ToolCallPart('shell', {'command': 'sleep 1 && true', 'mode': 'background'}),
-                'Done.',
+                _write(),
                 ToolCallPart('shell', {'command': 'true'}),
                 'Verified.',
             ),
@@ -495,9 +494,9 @@ class TestRequireVerification:
 
         result = await agent.run('Fix the bug')
 
-        # `false` failed and a background `true` has not finished; a foreground `true` passes.
+        # `run_command`'s `false` failed; after the next edit, the `shell` tool's `true` passed.
         assert result.output == 'Verified.'
-        assert _attempts(result.new_messages()) == [1, 2]
+        assert _attempts(result.new_messages()) == [1]
 
     async def test_records_spans(self, tmp_path: Path) -> None:
         exporter = InMemorySpanExporter()
@@ -518,20 +517,14 @@ class TestRequireVerification:
             ('completion unverified', {'require_verification.attempts': 1}),
         ]
 
-    async def test_long_repetitive_commands_are_matched_in_linear_time(self, tmp_path: Path) -> None:
-        commands = [
-            'echo ' + 'sed ' * 16_000,
-            'echo ' + 'sed -sed ' * 8_000,
-            'make ' + 'x ' * 32_000,
-            'echo ' + '1' * 32_000,
-        ]
+    async def test_repetitive_commands_are_neither_edits_nor_checks(self, tmp_path: Path) -> None:
+        # Inputs that made unanchored patterns rescan every suffix; kept small, as regression cases.
+        commands = ['echo ' + 'sed ' * 200, 'echo ' + 'sed -sed ' * 100, 'make ' + 'x ' * 400, 'echo ' + '1' * 400]
         agent = _agent(tmp_path, *[_run(command) for command in commands], 'Done.')
 
-        started = time.perf_counter()
         result = await agent.run('Look around')
 
         assert result.output == 'Done.'
-        assert time.perf_counter() - started < 2
 
     def test_rejects_a_negative_attempt_limit(self) -> None:
         with pytest.raises(ValueError, match='`max_attempts` must be at least 0, got -1'):

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import Tool
 from pydantic_ai_harness.file_system import WRITE_FILE_KIND
+from pydantic_ai_harness.require_verification import VerificationRequiredPart
 
 model_calls: list[None] = []
 """One entry per `editing_model` call, so a test can tell a replayed response from a new one."""
@@ -42,14 +43,12 @@ tools = [
 ]
 
 
-def attempts(messages: Sequence[ModelMessage]) -> list[object]:
+def attempts(messages: Sequence[ModelMessage]) -> list[int]:
     """The attempt number of each redirect in `messages`."""
     return [
-        part.metadata['attempt']
+        part.attempt
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
-        and part.metadata
-        and part.metadata['origin'] == 'pydantic-ai-harness.require_verification.v1'
+        if isinstance(part, VerificationRequiredPart)
     ]
