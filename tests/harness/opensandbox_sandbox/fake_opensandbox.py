@@ -30,12 +30,13 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 from urllib.parse import parse_qsl
 
 import anyio
 import httpx
 from opensandbox.config import ConnectionConfig
+from pydantic import TypeAdapter
 
 API_KEY = 'fake-key'
 DOMAIN = 'opensandbox.invalid'
@@ -61,6 +62,10 @@ def _json(status: int, body: Any = None) -> httpx.Response:
 
 def _error(status: int, code: str, message: str) -> httpx.Response:
     return _json(status, {'code': code, 'message': message})
+
+
+_CREDENTIALS = TypeAdapter(list[dict[str, object]])
+"""The credentials the SDK sends to the vault, each with a `name`."""
 
 
 @dataclass
@@ -270,8 +275,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 # The egress sidecar's vault, which answers with sanitized metadata only.
                 vault: dict[str, object] = json.loads(request.content)
                 sandbox.credential_vault = vault
-                # The SDK sends a list of credentials, each with a `name`.
-                credentials = cast(list[dict[str, object]], vault['credentials'])
+                credentials = _CREDENTIALS.validate_python(vault['credentials'])
                 return _json(
                     201,
                     {
