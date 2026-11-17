@@ -76,7 +76,7 @@ def _limits(store: OverflowStore | WorkspaceOverflowStore | None = None) -> Tool
 class TestReaderStepsAside:
     async def test_read_file_replaces_read_tool_result(self, tmp_path: Path) -> None:
         recorder, output = await _run(tmp_path, _limits(), FileSystem())
-        assert all(READ_TOOL_NAME not in tools and GREP_TOOL_NAME not in tools for tools in recorder.offered)
+        assert all(READ_TOOL_NAME not in tools and GREP_TOOL_NAME in tools for tools in recorder.offered)
         assert recorder.marker is not None
         assert 'Read it with read_file(path=' in recorder.marker
         assert READ_TOOL_NAME not in recorder.marker

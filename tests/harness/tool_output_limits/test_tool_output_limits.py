@@ -154,6 +154,11 @@ def _tool_def(name: str = 'big_tool') -> ToolDefinition:
     return ToolDefinition(name=name)
 
 
+def _summary(text: str, chars: int = 100) -> str:
+    """A summary as the model sees it, after the marker that says the output was summarized."""
+    return f'[summary of {chars:,} chars of output; rerun the original tool for the full output]\n{text}'
+
+
 async def _run(cap: ToolOutputLimits[object], result: Any, *, ctx: Any = None, tool_name: str = 'big_tool') -> Any:
     return await cap.after_tool_execute(
         ctx if ctx is not None else _make_ctx(),
@@ -494,7 +499,7 @@ class TestCombine:
         )
         assert isinstance(merged, ToolOutputLimits)
         assert [b.over for b in merged._bands] == [1000, 100]  # pyright: ignore[reportPrivateUsage]
-        assert await _run(merged, 'x' * 1500) == 'summary'
+        assert await _run(merged, 'x' * 1500) == _summary('summary', 1_500)
 
     def test_later_band_wins_a_shared_threshold(self):
         later = Truncate(max_chars=20)
@@ -546,10 +551,10 @@ class TestPassthrough:
 
     async def test_callable_filter(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=1, action=Truncate(max_chars=95))],
+            bands=[Band(over=1, action=Truncate(max_chars=150))],
             tool_filter=lambda ctx, td: td.name == 'big_tool',
         )
-        out = await _run(cap, 'x' * 100)
+        out = await _run(cap, 'x' * 300)
         assert isinstance(out, str) and 'truncated' in out
 
     async def test_below_threshold_passthrough(self):
@@ -584,15 +589,21 @@ class TestTruncate:
     async def test_marker_counts_toward_budget(self, strategy: TruncationStrategy, total: int, kept: int):
         text = ''.join(chr(0x4E00 + i) for i in range(total))
         if strategy is TruncationStrategy.head:
-            expected = text[:kept] + f'\n\n[truncated: showing first {kept:,} of {total:,} chars]'
+            expected = (
+                text[:kept]
+                + f'\n\n[truncated: showing first {kept:,} of {total:,} chars; rerun the original tool for the full output]'
+            )
         elif strategy is TruncationStrategy.tail:
-            expected = f'[... output truncated, showing last {kept} chars]\n' + text[-kept:]
+            expected = (
+                f'[... output truncated, showing last {kept} chars; rerun the original tool for the full output]\n'
+                + text[-kept:]
+            )
         else:
             head = kept * 2 // 5
             tail = kept - head
             expected = (
                 f'{text[:head]}\n\n[truncated: {total - kept:,} chars omitted from the middle; '
-                f'showing first {head:,} + last {tail:,} of {total:,} chars]\n\n{text[-tail:]}'
+                f'showing first {head:,} + last {tail:,} of {total:,} chars; rerun the original tool for the full output]\n\n{text[-tail:]}'
             )
         max_chars = len(expected)
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -816,17 +827,17 @@ class TestSpill:
 
     async def test_spill_failure_falls_back_to_truncate(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=95)))], store=_BrokenStore()
+            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=150)))], store=_BrokenStore()
         )
-        out = await _run(cap, 'a' * 100)
+        out = await _run(cap, 'a' * 300)
         assert isinstance(out, str) and 'truncated' in out
 
     async def test_spill_failure_logs_warning(self, caplog: pytest.LogCaptureFixture):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=95)))], store=_BrokenStore()
+            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=150)))], store=_BrokenStore()
         )
         with caplog.at_level('WARNING', logger='pydantic_ai_harness.tool_output_limits'):
-            out = await _run(cap, 'a' * 100)
+            out = await _run(cap, 'a' * 300)
         assert isinstance(out, str) and 'truncated' in out
         [record] = caplog.records
         assert record.levelname == 'WARNING'
@@ -882,23 +893,23 @@ class TestFilesInReturnValue:
     image = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
 
     async def test_file_alone_passes_through(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
         assert await _run(cap, self.image) is self.image
 
     async def test_short_text_beside_a_file_passes_through(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10_000, action=Truncate(max_chars=95))])
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10_000, action=Truncate(max_chars=150))])
         value = ['header', self.image]
         assert await _run(cap, value) is value
 
     async def test_data_beside_files_is_reduced_and_the_files_kept(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
         assert await _run(cap, ['A' * 300, self.image, 'B' * 300]) == [
             snapshot("""\
-["
+["AAAA
 
-[truncated: 601 chars omitted from the middle; showing first 2 + last 4 of 607 chars]
+[truncated: 592 chars omitted from the middle; showing first 6 + last 9 of 607 chars; rerun the original tool for the full output]
 
-BB"]\
+BBBBBBB"]\
 """),
             self.image,
         ]
@@ -919,42 +930,42 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
         assert await store.read('run-1/call-1.0') == ('A' * 300).encode('utf-8')
 
     async def test_structured_data_beside_a_file_is_reduced_and_the_file_kept(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
         assert await _run(cap, [{'rows': list(range(1_000))}, self.image, b'raw bytes']) == [
             snapshot("""\
+[{"r
 
+[truncated: 3,902 chars omitted from the middle; showing first 4 + last 8 of 3,914 chars; rerun the original tool for the full output]
 
-[truncated: 3,912 chars omitted from the middle; showing first 0 + last 2 of 3,914 chars]
-
-"]\
+ bytes"]\
 """),
             self.image,
         ]
 
     async def test_raw_bytes_beside_a_file_are_reduced_as_text(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
         assert await _run(cap, [b'R' * 5_000, self.image]) == [
             snapshot("""\
+"RRR
 
+[truncated: 4,990 chars omitted from the middle; showing first 4 + last 8 of 5,002 chars; rerun the original tool for the full output]
 
-[truncated: 5,000 chars omitted from the middle; showing first 0 + last 2 of 5,002 chars]
-
-R"\
+RRRRRRR"\
 """),
             self.image,
         ]
 
     async def test_content_beside_a_file_is_still_reduced(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
         out = await _run(cap, ToolReturn(return_value=['image', self.image], content='C' * 5_000))
         assert out == ToolReturn(
             return_value=['image', self.image],
             content=snapshot("""\
+CCCC
 
+[truncated: 4,988 chars omitted from the middle; showing first 4 + last 8 of 5,000 chars; rerun the original tool for the full output]
 
-[truncated: 4,998 chars omitted from the middle; showing first 0 + last 2 of 5,000 chars]
-
-CC\
+CCCCCCCC\
 """),
         )
 
@@ -973,8 +984,8 @@ class TestContentReduction:
         assert await store.read(handle) == ('C' * 5000).encode('utf-8')
 
     async def test_large_content_truncated(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        out = await _run(cap, ToolReturn(return_value='small', content='C' * 200))
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
+        out = await _run(cap, ToolReturn(return_value='small', content='C' * 400))
         assert isinstance(out, ToolReturn)
         assert isinstance(out.content, str) and 'truncated' in out.content
 
@@ -1021,7 +1032,7 @@ class TestSummarize:
 
         out = await _run(cap, 'x' * 100)
 
-        assert out == 'THE SUMMARY'
+        assert out == _summary('THE SUMMARY')
 
     @pytest.mark.usefixtures('instrument_all_agents')
     async def test_summarizer_run_is_named_after_the_capability(self, capfire: CaptureLogfire):
@@ -1107,7 +1118,7 @@ class TestSummarize:
             bands=[Band(over=5, action=Summarize(summarize=lambda name, text: f'{name}:{len(text)}'))]
         )
         out = await _run(cap, 'x' * 100)
-        assert out == 'big_tool:100'
+        assert out == _summary('big_tool:100')
 
     async def test_custom_async_summarizer(self):
         async def summ(name: str, text: str) -> str:
@@ -1115,14 +1126,14 @@ class TestSummarize:
 
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Summarize(summarize=summ))])
         out = await _run(cap, 'x' * 100)
-        assert out == 'async:100'
+        assert out == _summary('async:100')
 
     async def test_inherited_model_and_usage(self):
         # model=None resolves to ctx.model, and the call threads usage=ctx.usage.
         ctx = _make_ctx(model=_fixed_model('THE SUMMARY'))
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Summarize())])
         out = await _run(cap, 'x' * 100, ctx=ctx)
-        assert out == 'THE SUMMARY'
+        assert out == _summary('THE SUMMARY')
         assert ctx.usage.requests == 1
 
     async def test_inherited_model_reserves_parent_usage_limits(self):
@@ -1138,7 +1149,7 @@ class TestSummarize:
         with patch('pydantic_ai.Agent', return_value=mock_agent):
             out = await _run(cap, 'x' * 100, ctx=ctx)
 
-        assert out == 'THE SUMMARY'
+        assert out == _summary('THE SUMMARY')
         assert mock_agent.run.call_args.kwargs['usage_limits'] == UsageLimits(request_limit=4, tool_calls_limit=2)
 
     async def test_explicit_model_overrides_ctx(self):
@@ -1147,7 +1158,7 @@ class TestSummarize:
             bands=[Band(over=5, action=Summarize(model=_fixed_model('FROM EXPLICIT MODEL')))]
         )
         out = await _run(cap, 'x' * 100, ctx=ctx)
-        assert out == 'FROM EXPLICIT MODEL'
+        assert out == _summary('FROM EXPLICIT MODEL')
         assert ctx.usage.requests == 1
 
     async def test_explicit_model_name_overrides_ctx(self):
@@ -1158,7 +1169,7 @@ class TestSummarize:
         mock_agent.run.return_value = mock_result
 
         with patch('pydantic_ai.Agent', return_value=mock_agent) as agent_type:
-            assert await _run(cap, 'x' * 100, ctx=ctx) == 'FROM NAMED MODEL'
+            assert await _run(cap, 'x' * 100, ctx=ctx) == _summary('FROM NAMED MODEL')
 
         agent_type.assert_called_once_with(
             'test:summary', name='tool_output_limits', instructions='You summarize oversized tool output.'
@@ -1195,9 +1206,9 @@ class TestSummarize:
             raise RuntimeError('model down')
 
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=95)))]
+            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=150)))]
         )
-        out = await _run(cap, 'a' * 100)
+        out = await _run(cap, 'a' * 300)
         assert isinstance(out, str) and 'truncated' in out
 
     async def test_summarize_failure_logs_warning(self, caplog: pytest.LogCaptureFixture):
@@ -1205,10 +1216,10 @@ class TestSummarize:
             raise RuntimeError('model down')
 
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=95)))]
+            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=150)))]
         )
         with caplog.at_level('WARNING', logger='pydantic_ai_harness.tool_output_limits'):
-            await _run(cap, 'a' * 100)
+            await _run(cap, 'a' * 300)
         [record] = caplog.records
         assert 'RuntimeError' in record.getMessage()
         assert 'big_tool' in record.getMessage()
@@ -1222,7 +1233,7 @@ class TestSummarize:
             store=_BrokenStore(),
         )
 
-        assert await _run(cap, 'x' * 100) == 'NESTED SUMMARY'
+        assert await _run(cap, 'x' * 100) == _summary('NESTED SUMMARY')
 
 
 # ---------------------------------------------------------------------------

@@ -38,14 +38,21 @@ flowchart TB
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
 the registered `read_tool_result(handle, offset, limit, from_end, pattern, unit)` tool, and searches
 it with `grep_tool_result` ([Querying a spill](#querying-a-spill)).
-Both tools are bounded: `offset >= 0`, `read_tool_result`'s `limit` and `grep_tool_result`'s `context`
-and `max_matches` clamped to built-in caps, the joined output capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
-hang the host with catastrophic backtracking. Their own returns are exempt from
-reduction, so a query result is never itself spilled or truncated. With `FileSystem`
-on the agent, `read_file` takes its place for spills in the run's workspace, and its reads of
+Both tools are bounded: `offset >= 0`, `read_tool_result`'s `limit` and `grep_tool_result`'s
+`context` and `max_matches` clamped to built-in caps, the joined output capped, and `pattern` is a
+literal substring (not a regex), so a model-supplied value cannot hang the host with catastrophic
+backtracking. Their own returns are exempt from reduction, so a query result is never itself
+spilled or truncated. With `FileSystem` on the agent, `read_file` takes its place for spills in the run's workspace, and its reads of
 spills are exempt too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's
 `load_capability` and `search_tools` returns are never reduced either: core reads them back from
 history to know which on-demand capabilities are loaded and which tools are revealed.
+
+Every reduction says what it left out and how to get it back. A spill's marker names its handle
+and the tool to read it with. `Truncate` and `Summarize` keep no copy, so their markers tell the
+model to rerun the original tool: a `[truncated: ...]` marker ends with
+`; rerun the original tool for the full output`, and a summary opens with
+`[summary of N chars of output; rerun the original tool for the full output]`. A capped query says
+where to continue ([Querying a spill](#querying-a-spill)).
 
 ### Return-value and content handling
 
@@ -249,8 +256,8 @@ continue from. The model can then page around a match with `read_tool_result`.
 
 `read_tool_result(..., unit='bytes')` slices the raw stored bytes instead of lines, for output
 without useful line breaks such as minified JSON. `offset` and `limit` count bytes (`limit` is
-clamped to 50,000, and its default of 200 counts bytes too), `from_end` counts from the end, and a range past the end is clamped. The header
-reports the returned interval and the total length, such as
+clamped to 50,000, and its default of 200 counts bytes too), `from_end` counts from the end, and a
+range past the end is clamped. The header reports the returned interval and the total length, such as
 `bytes 50000-100000 of 240311 (end exclusive)`, so the model knows where to continue. A
 multi-byte UTF-8 character cut at either edge of the slice, and any byte of a binary spill that is
 not UTF-8, renders as U+FFFD. `pattern` filters lines, so combining it with `unit='bytes'` asks
@@ -324,10 +331,10 @@ Spilled files are kept for the life of the workspace; they are not pruned by thi
 ### Reading spills with `FileSystem`
 
 When spills are files in the run's workspace (the default `WorkspaceOverflowStore()`, without a
-`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` and `grep_tool_result`
-step aside for `FileSystem`'s `read_file`. The tools are marked with
+`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
+`FileSystem`'s `read_file`. The tool is marked with
 [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind)
-set to `READ_FILE_KIND`, so they are left out of every run step that has a tool of that kind. The
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
 spill marker then names that tool as it is called in the run, with the spill's path:
 
 ```text
@@ -345,7 +352,8 @@ recognized by its kind, `READ_TOOL_RESULT_KIND`, not its name, so a prefixed rea
 Two gaps to know about:
 
 - `read_file` has no equivalent of `read_tool_result`'s `from_end` or `unit='bytes'`. Filtering by
-  `pattern` and `grep_tool_result` map to `FileSystem`'s `search_files` (or `grep`).
+  `pattern` maps to `FileSystem`'s `search_files` (or `grep`). `grep_tool_result` does not step
+  aside, as `read_file` cannot search and a `FileSystem` may offer no search tool.
 - The decision is made from the store, not from `FileSystem`'s access rules. A `FileSystem`
   whose `denied_patterns` cover `.pydantic-ai-harness/`, or whose `allowed_patterns` leave it
   out, still replaces `read_tool_result` but cannot open the spills. Pass a store with a

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import posixpath
+import re
 import warnings
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
@@ -43,6 +44,7 @@ from pydantic_ai_harness.tool_output_limits._bands import (
     Truncate,
 )
 from pydantic_ai_harness.tool_output_limits._payload import (
+    RERUN_NOTE,
     Serializer,
     is_binary,
     json_sketch,
@@ -293,7 +295,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Register the `read_tool_result` and `grep_tool_result` tools for querying spilled payloads on demand.
 
-        When spills are files in the run's workspace, the tools step aside for a tool of
+        When spills are files in the run's workspace, `read_tool_result` steps aside for a tool of
         `FileSystem`'s `READ_FILE_KIND`, which reads them too. Built once, so durable execution
         sees the toolset it registered.
         """
@@ -348,10 +350,11 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             """
             return await _grep(self._store_for(ctx).read, handle, pattern, context, max_matches, offset)
 
+        # Only the reader steps aside: `read_file` cannot search, and `FileSystem` may offer no search tool.
         prepare = step_aside_for_read_file if self._spills_to_run_workspace else None
         tools = [
             Tool(read_tool_result, tool_kind=READ_TOOL_RESULT_KIND, prepare=prepare),
-            Tool(grep_tool_result, tool_kind=GREP_TOOL_RESULT_KIND, prepare=prepare),
+            Tool(grep_tool_result, tool_kind=GREP_TOOL_RESULT_KIND),
         ]
         return FunctionToolset(tools, id=self.id or 'tool_output_limits')
 
@@ -653,7 +656,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         except Exception as exc:
             _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
             return await self._fallback(ctx, call, action.then, unit)
-        return summary, None
+        return f'[summary of {len(unit.text):,} chars of output{RERUN_NOTE}]\n{summary}', None
 
     @durable_operation('summarize')
     async def _summarize(
@@ -1009,6 +1012,18 @@ def _omit(page: _Page, entries: Iterator[_Entry], start: int | None) -> None:
         page.omitted.append((start, end))
 
 
+_LINE_BREAK = re.compile('\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]')
+"""The line boundaries `str.splitlines` uses."""
+
+
+def _line_start(text: str, index: int) -> int:
+    """The byte offset line `index` of `text` starts at."""
+    position = 0
+    for _, line_break in zip(range(index), _LINE_BREAK.finditer(text)):
+        position = line_break.end()
+    return _byte_len(text[:position])
+
+
 def _capped(text: str, page: _Page, more: str) -> str:
     """The header note for output stopped at the cap, saying what was left out and where it continues."""
     notes = [
@@ -1017,7 +1032,7 @@ def _capped(text: str, page: _Page, more: str) -> str:
     ]
     if page.cut is not None:
         index, shown_bytes = page.cut
-        offset = sum(_byte_len(line) for line in text.splitlines(keepends=True)[:index]) + shown_bytes
+        offset = _line_start(text, index) + shown_bytes
         notes.append(f"the cut line continues at unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}")
     if more:
         notes.append(more)

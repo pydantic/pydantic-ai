@@ -325,7 +325,9 @@ point onward.
 
 Reduces an oversized tool return once, when produced, so it is not re-sent at full size on every
 later request. Actions: `Truncate` (zero-LLM, lossy), `Spill` (lossless: stores the payload and
-returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The spill preview reads
+returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The lossy markers tell the
+model to rerun the tool: `[truncated: ...; rerun the original tool for the full output]`, and a summary
+opens with `[summary of N chars of output; rerun the original tool for the full output]`. The spill preview reads
 `[Tool output too large (N chars); stored to handle '<handle>'. Read it with read_tool_result(...)]`,
 then a `shape:` line for JSON and a head/tail excerpt; the model pages it with the registered
 `read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None, unit='lines')` (`pattern` is a literal
@@ -336,7 +338,7 @@ for output without line breaks) and searches it with
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
 With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
-`read_tool_result` and `grep_tool_result` are left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
+`read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`; `grep_tool_result` stays) and the marker reads
 `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
 (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
 are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests

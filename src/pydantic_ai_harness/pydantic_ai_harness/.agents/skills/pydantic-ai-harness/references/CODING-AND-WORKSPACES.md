@@ -211,7 +211,7 @@ binary files the first 64 bytes in hex) for any other binary file; text files co
 A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
-`read_tool_result` and `grep_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
+`read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
 the files they read are in the run's workspace, also when `FileSystem` is renamed (`FileSystem().prefix_tools('wiki')`).
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
