@@ -50,7 +50,7 @@ Every check reads each recorded file in full, which detects a rewrite that keeps
 ## Scope
 
 - **Observations are in-process memory, per conversation.** They are held on the instance the agent was built with and keyed by the run's `conversation_id`, so a run continued from an earlier run's `message_history` is told about changes made between the runs. A conversation continued through another instance, process, or worker starts with no records. An instance keeps the 1,024 most recently used conversations.
-- **Paths are named only when they are plain.** The notice is in system voice, so a path is named only when it holds letters, digits and `._/@+-`, up to 200 characters. Other paths, such as one with a space, are counted with the rest.
+- **Paths are named only when they are plain.** The notice is in system voice, so a path is named only when it holds letters, digits and `._/:@+-`, up to 200 characters. Other paths, such as one with a space, are counted with the rest.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
 
 ## Telemetry

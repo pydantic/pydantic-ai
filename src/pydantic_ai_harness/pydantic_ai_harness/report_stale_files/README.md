@@ -66,7 +66,7 @@ down.
   about changes made between the runs. A conversation continued through another instance, process, or worker
   starts with no records. An instance keeps the 1,024 most recently used conversations.
 - **Paths are named only when they are plain.** The notice is in system voice, so a path is named only when it
-  holds letters, digits and `._/@+-`, up to 200 characters. Other paths, such as one with a space, are counted
+  holds letters, digits and `._/:@+-`, up to 200 characters. Other paths, such as one with a space, are counted
   with the rest.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
 

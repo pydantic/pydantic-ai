@@ -21,6 +21,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import FileSystem, ReportStaleFiles
 from pydantic_ai_harness.report_stale_files import STALE_FILES_ORIGIN
 from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
+from tests.harness.file_system.test_windows_paths import DriveBackend
 
 Step = tuple[Callable[[], object] | None, ToolCallPart | str]
 """What happens in the workspace while the model answers a request, and the model's answer."""
@@ -169,6 +170,19 @@ class TestReportStaleFiles:
         assert _notices(result.all_messages())[-1] == [
             f'{CHANGED}\n- `config.py`\n- `{(tmp_path / "shared.txt").as_posix()}`'
         ]
+
+    async def test_windows_workspace_paths_are_named_relative_to_the_working_directory(self, tmp_path: Path) -> None:
+        (tmp_path / 'project' / 'src').mkdir(parents=True)
+        app = tmp_path / 'project' / 'src' / 'app.py'
+        app.write_text('x = 1\n')
+        agent = _agent(
+            tmp_path,
+            (None, _read('src\\app.py')),
+            (lambda: app.write_text('x = 2\n'), _LIST),
+            (None, 'done'),
+        )
+        result = await agent.run('go', workspace=DriveBackend(tmp_path))
+        assert _notices(result.all_messages())[-1] == [f'{CHANGED}\n- `src/app.py`']
 
     async def test_file_too_large_to_read_is_skipped(self, tmp_path: Path) -> None:
         target = tmp_path / 'big.bin'

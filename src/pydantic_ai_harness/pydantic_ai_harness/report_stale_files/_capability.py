@@ -5,13 +5,12 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ModelRequest, SystemPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspacePaths
 from pydantic_ai_harness.file_system import FileReadEvent, FileWrittenEvent
 from pydantic_ai_harness.file_system._content import bytes_hash
 
@@ -27,7 +26,7 @@ _CHANGED = (
 )
 _DELETED = 'These files you read were deleted from the workspace:'
 
-_SHOWN_PATH = re.compile(r'[A-Za-z0-9._/@+-]{1,200}')
+_SHOWN_PATH = re.compile(r'[A-Za-z0-9._/:@+-]{1,200}')
 """Paths a notice names. The notice is in system voice, so a path with other characters is only counted."""
 
 _MAX_CHECKED_BYTES = 64 << 20
@@ -113,32 +112,49 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
         changed: list[str] = []
         deleted: list[str] = []
         for path, content_hash in list(self._observations.items()):
-            try:
-                entry = await ctx.workspace.stat(path)
-                if entry.is_dir or (entry.size is not None and entry.size > _MAX_CHECKED_BYTES):
-                    continue
-                content = await ctx.workspace.read_bytes(path)
-            except (FileNotFoundError, NotADirectoryError):
+            state = await _state(ctx.workspace, path, content_hash)
+            if state == 'deleted':
                 self._observations.pop(path, None)
                 deleted.append(path)
-                continue
-            except (OSError, WorkspaceError):
-                continue
-            if bytes_hash(content) != content_hash:
+            elif state == 'changed':
                 changed.append(path)
         if changed or deleted:
-            working_dir = Path(await ctx.workspace.working_dir())
-            notice = _render(_shown(changed, working_dir), _shown(deleted, working_dir), self.max_reported_files)
+            working_dir = await ctx.workspace.working_dir()
+            paths = ctx.workspace.paths
+            notice = _render(
+                [_shown(path, working_dir, paths) for path in changed],
+                [_shown(path, working_dir, paths) for path in deleted],
+                self.max_reported_files,
+            )
             ctx.enqueue(SystemPromptPart(notice, scope='request', metadata={'origin': STALE_FILES_ORIGIN}))
         return request_context
 
 
-def _shown(paths: list[str], working_dir: Path) -> list[str]:
-    """Each path as the file tools take it: relative to the working directory when inside it, else absolute."""
-    return [
-        (Path(path).relative_to(working_dir) if Path(path).is_relative_to(working_dir) else Path(path)).as_posix()
-        for path in paths
-    ]
+async def _state(
+    workspace: Workspace, path: str, content_hash: str
+) -> Literal['fresh', 'changed', 'deleted', 'unknown']:
+    """Whether the file at `path` still has `content_hash`; `'unknown'` when it can't be read."""
+    try:
+        entry = await workspace.stat(path)
+        if entry.is_dir or (entry.size is not None and entry.size > _MAX_CHECKED_BYTES):
+            return 'unknown'
+        content = await workspace.read_bytes(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return 'deleted'
+    except (OSError, WorkspaceError):
+        return 'unknown'
+    return 'fresh' if bytes_hash(content) == content_hash else 'changed'
+
+
+def _shown(path: str, working_dir: str, paths: WorkspacePaths) -> str:
+    """`path` as the file tools take it: relative to the working directory when inside it, else absolute."""
+    try:
+        relative = paths.relpath(path, working_dir)
+    except ValueError:  # pragma: no cover - a Windows path on another drive than the working directory
+        relative = path
+    if relative.split(paths.sep)[0] == '..':
+        relative = path
+    return relative.replace(paths.sep, '/')
 
 
 def _render(changed: list[str], deleted: list[str], limit: int) -> str:
