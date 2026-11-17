@@ -544,10 +544,6 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> ChatComp
     return chunk([ChatCompletionStreamOutputDelta(content=text, role='assistant')], finish_reason=finish_reason)
 
 
-def reasoning_chunk(text: str) -> ChatCompletionStreamOutput:
-    return chunk([ChatCompletionStreamOutputDelta(reasoning=text, role='assistant')])
-
-
 async def test_stream_text(allow_model_requests: None):
     stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
     mock_client = MockHuggingFace.create_stream_mock(stream)
@@ -1329,32 +1325,31 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
     )
 
 
-async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None):
-    """No recorded Hugging Face response carries `reasoning`, so a mock client returns `message.reasoning`."""
-    mock_client = MockHuggingFace.create_mock(
-        completion_message(
-            ChatCompletionOutputMessage(content='42', reasoning='I computed it', role='assistant'),
-            usage=ChatCompletionOutputUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-        )
+@pytest.mark.vcr()
+async def test_hf_model_reasoning_field_thinking_part(allow_model_requests: None, huggingface_api_key: str):
+    """Groq returns `openai/gpt-oss-120b` reasoning in `message.reasoning`, which becomes a `ThinkingPart`."""
+    m = HuggingFaceModel(
+        'openai/gpt-oss-120b',
+        provider=HuggingFaceProvider(provider_name='groq', api_key=huggingface_api_key),
     )
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
 
-    result = await agent.run('Hello')
-    assert result.output == '42'
-    assert result.all_messages()[-1].parts == [ThinkingPart(content='I computed it'), TextPart(content='42')]
+    result = await agent.run('What is 6 times 7? Reply with just the number.')
+    assert result.all_messages() == snapshot()
 
 
-async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests: None):
-    """No recorded Hugging Face response carries `reasoning`, so a mock client streams `delta.reasoning`."""
-    stream = [reasoning_chunk('I computed'), reasoning_chunk(' it'), text_chunk('42', finish_reason='stop')]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+@pytest.mark.vcr()
+async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests: None, huggingface_api_key: str):
+    """Groq streams `openai/gpt-oss-120b` reasoning in `delta.reasoning`, which becomes thinking part deltas."""
+    m = HuggingFaceModel(
+        'openai/gpt-oss-120b',
+        provider=HuggingFaceProvider(provider_name='groq', api_key=huggingface_api_key),
+    )
     agent = Agent(m)
 
     part_events: list[PartStartEvent | PartDeltaEvent] = []
     result: AgentRunResult[str] | None = None
-    async with agent.run_stream_events(user_prompt='Hello') as event_stream:
+    async with agent.run_stream_events(user_prompt='What is 6 times 7? Reply with just the number.') as event_stream:
         async for event in event_stream:
             if isinstance(event, AgentRunResultEvent):
                 result = event.result
@@ -1362,15 +1357,17 @@ async def test_hf_model_reasoning_field_thinking_part_iter(allow_model_requests:
                 part_events.append(event)
 
     assert result is not None
-    assert result.output == '42'
-    assert result.all_messages()[-1].parts == [ThinkingPart(content='I computed it'), TextPart(content='42')]
-    assert [event.part if isinstance(event, PartStartEvent) else event.delta for event in part_events] == snapshot(
-        [ThinkingPart(content='I computed'), ThinkingPartDelta(content_delta=' it'), TextPart(content='42')]
+    assert result.all_messages() == snapshot()
+    first_event = part_events[0]
+    assert isinstance(first_event, PartStartEvent)
+    assert isinstance(first_event.part, ThinkingPart)
+    assert any(
+        isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta) for event in part_events
     )
 
 
 async def test_hf_model_reasoning_field_and_think_tags_both_surfaces(allow_model_requests: None):
-    """No recorded Hugging Face response carries `reasoning`, so a mock client returns it next to `<think>` tags in `content`."""
+    """No recorded Hugging Face response carries both `reasoning` and `<think>` tags in `content`, so a mock client returns them together."""
     mock_client = MockHuggingFace.create_mock(
         completion_message(
             ChatCompletionOutputMessage(content='<think>hmm</think>42', reasoning='I computed it', role='assistant'),
@@ -1390,7 +1387,7 @@ async def test_hf_model_reasoning_field_and_think_tags_both_surfaces(allow_model
 
 
 async def test_hf_model_reasoning_field_thinking_part_round_trip(allow_model_requests: None):
-    """No recorded Hugging Face response carries `reasoning`, so a mock client returns it and captures the next request."""
+    """A mock client captures the follow-up request, since cassette replay does not match on the request body."""
     mock_client = MockHuggingFace.create_mock(
         [
             completion_message(
