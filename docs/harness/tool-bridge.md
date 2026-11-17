@@ -43,6 +43,7 @@ These tools are never bridged, so they reach the model as usual:
 
 - Tools that need approval or run outside the agent (`requires_approval=True`, external tools), so approval requests name the real tool. A bridged tool that raises `ApprovalRequired` itself is deferred as its `tool_call` call, and runs once that call is approved; a denial is recorded as the `tool_call` call's denied outcome.
 - Framework control tools, such as tool search and `load_capability`.
+- Code-execution tools, such as Code Mode's `run_code` and Shell's `run_command`, which take a program as a string argument, so it isn't sent JSON-escaped inside `args_json`.
 - Local fallbacks for a provider-native tool (`unless_native`), so the model can drop them when the provider runs the tool natively.
 
 Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`ToolSearch`](../capabilities/tool-search.md) has nothing left to reveal. Deferred tools that a capability owns, such as the tools of a capability with `defer_loading=True`, stay native, so core's tool search and `load_capability` reveal them as usual. A tool whose `unless_tool_kind` names another tool's kind is left out, as it would be without the bridge. The tool names `tool_search`, `tool_describe` and `tool_call` are reserved: an agent tool with one of them raises a `UserError`.

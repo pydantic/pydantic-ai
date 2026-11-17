@@ -6,13 +6,13 @@ import inspect
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.capabilities import ToolSearchFunc
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError, UserError
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.tool_manager import (
     ToolManager,
     _drop_superseded_tools as drop_superseded_tools,  # pyright: ignore[reportPrivateUsage]
@@ -21,7 +21,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets._tool_search import keywords_search_fn
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS, reserve_nested_call
+from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS, is_code_execution_tool, reserve_nested_call
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -135,13 +135,15 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         """Whether a wrapped tool goes behind the bridge.
 
         Framework control tools, local fallbacks for native tools, tools that need approval or run outside
-        the agent, and deferred tools a capability owns stay native, the last so core's tool search and
-        capability loading reveal them without changing the tool definitions already sent.
+        the agent, code-execution tools, whose program would otherwise travel JSON-escaped in `args_json`,
+        and deferred tools a capability owns stay native, the last so core's tool search and capability
+        loading reveal them without changing the tool definitions already sent.
         """
         return (
             tool_def.kind == 'function'
             and tool_def.tool_kind not in FRAMEWORK_CONTROL_TOOL_KINDS
             and not tool_def.unless_native
+            and not is_code_execution_tool(tool_def)
             and not (tool_def.defer_loading and tool_def.capability_id is not None)
             and await matches_tool_selector(self.tools, ctx, tool_def)
         )
@@ -188,8 +190,9 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         """Run a bridged tool through a nested `ToolManager`, so its validation and hooks apply as to a direct call.
 
-        The tool's retries are counted under its own name in the run's tool manager, as for a direct call,
-        so its `ctx.retry` and `max_retries` see only its own failures.
+        The nested manager shares the step's record of failed and successful tools with the run's, so the
+        tool's retries are counted under its own name, and its `ctx.retry` and `max_retries` see only its
+        own failures. A retry or failure it reports is passed on as `tool_call`'s.
         """
         parent = ctx.tool_manager
         if parent is None:
@@ -197,7 +200,14 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
                 "`ToolBridgeToolset` needs the run's tool manager, so bridged calls run through tool hooks."
             )
         name = target.tool_def.name
-        manager = ToolManager(toolset=self.wrapped, root_capability=parent.root_capability, ctx=ctx, tools=bridged)
+        manager = ToolManager(
+            toolset=self.wrapped,
+            root_capability=parent.root_capability,
+            ctx=ctx,
+            tools=bridged,
+            failed_tools=parent.failed_tools,
+            succeeded_tools=parent.succeeded_tools,
+        )
         assert ctx.tool_call_id is not None, 'the run sets the ID of the `tool_call` call being executed'
         # One `tool_call` runs one bridged call, so they share an ID, as a direct call would keep its own.
         call = ToolCallPart(tool_name=name, args=args_json or '{}', tool_call_id=ctx.tool_call_id)
@@ -208,27 +218,15 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         ctx.usage.tool_calls += reserved
         reserved *= 2
         try:
-            result = await manager.handle_call(
-                call, approved=ctx.tool_call_approved, metadata=ctx.tool_call_metadata, wrap_validation_errors=False
-            )
-        except ModelRetry as exc:
-            _count_failure(parent, ctx, target, exc)
-            raise
-        except ValidationError as exc:
-            _count_failure(parent, ctx, target, exc)
-            errors = exc.errors(include_url=False, include_context=False)
-            raise ModelRetry(f'Invalid arguments for tool {name!r}: {errors}') from exc
+            return await manager.handle_call(call, approved=ctx.tool_call_approved, metadata=ctx.tool_call_metadata)
+        except ToolRetryError as exc:
+            retry = exc.tool_retry
+            assert isinstance(retry, ToolReturnPart), 'a retry of a tool call answers it'
+            message = retry.model_response_str(wrap_if_error=False)
+            if not isinstance(retry.content, str):
+                message = f'Invalid arguments for tool {name!r}: {message}'
+            raise ModelRetry(message) from exc
+        except ToolFailedError as exc:
+            raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
-        parent.succeeded_tools.add(name)
-        return result
-
-
-def _count_failure(
-    parent: ToolManager[AgentDepsT], ctx: RunContext[AgentDepsT], target: ToolsetTool[AgentDepsT], exc: Exception
-) -> None:
-    """Count a failed bridged call against the bridged tool, as the run counts a failed direct call."""
-    name = target.tool_def.name
-    if ctx.retries.get(name, 0) >= target.max_retries:
-        raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {target.max_retries}') from exc
-    parent.failed_tools.add(name)

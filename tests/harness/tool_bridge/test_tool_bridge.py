@@ -18,7 +18,14 @@ from pydantic_ai.capabilities import (
     ToolSearch,
 )
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
-from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    ModelRetry,
+    ToolFailed,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -159,8 +166,8 @@ class TestToolBridge:
         assert _returns(result.all_messages()) == snapshot(
             [
                 "No tool named 'nope' is available through `tool_call`. Use `tool_search` to find one.",
-                "Invalid arguments for tool '_get_weather': [{'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'town': 'Paris'}}, {'type': 'extra_forbidden', 'loc': ('town',), 'msg': 'Extra inputs are not permitted', 'input': 'Paris'}]",
-                "Invalid arguments for tool '_get_weather': [{'type': 'json_invalid', 'loc': (), 'msg': 'Invalid JSON: expected ident at line 1 column 2', 'input': 'not json'}]",
+                'Invalid arguments for tool \'_get_weather\': [{"type":"missing","loc":["city"],"msg":"Field required","input":{"town":"Paris"}},{"type":"extra_forbidden","loc":["town"],"msg":"Extra inputs are not permitted","input":"Paris"}]',
+                'Invalid arguments for tool \'_get_weather\': [{"type":"json_invalid","loc":[],"msg":"Invalid JSON: expected ident at line 1 column 2","input":"not json"}]',
             ]
         )
 
@@ -472,3 +479,33 @@ class TestToolBridge:
             await agent.run('ping both', usage_limits=UsageLimits(tool_calls_limit=3))
 
         assert len(ran) == 1
+
+    async def test_code_execution_tools_stay_native(self):
+        def run_script(script: str) -> str:
+            """Run a script."""
+            return 'unused'  # pragma: no cover
+
+        seen: list[list[str]] = []
+        agent = Agent(
+            _scripted([], seen),
+            tools=[Tool(run_script, metadata={'code_arg_name': 'script'}), _get_time],
+            capabilities=[ToolBridge()],
+        )
+
+        await agent.run('hi')
+
+        assert seen == [['run_script', 'tool_search', 'tool_describe', 'tool_call']]
+
+    async def test_bridged_tool_failure(self):
+        def broken() -> str:
+            """Always fail for good."""
+            raise ToolFailed('service is down')
+
+        agent = Agent(
+            _scripted([_call('tool_call', name='broken', args_json='{}')]), tools=[broken], capabilities=[ToolBridge()]
+        )
+
+        result = await agent.run('go')
+
+        [failed] = _return_parts(result.all_messages())
+        assert (failed.tool_name, failed.outcome, failed.content) == ('tool_call', 'failed', 'service is down')
