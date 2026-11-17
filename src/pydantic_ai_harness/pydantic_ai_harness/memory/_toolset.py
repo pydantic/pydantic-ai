@@ -43,6 +43,7 @@ from pydantic_ai_harness.memory._store import (
     MetadataMemoryStore,
     SearchableMemoryStore,
     lexical_search,
+    list_scope_paths,
 )
 
 if TYPE_CHECKING:
@@ -741,7 +742,7 @@ async def _fallback_search(
     max_chars: int,
     max_file_chars: int,
 ) -> MemorySearchResult:
-    paths = await store.list_paths(prefix, limit=max_files + 1)
+    paths = await list_scope_paths(store, prefix, limit=max_files + 1)
     files: list[tuple[str, str]] = []
     scanned = 0
     content_truncated = False

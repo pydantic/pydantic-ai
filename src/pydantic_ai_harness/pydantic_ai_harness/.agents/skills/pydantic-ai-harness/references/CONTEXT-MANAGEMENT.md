@@ -20,6 +20,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Some old tool results are still needed verbatim, others are dead weight | `RelevanceCompaction` (a judge model ranks each older step) |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
 | The model knows when a phase of work ends and should compact then | `CompactOnRequest` |
+| A fresh tool result is junk the model should stop re-reading | `PruneToolResults` |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -247,6 +248,16 @@ agent = Agent(
 )
 ```
 
+### `PruneToolResults`
+
+`PruneToolResults(placeholder='[tool result pruned]')`: adds a `prune_tool_result(tool_call_id, summary)`
+tool. Once a call is accepted, the named result's content becomes `placeholder` plus the summary,
+persisted in history. Only results the latest response answered can be pruned; an unknown or older
+ID, a typed result `ClearToolResults` also keeps, or a summary not shorter than the result is
+refused in the tool return. Token triggers and `ReportContextUsage` anchor on the latest response's
+usage, which still counts the result until the next response. The span gets
+`compaction.model_requested`.
+
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
@@ -309,7 +320,7 @@ capability to see post-compaction usage, before it to see what triggered compact
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
   strategy between runs (for a `/compact` command). It applies no trigger of its own.
 
-Every rewrite (clear, dedupe, clamp, summarize) busts the provider prompt cache from the edit
+Every rewrite (clear, prune, dedupe, clamp, summarize) busts the provider prompt cache from the edit
 point onward.
 
 ## ToolOutputLimits

@@ -11,6 +11,7 @@ from pydantic_ai_harness.memory._in_memory import InMemoryMemoryStore
 from pydantic_ai_harness.memory._postgres import PostgresConnection, PostgresMemoryStore, PostgresPool
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import (
+    ChildListingMemoryStore,
     MemoryConflictError,
     MemoryFile,
     MemoryMutation,
@@ -31,6 +32,7 @@ from pydantic_ai_harness.memory._toolset import (
 )
 
 __all__ = [
+    'ChildListingMemoryStore',
     'FileMemoryStore',
     'InMemoryMemoryStore',
     'Memory',
