@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -13,13 +15,9 @@ from pydantic_ai import ToolDefinition
 from pydantic_ai.capabilities import ToolSearchFunc
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError, UserError
 from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
-from pydantic_ai.tool_manager import (
-    ToolManager,
-    _drop_superseded_tools as drop_superseded_tools,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
-from pydantic_ai.toolsets._tool_search import keywords_search_fn
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai_harness._code_tools import FRAMEWORK_CONTROL_TOOL_KINDS, is_code_execution_tool, reserve_nested_call
 
@@ -102,7 +100,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     """Which wrapped tools to bridge; the rest stay native."""
 
     search: ToolSearchFunc[AgentDepsT] | None = None
-    """Ranks the bridged tools for a `tool_search` query; `None` uses `ToolSearch`'s keyword matching."""
+    """Ranks the bridged tools for a `tool_search` query; `None` matches the query's words."""
 
     max_results: int = 10
     """Maximum number of `tool_search` results."""
@@ -114,11 +112,15 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         """Return the dispatcher tools plus the tools that aren't bridged."""
         native: dict[str, ToolsetTool[AgentDepsT]] = {}
         bridged: dict[str, ToolsetTool[AgentDepsT]] = {}
-        # Dropped here because the run's own `unless_tool_kind` filter only sees the tools left native.
-        for name, tool in drop_superseded_tools(await self.wrapped.get_tools(ctx)).items():
+        tools = await self.wrapped.get_tools(ctx)
+        # The run's `unless_tool_kind` filter only sees native tools, so the tools it decides between stay native.
+        superseding = {kind for tool in tools.values() if (kind := tool.tool_def.unless_tool_kind) is not None}
+        for name, tool in tools.items():
             if name in _DISPATCHERS:
                 raise UserError(f'Tool name {name!r} is reserved for `ToolBridge`. Rename the tool.')
-            if await self._bridges(ctx, tool.tool_def):
+            tool_def = tool.tool_def
+            steps_aside = tool_def.unless_tool_kind is not None or tool_def.tool_kind in superseding
+            if not steps_aside and await self._bridges(ctx, tool_def):
                 # The bridge discloses its tools itself, so tool search must not hold a deferred one back.
                 bridged[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=False))
             else:
@@ -183,7 +185,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     async def _search(
         self, ctx: RunContext[AgentDepsT], query: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
     ) -> list[_Match]:
-        search = self.search or keywords_search_fn
+        search = self.search or _keyword_search
         names = search(ctx, [query], [tool.tool_def for tool in bridged.values()])
         if inspect.isawaitable(names):
             names = await names
@@ -241,3 +243,15 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
+
+
+_WORD = re.compile(r'[a-z0-9]+')
+
+
+def _keyword_search(ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+    """Rank the tools by how many of the query's words appear in their name or description."""
+    words = set(_WORD.findall(' '.join(queries).lower()))
+    scores = {
+        tool.name: len(words & set(_WORD.findall(f'{tool.name} {tool.description or ""}'.lower()))) for tool in tools
+    }
+    return sorted((name for name, score in scores.items() if score), key=lambda name: -scores[name])

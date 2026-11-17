@@ -410,7 +410,8 @@ class TestToolBridge:
         async def step_aside(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
             return replace(tool_def, unless_tool_kind=READ_FILE_KIND)
 
-        model = _scripted([_call('tool_describe', name='cat_file')])
+        seen: list[list[str]] = []
+        model = _scripted([_call('tool_describe', name='cat_file')], seen)
         agent = Agent(
             model,
             tools=[Tool(cat_file, prepare=step_aside)],
@@ -423,6 +424,7 @@ class TestToolBridge:
 
         result = await agent.run('read a file')
 
+        assert 'read_file' in seen[0] and 'cat_file' not in seen[0]
         assert _returns(result.all_messages()) == [
             "No tool named 'cat_file' is available through `tool_call`. Use `tool_search` to find one."
         ]
@@ -546,3 +548,14 @@ class TestToolBridge:
         await agent.run('hi')
 
         assert seen == [['run_code']]
+
+    async def test_bridged_retries_spend_tool_call_retries(self):
+        def flaky() -> str:
+            """Always fail."""
+            raise ModelRetry('try again')
+
+        model = _scripted([_call('tool_call', name='flaky', args_json='{}')] * 3)
+        agent = Agent(model, tools=[Tool(flaky, max_retries=5)], capabilities=[ToolBridge(max_retries=1)])
+
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'tool_call' exceeded max retries count of 1"):
+            await agent.run('go')

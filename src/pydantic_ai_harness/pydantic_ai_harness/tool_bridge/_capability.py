@@ -40,7 +40,7 @@ class ToolBridge(AbstractCapability[AgentDepsT]):
     search: ToolSearchFunc[AgentDepsT] | None = None
     """Ranks the bridged tools for a `tool_search` query: `(ctx, queries, tools) -> names`, sync or async.
 
-    `None` (default) uses the keyword matching [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] uses.
+    `None` (default) ranks tools by how many of the query's words appear in their name or description.
     """
 
     max_results: int = 10

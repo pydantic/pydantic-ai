@@ -448,7 +448,7 @@ agent = Agent('test', capabilities=[ToolBridge(['github_search', 'github_get_iss
 ```
 
 Options: `tools` (`'all'`, a list of names, or a `(ctx, tool_def) -> bool` callable; the rest stay
-native), `search` (a `ToolSearchFunc`; `None` uses `ToolSearch`'s keyword matching), `max_results=10`, `max_retries=3`.
+native), `search` (a `ToolSearchFunc`; `None` matches query words against names and descriptions), `max_results=10`, `max_retries=3`.
 Gotchas: approval-required and external tools, framework control tools, code-execution tools (`run_code`,
 `run_command`) and `unless_native` fallbacks stay native, as do deferred tools a capability owns; other `defer_loading=True` tools are bridged, so `ToolSearch` has nothing left to reveal; the
 names `tool_search`, `tool_describe` and `tool_call` are reserved; each call costs an extra step and
