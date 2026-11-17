@@ -1292,31 +1292,33 @@ class OpenRouterModel(OpenAIChatModel):
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
         thinking = self._request_thinks(model_settings, model_request_parameters)
-        # Where forcing isn't supported while thinking, OpenRouter doesn't reject the request: it drops `reasoning`
-        # and answers without any, so a resolved forced choice falls back to `'auto'` rather than losing it. An
-        # explicit forcing `tool_choice` only conflicts with thinking the user asked for; thinking the model does by
-        # default, or at its lowest effort on `thinking=False`, gives way to it, as on the direct API.
-        requested_thinking = (
-            thinking
-            and model_request_parameters.thinking is not False
-            and (
-                'openrouter_reasoning' in model_settings
-                or model_settings.get('openai_reasoning_effort') is not None
-                or model_request_parameters.thinking is not None
+        profile = self._resolved_profile
+        disables_thinking = profile.get('forced_tool_choice_disables_thinking', False)
+        # A route that can't force while thinking returns a 400 whenever the request reasons. On Anthropic routes,
+        # where a forced choice answers without thinking, OpenRouter instead drops `reasoning` and answers without any,
+        # so a resolved forced choice falls back to `'auto'` rather than losing it, and an explicit forcing
+        # `tool_choice` only conflicts with thinking the user asked for: thinking the model does by default, or at its
+        # lowest effort on `thinking=False`, gives way to it, as on the direct API.
+        forcing_thinking = thinking
+        thinking_remedy = "Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`"
+        if disables_thinking:
+            forcing_thinking = (
+                thinking
+                and model_request_parameters.thinking is not False
+                and (
+                    'openrouter_reasoning' in model_settings
+                    or model_settings.get('openai_reasoning_effort') is not None
+                    or model_request_parameters.thinking is not None
+                )
             )
-        )
+            thinking_remedy = f'OpenRouter would silently drop reasoning. {thinking_remedy}'
         return support_tool_forcing(
             self.model_name,
             model_settings,
-            tool_forcing_unavailable_reason(
-                self._resolved_profile,
-                thinking=requested_thinking,
-                thinking_remedy=(
-                    'OpenRouter would silently drop reasoning. Disable thinking with `thinking=False` or '
-                    "`openrouter_reasoning={'enabled': False}`"
-                ),
-            ),
-            disables_thinking=thinking and self._resolved_profile.get('forced_tool_choice_disables_thinking', False),
+            tool_forcing_unavailable_reason(profile, thinking=forcing_thinking, thinking_remedy=thinking_remedy),
+            disables_thinking=thinking and disables_thinking,
+            # Outside Anthropic routes, a route that can't force while thinking returns a 400 for it.
+            api_rejects=not disables_thinking and profile.get('supports_forced_tool_choice', True),
         )
 
     @override
