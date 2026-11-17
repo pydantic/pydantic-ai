@@ -94,6 +94,8 @@ ZAI_BACKUP = Provider(
 )
 # OpenCode Zen's free models, with no key: OpenCode 2.2.5 then sends Zen the key `public`. Zen types a spent free
 # allowance `FreeUsageLimitError`, which OpenCode types `provider.quota`: `QUOTA_CODES` in `provider-error.ts`.
+# Only a `PR_REVIEW_MODEL_CHAIN` link runs it, and douwebot passes no configured chain, so no douwebot receipt names
+# its `review_engine`; give it its own `ReviewEngine` before douwebot can run it.
 OPENCODE_ZEN_FREE = Provider(
     'opencode',
     'opencode/hy4-flash-free',
