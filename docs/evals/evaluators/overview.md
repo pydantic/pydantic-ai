@@ -112,6 +112,8 @@ class ValidSQL(Evaluator):
             return False
 ```
 
+A plain function that takes an `EvaluatorContext` also works as an evaluator, see [Function Evaluators](custom.md#function-evaluators).
+
 **When to use:**
 
 - Domain-specific validation (SQL syntax, regex patterns, business rules)

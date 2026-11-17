@@ -16,6 +16,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -25,7 +26,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart, PartStartEvent, RequestUsage
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UnsupportedSettingWarning, UserError
 from pydantic_ai.messages import (
     BinaryAudio,
     BinaryContent,
@@ -38,11 +39,14 @@ from pydantic_ai.messages import (
     PartEndEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryInfo,
+    SpeechPart,
+    SpeechTimestamp,
     TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters, get_user_agent
 from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile
@@ -50,6 +54,7 @@ from pydantic_ai.realtime.codec import (
     AudioDelta,
     CommitAudio,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     ResponseDone,
     SessionUsage,
@@ -58,8 +63,10 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
 )
 from pydantic_ai.realtime.lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputLost,
+    OutputItemCut,
     RealtimeFrame,
     ResponseEnded,
     ResponseStarted,
@@ -70,7 +77,7 @@ from pydantic_ai.realtime.lifecycle import (
 from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, IsStr, try_import
 from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
@@ -121,10 +128,16 @@ class FakeWebSocket:
         self._incoming = [frame if isinstance(frame, str) else json.dumps(frame) for frame in incoming]
         self.sent: list[str] = []
         self.closed = False
+        self.drained = asyncio.Event()
+        """Set once a connection held open asks for a frame past the scripted ones.
+
+        The connection only asks for its next frame once the session has taken in the previous one, so by then
+        every scripted frame has been applied."""
 
     async def recv(self) -> str:
         if not self._incoming:
             if self.hold_open:
+                self.drained.set()
                 await asyncio.Event().wait()
             raise websockets.exceptions.ConnectionClosedOK(Close(1000, ''), None)
         return self._incoming.pop(0)
@@ -154,6 +167,7 @@ def agent_json(
     tools: list[dict[str, Any]] | None = None,
     tool_ids: list[str] | None = None,
     custom_llm_extra_body: bool = False,
+    realtime_model: str | None = None,
 ) -> dict[str, Any]:
     """A `GET /v1/convai/agents/{id}` response holding just what the preflight reads."""
     return {
@@ -164,6 +178,7 @@ def agent_json(
                 'prompt': {'prompt': 'Existing', 'tools': tools or [], 'tool_ids': tool_ids or []},
             },
             'conversation': {'client_events': ['audio', 'agent_response', 'user_transcript', 'context_usage']},
+            'realtime_model': realtime_model,
         },
         'platform_settings': {
             'auth': {'enable_auth': False},
@@ -338,6 +353,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=True,  # the toggle-gated `text_only` override
         supports_session_seeding=False,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
@@ -346,6 +362,7 @@ def test_profile() -> None:
         supports_async_tool_calls=False,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
+        output_speech_timestamp_granularity='word',
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,
@@ -365,11 +382,20 @@ def test_rejects_non_elevenlabs_provider() -> None:
 # --- settings the WebSocket cannot honor ---------------------------------------------------------
 
 
-async def test_reconnect_policy_raises() -> None:
-    model = _model(RestRecorder(agent_json()), settings=ElevenLabsAgentsRealtimeModelSettings(reconnect={}))
-    with pytest.raises(UserError, match='not resumed after a drop'):
+async def test_reconnect_policy_is_ignored_with_a_warning() -> None:
+    """A conversation isn't resumed after a drop, so a `reconnect` policy warns, as an ignored guarantee does."""
+    settings = ElevenLabsAgentsRealtimeModelSettings(reconnect={})
+    model = _model(RestRecorder(agent_json()), settings=settings)
+    with pytest.warns(
+        UnsupportedSettingWarning, match='`reconnect` setting is not supported.*A dropped connection ends'
+    ):
+        model._warn_unsupported_settings(settings, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # The session still opens; a drop ends it, as without a policy.
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    with patched_connect(ws):
         async with _connect(model):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_turn_detection_config_raises() -> None:
@@ -379,21 +405,22 @@ async def test_turn_detection_config_raises() -> None:
             pass  # pragma: no cover
 
 
-async def test_turn_detection_true_is_accepted() -> None:
+@pytest.mark.parametrize(
+    'settings',
+    [
+        ElevenLabsAgentsRealtimeModelSettings(turn_detection=True),
+        ElevenLabsAgentsRealtimeModelSettings(turn_detection={'sensitivity': 'high'}),
+        ElevenLabsAgentsRealtimeModelSettings(input_transcription_model=None),
+    ],
+    ids=['turn_detection=True', 'turn_detection_knobs', 'transcription=None'],
+)
+async def test_settings_the_agent_cannot_tune_are_ignored(settings: ElevenLabsAgentsRealtimeModelSettings) -> None:
+    """As on a standard model, a knob the agent WebSocket has no surface for is ignored rather than refused."""
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(RestRecorder(agent_json()))
     with patched_connect(ws):
-        async with _connect(model, model_settings=ElevenLabsAgentsRealtimeModelSettings(turn_detection=True)):
+        async with _connect(model, model_settings=settings):
             pass
-
-
-async def test_disabling_input_transcription_raises() -> None:
-    model = _model(RestRecorder(agent_json()))
-    with pytest.raises(UserError, match='cannot disable input transcription'):
-        async with _connect(
-            model, model_settings=ElevenLabsAgentsRealtimeModelSettings(input_transcription_model=None)
-        ):
-            pass  # pragma: no cover
 
 
 # --- REST preflight: override permissions --------------------------------------------------------
@@ -427,10 +454,18 @@ async def test_an_agent_without_context_usage_reports_warns_once() -> None:
     agent = agent_json()
     del agent['conversation_config']['conversation']
     model = _model(RestRecorder(agent))
-    with pytest.warns(UserWarning, match=r"doesn't send `context_usage` reports"):
+    with pytest.warns(UserWarning) as record:
         with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
             async with _connect(model):
                 pass
+    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
+        [
+            (
+                "The ElevenLabs agent 'agent_0101test' doesn't send `context_usage` reports, so the session has no context usage, and a spoken reply is taken to end after a second without audio rather than with its last audio. Add `context_usage` to the agent's `conversation.client_events` (Advanced > Client events in the agent's settings in the ElevenLabs dashboard) for both.",
+                'test_elevenlabs_agents.py',
+            )
+        ]
+    )
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
@@ -508,6 +543,47 @@ async def test_each_settings_override_requires_its_toggle() -> None:
         with pytest.raises(UserError, match=toggle_pattern):
             async with _connect(model, model_settings=settings):
                 pass  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ('settings', 'setting'),
+    [
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_llm='gpt-5.2'), r'agent\.prompt\.llm'),
+        (
+            ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tts={'model_id': 'eleven_turbo_v2'}),
+            r'tts\.model_id',
+        ),
+    ],
+    ids=['llm', 'tts-model'],
+)
+async def test_an_agent_in_realtime_voice_mode_refuses_the_overrides_it_ignores(
+    settings: ElevenLabsAgentsRealtimeModelSettings, setting: str
+) -> None:
+    """In Realtime voice mode, ElevenLabs picks the LLM and TTS model itself.
+
+    Verified live: the server accepts both overrides and answers with the agent's Realtime model and TTS model all the
+    same, so the preflight refuses them rather than let them be ignored. A unit test rather than a recording, because
+    the preflight raises before anything is sent.
+    """
+    model = _model(RestRecorder(agent_json(overrides=ALL_OVERRIDES_ENABLED, realtime_model='eleven_realtime_v1_mini')))
+    with pytest.raises(UserError, match=rf"Realtime voice mode \('eleven_realtime_v1_mini'\).*`{setting}`"):
+        async with _connect(model, model_settings=settings):
+            pass  # pragma: no cover
+
+
+async def test_an_agent_in_realtime_voice_mode_takes_the_overrides_it_honors() -> None:
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    settings = ElevenLabsAgentsRealtimeModelSettings(
+        elevenlabs_agents_voice_id='voice_1', elevenlabs_agents_tts={'stability': 0.4}
+    )
+    model = _model(RestRecorder(agent_json(overrides=ALL_OVERRIDES_ENABLED, realtime_model='eleven_realtime_v1_mini')))
+    with patched_connect(ws):
+        async with _connect(model, instructions='Be helpful.', model_settings=settings):
+            pass
+    assert ws.sent_frames()[0]['conversation_config_override'] == {
+        'agent': {'prompt': {'prompt': 'Be helpful.'}},
+        'tts': {'voice_id': 'voice_1', 'stability': 0.4},
+    }
 
 
 async def test_custom_llm_extra_body_requires_its_sibling_toggle() -> None:
@@ -617,11 +693,14 @@ async def test_tool_mismatch_errors_by_default() -> None:
     with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL, local_only]):
             pass  # pragma: no cover
-    message = str(exc_info.value)
-    assert "tool 'local_only' is not configured on the agent" in message
-    assert "agent client tool 'close_widget' is not defined by this agent run" in message
-    assert "tool 'get_weather' differs in description" in message
-    assert "tool 'get_weather' differs in parameters schema" in message
+    assert str(exc_info.value) == snapshot("""\
+The tools of the ElevenLabs agent 'agent_0101test' do not match this agent run:
+- tool 'local_only' is not configured on the agent
+- agent client tool 'close_widget' is not defined by this agent run
+- tool 'get_weather' differs in description
+- tool 'get_weather' differs in parameters schema
+Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent.\
+""")
 
 
 async def test_matching_tools_pass_the_default_check() -> None:
@@ -694,9 +773,14 @@ async def test_error_mode_matches_nested_and_optional_parameters() -> None:
 async def test_expects_response_disabled_on_the_agent_is_a_mismatch() -> None:
     remote = dict(WEATHER_TOOL_REMOTE, expects_response=False)
     model = _model(RestRecorder(agent_json(tools=[remote])))
-    with pytest.raises(UserError, match='has `expects_response` disabled'):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL]):
             pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot("""\
+The tools of the ElevenLabs agent 'agent_0101test' do not match this agent run:
+- agent client tool 'get_weather' has `expects_response` disabled, but Pydantic AI tools always return a result
+Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent.\
+""")
 
 
 async def test_server_side_tools_do_not_participate_in_the_check() -> None:
@@ -879,7 +963,11 @@ async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() ->
                         break
 
     [result] = [event for event in events if isinstance(event, FunctionToolResultEvent)]
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart)
+    assert (result.part.outcome, result.part.retry) == (
+        'retried',
+        RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
+    )
     assert 'Unknown tool name' in str(result.part.content)
     assert 'get_weather' in str(result.part.content)
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
@@ -1265,9 +1353,12 @@ async def test_tool_sync_requires_parameter_descriptions() -> None:
     recorder = RestRecorder(agent_json())
     model = _model(recorder)
     settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
-    with pytest.raises(UserError, match=r"requires a description for every tool parameter, and 'city' has none"):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[bare], model_settings=settings):
             pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot(
+        "Cannot sync tool 'get_weather': ElevenLabs requires a description for every tool parameter, and 'city' has none. Add parameter descriptions (e.g. in the function docstring) or simplify the parameter types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_agents_tool_sync='off'`."
+    )
     assert recorder.request_summaries() == [f'GET /v1/convai/agents/{AGENT_ID}']
 
 
@@ -1299,13 +1390,10 @@ async def test_tool_sync_validation_reports_every_offender_and_writes_nothing() 
     with pytest.raises(UserError) as exc_info:
         async with _connect(model, tools=[WEATHER_TOOL, bare, unexpressable], model_settings=settings):
             pass  # pragma: no cover
-    message = str(exc_info.value)
-    assert "Cannot sync tool 'set_language'" in message
-    assert "'language' has none" in message
-    assert "'region' has none" in message
-    assert "Cannot sync tool 'add_items'" in message
-    assert "'items' uses a JSON Schema feature" in message
-    assert 'get_weather' not in message
+    assert str(exc_info.value) == snapshot("""\
+Cannot sync tool 'set_language': ElevenLabs requires a description for every tool parameter, and 'language' has none; ElevenLabs requires a description for every tool parameter, and 'region' has none. Add parameter descriptions (e.g. in the function docstring) or simplify the parameter types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_agents_tool_sync='off'`.
+Cannot sync tool 'add_items': parameter 'items' uses a JSON Schema feature the ElevenLabs tool dialect cannot express (a union of types, or a recursive reference). Add parameter descriptions (e.g. in the function docstring) or simplify the parameter types, or keep the tool configured in the ElevenLabs dashboard with `elevenlabs_agents_tool_sync='off'`.\
+""")
     # Only the preflight ran: no tool listing, no creates, no agent re-point.
     assert recorder.request_summaries() == [f'GET /v1/convai/agents/{AGENT_ID}']
 
@@ -1439,6 +1527,57 @@ def test_elevenlabs_parameters_reject_inexpressible_shapes() -> None:
     )
     with pytest.raises(UserError, match=r'the parameters schema uses a JSON Schema feature'):
         rt_elevenlabs._tool_config(recursive_tool)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_elevenlabs_parameters_drop_keywords_outside_the_dialect() -> None:
+    """`propertyNames` and `contains` never reach the dialect, so a recursion through them still syncs.
+
+    Pydantic never emits `contains`, so the schema is written by hand. A unit test for the same reason
+    as the conversion test above.
+    """
+    tool = ToolDefinition(
+        name='tree',
+        description='Tree tool.',
+        parameters_json_schema={
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        'name': {'type': 'string', 'description': 'Name'},
+                        'kids': {
+                            'type': 'array',
+                            'items': {'type': 'string', 'description': 'Kid name'},
+                            'contains': {'$ref': '#/$defs/Node'},
+                            'description': 'Kids',
+                        },
+                    },
+                    'propertyNames': {'$ref': '#/$defs/Node'},
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'nodes': {
+                    'type': 'array',
+                    'items': {'type': 'string', 'description': 'Node name'},
+                    'contains': {'$ref': '#/$defs/Node'},
+                    'description': 'Nodes',
+                }
+            },
+        },
+    )
+    config = rt_elevenlabs._tool_config(tool)  # pyright: ignore[reportPrivateUsage]
+    assert config['parameters'] == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'nodes': {
+                    'type': 'array',
+                    'description': 'Nodes',
+                    'items': {'type': 'string', 'description': 'Node name'},
+                }
+            },
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -1605,8 +1744,12 @@ async def test_preflight_resolves_attached_tools_when_the_inline_list_is_empty()
             pass  # pragma: no cover
     # Both directions of the mismatch must be reported: the `other_tool` line can only appear if the
     # per-id fetch's config was retained into the check, not merely requested and discarded.
-    assert "tool 'get_weather' is not configured on the agent" in str(exc_info.value)
-    assert "agent client tool 'other_tool' is not defined by this agent run" in str(exc_info.value)
+    assert str(exc_info.value) == snapshot("""\
+The tools of the ElevenLabs agent 'agent_0101test' do not match this agent run:
+- tool 'get_weather' is not configured on the agent
+- agent client tool 'other_tool' is not defined by this agent run
+Update the agent's client tools to match, opt into `elevenlabs_agents_tool_sync='sync'` to sync them from Pydantic AI, or set `elevenlabs_agents_tool_sync='off'` to trust the agent.\
+""")
     assert recorder.request_summaries() == [
         f'GET /v1/convai/agents/{AGENT_ID}',
         'GET /v1/convai/tools/tool_1',
@@ -1807,7 +1950,8 @@ async def test_send_audio_rejects_non_pcm_media_type() -> None:
 async def test_send_text_frames_user_message() -> None:
     connection, ws = _connection()
     await connection.send('What is the weather?')
-    assert ws.sent_frames() == [{'type': 'user_message', 'text': 'What is the weather?'}]
+    # Under an id naming the input, which the reply answering it names in its `in_response_to_ids`.
+    assert ws.sent_frames() == [{'type': 'user_message', 'text': 'What is the weather?', 'id': 'pydantic_ai_input_0'}]
 
 
 async def test_send_text_context_frames_contextual_update() -> None:
@@ -1891,7 +2035,7 @@ async def test_a_reply_ends_with_its_last_audio_not_its_text() -> None:
     )
     assert events == [
         AudioDelta(data=b'\x00\x01'),
-        OutputTranscript(text='Hello!', is_final=True),
+        OutputTranscript(text='Hello!', is_final=True, item_id='resp_1'),
         AudioDelta(data=b'\x00\x01'),
         ResponseDone(provider_response_id='resp_1', provider_details=_CONVERSATION),
         _VOICED_USAGE,
@@ -2123,11 +2267,11 @@ async def test_user_transcript_maps_to_final_input_transcript() -> None:
 
 
 async def test_response_complete_after_the_boundary_is_dropped() -> None:
-    # `agent_response_complete` (text mode only, gated behind `client_events`) trails the
-    # `agent_response` that already closed the turn, so it must not emit a second boundary.
+    # `agent_response_complete` (gated behind `client_events`) trails the `agent_response` that already closed the
+    # turn, so it must not emit a second boundary.
     events, _ = await _events(
         [
-            {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}},
+            {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!', 'event_id': 2}},
             {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
@@ -2140,10 +2284,32 @@ async def test_response_complete_closes_an_audio_only_turn() -> None:
     events, _ = await _events(
         [
             {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 1}},
-            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 1}},
         ]
     )
     assert events == [AudioDelta(data=b'\x00\x01'), ResponseDone(provider_details=_CONVERSATION)]
+
+
+async def test_response_complete_of_an_earlier_turn_leaves_the_reply_under_way_alone() -> None:
+    # Verified live: in audio mode it arrives once the turn's audio has played out, long after that turn's reply
+    # ended, so a later turn's reply can be under way by then.
+    audio = base64.b64encode(b'\x00\x01').decode()
+    events, _ = await _events(
+        [
+            {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 2}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 1}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': 'Hi!', 'event_id': 2, 'response_id': 'resp_2'},
+            },
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
+        ]
+    )
+    assert events == [
+        AudioDelta(data=b'\x00\x01'),
+        OutputTranscript(text='Hi!', is_final=True, item_id='resp_2'),
+        ResponseDone(provider_response_id='resp_2', provider_details=_CONVERSATION),
+    ]
 
 
 async def test_a_boundary_with_nothing_streamed_is_dropped() -> None:
@@ -2229,6 +2395,433 @@ async def test_interruption_during_playback_does_not_taint_the_next_turn() -> No
     ]
 
 
+# One agent turn with two messages, as recorded live on an agent that speaks before calling a tool: what it says
+# before the call, then its answer to the result, each with its own `response_id` under the turn's `event_id`.
+_SPOKEN_BEFORE_THE_CALL = [
+    {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 10}},
+    {
+        'type': 'agent_response',
+        'agent_response_event': {
+            'agent_response': 'I am now going to check the weather in Berlin for you.',
+            'event_id': 10,
+            'response_id': 'resp_before_call',
+            'in_response_to_ids': ['user_1'],
+        },
+    },
+    {
+        'type': 'client_tool_call',
+        'client_tool_call': {
+            'tool_name': 'get_weather',
+            'tool_call_id': 'call_1',
+            'parameters': {'city': 'Berlin'},
+            'event_id': 10,
+            'expects_response': True,
+        },
+    },
+    {
+        'type': 'agent_tool_response',
+        'agent_tool_response': {'tool_name': 'get_weather', 'tool_call_id': 'call_1', 'event_id': 10},
+    },
+]
+
+
+def _correction(response_id: str, original: str, corrected: str) -> dict[str, Any]:
+    return {
+        'type': 'agent_response_correction',
+        'agent_response_correction_event': {
+            'original_agent_response': original,
+            'corrected_agent_response': corrected,
+            'event_id': 10,
+            'response_id': response_id,
+        },
+    }
+
+
+_CUT_BEFORE_THE_CALL = _correction(
+    'resp_before_call', 'I am now going to check the weather in Berlin for you.', 'I am now going to...'
+)
+"""Recorded live: a barge-in while the message before the call plays cuts it down to what was heard."""
+
+
+async def test_a_correction_of_an_earlier_message_leaves_the_reply_being_voiced_to_its_own() -> None:
+    """A barge-in corrects every message of the turn the user didn't hear in full, each by its `response_id`.
+
+    Recorded live: the message the user was hearing is cut down to what they heard, and the answer after the tool
+    call, voiced but never heard, is corrected to `''`. The answer, still being voiced (no `context_usage` marks its
+    last audio), ends with its own correction, not with the earlier message's. A unit test rather than a recording:
+    the barge-in has to land in the second after the reply's last audio arrives, which a live run can't time.
+    """
+    answer = 'It is sunny and 21 degrees in Berlin.'
+    events, _ = await _events(
+        [
+            *_SPOKEN_BEFORE_THE_CALL,
+            {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 10}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': answer, 'event_id': 10, 'response_id': 'resp_answer'},
+            },
+            {'type': 'interruption', 'interruption_event': {'event_id': 47}},
+            _CUT_BEFORE_THE_CALL,
+            _correction('resp_answer', answer, ''),
+        ]
+    )
+    assert events == [
+        AudioDelta(data=b'\x00\x01'),
+        OutputTranscript(
+            text='I am now going to check the weather in Berlin for you.', is_final=True, item_id='resp_before_call'
+        ),
+        ResponseDone(provider_response_id='resp_before_call', provider_details=_CONVERSATION),
+        ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city":"Berlin"}', response_usage_follows=True),
+        SessionUsage(usage=RequestUsage(), response_scoped=True),
+        AudioDelta(data=b'\x00\x01'),
+        OutputTranscript(text=answer, is_final=True, item_id='resp_answer'),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(
+            interrupted=True,
+            provider_response_id='resp_answer',
+            provider_details={'corrected_agent_response': '', **_CONVERSATION},
+        ),
+    ]
+
+
+async def test_a_correction_of_an_earlier_message_ends_the_streamed_reply_without_its_text() -> None:
+    """A barge-in while the answer after a tool call streams (recorded live, with text parts in `client_events`).
+
+    The answer never gets its `agent_response`, and the one correction names the message before the call, so the
+    answer ends as interrupted, without that message's text as its own.
+    """
+    events, _ = await _events(
+        [
+            *_SPOKEN_BEFORE_THE_CALL,
+            {
+                'type': 'agent_chat_response_part',
+                'text_response_part': {'text': '', 'type': 'start', 'event_id': 10, 'response_id': 'resp_answer'},
+            },
+            {
+                'type': 'agent_chat_response_part',
+                'text_response_part': {
+                    'text': 'The weather in Berlin is',
+                    'type': 'delta',
+                    'event_id': 10,
+                    'response_id': 'resp_answer',
+                },
+            },
+            {'type': 'interruption', 'interruption_event': {'event_id': 43}},
+            _CUT_BEFORE_THE_CALL,
+        ]
+    )
+    assert events[-3:] == [
+        OutputTranscript(text='The weather in Berlin is', is_final=False, item_id='resp_answer'),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(interrupted=True, provider_details=_CONVERSATION),
+    ]
+
+
+async def test_corrections_after_the_replies_ended_revise_what_history_recorded() -> None:
+    """A barge-in during playback of a turn whose replies have all ended, as recorded live.
+
+    Synthesis outruns playback, so both messages of the turn (what the agent said before calling the tool, and its
+    answer to the result) have ended with their last audio by the time the user cuts in. ElevenLabs' corrections say
+    what was heard of each: history swaps in copies, in the same positions, of the cut-off message cut down to what
+    was heard and of the answer, never heard, with no transcript, each keeping what the agent said. A snapshot of
+    history taken before is left as it was.
+    """
+    answer = 'It is sunny and 21 degrees in Berlin.'
+    ws = FakeWebSocket(
+        [
+            HANDSHAKE_FRAME,
+            *_SPOKEN_BEFORE_THE_CALL,
+            {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 10}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': answer, 'event_id': 10, 'response_id': 'resp_answer'},
+            },
+            _VOICED,
+            {'type': 'interruption', 'interruption_event': {'event_id': 47}},
+            _CUT_BEFORE_THE_CALL,
+            _correction('resp_answer', answer, ''),
+        ]
+    )
+    ws.hold_open = True
+    model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'It is sunny in {city}.'
+
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
+
+    before: list[ModelMessage] = []
+    with patched_connect(ws):
+        async with agent.realtime(model, model_settings=settings).session() as session:
+            with anyio.fail_after(10):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeResponseInterruptedEvent):
+                        before = session.all_messages()
+                        break
+                # The corrections make no event of their own: they only revise history.
+                await ws.drained.wait()
+
+    def spoken(messages: list[ModelMessage]) -> list[tuple[str | None, dict[str, Any] | None, str]]:
+        return [
+            (part.transcript, part.provider_details, message.state)
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, SpeechPart)
+        ]
+
+    assert spoken(before) == [
+        ('I am now going to check the weather in Berlin for you.', None, 'complete'),
+        (answer, None, 'complete'),
+    ]
+    assert spoken(session.all_messages()) == [
+        (
+            'I am now going to...',
+            {'original_transcript': 'I am now going to check the weather in Berlin for you.'},
+            'interrupted',
+        ),
+        (None, {'original_transcript': answer}, 'interrupted'),
+    ]
+    assert [type(message) for message in session.all_messages()] == [type(message) for message in before]
+
+
+def _aligned_audio(text: str, *, event_id: int = 1) -> dict[str, Any]:
+    """An audio frame timing `text`, a stretch of speech of its own, at 100 ms a character from the stretch's start."""
+    return {
+        'type': 'audio',
+        'audio_event': {
+            'audio_base_64': base64.b64encode(b'\x00\x01').decode(),
+            'event_id': event_id,
+            'alignment': {
+                'chars': list(text),
+                'char_start_times_ms': [index * 100 for index in range(len(text))],
+                'char_durations_ms': [100] * len(text),
+            },
+        },
+    }
+
+
+def _timed_connection(
+    incoming: Sequence[dict[str, Any] | str], *, strip_audio_tags: bool = True
+) -> ElevenLabsAgentsRealtimeConnection:
+    ws = FakeWebSocket(list(incoming))
+    return ElevenLabsAgentsRealtimeConnection(
+        ws,  # type: ignore[arg-type]
+        conversation_id='conv_1',
+        strip_audio_tags=strip_audio_tags,
+        speech_timestamps=True,
+    )
+
+
+async def test_speech_timestamps_group_aligned_characters_into_words() -> None:
+    """Each stretch is timed from its own start, and one can end mid-word (verified live).
+
+    A stretch starts where the ones before it ended, as a frame without an `alignment` doesn't move it; a word split
+    between stretches runs from its first character to its last, and the response's last word ends with its audio.
+    """
+    incoming = [
+        _aligned_audio('Hi the'),
+        {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 1}},
+        _aligned_audio('re. Bye'),
+        {
+            'type': 'agent_response',
+            'agent_response_event': {'agent_response': 'Hi there. Bye', 'response_id': 'resp_1', 'event_id': 1},
+        },
+        _VOICED,
+    ]
+    events = await collect_codec_events(_timed_connection(incoming))
+    assert events == [
+        AudioDelta(data=b'\x00\x01'),
+        OutputSpeechTimestamps([SpeechTimestamp(text='Hi', start_ms=0, duration_ms=200)]),
+        AudioDelta(data=b'\x00\x01'),
+        AudioDelta(data=b'\x00\x01'),
+        OutputSpeechTimestamps([SpeechTimestamp(text='there.', start_ms=300, duration_ms=600)]),
+        OutputTranscript(text='Hi there. Bye', is_final=True, item_id='resp_1'),
+        OutputSpeechTimestamps([SpeechTimestamp(text='Bye', start_ms=1000, duration_ms=300)]),
+        ResponseDone(provider_response_id='resp_1', provider_details=_CONVERSATION),
+        _VOICED_USAGE,
+    ]
+
+    # Without `output_speech_timestamps`, the alignment is ignored.
+    events, _ = await _events(incoming)
+    assert not any(isinstance(event, OutputSpeechTimestamps) for event in events)
+
+
+async def test_speech_timestamps_start_over_with_each_response() -> None:
+    """The response that calls a tool and the one answering its result are timed in their own audio, in one turn."""
+    events = await collect_codec_events(
+        _timed_connection(
+            [
+                _aligned_audio('One moment.', event_id=10),
+                _tool_call_frame('get_weather'),
+                _aligned_audio('Sunny.', event_id=10),
+                {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Sunny.', 'event_id': 10}},
+                _VOICED,
+            ]
+        )
+    )
+    assert [event for event in events if isinstance(event, (OutputSpeechTimestamps, SessionUsage, ResponseDone))] == [
+        OutputSpeechTimestamps([SpeechTimestamp(text='One', start_ms=0, duration_ms=300)]),
+        OutputSpeechTimestamps([SpeechTimestamp(text='moment.', start_ms=400, duration_ms=700)]),
+        SessionUsage(usage=RequestUsage(), response_scoped=True),
+        OutputSpeechTimestamps([SpeechTimestamp(text='Sunny.', start_ms=0, duration_ms=600)]),
+        ResponseDone(provider_details=_CONVERSATION),
+        _VOICED_USAGE,
+    ]
+
+
+@pytest.mark.parametrize(
+    'strip_audio_tags, words',
+    [
+        (True, ['Hi', 'there', '[Your', 'Name]', '[1]', 'Hello', f'[{"a" * 30}', 'b' * 30, '[unclosed']),
+        (
+            False,
+            [
+                '[laughs]',
+                'Hi',
+                '[strong',
+                'accent]',
+                'there',
+                '[Your',
+                'Name]',
+                '[1]',
+                '[laughs][sighs]Hello',
+                f'[{"a" * 30}',
+                'b' * 30,
+                '[unclosed',
+            ],
+        ),
+    ],
+)
+async def test_speech_timestamps_leave_out_stripped_audio_tags(strip_audio_tags: bool, words: list[str]) -> None:
+    """An expressive voice's audio tags are timed (verified live), and go as from the transcript, wherever they are."""
+    text = f'[laughs] Hi [strong accent] there [Your Name] [1] [laughs][sighs]Hello [{"a" * 30} {"b" * 30} [unclosed'
+    events = await collect_codec_events(
+        _timed_connection(
+            [
+                _aligned_audio(text),
+                {'type': 'agent_response', 'agent_response_event': {'agent_response': text}},
+                _VOICED,
+            ],
+            strip_audio_tags=strip_audio_tags,
+        )
+    )
+    timed = [
+        timestamp.text
+        for event in events
+        if isinstance(event, OutputSpeechTimestamps)
+        for timestamp in event.timestamps
+    ]
+    assert timed == words
+
+
+def _cut_off(response_id: str, text: str, heard: str, *, when: str, event_id: int) -> list[dict[str, Any]]:
+    """An agent message timed word by word that a barge-in cuts off, as recorded live for each moment it can land.
+
+    Its audio ends mid-word, so its last word is timed only once its response ends.
+    """
+
+    def response(said: str) -> dict[str, Any]:
+        return {
+            'type': 'agent_response',
+            'agent_response_event': {'agent_response': said, 'event_id': event_id, 'response_id': response_id},
+        }
+
+    interruption = {'type': 'interruption', 'interruption_event': {'event_id': event_id + 1}}
+    if when == 'generated':
+        # The text that follows is already cut down to what was heard, with no correction.
+        return [_aligned_audio(text, event_id=event_id), interruption, response(heard)]
+    return [
+        _aligned_audio(text, event_id=event_id),
+        response(text),
+        *([_VOICED] if when == 'ended' else []),
+        interruption,
+        _correction(response_id, text, heard),
+    ]
+
+
+@pytest.mark.parametrize('when', ['ended', 'voiced', 'generated'])
+async def test_a_barge_in_drops_the_timestamps_of_the_words_not_heard(when: str) -> None:
+    """The heard text of a message a barge-in cuts off says where its playback stopped: before its first unheard word.
+
+    Verified live, where ElevenLabs' cut-down text matched the timed words one for one, whether the barge-in landed
+    after the message's response ended, while its audio was still coming, or while it was still being generated. A
+    message heard in full keeps them all.
+    """
+    ws = FakeWebSocket(
+        [
+            HANDSHAKE_FRAME,
+            *_cut_off('resp_1', 'Hello there friend.', 'Hello there...', when=when, event_id=1),
+            _correction('resp_unknown', 'Gone.', ''),
+            *_cut_off('resp_2', 'Bye.', 'Bye.', when=when, event_id=3),
+        ]
+    )
+    ws.hold_open = True
+    model = _model(RestRecorder(agent_json()))
+    settings = ElevenLabsAgentsRealtimeModelSettings(output_speech_timestamps=True)
+    with patched_connect(ws):
+        async with Agent().realtime(model, model_settings=settings).session() as session:
+            interruptions = 0
+            with anyio.fail_after(10):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeResponseInterruptedEvent):
+                        interruptions += 1
+                        if interruptions == 2:
+                            break
+                # The corrections make no event of their own: they only revise history.
+                await ws.drained.wait()
+
+    parts = [
+        part
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+    assert [(part.transcript, part.interrupted_at_ms, part.timestamps) for part in parts] == [
+        (
+            'Hello there...',
+            1200,
+            [
+                SpeechTimestamp(text='Hello', start_ms=0, duration_ms=500),
+                SpeechTimestamp(text='there', start_ms=600, duration_ms=500),
+            ],
+        ),
+        ('Bye.', None, [SpeechTimestamp(text='Bye.', start_ms=0, duration_ms=400)]),
+    ]
+
+
+async def test_a_barge_in_finds_the_words_of_recent_messages_only() -> None:
+    """A barge-in cuts the messages of the turn under way, so the words of older ones aren't kept to cut."""
+    incoming: list[dict[str, Any]] = []
+    for turn in range(10):
+        incoming += [
+            _aligned_audio('Hi there.', event_id=turn),
+            {
+                'type': 'agent_response',
+                'agent_response_event': {
+                    'agent_response': 'Hi there.',
+                    'event_id': turn,
+                    'response_id': f'resp_{turn}',
+                },
+            },
+            _VOICED,
+        ]
+    incoming += [
+        {'type': 'interruption', 'interruption_event': {'event_id': 10}},
+        _correction('resp_0', 'Hi there.', 'Hi...'),
+        _correction('resp_9', 'Hi there.', 'Hi...'),
+    ]
+    connection = _timed_connection(incoming)
+    cuts = [event async for frame in connection.frames() for event in frame if isinstance(event, OutputItemCut)]
+    assert cuts == [
+        OutputItemCut(item_id='resp_0', heard_transcript='Hi...'),
+        OutputItemCut(item_id='resp_9', heard_transcript='Hi...', heard_ms=300),
+    ]
+
+
 async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None:
     # `parameters` arrives as a parsed object; the codec's `args` is a string, so it is re-serialized.
     events, _ = await _events(
@@ -2251,25 +2844,36 @@ async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None
     ]
 
 
-@pytest.mark.parametrize('ended_by', ['quiet', 'next-frame', 'drop'])
+@pytest.mark.parametrize('ended_by', ['quiet', 'next-frame', 'drop', 'malformed-frame'])
 async def test_a_replys_parallel_tool_calls_are_one_response(ended_by: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Verified live: a reply's parallel calls come as separate frames, back to back, and nothing follows until their
     # results are in. They are one response, which ends once no more come.
     monkeypatch.setattr(rt_elevenlabs, '_TOOL_CALL_BATCH_WINDOW', 0.01)
-    after: list[dict[str, Any]] = {'quiet': [], 'next-frame': [_VOICED], 'drop': []}[ended_by]
+    bad_audio = {'type': 'audio', 'audio_event': {'audio_base_64': '!!!!', 'event_id': 2}}
+    after: list[dict[str, Any]] = {'quiet': [], 'next-frame': [_VOICED], 'drop': [], 'malformed-frame': [bad_audio]}[
+        ended_by
+    ]
     connection, ws = _connection(
         [_tool_call_frame('get_weather'), _tool_call_frame('get_time', tool_call_id='call_2'), *after]
     )
-    ws.hold_open = ended_by != 'drop'
+    ws.hold_open = ended_by in ('quiet', 'next-frame')
     frames = connection.frames()
     seen: list[Any] = []
+    last: RealtimeFrame = []
     while not any(isinstance(event, ResponseEnded) for event in seen):
-        seen += await anext(frames)
+        last = await anext(frames)
+        seen += last
     started = [event for event in seen if isinstance(event, ResponseStarted)]
     ended = [event for event in seen if isinstance(event, ResponseEnded)]
     calls = [event.tool_call_id for event in seen if isinstance(event, ToolCall)]
     assert (len(started), calls) == (1, ['call_1', 'call_2'])
     assert [(event.status, event.finish_reason) for event in ended] == [('completed', 'tool_call')]
+    if ended_by == 'malformed-frame':
+        # Any frame but another call ends them, by its type alone: the malformed one does, and reports its payload.
+        error = last[-1]
+        assert isinstance(error, RealtimeSessionErrorEvent)
+        assert error.recoverable
+        assert error.message.startswith('Failed to parse ElevenLabs Agents event')
 
 
 async def test_fire_and_forget_tool_calls_never_send_a_result() -> None:
@@ -2432,7 +3036,7 @@ async def test_malformed_event_payload_is_recoverable_and_leaves_turn_state_alon
             {'type': 'audio', 'audio_event': {}},
             {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 1}},
             {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 2}},
-            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 3}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
     error, *rest = events
@@ -2450,7 +3054,7 @@ async def test_corrupted_audio_base64_is_a_recoverable_error() -> None:
         [
             {'type': 'audio', 'audio_event': {'audio_base_64': '!!!!', 'event_id': 1}},
             {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 2}},
-            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 3}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
     error, *rest = events
@@ -2543,7 +3147,7 @@ async def test_a_text_turn_is_answered_by_the_response_it_starts() -> None:
                 ),
                 AudioDelta(data=b'\x00\x01'),
             ],
-            [OutputTranscript(text='Hello!', is_final=True)],
+            [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')],
             [
                 ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
                 ResponseEnded(
@@ -2577,7 +3181,7 @@ async def test_a_barge_in_leaves_the_truncated_reply_with_the_cut_off_response()
             ],
             [RealtimeResponseInterruptedEvent()],
             [
-                OutputTranscript(text='Once...', is_final=True),
+                OutputTranscript(text='Once...', is_final=True, item_id='resp_1'),
                 ResponseDone(
                     interrupted=True, provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}
                 ),
@@ -2629,8 +3233,295 @@ async def test_a_barge_in_the_users_words_overtake_still_ends_the_cut_off_respon
                     status='cancelled',
                     provider_details={'conversation_id': 'conv_1'},
                 ),
-                StaleEvent(event=OutputTranscript(text='Once...', is_final=True)),
+                StaleEvent(event=OutputTranscript(text='Once...', is_final=True, item_id='resp_1')),
             ],
+        ]
+    )
+
+
+def _reply(text: str, *, event_id: int, response_id: str, answers: list[str]) -> dict[str, Any]:
+    return {
+        'type': 'agent_response',
+        'agent_response_event': {
+            'agent_response': text,
+            'event_id': event_id,
+            'response_id': response_id,
+            'in_response_to_ids': answers,
+        },
+    }
+
+
+_GREETING_CUT = _reply('...', event_id=1, response_id='resp_greeting', answers=[])
+"""Recorded live: the agent's greeting, cut off by text sent as it started, answers nothing."""
+
+
+async def test_a_reply_that_names_none_of_the_text_leaves_it_to_the_next() -> None:
+    """Text sent just as the greeting starts is taken for what the greeting answers, until the greeting names none.
+
+    Recorded live: the text cuts the greeting off, and the reply after it names the text in its
+    `in_response_to_ids`. So the text's reply is the second response, which `wait_for_reply()` waits for.
+    """
+    connection, ws = _connection()
+    assert await connection.send('What is two plus two?') == snapshot([InputAdded(input_id=0)])
+    second_audio = {
+        'type': 'audio',
+        'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
+    }
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            {'type': 'interruption', 'interruption_event': {'event_id': 2}},
+            _GREETING_CUT,
+            second_audio,
+            _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
+            _VOICED,
+        ],
+    )
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [RealtimeResponseInterruptedEvent()],
+            [
+                AnswersRevised(response_id='pydantic_ai_response_1', released=(0,)),
+                OutputTranscript(text='...', is_final=True, item_id='resp_greeting'),
+                ResponseDone(
+                    interrupted=True,
+                    provider_response_id='resp_greeting',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='cancelled',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+            ],
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_2', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [OutputTranscript(text='Four.', is_final=True, item_id='resp_reply')],
+            [
+                ResponseDone(provider_response_id='resp_reply', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_2',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
+            ],
+        ]
+    )
+
+
+async def test_an_empty_reply_text_still_revises_the_reply_under_way() -> None:
+    """Reply text that says nothing (only audio tags, say) makes no output, but its names revise the reply all the same."""
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(connection, ws, [_AUDIO, _reply('', event_id=1, response_id='resp_1', answers=[])])
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [
+                AnswersRevised(response_id='pydantic_ai_response_1', released=(0,)),
+                OutputTranscript(text='', is_final=True, item_id='resp_1'),
+            ],
+        ]
+    )
+
+
+async def test_a_reply_text_after_another_message_of_the_turn_revises_its_own_response() -> None:
+    """A turn's next message ends the one still being voiced before its own text starts a response: the text's names
+    are that new response's, and leave the one that ended alone (which still answers the text, as its own text said).
+    """
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            _reply('Let me check.', event_id=1, response_id='resp_a', answers=['pydantic_ai_input_0']),
+            _AUDIO,
+            _reply('All done.', event_id=1, response_id='resp_b', answers=[]),
+        ],
+    )
+    assert not [event for frame in frames for event in frame if isinstance(event, AnswersRevised)]
+    assert frames[-1][:3] == [
+        ResponseDone(provider_response_id='resp_a', provider_details={'conversation_id': 'conv_1'}),
+        ResponseEnded(
+            response_id='pydantic_ai_response_1', status='completed', provider_details={'conversation_id': 'conv_1'}
+        ),
+        ResponseStarted(response_id='pydantic_ai_response_2', answers=(), basis='inferred', provider_id=False),
+    ]
+
+
+async def test_an_echoed_id_that_does_not_parse_is_ignored() -> None:
+    """An id with our prefix that names no input is ignored rather than failing the frame, so the reply still lands."""
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            _reply(
+                'Hello!', event_id=1, response_id='resp_1', answers=['pydantic_ai_input_oops', 'pydantic_ai_input_0']
+            ),
+        ],
+    )
+    assert frames[-1] == [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')]
+
+
+async def test_a_reply_naming_what_the_user_said_releases_no_text() -> None:
+    """A reply that names something besides text (speech, by an id the server made up) may have folded that in after
+    the text, naming only it: the text it was taken to answer stays answered, rather than wait for a reply naming it.
+    """
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [_AUDIO, _reply('Hello!', event_id=1, response_id='resp_1', answers=['3ed477e9-19e0-4d5a-a746-e21315b1c646'])],
+    )
+    assert frames[-1] == [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')]
+
+
+class _PacedWebSocket(FakeWebSocket):
+    """A connection held open that hands out its scripted frames a batch at a time, as the test releases them."""
+
+    hold_open = True
+
+    def __init__(self, incoming: Sequence[dict[str, Any] | str]) -> None:
+        super().__init__(incoming)
+        self._released = asyncio.Event()
+
+    def release(self, frames: Sequence[dict[str, Any]]) -> None:
+        self.drained.clear()
+        self._incoming.extend(json.dumps(frame) for frame in frames)
+        self._released.set()
+
+    async def recv(self) -> str:
+        while not self._incoming:
+            self._released.clear()
+            self.drained.set()
+            await self._released.wait()
+        return self._incoming.pop(0)
+
+
+async def test_wait_for_reply_waits_past_a_greeting_the_text_cut_off() -> None:
+    """`wait_for_reply()` for text sent as the greeting started ends with the reply that names the text.
+
+    The order of what was sent and received credits the greeting with the text; its `in_response_to_ids` (empty, as
+    recorded live) says otherwise, so the wait goes on until the reply that does name it.
+    """
+    ws = _PacedWebSocket([HANDSHAKE_FRAME])
+    model = _model(RestRecorder(agent_json()))
+    agent: Agent[None, str] = Agent()
+    with patched_connect(ws):
+        async with agent.realtime(model).session() as session:
+            with anyio.fail_after(10):
+                await session.send('What is two plus two?')
+                replied = anyio.Event()
+
+                async def wait() -> None:
+                    await session.wait_for_reply()
+                    replied.set()
+
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(wait)
+                    ws.release([_AUDIO, {'type': 'interruption', 'interruption_event': {'event_id': 2}}, _GREETING_CUT])
+                    await ws.drained.wait()
+                    assert not replied.is_set()
+                    ws.release(
+                        [
+                            {
+                                'type': 'audio',
+                                'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
+                            },
+                            _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
+                            _VOICED,
+                        ]
+                    )
+    replies = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [(reply.provider_response_id, reply.state) for reply in replies] == [
+        ('resp_greeting', 'interrupted'),
+        ('resp_reply', 'complete'),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('answers', 'revision'),
+    [
+        ([], [AnswersRevised(response_id='pydantic_ai_response_1', released=(0,))]),
+        (['pydantic_ai_input_0'], []),
+    ],
+    ids=['names-none', 'names-the-text'],
+)
+async def test_a_cut_off_reply_whose_text_trails_its_end_is_revised_before_it_ends(
+    answers: list[str], revision: list[AnswersRevised]
+) -> None:
+    """The user's words overtake the cut-off reply's text, which then trails the end of its response: the revision
+    its names make comes ahead of that end, while the reply is still under way."""
+    connection, ws = _connection()
+    await connection.send('What is two plus two?')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            {'type': 'interruption', 'interruption_event': {'event_id': 3}},
+            {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Stop.', 'event_id': 3}},
+            _reply('...', event_id=1, response_id='resp_1', answers=answers),
+        ],
+    )
+    assert frames[-1] == [
+        *revision,
+        ResponseDone(interrupted=True, provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+        ResponseEnded(
+            response_id='pydantic_ai_response_1', status='cancelled', provider_details={'conversation_id': 'conv_1'}
+        ),
+        StaleEvent(event=OutputTranscript(text='...', is_final=True, item_id='resp_1')),
+    ]
+
+
+async def test_a_reply_answers_text_sent_after_it_started_that_it_names() -> None:
+    """A reply naming text that reached the agent after it started answers that text too, as do any sent before it.
+
+    Text sent while the agent speaks folds into its next reply, which may name only the latest (verified live).
+    """
+    ws = FakeWebSocket([_AUDIO])
+    ws.hold_open = True
+    connection = ElevenLabsAgentsRealtimeConnection(ws, conversation_id='conv_1')  # type: ignore[arg-type]
+    await connection.send('Hi')
+    frames = connection.frames()
+    assert await anext(frames) == snapshot(
+        [
+            ResponseStarted(response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False),
+            AudioDelta(data=b'\x00\x01'),
+        ]
+    )
+    await connection.send('And the weather?')
+    await connection.send('In Berlin, please.')
+    reply = _reply('Hello! It is sunny in Berlin.', event_id=1, response_id='resp_1', answers=['pydantic_ai_input_2'])
+    ws._incoming.append(json.dumps(reply))  # pyright: ignore[reportPrivateUsage]
+    assert await anext(frames) == snapshot(
+        [
+            AnswersRevised(response_id='pydantic_ai_response_1', claimed=(1, 2)),
+            OutputTranscript(text='Hello! It is sunny in Berlin.', is_final=True, item_id='resp_1'),
         ]
     )
 
@@ -2719,6 +3610,107 @@ async def test_a_dropped_connection_loses_the_response_under_way() -> None:
                 message='ElevenLabs Agents connection closed: received 1000 (OK); no close frame sent',
                 recoverable=False,
             ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'malformed, payload_model',
+    [
+        ({'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}}, '_ContextUsageEvent'),
+        ({'type': 'agent_response', 'agent_response_event': {'event_id': 2}}, '_AgentResponseEvent'),
+        ({'type': 'user_transcript', 'user_transcription_event': {}}, '_UserTranscriptEvent'),
+    ],
+    ids=['context-usage', 'agent-response', 'user-transcript'],
+)
+async def test_a_malformed_frame_still_ends_the_reply_its_type_ends(
+    malformed: dict[str, Any], payload_model: str
+) -> None:
+    # What a frame ends follows from its type alone, so the reply ends with a malformed frame as with a well-formed
+    # one, which is a recoverable error, and the next reply is a response of its own, after the user's words.
+    connection, ws = _connection()
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _agent_response('Hi.'),
+            malformed,
+            {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Again.'}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': 'Done.', 'event_id': 2, 'response_id': 'resp_2'},
+            },
+            _VOICED,
+        ],
+    )
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                OutputTranscript(text='Hi.', is_final=True, item_id='resp_1'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                RealtimeSessionErrorEvent(
+                    message=IsStr(
+                        regex=rf'Failed to parse ElevenLabs Agents event: 1 validation error for {payload_model}\n.*',
+                        regex_flags=re.DOTALL,
+                    )
+                ),
+            ],
+            [
+                UserTurnStarted(turn_id='pydantic_ai_user_turn_1'),
+                UserTurnEnded(turn_id='pydantic_ai_user_turn_1'),
+                InputTranscript(text='Again.', is_final=True),
+            ],
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_2',
+                    basis='inferred',
+                    user_turn_id='pydantic_ai_user_turn_1',
+                    provider_id=False,
+                ),
+                OutputTranscript(text='Done.', is_final=True, item_id='resp_2'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_2', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_2',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
+            ],
+        ]
+    )
+
+    # The reply is over before the connection drops, so it isn't lost with it.
+    connection, ws = _connection()
+    assert await _frames(connection, ws, [_agent_response('Hi.'), malformed]) == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                OutputTranscript(text='Hi.', is_final=True, item_id='resp_1'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                RealtimeSessionErrorEvent(
+                    message=IsStr(
+                        regex=rf'Failed to parse ElevenLabs Agents event: 1 validation error for {payload_model}\n.*',
+                        regex_flags=re.DOTALL,
+                    )
+                ),
+            ],
         ]
     )
 
@@ -2934,8 +3926,16 @@ async def test_an_mcp_call_awaiting_approval_is_denied(reported: bool) -> None:
     # response it belongs to.
     connection, ws = _connection()
     frames = connection.frames()
-    with pytest.warns(UserWarning, match='cannot do, so the call was denied'):
+    with pytest.warns(UserWarning) as record:
         first = await _next_frames(frames, ws, [_mcp_call('awaiting_approval', approval_timeout_secs=300)])
+    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
+        [
+            (
+                'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval off for the tool on the ElevenLabs side.',
+                'elevenlabs_agents.py',
+            )
+        ]
+    )
     assert ws.sent_frames() == [{'type': 'mcp_tool_approval_result', 'tool_call_id': 'mcp_1', 'is_approved': False}]
     outcome = [_mcp_call('failure', error_message='Rejected by the user.')] if reported else []
     rest = await _next_frames(frames, ws, [*outcome, _agent_response('I cannot look that up.'), _VOICED])
@@ -2958,9 +3958,17 @@ async def test_an_mcp_call_without_a_server_id_is_named_by_kind_alone() -> None:
 
 async def test_an_mcp_call_denied_before_a_drop_keeps_its_denial() -> None:
     connection, ws = _connection()
-    with pytest.warns(UserWarning, match='cannot do, so the call was denied'):
+    with pytest.warns(UserWarning) as record:
         ws._incoming.append(json.dumps(_mcp_call('awaiting_approval')))  # pyright: ignore[reportPrivateUsage]
         frames = [frame async for frame in connection.frames()]
+    assert [(str(warning.message), Path(warning.filename).name) for warning in record] == snapshot(
+        [
+            (
+                'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval off for the tool on the ElevenLabs side.',
+                'elevenlabs_agents.py',
+            )
+        ]
+    )
     returns = [part for part in _native_parts(frames) if isinstance(part, NativeToolReturnPart)]
     assert [(part.tool_call_id, part.outcome) for part in returns] == [('mcp_1', 'denied')]
     ended = [event for frame in frames for event in frame if isinstance(event, ResponseEnded)]

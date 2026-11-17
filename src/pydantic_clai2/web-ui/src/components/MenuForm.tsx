@@ -51,6 +51,8 @@ export function MenuForm({
   onNotice: (text: string) => void
 }) {
   const [menu, setMenu] = useState<MenuInfo | null>(null)
+  // Why the rows could not load, shown in their place: a menu that never loads must not say it is loading.
+  const [failed, setFailed] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -71,9 +73,12 @@ export function MenuForm({
       const found = await session.menu(target)
       if (id !== request.current) return
       setMenu(found)
+      setFailed(null)
       const first = opened?.(found)
       setOpen((current) => current ?? found.fields.find((field) => field.menu && field.key === first)?.key ?? '')
     } catch (error) {
+      if (id !== request.current) return
+      setFailed(message(error))
       onError(message(error))
     }
     // A fresh target each render names the same menu.
@@ -111,7 +116,7 @@ export function MenuForm({
     }
   }
 
-  if (menu === null) return <p className="plugin-empty">Loading its settings…</p>
+  if (menu === null) return <p className="plugin-empty">{failed ?? 'Loading its settings…'}</p>
   if (menu.fields.length === 0) return <p className="plugin-empty">It takes no settings.</p>
   const row = (field: MenuField, named = false) => (
     <MenuRow

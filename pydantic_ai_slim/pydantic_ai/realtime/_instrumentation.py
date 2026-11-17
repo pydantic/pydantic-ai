@@ -22,8 +22,10 @@ from .._instrumentation import (
     InstrumentationNames,
     annotate_tool_call_otel_metadata,
     build_tool_definitions,
+    mcp_telemetry_history_ids,
     model_metric_attributes,
     model_request_parameters_attributes,
+    model_request_telemetry_url_ids,
     provider_attributes,
     record_exception,
     redact_binary_content,
@@ -208,7 +210,16 @@ class SessionInstrumentation:
         # `logfire.json_schema` entry marks the attribute as a JSON array so the Logfire UI
         # deserializes and renders it as a conversation rather than as a string.
         if messages:
-            attributes['pydantic_ai.all_messages'] = safe_to_json(settings.messages_to_otel_messages(messages)).decode()
+            mcp_url_ids = (
+                frozenset(model_request_telemetry_url_ids(self.model_request_parameters))
+                if self.model_request_parameters is not None
+                else frozenset[str]()
+            )
+            attributes['pydantic_ai.all_messages'] = safe_to_json(
+                settings.messages_to_otel_messages(
+                    messages, mcp_url_ids=mcp_telemetry_history_ids(messages, mcp_url_ids)
+                )
+            ).decode()
             if new_message_index is not None:
                 attributes['pydantic_ai.new_message_index'] = new_message_index
             schema_properties['pydantic_ai.all_messages'] = {'type': 'array'}
@@ -306,7 +317,7 @@ class SessionInstrumentation:
             # instrumented model uses, so realtime `chat` spans can't drift from the classic path.
             if self.model_request_parameters is not None:
                 annotate_tool_call_otel_metadata(response, self.model_request_parameters)
-            settings.handle_messages(input_messages, response, span)
+            settings.handle_messages(input_messages, response, span, self.model_request_parameters)
             span.set_attributes(
                 response_attributes(response, response.model_name or self.model_name, price_calculation)
             )
@@ -389,7 +400,8 @@ class SessionInstrumentation:
         span) so Logfire's per-step rendering of native tools and `gen_ai.tool.definitions` still fires.
         `model_request_parameters` (and the serialized realtime `model_settings`, whose vocabulary —
         provider voice settings, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
-        equivalent) are gated on `include_model_request_parameters`; tool definitions and `max_tokens`,
+        equivalent) are gated on `include_model_request_parameters`, and `model_settings` additionally on
+        `include_content`, since provider settings can carry prompt text; tool definitions and `max_tokens`,
         which have spec homes, are set ungated like the classic path.
 
         The `logfire.json_schema` declarations that make the serialized blobs render as objects (rather
@@ -410,7 +422,7 @@ class SessionInstrumentation:
                         self.model_request_parameters, include_content=settings.include_content
                     )
                 )
-            if self.model_settings:
+            if self._exports_model_settings(settings):
                 attributes['model_settings'] = safe_to_json(serialize_any(self.model_settings)).decode()
         if self.model_settings and (max_tokens := self.model_settings.get('max_tokens')) is not None:
             attributes['gen_ai.request.max_tokens'] = max_tokens
@@ -426,9 +438,19 @@ class SessionInstrumentation:
         if settings.include_model_request_parameters:
             if self.model_request_parameters is not None:
                 properties['model_request_parameters'] = {'type': 'object'}
-            if self.model_settings:
+            if self._exports_model_settings(settings):
                 properties['model_settings'] = {'type': 'object'}
         return properties
+
+    def _exports_model_settings(self, settings: InstrumentationSettings) -> bool:
+        """Whether the serialized `model_settings` blob goes on the span.
+
+        Provider settings can carry prompt text (GPT-Live's `openai_live_instructions`, Gemini's
+        `google_config_overrides` system instruction, ElevenLabs Agents' first message and overrides), and
+        a settings dict has no schema telling those keys apart, so the blob is left off entirely with
+        `include_content=False`. `gen_ai.request.max_tokens` is emitted regardless.
+        """
+        return bool(self.model_settings) and settings.include_content
 
     def record_user_speech(self, started_at: int | None) -> None:
         """Record the segment the user just spoke, as a `user speech` span with a real duration.

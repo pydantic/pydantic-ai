@@ -5,12 +5,15 @@ from __future__ import annotations
 import sys
 import textwrap
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
 
 import pytest
 import xdist.workermanage
+from _pytest import timing
 
+from . import cost_guards
 from .cost_guards import (
     BUDGET_ENV_VAR,
     COLLECT_BUDGET_ENV_VAR,
@@ -25,6 +28,27 @@ RunPytest: TypeAlias = Callable[..., pytest.RunResult]
 SPAWN = 'subprocess.run([sys.executable, "-I", "-S", "-c", "pass"], check=True)'
 
 
+@dataclass(eq=False)  # Registered as a plugin, which pytest needs to hash.
+class FakeClock:
+    """A clock that only moves when a test in the inner session calls `clock.sleep`.
+
+    It stands in for both the guards' and pytest's own timer, so a budget test measures exactly what it slept
+    however loaded the runner is.
+    """
+
+    now: float = 0.0
+
+    def perf_counter(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+    @pytest.fixture(scope='session')
+    def clock(self) -> FakeClock:
+        return self
+
+
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest:
     """Run an in-process pytest session over `source` with only the cost guards loaded."""
@@ -32,6 +56,8 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest
     monkeypatch.delenv(BUDGET_ENV_VAR, raising=False)
     monkeypatch.delenv(COLLECT_BUDGET_ENV_VAR, raising=False)
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+    # An inner session that sets the collection budget would otherwise import the real shared dependencies.
+    monkeypatch.setattr(cost_guards, 'SHARED_DEPENDENCIES', ())
     pytester.makeini(
         """
         [pytest]
@@ -41,9 +67,17 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest
         """
     )
 
-    def run(source: str, *args: str) -> pytest.RunResult:
+    def run(source: str, *args: str, clock: FakeClock | None = None) -> pytest.RunResult:
+        """With a `clock`, the inner session is timed by it and its tests can request it as the `clock` fixture."""
         pytester.makepyfile(test_guarded=f'import subprocess, sys, time\nimport pytest\n{textwrap.dedent(source)}')
-        return pytester.runpytest_inprocess('-p', 'tests.cost_guards', '-p', 'no:cacheprovider', *args)
+        args = ('-p', 'tests.cost_guards', '-p', 'no:cacheprovider', *args)
+        if clock is None:
+            return pytester.runpytest_inprocess(*args)
+        # Patched only around the inner session, so the outer test keeps its real timing.
+        with monkeypatch.context() as patch:
+            patch.setattr(timing, 'perf_counter', clock.perf_counter)
+            patch.setattr(cost_guards, 'time', clock)
+            return pytester.runpytest_inprocess(*args, plugins=[clock])
 
     return run
 
@@ -255,7 +289,7 @@ def test_a_failing_marked_test_is_not_judged(run: RunPytest):
 
 
 @pytest.mark.subprocess(reason='checks the guard and the stale-marker verdict across pytest-xdist workers')
-def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+def test_guards_work_under_xdist(run: RunPytest, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, '0.05')
     # Workers import `tests.cost_guards` from a fresh interpreter, and xdist replaces their `sys.path` with the one
     # this process started with (ignoring `PYTHONPATH`), which only has the repo root when an editable install adds it.
@@ -264,9 +298,23 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
         '_sys_path',
         [str(Path(__file__).parent.parent), *xdist.workermanage._sys_path],  # pyright: ignore[reportPrivateUsage]
     )
+    # Workers load this conftest before collecting, so they preload a local module rather than paying for the real
+    # shared dependencies. It also runs in this process, where the `run` fixture's `monkeypatch` restores the tuple.
+    pytester.makepyfile(shared_dependency='')
+    pytester.makeconftest(
+        """
+        from tests import cost_guards
+
+        cost_guards.SHARED_DEPENDENCIES = ('shared_dependency',)
+        """
+    )
     result = run(
         f"""
+        PRELOADED = 'shared_dependency' in sys.modules
         time.sleep(0.1)
+
+        def test_preloaded_on_the_worker():
+            assert PRELOADED
 
         @pytest.mark.subprocess(reason='used to launch Python')
         def test_stale():
@@ -280,14 +328,14 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
         '-n',
         '2',
     )
-    result.assert_outcomes(passed=1, failed=1)
+    result.assert_outcomes(passed=2, failed=1)
     result.stdout.fnmatch_lines(
         [
             '*`test_guarded.py::test_unmarked` launched a Python interpreter during call:*',
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
             '*slow test module collection*',
             'test_guarded.py took *s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
-            '*worker startup and collection of 2 tests took *s (slowest worker collected in *s)',
+            '*worker startup and collection of 3 tests took *s (slowest worker collected in *s)',
         ]
     )
 
@@ -297,24 +345,25 @@ def test_the_time_budget_fails_slow_tests_unless_marked(run: RunPytest, monkeypa
     result = run(
         """
         @pytest.fixture(scope='module')
-        def shared_server():
-            time.sleep(0.1)
+        def shared_server(clock):
+            clock.sleep(0.1)
 
         def test_fast(shared_server):
             pass
 
-        def test_slow():
-            time.sleep(0.1)
+        def test_slow(clock):
+            clock.sleep(0.1)
 
         @pytest.mark.slow(reason='waits on purpose')
-        def test_marked_slow():
-            time.sleep(0.1)
-        """
+        def test_marked_slow(clock):
+            clock.sleep(0.1)
+        """,
+        clock=FakeClock(),
     )
     result.assert_outcomes(passed=2, failed=1)
     result.stdout.fnmatch_lines(
         [
-            '*`test_guarded.py::test_slow` took 0.1*s in setup and call, over the 0.05s per-test budget '
+            '*`test_guarded.py::test_slow` took 0.10s in setup and call, over the 0.05s per-test budget '
             f'({BUDGET_ENV_VAR}).',
             '*inject or monkeypatch timeouts*',
             "*mark it `@pytest.mark.slow(reason='...')`.",
@@ -327,15 +376,16 @@ def test_the_budget_message_names_excluded_shared_setup(run: RunPytest, monkeypa
     result = run(
         """
         @pytest.fixture(scope='module')
-        def shared_server():
-            time.sleep(0.01)
+        def shared_server(clock):
+            clock.sleep(0.01)
 
-        def test_slow(shared_server):
-            time.sleep(0.1)
-        """
+        def test_slow(shared_server, clock):
+            clock.sleep(0.1)
+        """,
+        clock=FakeClock(),
     )
     result.assert_outcomes(failed=1)
-    result.stdout.fnmatch_lines(['*not counting 0.0*s of shared fixture setup*'])
+    result.stdout.fnmatch_lines(['*took 0.10s in setup and call, not counting 0.01s of shared fixture setup*'])
 
 
 def test_shared_setup_requested_during_the_call_is_not_counted(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
@@ -343,12 +393,13 @@ def test_shared_setup_requested_during_the_call_is_not_counted(run: RunPytest, m
     result = run(
         """
         @pytest.fixture(scope='module')
-        def shared_server():
-            time.sleep(0.1)
+        def shared_server(clock):
+            clock.sleep(0.1)
 
         def test_fast(request):
             request.getfixturevalue('shared_server')
-        """
+        """,
+        clock=FakeClock(),
     )
     result.assert_outcomes(passed=1)
 
@@ -388,3 +439,27 @@ def test_a_module_within_the_collection_budget_passes(run: RunPytest, monkeypatc
     result = run('def test_nothing():\n    pass\n')
     assert result.ret == pytest.ExitCode.OK
     assert 'slow test module collection' not in result.stdout.str()
+
+
+@pytest.mark.parametrize(('budget', 'preloaded'), [('5', True), ('', False)])
+def test_the_collection_budget_imports_shared_dependencies_before_collection(
+    run: RunPytest,
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+    budget: str,
+    preloaded: bool,
+):
+    """So no module is charged for being the first to import one; a dependency that isn't installed is skipped."""
+    pytester.makepyfile(shared_dependency='')
+    pytester.syspathinsert()
+    monkeypatch.setattr(cost_guards, 'SHARED_DEPENDENCIES', ('shared_dependency', 'not_an_installed_dependency'))
+    monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, budget)
+    result = run(
+        f"""
+        PRELOADED = 'shared_dependency' in sys.modules
+
+        def test_preloaded():
+            assert PRELOADED is {preloaded}
+        """
+    )
+    result.assert_outcomes(passed=1)

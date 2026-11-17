@@ -7,6 +7,7 @@ import importlib.abc
 import importlib.machinery
 import importlib.util
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -30,8 +31,11 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _backend
+from tests.realtime.simulation._loop import SimulatedLoop
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 async def started(**settings: Any) -> ModalSandboxBackend:
@@ -85,7 +89,7 @@ async def test_missing_credentials_are_reported_as_not_found(fake_modal: FakeMod
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await ModalSandboxBackend().get_sandbox()
     assert str(exc.value) == (
-        'No Modal credentials found. Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET or run `modal token new`.'
+        'No Modal credentials found. Set MODAL_TOKEN_ID / MODAL_TOKEN_SECRET, run `modal token new`, or pass a configured `modal.Client` as `client=`.'
     )
     fake_modal.attach_error = missing
     with pytest.raises(WorkspaceUnavailableError, match=r'^No Modal credentials found'):
@@ -305,8 +309,15 @@ class TestRun:
         fake_modal.sandboxes[0].poll_error = ValueError('control plane unavailable')
         assert (await backend.run(['kill-self'])).exit_code == 137
 
-    async def test_early_sigkill_with_slow_output_is_a_real_exit(self, fake_modal: FakeModal) -> None:
-        # A delayed output drain should not make an early exit look like a deadline kill.
+    @pytest.mark.parametrize(
+        'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+    )
+    async def test_early_sigkill_with_slow_output_is_a_real_exit(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A delayed output drain should not make an early exit look like a deadline kill. On a virtual clock, a stalled
+        # runner can't use up the command's deadline before it exits.
+        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=asyncio.get_running_loop().time))
         fake_modal.responder = lambda argv, timeout: ('', '', 137)
         fake_modal.stdout_delay = 1.1
         backend = await started()
@@ -698,6 +709,7 @@ class TestWorkingDir:
         await started(image='ubuntu:22.04')
         assert fake_modal.create_kwargs[-1]['workdir'] is None
 
+    @posix_only
     async def test_configured_working_dir_is_where_commands_start(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         home, project = tmp_path / 'home', tmp_path / 'project'
         home.mkdir()
@@ -746,6 +758,60 @@ class TestCreate:
         assert backend.ref == WorkspaceRef(provider='modal', id='sb-owned')
         assert await backend.get_sandbox() is fake_modal.sandboxes[0]
         assert fake_modal.owned_creates == 1
+
+    async def test_a_create_that_outlives_every_caller_is_logged(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The cancelled caller's cleanup ran while `ref` was still `None`; only the log names the sandbox.
+        backend = ModalSandboxBackend()
+        fake_modal.create_gate = anyio.Event()
+        with caplog.at_level(logging.WARNING, logger=_backend.__name__):
+            task = asyncio.create_task(backend.run(['true']))
+            with anyio.fail_after(5):
+                while not fake_modal.create_started:
+                    await anyio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert backend.ref is None
+            fake_modal.create_gate.set()
+            with anyio.fail_after(5):
+                while backend.ref is None:
+                    await anyio.sleep(0)
+        assert [record.levelno for record in caplog.records] == [logging.WARNING]
+        assert [record.getMessage() for record in caplog.records] == [
+            'Created Modal sandbox sb-owned after every caller waiting for it was cancelled; it keeps running '
+            "until its `sandbox_timeout` ends it unless you terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`"
+        ]
+
+    async def test_a_caller_cancelled_as_the_create_returns_finds_the_ref(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A caller still counted when the create returns resumes only after the ref is recorded, since
+        # nothing between the count check and recording the ref awaits; its own cleanup can terminate it.
+        backend = ModalSandboxBackend()
+        fake_modal.create_gate = anyio.Event()
+        seen: list[WorkspaceRef | None] = []
+
+        async def caller() -> None:
+            try:
+                await backend.get_sandbox()
+            except asyncio.CancelledError:
+                seen.append(backend.ref)
+                raise
+
+        with caplog.at_level(logging.WARNING, logger=_backend.__name__):
+            task = asyncio.create_task(caller())
+            with anyio.fail_after(5):
+                while not fake_modal.create_started:
+                    await anyio.sleep(0)
+            # In one tick: the create's reply wakes the acquisition first, then the caller's cancellation.
+            fake_modal.create_gate.set()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert seen == [WorkspaceRef(provider='modal', id='sb-owned')]
+        assert caplog.records == []
 
     @pytest.mark.parametrize('operation', ['run', 'write_bytes'])
     async def test_ref_is_recorded_by_the_first_operation(self, fake_modal: FakeModal, operation: str) -> None:
@@ -989,6 +1055,54 @@ class TestFilesystem:
             ('pkg', '/srv/pkg', True, None),
         ]
 
+    @posix_only
+    async def test_reads_refuse_anything_but_a_regular_file(self, fake_modal: FakeModal, tmp_path: Path) -> None:
+        # A device can stream without end into this process, like a FIFO can block it; the local
+        # backend refuses both, and so does this one. A link to one is refused too.
+        fake_modal.host_root = tmp_path
+        (tmp_path / 'data.txt').write_bytes(b'body')
+        (tmp_path / 'device').symlink_to('/dev/null')
+        backend = ModalSandboxBackend()
+        for path in ('/dev/null', str(tmp_path / 'device')):
+            with pytest.raises(OSError, match='Not a regular file in the Modal sandbox'):
+                await backend.read_bytes(path)
+        assert await backend.read_bytes(str(tmp_path / 'data.txt')) == b'body'
+        with pytest.raises(FileNotFoundError):
+            await backend.read_bytes(str(tmp_path / 'missing'))
+        with pytest.raises(IsADirectoryError):
+            await backend.read_bytes(str(tmp_path))
+        # The check carries a deadline, so a wedged sandbox fails it instead of hanging the read.
+        probes = [call for call in fake_modal.sandboxes[0].exec_calls if call.argv[3:4] == ['modal-probe']]
+        assert len(probes) == 5
+        assert {call.timeout for call in probes} == {10}
+
+    async def test_the_write_link_loop_check_carries_a_deadline(self, fake_modal: FakeModal) -> None:
+        backend = await started()
+        await backend.write_bytes('/tmp/a.txt', b'body')
+        checks = [call for call in fake_modal.sandboxes[0].exec_calls if call.argv[-3:-1] == ['test', '-L']]
+        assert len(checks) == 1
+        assert checks[0].timeout == 10
+
+    @pytest.mark.parametrize('code', [-1, 2, 137])
+    async def test_a_read_whose_file_check_fails_is_refused(self, fake_modal: FakeModal, code: int) -> None:
+        # Only a clean pass reaches the unbounded SDK read; a check Modal killed at its deadline must not.
+        backend = await started()
+        await backend.write_bytes('/tmp/a.txt', b'body')
+        fake_modal.kind_probe_exit = code
+        with pytest.raises(
+            WorkspaceError, match=f"Could not check what '/tmp/a.txt' is in the Modal sandbox: the check exited {code}"
+        ):
+            await backend.read_bytes('/tmp/a.txt')
+
+    async def test_a_read_whose_file_check_died_with_the_sandbox_is_unavailable(self, fake_modal: FakeModal) -> None:
+        # Modal kills a terminated sandbox's commands with 137; that is the sandbox's state, not the path's.
+        backend = await started()
+        fake_modal.kind_probe_exit = 137
+        fake_modal.sandboxes[0].poll_result = 0
+        with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
+            await backend.read_bytes('/tmp/a.txt')
+
+    @posix_only
     async def test_symlinks_follow_relative_chained_dangling_and_looping_targets(
         self, fake_modal: FakeModal, tmp_path: Path
     ) -> None:
@@ -1007,6 +1121,7 @@ class TestFilesystem:
             'relative': (False, 5),
         }
 
+    @posix_only
     async def test_list_dir_raises_a_link_target_failure_unwrapped(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         # Link targets resolve concurrently; a failure must reach error mapping, not an ExceptionGroup.
         fake_modal.host_root = tmp_path
@@ -1022,6 +1137,7 @@ class TestFilesystem:
         with pytest.raises(PermissionError):
             await backend.list_dir(str(tmp_path))
 
+    @posix_only
     async def test_parent_and_relative_leaf_symlink_write(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'a' / 'sub').mkdir(parents=True)
@@ -1044,6 +1160,7 @@ class TestFilesystem:
             await backend.write_bytes(str(tmp_path / 'abs' / 'loop'), b'no')
         assert (tmp_path / 'a' / 'sub' / 'loop').is_symlink()
 
+    @posix_only
     async def test_unresolved_kernel_link_is_not_replaced(
         self, fake_modal: FakeModal, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1062,6 +1179,7 @@ class TestFilesystem:
             await backend.write_bytes(str(link), b'no')
         assert link.is_symlink()
 
+    @posix_only
     async def test_dangling_symlink_is_listed_but_does_not_exist(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'dangling').symlink_to('missing')
@@ -1072,6 +1190,7 @@ class TestFilesystem:
             await backend.stat(str(tmp_path / 'dangling'))
         assert await backend.exists(str(tmp_path / 'dangling')) is False
 
+    @posix_only
     async def test_list_dir_resolves_links_concurrently(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'target').write_bytes(b'x')
@@ -1097,6 +1216,7 @@ class TestFilesystem:
             entries = await backend.list_dir(str(tmp_path))
         assert len(entries) == 21
 
+    @posix_only
     async def test_symlink_loop_is_not_found(self, fake_modal: FakeModal, tmp_path: Path) -> None:
         fake_modal.host_root = tmp_path
         (tmp_path / 'loop').symlink_to('loop')
@@ -1113,6 +1233,7 @@ class TestFilesystem:
         await backend.remove('/tmp/pkg')
         assert fake_modal.sandboxes[0].removals == [('/tmp/pkg', True)]
 
+    @posix_only
     async def test_remove_refuses_the_working_dir_and_its_ancestors(
         self, fake_modal: FakeModal, tmp_path: Path
     ) -> None:
@@ -1177,7 +1298,7 @@ class TestFilesystem:
         await fake_modal.sandboxes[0].terminate.aio()
         with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
             await backend.read_bytes('/x')
-        assert fake_modal.sandboxes[0].exec_calls  # the FIFO probe detects shutdown before the SDK read
+        assert fake_modal.sandboxes[0].exec_calls  # the file-kind probe detects shutdown before the SDK read
 
     async def test_a_wrapped_auth_failure_is_terminal(self, fake_modal: FakeModal) -> None:
         backend = await started()
@@ -1207,7 +1328,6 @@ class TestErrorMapping:
             ('ExecutionError', WorkspaceError),
             ('RequestSizeError', WorkspaceError),
             ('SandboxFilesystemError', WorkspaceError),
-            ('FilesystemExecutionError', WorkspaceError),
             ('ConnectionError', None),
             ('ServiceError', None),
             ('ResourceExhaustedError', None),

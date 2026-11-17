@@ -26,9 +26,9 @@ interactions:
       access-control-max-age:
       - "600"
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - "13289"
+      - "13578"
       content-type:
       - application/json
       strict-transport-security:
@@ -69,6 +69,10 @@ interactions:
               max_soft_timeouts_per_generation: 1
               llm_generated_message_prompt_override: null
               disable_until_first_user_message: false
+            noisy_environment_detection: false
+            noisy_environment_message: >-
+              Uhh ... sorry, I'm picking up some noise in the background. Could you move
+              somewhere quieter?
           tts:
             model_id: eleven_flash_v2
             voice_id: cjVigY5qzO86Huf0OWal
@@ -80,6 +84,7 @@ interactions:
             stability: 0.5
             speed: 1.0
             similarity_boost: 0.75
+            clone_strength: 0.0
             text_normalisation_type: system_prompt
             pronunciation_dictionary_locators: []
             enable_phoneme_tags: true
@@ -137,7 +142,9 @@ interactions:
                 output_format: null
                 interaction_budget: null
                 disable_max_duration: true
-            subagents: []
+            subagent_config:
+              agents: []
+              self_subagent: null
             prompt:
               prompt: You are a helpful assistant.
               llm: gemini-2.5-flash
@@ -340,6 +347,7 @@ interactions:
                 soft_timeout_config:
                   message: false
                   additional_soft_timeout_messages: false
+                noisy_environment_message: false
               tts:
                 model_id: true
                 voice_id: true
@@ -347,6 +355,7 @@ interactions:
                 stability: true
                 speed: true
                 similarity_boost: true
+                clone_strength: false
                 pronunciation_dictionary_locators: false
               conversation:
                 text_only: true
@@ -569,7 +578,7 @@ interactions:
         trust_context: unknown
         default_hold_audio_url: >-
           https://eleven-public-cdn-common.elevenlabs.io/convai/ambient-audio-assets/elevator1.mp3
-  recorded_at: 2026-10-16T15:40:12.912713+00:00
+  recorded_at: 2026-10-20T21:16:17.279262+00:00
 - request:
     method: GET
     uri: >-
@@ -597,7 +606,7 @@ interactions:
       access-control-max-age:
       - "600"
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
       - "140"
       content-type:
@@ -611,4 +620,4 @@ interactions:
       content:
         signed_url: >-
           wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_2401m52medn1e61r3f86pkac45kw&conversation_signature=scrubbed
-  recorded_at: 2026-10-16T15:40:12.981910+00:00
+  recorded_at: 2026-10-20T21:16:17.347620+00:00

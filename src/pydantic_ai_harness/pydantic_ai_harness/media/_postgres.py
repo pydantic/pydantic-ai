@@ -19,10 +19,10 @@ from pydantic_ai_harness.media._store import (
     _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
     PublicUrlResolver,
-    _coerce_metadata_mapping,  # pyright: ignore[reportPrivateUsage]
-    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
+    coerce_metadata_mapping,
     media_uri_for,
     parse_media_uri,
+    resolve_public_url,
 )
 
 # Postgres truncates identifiers past 63 bytes, which would let two distinct
@@ -111,11 +111,16 @@ class PostgresMediaStore:
         self._schema_lock = anyio.Lock()
 
     async def _ensure_schema(self) -> None:
+        """Create the table once, unless it exists, so a role without `CREATE` on the schema can use it."""
         if self._schema_ready:
             return
         async with self._schema_lock:
             if self._schema_ready:
                 return
+            async with self._pool.acquire() as connection:
+                if await connection.fetchval('SELECT to_regclass($1) IS NOT NULL', self._table):
+                    self._schema_ready = True
+                    return
             async with self._pool.acquire() as connection, connection.transaction():
                 # `CREATE TABLE IF NOT EXISTS` is not race-free in Postgres: concurrent
                 # callers can collide on `pg_type`'s unique index.
@@ -166,7 +171,7 @@ class PostgresMediaStore:
         return row is not None
 
     async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
@@ -178,4 +183,4 @@ class PostgresMediaStore:
         value = row[0]
         if not isinstance(value, str):
             raise ValueError(f'media row for {digest} has wrong types')
-        return _coerce_metadata_mapping(json.loads(value))
+        return coerce_metadata_mapping(json.loads(value))

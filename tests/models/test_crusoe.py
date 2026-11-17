@@ -110,6 +110,7 @@ async def test_crusoe_model_simple(allow_model_requests: None, crusoe_api_key: s
                     details={'reasoning_tokens': 108}, input_tokens=20, output_reasoning_tokens=108, output_tokens=118
                 ),
                 model_name='zai/GLM-5.2',
+                model_id='crusoe:zai/GLM-5.2',
                 timestamp=IsDatetime(),
                 provider_name='crusoe',
                 provider_url='https://api.inference.crusoecloud.com/v1',
@@ -166,6 +167,7 @@ async def test_crusoe_tool_calling(allow_model_requests: None, crusoe_api_key: s
                     output_tokens=37,
                 ),
                 model_name='zai/GLM-5.2',
+                model_id='crusoe:zai/GLM-5.2',
                 timestamp=IsDatetime(),
                 provider_name='crusoe',
                 provider_url='https://api.inference.crusoecloud.com/v1',
@@ -207,6 +209,7 @@ async def test_crusoe_tool_calling(allow_model_requests: None, crusoe_api_key: s
                     output_tokens=54,
                 ),
                 model_name='zai/GLM-5.2',
+                model_id='crusoe:zai/GLM-5.2',
                 timestamp=IsDatetime(),
                 provider_name='crusoe',
                 provider_url='https://api.inference.crusoecloud.com/v1',

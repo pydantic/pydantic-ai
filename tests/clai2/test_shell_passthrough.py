@@ -34,11 +34,12 @@ from pydantic_clai2.cli.shell_passthrough import (
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._processes import taskkill_path
+from pydantic_clai2.runtime.processes import taskkill_path
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs
+from tests.conftest import no_leaked_tasks
 
 
 @pytest.fixture(autouse=True)
@@ -419,24 +420,23 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
 
     output = Output()
     interrupts = Interrupts()
-    tasks_before = asyncio.all_tasks()
-    task = asyncio.create_task(
-        run_shell_command(
-            'printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd()
+    with no_leaked_tasks():
+        task = asyncio.create_task(
+            run_shell_command(
+                'printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd()
+            )
         )
-    )
-    with anyio.fail_after(10):
-        await printed.wait()
-        assert not task.done()
-        if external_cancel:
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        else:
-            assert interrupts.cancel()
-            context = await task
-            assert '\nInterrupted\n\nstdout:\nready\n\nstderr:\n' in context
-    assert asyncio.all_tasks() == tasks_before
+        with anyio.fail_after(10):
+            await printed.wait()
+            assert not task.done()
+            if external_cancel:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                assert interrupts.cancel()
+                context = await task
+                assert '\nInterrupted\n\nstdout:\nready\n\nstderr:\n' in context
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX fork and detached sessions')
@@ -483,34 +483,33 @@ async def test_detached_descendant_cannot_hold_output_open(
             asyncio.get_running_loop().call_soon(interrupts.cancel)
 
     monkeypatch.setattr(_ShellOutput, 'process_exited', on_process_exit)
-    tasks_before = asyncio.all_tasks()
-    task = asyncio.create_task(
-        run_shell_command(
-            f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
-            console=Console(file=Output()),
-            interrupts=interrupts,
-            cwd=Path.cwd(),
+    with no_leaked_tasks():
+        task = asyncio.create_task(
+            run_shell_command(
+                f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
+                console=Console(file=Output()),
+                interrupts=interrupts,
+                cwd=Path.cwd(),
+            )
         )
-    )
-    try:
-        with anyio.fail_after(10):
-            await ready.wait()
-        if cancellation == 'running':
-            assert interrupts.cancel()
-        done, _ = await asyncio.wait({task}, timeout=10)
-        assert task in done, 'Shell waited for a detached descendant to close stdout/stderr'
-        context = task.result()
-        assert '\nstdout:\nDETACHED_READY\n' in context
-        assert ('\nExit code 0\n' if cancellation == 'none' else '\nInterrupted\n') in context
-        assert protocols[0].closed.is_set()
-        os.kill(int(pid_file.read_text()), 0)  # The detached child is still alive when the command returns.
-    finally:
-        if pid_file.exists():
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(int(pid_file.read_text()), signal.SIGKILL)
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert asyncio.all_tasks() == tasks_before
+        try:
+            with anyio.fail_after(10):
+                await ready.wait()
+            if cancellation == 'running':
+                assert interrupts.cancel()
+            done, _ = await asyncio.wait({task}, timeout=10)
+            assert task in done, 'Shell waited for a detached descendant to close stdout/stderr'
+            context = task.result()
+            assert '\nstdout:\nDETACHED_READY\n' in context
+            assert ('\nExit code 0\n' if cancellation == 'none' else '\nInterrupted\n') in context
+            assert protocols[0].closed.is_set()
+            os.kill(int(pid_file.read_text()), 0)  # The detached child is still alive when the command returns.
+        finally:
+            if pid_file.exists():
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 def test_output_limit_counts_characters_and_marks_truncation_once(monkeypatch: pytest.MonkeyPatch) -> None:

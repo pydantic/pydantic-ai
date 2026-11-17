@@ -19,6 +19,7 @@ if sys.platform != 'emscripten':
 from ._warnings import PydanticAIDeprecationWarning
 
 __all__ = (
+    'DEFAULT_HTTP_LIMITS',
     'DEFAULT_HTTP_TIMEOUT',
     'DEFAULT_MAX_CONNECTIONS',
     'DEFAULT_MAX_KEEPALIVE_CONNECTIONS',
@@ -71,27 +72,39 @@ _NotGivenT = TypeVar('_NotGivenT')
 # The OpenAI and Anthropic SDKs' own connection pool limits, rather than HTTPX's 100 and 20.
 DEFAULT_MAX_CONNECTIONS = 1000
 DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 100
+DEFAULT_HTTP_LIMITS = httpx2.Limits(
+    max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+)
 
 
 def create_async_httpx2_client(
     *,
     timeout: float | httpx2.Timeout = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5),
-    limits: httpx2.Limits = httpx2.Limits(
-        max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
-    ),
+    limits: httpx2.Limits = DEFAULT_HTTP_LIMITS,
+    transport: httpx2.AsyncBaseTransport | None = None,
 ) -> httpx2.AsyncClient:
     """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
 
     This is the client a provider creates when you don't pass your own `http_client`; the Google
     providers create it with a 20-minute timeout instead. Call it yourself to adjust the timeouts or
-    connection pool limits, and pass the result to the provider as `http_client`. A client you create
-    this way is yours to close.
+    connection pool limits, or to send requests through your own transport, such as a
+    [retrying transport](../retries.md#transport-retries), and pass the result to the provider as
+    `http_client`. A client you create this way is yours to close.
 
     Args:
         timeout: The client's timeout, in seconds or as an `httpx2.Timeout` that sets each phase
             separately. Defaults to 600 seconds, with a 5-second connect timeout.
         limits: The connection pool limits. Defaults to 1000 connections, of which up to 100 are kept
-            alive while idle, matching the OpenAI and Anthropic SDKs' own clients.
+            alive while idle, matching the OpenAI and Anthropic SDKs' own clients. Not used with
+            `transport`, whose own pool limits apply.
+        transport: The transport to send requests through, such as an
+            [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport]. It replaces
+            the transport the client would otherwise build, so it owns the connection pool: set pool limits
+            on it, or on the transport it wraps (an `AsyncHTTPX2TenacityTransport` without `wrapped` uses
+            these defaults). With a transport, HTTPX also stops reading proxies from the
+            `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables; give the transport a `proxy`
+            to use one, and its `limits` too, since an `httpx2.AsyncHTTPTransport` you build has HTTPX's
+            default pool of 100 connections, 20 kept alive. The timeouts and user agent still apply.
 
     A request timeout whose phases are all equal, such as a number of seconds, can shorten the
     client's connect and pool timeouts but never lengthen them; see
@@ -103,6 +116,7 @@ def create_async_httpx2_client(
     return httpx2.AsyncClient(
         timeout=client_timeout,
         limits=limits,
+        transport=transport,
         headers={'User-Agent': get_user_agent()},
         event_hooks={'request': [ConnectPoolTimeoutCap(connect=client_timeout.connect, pool=client_timeout.pool)]},
     )

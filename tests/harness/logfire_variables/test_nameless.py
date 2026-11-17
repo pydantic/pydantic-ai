@@ -5,19 +5,9 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.logfire import AgentControl, ManagedPrompt
+from pydantic_ai_harness.logfire import AgentControl
 
 from ._helpers import Publish
-
-
-async def test_nameless_prompt_normalizes_agent_name() -> None:
-    capability = ManagedPrompt(default='hello')
-    agent = Agent(TestModel(), name=' Checkout Assistant #2 ', capabilities=[capability])
-    await agent.run('hello')
-    assert [
-        variable.name
-        for variable in capability._variables_by_agent.values()  # pyright: ignore[reportPrivateUsage]
-    ] == ['prompt__checkout_assistant_2']
 
 
 async def test_nameless_agent_normalizes_agent_name() -> None:
@@ -37,19 +27,6 @@ async def test_hyphenated_agent_name() -> None:
         variable.name
         for variable in capability._variables_by_agent.values()  # pyright: ignore[reportPrivateUsage]
     ] == ['agent__pydanty_explorer']
-
-
-async def test_a_nameless_prompt_on_a_nameless_agent_raises() -> None:
-    """`ManagedPrompt` has no construction-time guard, so its refusal lands on the first run.
-
-    `AgentControl` refuses an agent with no `name` of its own where it is wired up (below), because
-    a config an agent reads should not move when a local is renamed. `ManagedPrompt` predates that
-    and still derives from whatever name the run ends up with, so the base's own check is what
-    catches an agent that has none at all.
-    """
-    agent = Agent(TestModel(), capabilities=[ManagedPrompt(default='hello')])
-    with pytest.raises(UserError, match='without an explicit `name`'):
-        await agent.run('hello', infer_name=False)
 
 
 def test_an_inferred_agent_name_is_refused_at_construction() -> None:

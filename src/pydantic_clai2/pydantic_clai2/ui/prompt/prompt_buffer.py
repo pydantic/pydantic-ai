@@ -176,19 +176,20 @@ class PromptBuffer:
         assert self.search is not None
         if key in ('enter', 'escape'):
             self.search = None
-        elif key == 'ctrl-g':
+            return
+        if key == 'ctrl-g':
             self.replace(self.search_original, group='search')
             self.search = None
-        else:
-            if key == 'backspace':
-                self.search = self.search[:-1]
-            elif len(key) == 1 and key.isprintable():
-                self.search += key
-            matches = [entry for entry in reversed(self.history) if self.search in entry]
-            if matches:
-                index = (matches.index(self.text) + 1) % len(matches) if key == 'ctrl-r' and self.text in matches else 0
-                self.replace(matches[index], group='search')
-                self.history_index = None
+            return
+        if key == 'backspace':
+            self.search = self.search[:-1]
+        elif len(key) == 1 and key.isprintable():
+            self.search += key
+        matches = [entry for entry in reversed(self.history) if self.search in entry]
+        if matches:
+            index = (matches.index(self.text) + 1) % len(matches) if key == 'ctrl-r' and self.text in matches else 0
+            self.replace(matches[index], group='search')
+            self.history_index = None
 
     def edit(self, key: str) -> bool:
         """Apply an editing key; return false when the owner should handle it."""
@@ -271,6 +272,8 @@ class PromptBuffer:
         cells = 0
         cursor_row = 0
         text, cursor = self.display()
+        # A newline under the cursor paints as a blank, a tab as four spaces.
+        painted = {'\n': ' ', '\t': '    '}
         for index, char in enumerate(text + ' '):
             is_cursor = index == cursor
             if index == len(text) and not is_cursor:
@@ -279,14 +282,15 @@ class PromptBuffer:
                 rows.append('')
                 cells = 0
                 continue
-            display = ' ' if char == '\n' else '    ' if char == '\t' else char if char.isprintable() else '?'
+            display = painted.get(char, char if char.isprintable() else '?')
             size = visible_length(display)
             if cells + size > width:
                 rows.append('')
                 cells = 0
             if is_cursor:
                 cursor_row = len(rows) - 1
-            rows[-1] += f'\x1b[7m{display}\x1b[27m' if is_cursor else display
+                display = f'\x1b[7m{display}\x1b[27m'
+            rows[-1] += display
             cells += size
             if char == '\n':
                 rows.append('')

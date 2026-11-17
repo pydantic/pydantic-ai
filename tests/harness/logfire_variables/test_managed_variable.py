@@ -1,11 +1,9 @@
 """Tests for the shared `ManagedVariableCapability` base (source `pydantic_ai_harness.logfire`).
 
-Managed-variable capabilities like `ManagedPrompt` all derive their backing variable through the
+Managed-variable capabilities like `AgentControl` derive their backing variable through the
 base's `_build_managed_variable`: the `<prefix><name>` naming, hyphen-to-underscore normalization,
-accidental-prefix stripping, and invalid-name rejection are identical across the three. Rather than
-re-assert that shared contract once per capability, it is exercised here once through a minimal
-concrete subclass. Each capability's own test module keeps only a smoke test that it wires its name,
-prefix, value type, and default into this base correctly, plus its capability-specific branches.
+accidental-prefix stripping, and invalid-name rejection. That contract is exercised here once
+through a minimal concrete subclass.
 """
 
 from __future__ import annotations

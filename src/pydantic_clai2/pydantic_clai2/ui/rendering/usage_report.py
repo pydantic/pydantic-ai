@@ -14,7 +14,7 @@ from decimal import Decimal
 from rich.console import Console
 from rich.table import Table
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, RetryFeedbackPart, ToolReturnPart
 from pydantic_ai.usage import RunUsage
 from pydantic_clai2.ui.rendering import theme
 
@@ -30,8 +30,13 @@ class SessionUsage:
     unpriced: tuple[str, ...]
 
 
+def starts_turn(request: ModelRequest) -> bool:
+    """Whether `request` starts a turn: it carries no tool return or retry."""
+    return not any(isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in request.parts)
+
+
 def session_usage(messages: Sequence[ModelMessage]) -> SessionUsage:
-    """Group responses into turns; a turn starts at a request that carries no tool return or retry.
+    """Group responses into turns, each starting at a request that `starts_turn`.
 
     A prompt cancelled before any response leaves only its request behind; such turns are dropped.
     """
@@ -39,14 +44,14 @@ def session_usage(messages: Sequence[ModelMessage]) -> SessionUsage:
     unpriced: dict[str, None] = {}
     for message in messages:
         if isinstance(message, ModelRequest):
-            if not any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts):
+            if starts_turn(message):
                 turns.append(RunUsage())
             continue
         if not turns:
             turns.append(RunUsage())
         turns[-1].incr(message.usage)
         turns[-1].requests += 1
-        if message.usage.cost is None:
+        if message.usage.cost is None and not message.usage.unmeasured_requests:
             unpriced.setdefault(message.model_name or _UNKNOWN, None)
     turns = [turn for turn in turns if turn.requests]
     total = RunUsage()
@@ -75,6 +80,9 @@ def cost_line(usage: SessionUsage) -> str:
     )
     if usage.unpriced:
         line += f'. No price data for {", ".join(usage.unpriced)}; those responses are not counted in costs.'
+    if total.unmeasured_requests:
+        responses = f'{total.unmeasured_requests:,} response' + ('' if total.unmeasured_requests == 1 else 's')
+        line += f'. Token and cost totals are lower bounds because {responses} omitted usage information.'
     return line
 
 

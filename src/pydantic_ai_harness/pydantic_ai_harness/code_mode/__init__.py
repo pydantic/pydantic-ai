@@ -1,5 +1,6 @@
 """Code mode capability: route tool calls through a sandboxed Python environment."""
 
+from pydantic_ai_harness._code_tools import FOLD_INTO_CODE_MODE
 from pydantic_ai_harness.code_mode._capability import CodeMode
 from pydantic_ai_harness.code_mode._events import (
     CODE_MODE_EVENTS,
@@ -17,6 +18,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
     CodeModeOSCallback,
+    CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeReturnSchemaWarning,
     CodeModeToolset,
@@ -24,10 +26,12 @@ from pydantic_ai_harness.code_mode._toolset import (
 
 __all__ = [
     'CODE_MODE_EVENTS',
+    'FOLD_INTO_CODE_MODE',
     'CodeMode',
     'CodeModeMount',
     'CodeModeOS',
     'CodeModeOSCallback',
+    'CodeModeOSPolicy',
     'CodeModeReplStore',
     'CodeModeResourceLimits',
     'CodeModeReturnSchemaWarning',

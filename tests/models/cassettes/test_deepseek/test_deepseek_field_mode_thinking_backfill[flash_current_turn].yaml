@@ -1,0 +1,98 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "683"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            What is the weather in Paris? Use the get_weather tool, then answer in one
+            short sentence.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_primary
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+          reasoning_content: ""
+        - role: tool
+          tool_call_id: call_primary
+          content: sunny
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get the weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        id: ab354a1f-a76d-49c4-a034-768b5d429ed1
+        object: chat.completion
+        created: 1792951690
+        model: deepseek-flash
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: The weather in Paris is sunny.
+            reasoning_content: ""
+          logprobs: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 369
+          completion_tokens: 8
+          total_tokens: 377
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+          prompt_cache_hit_tokens: 0
+          prompt_cache_miss_tokens: 369
+        system_fingerprint: e72d3c7f663d3e1383b00b3884cb4501
+  recorded_at: 2026-10-25T18:08:11.268601+00:00

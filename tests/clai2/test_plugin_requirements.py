@@ -18,8 +18,8 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import SubAgents
-from pydantic_clai2.commands import Commands, plugins_command
+from pydantic_ai_harness.sub_agents import SubAgents
+from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, features
 from pydantic_clai2.config.features import check_feature_name
 from pydantic_clai2.config.plugin_requirements import (
@@ -35,12 +35,10 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.loader import PluginLoader
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu
-
-CODER = 'pydantic_ai_harness.coder:Coder'
 
 FANCY = """
 from pydantic import BaseModel
@@ -226,6 +224,41 @@ def test_replacing_the_factory_drops_the_old_plugins_tags(tmp_path: Path) -> Non
     assert tags(store, 'p') is None
 
 
+@pytest.mark.parametrize('plugin_id', ['p', 'observability'])
+def test_learned_requirements_keep_current_settings_and_removed_plugins(tmp_path: Path, plugin_id: str) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    other = SettingsStore(store.path)
+    original = PluginSettings(id=plugin_id, factory='p', settings={'mode': 'plain', 'future': True})
+    store.save_plugin(original)
+    current = original.model_copy(update={'settings': {'mode': 'custom', 'future': True}, 'enabled': False})
+    other.save_plugin(current, requires={'future': frozenset({'future-feature'})})
+
+    store.update_plugin_requirements(original, requires={'mode': frozenset({'fancy-mode'})})
+
+    assert other.plugins() == [current]
+    assert tags(other, plugin_id) == {'mode': ['fancy-mode'], 'future': ['future-feature']}
+
+    other.delete_plugin(plugin_id)
+    store.update_plugin_requirements(original, requires={'mode': frozenset({'fancy-mode'})})
+    assert other.plugins() == []
+    assert tags(other, plugin_id) is None
+
+
+@pytest.mark.parametrize('changed', [{'factory': 'replacement'}, {'path': '/replacement/plugin.py'}])
+def test_learned_requirements_do_not_tag_a_replacement(tmp_path: Path, changed: dict[str, str]) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    original = PluginSettings(id='p', factory='p', settings={'mode': 'custom'})
+    store.save_plugin(original)
+    other = SettingsStore(store.path)
+    replacement = original.model_copy(update=changed)
+    other.save_plugin(replacement)
+
+    store.update_plugin_requirements(original, requires={'mode': frozenset({'old-only'})})
+
+    assert other.plugins() == [replacement]
+    assert tags(other, 'p') is None
+
+
 def test_null_requirements_row_is_unreadable(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     save_raw(store, 'p', '{"id": "p", "factory": "p", "settings": {"mode": "fancy"}}', 'null')
@@ -383,13 +416,6 @@ def test_host_rejects_bad_requirement_declarations() -> None:
     assert host.requirements == {'Mode': frozenset({'fancy-mode'})}
 
 
-def test_offline_add_uses_the_capability_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(features.CAPABILITY_REQUIREMENTS, CODER, {'sub_agents': frozenset({'stock-bound-delegation'})})
-    store = SettingsStore(tmp_path / 'config.db')
-    plugins_command(store, ['add', 'mine', CODER, '{"sub_agents": true}'])
-    assert tags(store, 'mine') == {'sub_agents': ['stock-bound-delegation']}
-
-
 GATE = """
 from pydantic_ai.capabilities import Capability, Hooks
 from pydantic_ai.exceptions import UserError
@@ -494,9 +520,9 @@ def delegates(capabilities: Sequence[AgentCapability[None]]) -> bool:
     return any(isinstance(leaf, SubAgents) for leaf in leaves)
 
 
-def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
+async def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
     shell = coder_shell(tmp_path, io.StringIO(), sub_agents_tags=None)
-    assert shell.fork_session(None, []).on_setup_error == shell.capability_failed
+    assert (await shell.fork_session(None, [])).on_setup_error == shell.capability_failed
 
 
 async def test_coder_delegation_saved_by_another_build_is_ignored(tmp_path: Path) -> None:

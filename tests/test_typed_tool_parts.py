@@ -1066,4 +1066,5 @@ async def test_failed_denied_and_non_fitting_calls_keep_the_tool_kind() -> None:
     assert returns == {
         'f1': (ToolReturnPart, 'test.lookup', 'failed'),
         'd1': (ToolReturnPart, 'test.lookup', 'denied'),
+        'b1': (ToolReturnPart, 'test.lookup', 'retried'),
     }

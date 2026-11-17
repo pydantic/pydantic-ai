@@ -13,7 +13,7 @@ import pytest
 
 import pydantic_clai2.ui.rendering.splash
 from pydantic_clai2.__main__ import main
-from pydantic_clai2.cli import _cli
+from pydantic_clai2.cli import cli
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.rendering.splash import Splash
 from tests.clai2.cli_runner import CliRunner
@@ -81,6 +81,25 @@ def test_cli_recovers_unsupported_theme_without_losing_unknown_settings(
         assert dict(connection.execute('SELECT key, value_json FROM settings')) == saved
 
 
+@pytest.mark.parametrize(
+    'args',
+    [
+        ['sessions', 'foo'],
+        ['sessions', '-p', 'hi'],
+        ['sessions', '--model', 'x'],
+        ['--model', 'x', 'sessions'],
+        ['--prompt', 'hi', 'sessions'],
+        ['--web', 'sessions'],
+        ['--request-limit', '3', 'sessions'],
+        ['--database', 'unused.db', 'sessions'],
+    ],
+)
+def test_sessions_rejects_ignored_arguments(run_cli: CliRunner, args: list[str]) -> None:
+    result = run_cli(*args)
+    assert result.returncode == 2
+    assert '`sessions` does not accept arguments or chat/settings options' in result.stderr
+
+
 def test_cli_startup_interrupt(tmp_path: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
     def interrupted(coroutine: Coroutine[object, object, object]) -> None:
         coroutine.close()
@@ -115,6 +134,6 @@ def test_startup_saved_splash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s
         assert isinstance(splash, RecordingSplash)
 
     monkeypatch.setattr(pydantic_clai2.ui.rendering.splash, 'Splash', RecordingSplash)
-    monkeypatch.setattr(_cli, 'run', run)
+    monkeypatch.setattr(cli, 'run', run)
     main()
     assert requested == [enabled]

@@ -35,6 +35,7 @@ def test_examples_present():
     assert [path.name for path in EXAMPLE_FILES] == [
         'agent_control.py',
         'coding_agent.py',
+        'pixeltable_video.py',
         'research_agent.py',
     ]
 

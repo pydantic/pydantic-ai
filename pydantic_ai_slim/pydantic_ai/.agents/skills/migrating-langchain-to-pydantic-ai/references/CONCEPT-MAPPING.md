@@ -137,7 +137,7 @@ Map each middleware by the behavior it owns:
 | trim/summarize messages | `ProcessHistory` with an explicitly tested summary and pairing policy |
 | filter/rename tool definitions | tool `prepare`, `PrepareTools`, or wrapper toolset |
 | validate tool arguments | `args_validator` or tool-validation hook |
-| dynamic model selection/fallback | model instance/wrapper such as `FallbackModel`, or select the model at the app boundary |
+| dynamic model selection/fallback | the `ModelFallback` capability for fallback, `SelectModel` or `run(model=...)` for selection; `FallbackModel` only outside an agent |
 | model call limit | `UsageLimits` and explicit application limits |
 | tool error conversion | catch the expected exception in the tool and raise `ModelRetry` only for model-correctable failures |
 | logging/tracing | Logfire instrumentation or hooks for application metrics |

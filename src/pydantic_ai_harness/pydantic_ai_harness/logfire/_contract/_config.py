@@ -153,7 +153,9 @@ def _enumerates_values(annotation: object) -> bool:
 
 
 SETTING_ADAPTERS: dict[str, TypeAdapter[Any]] = {
-    name: TypeAdapter(field_info.annotation) for name, field_info in AgentConfigSettings.model_fields.items()
+    name: TypeAdapter(field_info.annotation)
+    for name, field_info in AgentConfigSettings.model_fields.items()
+    if field_info.annotation is not None
 }
 """One validator per canonical setting, read off the field annotations rather than restated.
 

@@ -47,10 +47,7 @@ interactions:
   data:
     type: client_tool_result
     tool_call_id: get_weather_7ce87451fd574570a6312ccea6efac48
-    result: 'Unknown tool name: ''get_weather''. No tools available.
-
-
-      Fix the errors and try again.'
+    result: '{"error":"Unknown tool name: ''get_weather''. No tools available."}'
     is_error: true
 - kind: message
   direction: received

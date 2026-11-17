@@ -13,7 +13,7 @@ def keyed_messages(messages: list[object]) -> list[tuple[str, str]]:
     """Each message's SHA-256 and the JSON it hashes, in history order."""
     keyed: list[tuple[str, str]] = []
     for message in messages:
-        text = json.dumps(message, sort_keys=True, separators=(',', ':'))
+        text = json.dumps(message, separators=(',', ':'))
         keyed.append((hashlib.sha256(text.encode()).hexdigest(), text))
     return keyed
 

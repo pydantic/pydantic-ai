@@ -12,7 +12,7 @@ vocabulary, `profiles.py` the `RealtimeModelProfile` type (per-provider tables l
 `codec.py` the connection layer; concrete providers live in `openai.py` / `azure.py` / `google.py` /
 `xai.py` / `openai_live.py` (OpenAI GPT-Live, a different protocol from the Realtime API rather than another
 model on it, which is why `infer_realtime_model` routes it by model name inside the `openai` prefix) /
-`elevenlabs_agents.py`. The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
+`elevenlabs.py` (Eleven Realtime, on the OpenAI protocol) / `elevenlabs_agents.py` (ElevenLabs Agents). The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
 
 ## Policy lives in the shared core, never in the session
 
@@ -31,8 +31,8 @@ model on it, which is why `infer_realtime_model` routes it by model name inside 
 
 - Parse provider frames through typed SDK models, never ad-hoc `dict` access. OpenAI-protocol event
   types come from the OpenAI SDK; Gemini's from `google-genai`.
-- Azure and xAI reuse the OpenAI codec (`_openai_protocol.py`). Fix protocol bugs there so all
-  three benefit; put genuinely provider-specific divergence in the provider's own module.
+- Azure, xAI, and Eleven Realtime reuse the OpenAI codec (`_openai_protocol.py`). Fix protocol bugs there so all
+  of them benefit; put genuinely provider-specific divergence in the provider's own module.
 - Capability differences go through `RealtimeModelProfile` flags (resolved defaults → provider →
   user `profile=`), never `isinstance`/provider-name checks at use sites. A change that branches on
   a profile flag needs a test pinning each side of the flag.

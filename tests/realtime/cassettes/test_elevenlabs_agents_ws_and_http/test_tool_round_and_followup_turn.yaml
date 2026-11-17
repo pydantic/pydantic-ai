@@ -18,7 +18,7 @@ interactions:
   at: 0.0
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_0401m52nv47sftq81cygg7j1k4ap
+      conversation_id: conv_3801m5djqwhxe8vrkn7r0fnn1ygs
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -29,13 +29,14 @@ interactions:
   data:
     type: user_message
     text: What is the weather in Berlin?
+    id: pydantic_ai_input_0
 - kind: message
   direction: received
-  at: 0.942
+  at: 0.896
   data:
     client_tool_call:
       tool_name: get_weather
-      tool_call_id: get_weather_5348288e4a39452ea53f7cca5c20f7e5
+      tool_call_id: get_weather_0e5a97ebe44647179ec5eb745a63ed58
       parameters:
         city: Berlin
       event_id: 1
@@ -43,19 +44,19 @@ interactions:
     type: client_tool_call
 - kind: message
   direction: sent
-  at: 0.943
+  at: 0.897
   data:
     type: client_tool_result
-    tool_call_id: get_weather_5348288e4a39452ea53f7cca5c20f7e5
+    tool_call_id: get_weather_0e5a97ebe44647179ec5eb745a63ed58
     result: It is sunny and 21 degrees in Berlin.
     is_error: false
 - kind: message
   direction: received
-  at: 0.99
+  at: 0.944
   data:
     agent_tool_response:
       tool_name: get_weather
-      tool_call_id: get_weather_5348288e4a39452ea53f7cca5c20f7e5
+      tool_call_id: get_weather_0e5a97ebe44647179ec5eb745a63ed58
       tool_type: client
       is_error: false
       is_blocked: false
@@ -65,52 +66,38 @@ interactions:
     type: agent_tool_response
 - kind: message
   direction: received
-  at: 1.683
+  at: 1.592
   data:
     audio_event:
-      audio_base_64: AgD//wIA///7//3/AQACAAAA/////////f/+/wAAAAAA
+      audio_base_64: AgAHAAcAAgAAAAEAAgAAAAEAAQABAAAA/v8CAAIABAAD
       event_id: 1
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 1.749
-  data:
-    ping_event:
-      event_id: 2
-      ping_ms: null
-    type: ping
-- kind: message
-  direction: sent
-  at: 1.749
-  data:
-    type: pong
-    event_id: 2
-- kind: message
-  direction: received
-  at: 1.763
+  at: 1.673
   data:
     audio_event:
-      audio_base_64: tQMaBdkF3gTpA1EF0gdlCX8JMQjpBc8DUwTMB6wKJAkD
+      audio_base_64: 9vNY85fy8vH68VvyOfIf8jH0ffa09tv2Afj/+Fz5S/qx
       event_id: 1
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 1.784
+  at: 1.675
   data:
     agent_response_event:
       agent_response: It is sunny and twenty-one degrees Celsius in Berlin.
       event_id: 1
-      response_id: 7817e27f-3c48-4795-bddc-abecb550029d
+      response_id: 9b968136-b6d4-4113-a22f-90653208c89f
       in_response_to_ids:
-      - 3ed477e9-19e0-4d5a-a746-e21315b1c646
+      - pydantic_ai_input_0
       response_type: text
       attachments: []
     type: agent_response
 - kind: message
   direction: received
-  at: 1.785
+  at: 1.675
   data:
     context_usage_event:
       event_id: 1
@@ -120,52 +107,76 @@ interactions:
     type: context_usage
 - kind: message
   direction: sent
-  at: 1.785
+  at: 1.676
   data:
     type: user_message
     text: Thanks, that is all.
+    id: pydantic_ai_input_2
 - kind: message
   direction: received
-  at: 1.831
+  at: 1.723
   data:
     interruption_event:
       event_id: 2
     type: interruption
 - kind: message
   direction: received
-  at: 1.832
+  at: 1.723
   data:
     agent_response_correction_event:
       original_agent_response: It is sunny and twenty-one degrees Celsius in Berlin.
       corrected_agent_response: '...'
       event_id: 1
-      response_id: 7817e27f-3c48-4795-bddc-abecb550029d
+      response_id: 9b968136-b6d4-4113-a22f-90653208c89f
     type: agent_response_correction
 - kind: message
   direction: received
-  at: 2.514
+  at: 1.752
+  data:
+    ping_event:
+      event_id: 2
+      ping_ms: null
+    type: ping
+- kind: message
+  direction: sent
+  at: 1.752
+  data:
+    type: pong
+    event_id: 2
+- kind: message
+  direction: received
+  at: 2.631
   data:
     audio_event:
-      audio_base_64: //8CAAMAAAABAAAAAAD//////v////7///8BAP//AAD/
+      audio_base_64: AAACAAIA///+//z//f/9//z/+v/8//v//f/+//3//f/8
       event_id: 2
       is_final: false
     type: audio
 - kind: message
   direction: received
-  at: 2.52
+  at: 2.706
+  data:
+    audio_event:
+      audio_base_64: MgEGAxkC2PuI9Wb0HPff+F74XvkT/bD/Kf5t/Kv9GACD
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 2.71
   data:
     agent_response_event:
-      agent_response: You're welcome.
+      agent_response: You're welcome, let me know if you need anything else.
       event_id: 2
-      response_id: cc97f373-d94c-47e4-bdaf-4f616e3de043
+      response_id: ad0041fa-a1e3-4179-b5a3-b787c4c17644
       in_response_to_ids:
-      - 4d21ba8b-d08b-4a05-a5ec-ccbe8cf82636
+      - pydantic_ai_input_2
       response_type: text
       attachments: []
     type: agent_response
 - kind: message
   direction: received
-  at: 2.521
+  at: 2.712
   data:
     context_usage_event:
       event_id: 2
@@ -175,715 +186,43 @@ interactions:
     type: context_usage
 - kind: message
   direction: received
-  at: 3.449
+  at: 3.452
   data:
     ping_event:
       event_id: 3
-      ping_ms: 45
+      ping_ms: 47
     type: ping
 - kind: message
   direction: sent
-  at: 3.449
+  at: 3.453
   data:
     type: pong
     event_id: 3
 - kind: message
   direction: received
-  at: 5.15
+  at: 5.152
   data:
     ping_event:
       event_id: 4
-      ping_ms: 45
+      ping_ms: 47
     type: ping
 - kind: message
   direction: sent
-  at: 5.15
+  at: 5.152
   data:
     type: pong
     event_id: 4
 - kind: message
   direction: received
-  at: 6.851
+  at: 6.853
   data:
     ping_event:
       event_id: 5
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 6.851
-  data:
-    type: pong
-    event_id: 5
-- kind: message
-  direction: received
-  at: 8.552
-  data:
-    ping_event:
-      event_id: 6
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 8.552
-  data:
-    type: pong
-    event_id: 6
-- kind: message
-  direction: received
-  at: 10.253
-  data:
-    ping_event:
-      event_id: 7
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 10.253
-  data:
-    type: pong
-    event_id: 7
-- kind: message
-  direction: received
-  at: 11.953
-  data:
-    ping_event:
-      event_id: 8
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 11.954
-  data:
-    type: pong
-    event_id: 8
-- kind: message
-  direction: received
-  at: 13.654
-  data:
-    ping_event:
-      event_id: 9
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 13.654
-  data:
-    type: pong
-    event_id: 9
-- kind: message
-  direction: received
-  at: 15.355
-  data:
-    ping_event:
-      event_id: 10
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 15.355
-  data:
-    type: pong
-    event_id: 10
-- kind: message
-  direction: received
-  at: 17.056
-  data:
-    ping_event:
-      event_id: 11
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 17.056
-  data:
-    type: pong
-    event_id: 11
-- kind: message
-  direction: received
-  at: 18.756
-  data:
-    ping_event:
-      event_id: 12
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 18.757
-  data:
-    type: pong
-    event_id: 12
-- kind: message
-  direction: received
-  at: 20.458
-  data:
-    ping_event:
-      event_id: 13
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 20.458
-  data:
-    type: pong
-    event_id: 13
-- kind: message
-  direction: received
-  at: 22.158
-  data:
-    ping_event:
-      event_id: 14
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 22.158
-  data:
-    type: pong
-    event_id: 14
-- kind: message
-  direction: received
-  at: 23.859
-  data:
-    ping_event:
-      event_id: 15
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 23.859
-  data:
-    type: pong
-    event_id: 15
-- kind: message
-  direction: received
-  at: 25.56
-  data:
-    ping_event:
-      event_id: 16
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 25.56
-  data:
-    type: pong
-    event_id: 16
-- kind: message
-  direction: received
-  at: 27.261
-  data:
-    ping_event:
-      event_id: 17
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 27.261
-  data:
-    type: pong
-    event_id: 17
-- kind: message
-  direction: received
-  at: 28.962
-  data:
-    ping_event:
-      event_id: 18
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 28.962
-  data:
-    type: pong
-    event_id: 18
-- kind: message
-  direction: received
-  at: 30.662
-  data:
-    ping_event:
-      event_id: 19
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 30.662
-  data:
-    type: pong
-    event_id: 19
-- kind: message
-  direction: received
-  at: 32.363
-  data:
-    ping_event:
-      event_id: 20
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 32.363
-  data:
-    type: pong
-    event_id: 20
-- kind: message
-  direction: received
-  at: 34.064
-  data:
-    ping_event:
-      event_id: 21
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 34.064
-  data:
-    type: pong
-    event_id: 21
-- kind: message
-  direction: received
-  at: 35.765
-  data:
-    ping_event:
-      event_id: 22
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 35.765
-  data:
-    type: pong
-    event_id: 22
-- kind: message
-  direction: received
-  at: 37.465
-  data:
-    ping_event:
-      event_id: 23
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 37.465
-  data:
-    type: pong
-    event_id: 23
-- kind: message
-  direction: received
-  at: 39.166
-  data:
-    ping_event:
-      event_id: 24
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 39.166
-  data:
-    type: pong
-    event_id: 24
-- kind: message
-  direction: received
-  at: 40.867
-  data:
-    ping_event:
-      event_id: 25
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 40.867
-  data:
-    type: pong
-    event_id: 25
-- kind: message
-  direction: received
-  at: 42.567
-  data:
-    ping_event:
-      event_id: 26
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 42.567
-  data:
-    type: pong
-    event_id: 26
-- kind: message
-  direction: received
-  at: 44.268
-  data:
-    ping_event:
-      event_id: 27
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 44.268
-  data:
-    type: pong
-    event_id: 27
-- kind: message
-  direction: received
-  at: 45.968
-  data:
-    ping_event:
-      event_id: 28
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 45.969
-  data:
-    type: pong
-    event_id: 28
-- kind: message
-  direction: received
-  at: 47.67
-  data:
-    ping_event:
-      event_id: 29
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 47.67
-  data:
-    type: pong
-    event_id: 29
-- kind: message
-  direction: received
-  at: 49.37
-  data:
-    ping_event:
-      event_id: 30
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 49.371
-  data:
-    type: pong
-    event_id: 30
-- kind: message
-  direction: received
-  at: 51.072
-  data:
-    ping_event:
-      event_id: 31
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 51.072
-  data:
-    type: pong
-    event_id: 31
-- kind: message
-  direction: received
-  at: 52.773
-  data:
-    ping_event:
-      event_id: 32
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 52.773
-  data:
-    type: pong
-    event_id: 32
-- kind: message
-  direction: received
-  at: 54.474
-  data:
-    ping_event:
-      event_id: 33
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 54.474
-  data:
-    type: pong
-    event_id: 33
-- kind: message
-  direction: received
-  at: 56.174
-  data:
-    ping_event:
-      event_id: 34
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 56.174
-  data:
-    type: pong
-    event_id: 34
-- kind: message
-  direction: received
-  at: 57.875
-  data:
-    ping_event:
-      event_id: 35
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 57.875
-  data:
-    type: pong
-    event_id: 35
-- kind: message
-  direction: received
-  at: 59.576
-  data:
-    ping_event:
-      event_id: 36
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 59.576
-  data:
-    type: pong
-    event_id: 36
-- kind: message
-  direction: received
-  at: 61.278
-  data:
-    ping_event:
-      event_id: 37
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 61.278
-  data:
-    type: pong
-    event_id: 37
-- kind: message
-  direction: received
-  at: 62.978
-  data:
-    ping_event:
-      event_id: 38
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 62.978
-  data:
-    type: pong
-    event_id: 38
-- kind: message
-  direction: received
-  at: 64.679
-  data:
-    ping_event:
-      event_id: 39
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 64.679
-  data:
-    type: pong
-    event_id: 39
-- kind: message
-  direction: received
-  at: 66.38
-  data:
-    ping_event:
-      event_id: 40
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 66.38
-  data:
-    type: pong
-    event_id: 40
-- kind: message
-  direction: received
-  at: 68.081
-  data:
-    ping_event:
-      event_id: 41
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 68.081
-  data:
-    type: pong
-    event_id: 41
-- kind: message
-  direction: received
-  at: 69.783
-  data:
-    ping_event:
-      event_id: 42
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 69.783
-  data:
-    type: pong
-    event_id: 42
-- kind: message
-  direction: received
-  at: 71.482
-  data:
-    ping_event:
-      event_id: 43
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 71.482
-  data:
-    type: pong
-    event_id: 43
-- kind: message
-  direction: received
-  at: 73.184
-  data:
-    ping_event:
-      event_id: 44
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 73.184
-  data:
-    type: pong
-    event_id: 44
-- kind: message
-  direction: received
-  at: 74.885
-  data:
-    ping_event:
-      event_id: 45
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 74.885
-  data:
-    type: pong
-    event_id: 45
-- kind: message
-  direction: received
-  at: 76.585
-  data:
-    ping_event:
-      event_id: 46
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 76.585
-  data:
-    type: pong
-    event_id: 46
-- kind: message
-  direction: received
-  at: 78.286
-  data:
-    ping_event:
-      event_id: 47
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 78.286
-  data:
-    type: pong
-    event_id: 47
-- kind: message
-  direction: received
-  at: 79.988
-  data:
-    ping_event:
-      event_id: 48
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 79.988
-  data:
-    type: pong
-    event_id: 48
-- kind: message
-  direction: received
-  at: 81.689
-  data:
-    ping_event:
-      event_id: 49
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 81.689
-  data:
-    type: pong
-    event_id: 49
-- kind: message
-  direction: received
-  at: 83.39
-  data:
-    ping_event:
-      event_id: 50
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 83.391
-  data:
-    type: pong
-    event_id: 50
-- kind: message
-  direction: received
-  at: 85.091
-  data:
-    ping_event:
-      event_id: 51
-      ping_ms: 45
-    type: ping
-- kind: message
-  direction: sent
-  at: 85.091
-  data:
-    type: pong
-    event_id: 51
-- kind: message
-  direction: received
-  at: 86.793
-  data:
-    ping_event:
-      event_id: 52
-      ping_ms: 46
-    type: ping
-- kind: message
-  direction: sent
-  at: 86.793
-  data:
-    type: pong
-    event_id: 52
-- kind: message
-  direction: received
-  at: 88.494
-  data:
-    ping_event:
-      event_id: 53
       ping_ms: 47
     type: ping
 - kind: message
   direction: sent
-  at: 88.494
+  at: 6.853
   data:
     type: pong
-    event_id: 53
+    event_id: 5

@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "False positive: only adds `repr=False` so the credential-bearing URL stays out of `repr`; the attribute's type, default, and constructor parameter are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10764"
+}

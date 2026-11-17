@@ -1,6 +1,7 @@
 import { useContext, useState } from 'react'
 import { SessionContext } from '../api'
 import type { AnswerBody, Questions } from '../protocol'
+import { ApprovalCard } from './ApprovalCard'
 import { CheckIcon, QuestionIcon } from './icons'
 
 interface Props {
@@ -20,6 +21,11 @@ export function QuestionCard({ request, asker = 'CLAI', onAnswer, onError }: Pro
   const [custom, setCustom] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const complete = request.questions.every((q) => (picked[q.header]?.length ?? 0) > 0 || (custom[q.header] ?? '').trim())
+  if (request.approval) {
+    return (
+      <ApprovalCard request={request} approval={request.approval} asker={asker} answer={answer} onError={onError} />
+    )
+  }
 
   const toggle = (header: string, label: string, multi: boolean) => {
     setCustom((current) => ({ ...current, [header]: '' }))

@@ -15,7 +15,7 @@ import pytest
 from rich.console import Console
 
 from pydantic_clai2.cli.shell_passthrough import run_shell_command
-from pydantic_clai2.cli.shell_terminal import Terminal, TerminalText, attached_terminal
+from pydantic_clai2.cli.shell_terminal import PtyRun, Terminal, TerminalText, attached_terminal
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 
@@ -221,6 +221,32 @@ async def test_resizing_reaches_the_command(user: int, tmp_path: Path) -> None:
         context = await task
     assert '\nExit code 0\n' in context
     assert (tmp_path / 'resized').read_text() == '40 120\n'
+
+
+async def test_a_resize_while_the_command_starts_reaches_it(
+    user: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resize after the pseudo-terminal is made but before CLAI listens for resizes still reaches the command."""
+    started = asyncio.Event()
+    start = PtyRun.start
+
+    def resize_then_start(self: PtyRun) -> None:
+        # Nothing listens for the terminal's size yet, so no notification can carry this change.
+        _set_size(user, 40, 120)
+        start(self)
+        started.set()
+
+    monkeypatch.setattr(PtyRun, 'start', resize_then_start)
+    command = 'while [ ! -f go ]; do sleep 0.01; done; stty size > seen'
+    task = asyncio.create_task(
+        run_shell_command(command, console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=tmp_path)
+    )
+    reached = asyncio.create_task(started.wait())
+    await asyncio.wait({reached, task}, return_when=asyncio.FIRST_COMPLETED)
+    assert started.is_set(), task
+    (tmp_path / 'go').touch()
+    assert '\nExit code 0\n' in await task
+    assert (tmp_path / 'seen').read_text() == '40 120\n'
 
 
 async def test_background_job_cannot_hold_the_command_open(user: int) -> None:

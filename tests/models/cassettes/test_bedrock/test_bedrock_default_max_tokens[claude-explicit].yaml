@@ -1,0 +1,55 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-opus-5-5/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 4628f606-0e74-4dca-bc65-cfddfc1ef81b
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "143"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: "Reply with the single word: ok"
+        system: []
+        inferenceConfig:
+          maxTokens: 1000
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "342"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1291
+        output:
+          message:
+            content:
+            - text: ok
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 18
+          outputTokens: 4
+          serverToolUsage: {}
+          totalTokens: 22
+  recorded_at: 2026-10-20T23:00:12.737013+00:00

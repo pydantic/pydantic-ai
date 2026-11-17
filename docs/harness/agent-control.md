@@ -21,6 +21,25 @@ Install the `logfire` extra:
 pip/uv-add "pydantic-ai-harness[logfire]"
 ```
 
+```mermaid
+flowchart TB
+    accTitle: Agent Control: an agent's config you change in Logfire, not in code
+    accDescr: As an agent run starts, the AgentControl capability resolves the Logfire managed variable agent__checkout_assistant once. Each model request gets the published instructions, model, settings and tool definitions, and the code-defined value for anything not published. AgentControl also reports the code baseline to Logfire on a config hint span, which Logfire creates the config from.
+    variable[("Logfire<br/>managed variable<br/>agent__checkout_assistant")]:::external
+    subgraph run["Agent run"]
+        control["AgentControl()"]:::capability
+        request["model request<br/>instructions, model,<br/>settings, tool definitions"]
+    end
+    model(["model"])
+    hint["Logfire<br/>agent_control_config_hint span"]:::external
+    variable -->|"resolved once,<br/>as the run starts"| control
+    control -->|"published values,<br/>code values for the rest"| request
+    request --> model
+    control -->|"code baseline"| hint
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## The problem it solves
 
 An agent's behavior is spread across knobs that all live in code: the instructions, the model and its

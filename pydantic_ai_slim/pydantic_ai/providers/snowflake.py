@@ -24,7 +24,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -45,7 +45,7 @@ class SnowflakeModelProfile(OpenAIModelProfile, total=False):
     """
 
 
-class SnowflakeProvider(_OpenAICompatibleProvider):
+class SnowflakeProvider(_OpenAISDKProvider):
     """Provider for [Snowflake Cortex](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api).
 
     Routes requests through Snowflake's OpenAI-compatible Chat Completions API at
@@ -56,6 +56,11 @@ class SnowflakeProvider(_OpenAICompatibleProvider):
 
     @property
     def name(self) -> str:
+        return 'snowflake'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing reasoning details.
         return 'snowflake'
 
     @property

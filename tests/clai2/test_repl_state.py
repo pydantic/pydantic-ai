@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 
+import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
@@ -18,7 +19,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -35,9 +35,9 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime import repl_state
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.monty_cells import NOTE_CHARS, MontyCell
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculative_mode import guidance
@@ -65,8 +65,8 @@ class Script:
             self.instructions.append(info.instructions or '')
             args: dict[str, object] = {'code': self.CODE[part.content], 'restart': part.content == 'restart'}
             return ModelResponse(parts=[ToolCallPart('run_code', args)])
-        assert isinstance(part, ToolReturnPart | RetryPromptPart)
-        self.results.append(f'retry: {part.content}' if isinstance(part, RetryPromptPart) else str(part.content))
+        assert isinstance(part, ToolReturnPart)
+        self.results.append(f'retry: {part.content}' if part.outcome == 'retried' else str(part.content))
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
@@ -325,8 +325,8 @@ class TestReplStates:
         with caplog.at_level(logging.WARNING):
             await blocked.save(own, b'state')
             assert await unreadable.load(own) is None
-            unreadable.delete(SESSION_ID)
-            states.copy(source=SESSION_ID, target=FORK_ID)
+            await anyio.to_thread.run_sync(unreadable.delete, SESSION_ID)
+            await anyio.to_thread.run_sync(lambda: states.copy(source=SESSION_ID, target=FORK_ID))
 
         assert 'Could not save the REPL state' in caplog.text
         assert 'Could not read the saved REPL state' in caplog.text
