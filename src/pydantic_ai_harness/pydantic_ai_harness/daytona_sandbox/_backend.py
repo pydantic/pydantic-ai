@@ -600,7 +600,6 @@ class DaytonaSandboxBackend(
             name=name,
             snapshot=self._snapshot,
             env_vars=env_vars or None,
-            env_vars=self._env or None,
             secrets=self._secrets,
             auto_stop_interval=self._auto_stop_interval,
             network_block_all=not self._allow_internet_access,
