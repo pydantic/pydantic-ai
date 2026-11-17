@@ -20,7 +20,7 @@ from pydantic_ai.tools import (
     RunContext,
     ToolDenied,
 )
-from pydantic_ai_harness.ask_user import TOOL_NAME
+from pydantic_ai_harness.ask_user._toolset import OWNER_METADATA_KEY
 
 __all__ = ['DEFAULT_MESSAGE', 'DEFAULT_QUESTION_MESSAGE', 'DenyUnanswered']
 
@@ -33,7 +33,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
     """Deny approval-required calls and unanswered questions that nobody attended.
 
     For runs that may end with no one available to approve or answer: a held approval is denied
-    with `message`, and a deferred `ask_user_question` call is answered with `question_message`,
+    with `message`, and a deferred `AskUser` question is answered with `question_message`,
     so the run finishes instead of pausing on `DeferredToolRequests`. Any other deferred call
     stays deferred for its own handler. Without this capability nothing changes.
 
@@ -48,7 +48,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
     """The tool result for a denied approval."""
 
     question_message: str = DEFAULT_QUESTION_MESSAGE
-    """The tool result for an unanswered `ask_user_question` call."""
+    """The tool result for an unanswered `AskUser` question."""
 
     def get_ordering(self) -> CapabilityOrdering:
         """After every handler that may ask the user, including any `HandleDeferredToolCalls` subclass."""
@@ -64,7 +64,8 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
         questions = [
             call.tool_call_id
             for call in requests.calls
-            if call.tool_name == TOOL_NAME and requests.kind(call.tool_call_id) == 'question'
+            if requests.kind(call.tool_call_id) == 'question'
+            and OWNER_METADATA_KEY in requests.metadata.get(call.tool_call_id, {})
         ]
         if not approvals and not questions:
             return None

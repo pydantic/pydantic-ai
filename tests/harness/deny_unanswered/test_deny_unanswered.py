@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.capabilities import HandleDeferredToolCalls, PrefixTools
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
@@ -94,6 +94,20 @@ class TestDenyUnanswered:
         assert result.output == 'done'
         assert [(part.tool_name, part.content) for part in _tool_returns(result.all_messages())] == [
             ('ask_user_question', expected)
+        ]
+
+    async def test_answers_prefixed_ask_user_question_in_run(self):
+        """An `AskUser` question is found by its ownership metadata, so a `PrefixTools` rename still gets answered."""
+        agent = Agent(
+            call_then_echo('user_ask_user_question', {'questions': QUESTION}, 'q1', 'done'),
+            capabilities=[PrefixTools(AskUser(answerer=None), prefix='user'), DenyUnanswered()],
+            output_type=[str, DeferredToolRequests],
+        )
+
+        result = await agent.run('go')
+        assert result.output == 'done'
+        assert [(part.tool_name, part.content) for part in _tool_returns(result.all_messages())] == [
+            ('user_ask_user_question', DEFAULT_QUESTION_MESSAGE)
         ]
 
     async def test_leaves_other_deferred_calls_deferred(self):

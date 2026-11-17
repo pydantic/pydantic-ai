@@ -628,7 +628,7 @@ print(agent.run_sync('Set up storage').output)
 ## Deny Unanswered
 
 `DenyUnanswered` ends the wait in an unattended run: a held approval is denied with
-`message` (`ToolDenied`) and a deferred `ask_user_question` call is answered with
+`message` (`ToolDenied`) and a deferred `AskUser` question is answered with
 `question_message` (nobody is available to answer, not "the user declined"),
 so the run finishes instead of pausing on `DeferredToolRequests`. Any other deferred call
 stays deferred for its own handler.
