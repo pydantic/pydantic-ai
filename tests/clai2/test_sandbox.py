@@ -909,6 +909,24 @@ class TestRequestEnv:
         await session.prompt('run the evals')
         assert (provider.folder(WorkspaceRef(provider='fake', id='sbx-1')) / 'seen').read_text() == 'sk-saved'
 
+    async def test_control_characters_in_the_reason_are_shown_escaped(
+        self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dialogs = ScriptedDialogs([Back()])
+        monkeypatch.setattr(sandbox, 'TerminalDialogs', scripted(dialogs))
+        loaded = load(checkout, terminal=True)
+        reason = 'run evals\r\x1b[2KCheck configuration\x1b[8m'
+        model, returns = steps(('request_env', {'name': 'ANTHROPIC_API_KEY', 'reason': reason}), 'done')
+        session = on_screen(loaded, checkout, model=model, shell=True)
+        await plugin_of(loaded).command(['fake'])
+        await session.prompt('run the evals')
+        [asked] = dialogs.asked
+        assert asked.title == (
+            'The agent asks for ANTHROPIC_API_KEY to run evals\\x0d\\x1b[2KCheck configuration\\x1b[8m. '
+            'Anything run in the sandbox can read it.'
+        )
+        assert returns[0] == 'The user did not give ANTHROPIC_API_KEY.'
+
     async def test_a_background_command_gets_the_key(
         self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
     ) -> None:

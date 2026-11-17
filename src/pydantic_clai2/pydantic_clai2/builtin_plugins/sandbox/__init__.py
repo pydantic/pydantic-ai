@@ -45,6 +45,7 @@ from pydantic_clai2.runtime.imported_history import imported_context
 from pydantic_clai2.runtime.session import ConversationWorkspace
 from pydantic_clai2.ui.menus.dialogs import RUNNERS, TerminalDialogs
 from pydantic_clai2.ui.rendering.status import StatusSegment
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 __all__ = ('SandboxPlugin',)
 
@@ -147,7 +148,9 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         async with self.plugin.host.full_screen():
             key = await choose_key(
                 name=name,
-                label=f'The agent asks for {name} to {reason}. Anything run in the sandbox can read it.',
+                # The model wrote `reason`: escaped, so control characters cannot redraw the question the user answers.
+                label=f'The agent asks for {name} to {terminal_text(reason, keep="")}. '
+                'Anything run in the sandbox can read it.',
                 dialogs=TerminalDialogs(RUNNERS),
             )
         if key is None:
