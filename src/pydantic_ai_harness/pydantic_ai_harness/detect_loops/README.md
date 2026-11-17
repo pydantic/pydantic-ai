@@ -160,19 +160,19 @@ detect_loops = DetectLoops(stream_detector=RepeatedLines())
 
 ### `'nudge'` (default)
 
-The capability enqueues a [`SystemPromptPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.SystemPromptPart) with [`RunContext.enqueue`](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run), which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. For example:
+The capability enqueues a `LoopNudgePart`, an [`InstructionCapabilityPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.InstructionCapabilityPart) kind (a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice), with [`RunContext.enqueue`](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run), which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. The model sees its text as a [mid-conversation system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#mid-conversation-system-prompts), or as `<system>` user text on a model without inline system prompts. For example:
 
 ```text
 Your last 3 calls to `read_file` used the same arguments and returned the same result, so calling it again will not change the outcome. Change your approach, or explain what is blocking you.
 ```
 
-The text names tools using only letters, digits, and `_`; any other character becomes `_`. The real names, and the pattern, are in the part's `metadata`:
+The text names tools using only letters, digits, and `_`; any other character becomes `_`. The part's `pattern` and `tool_names` fields hold the pattern and the real names, and never reach the model. Find nudges in history by their type, not by their text:
 
-```python
-{'origin': 'pydantic-ai-harness.detect_loops.nudge.v1', 'pattern': 'repeated_result', 'tool_names': ['read_file']}
+```python {test="skip" lint="skip"}
+from pydantic_ai_harness.detect_loops import LoopNudgePart
+
+nudges = [part for message in messages for part in message.parts if isinstance(part, LoopNudgePart)]
 ```
-
-Find nudges in history by that `origin`, not by their text ([identifying system prompts](https://pydantic.dev/docs/ai/core-concepts/message-history/#identifying-system-prompts)). On a model without inline system prompts, Pydantic AI sends the part as `<system>` user text, as it does any [mid-conversation system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#mid-conversation-system-prompts).
 
 For a [loop within a response](#loops-within-a-response), the stream is also stopped and the request made again, with the nudge. The nudge is request-scoped there: the response that looped is gone, so it's sent with that one request instead of staying in the conversation. The capability raises `ModelRetry`, so the model also sees `Your previous response was rejected because it kept repeating itself.` as retry feedback, and each such retry counts against the agent's [output retries](https://pydantic.dev/docs/ai/core-concepts/agent/#how-output-retries-are-enforced): a model that keeps looping ends the run with `UnexpectedModelBehavior` once they run out. A streamed response that was stopped isn't kept in history, and the tokens it used aren't added to the run's usage. A response that arrived whole stays in history ahead of the retry, as any rejected response does.
 
