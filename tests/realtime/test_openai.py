@@ -5377,15 +5377,43 @@ async def test_parallel_tool_calls_get_one_response_create() -> None:
     ]
 
 
+_WEATHER_CALL_ITEM = {
+    'id': 'item-call-1',
+    'type': 'function_call',
+    'call_id': 'call-1',
+    'name': 'get_weather',
+    'arguments': '{}',
+    'status': 'completed',
+}
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize('status', ['completed', 'cancelled'])
-async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(status: str) -> None:
+@pytest.mark.parametrize(
+    'done_response',
+    [
+        pytest.param({'id': 'resp-1', 'status': 'completed', 'output': [_WEATHER_CALL_ITEM]}, id='completed'),
+        pytest.param({'id': 'resp-1', 'status': 'cancelled', 'output': [_WEATHER_CALL_ITEM]}, id='cancelled'),
+        pytest.param({'status': 'completed', 'output': [_WEATHER_CALL_ITEM]}, id='without-id'),
+        pytest.param(
+            {'id': 'resp-1', 'status': 'completed', 'output': [_WEATHER_CALL_ITEM], 'usage': 'bogus'},
+            id='unreadable-usage',
+        ),
+        pytest.param('garbled', id='unreadable'),
+    ],
+)
+async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(
+    done_response: dict[str, Any] | str,
+) -> None:
     """One call's result goes out as soon as it settles, and its `response.create` at the `response.done`.
 
     The same frames at the same moments as before tool results were batched: the connection already held
     an early result's `response.create` back until the calling response's `response.done`, and dropped it
     when the server cancelled that response (the user barged in), leaving the answer to the response the
     user's speech starts.
+
+    A `response.done` the connection can't read, or one without an id, still ends the calling response: its
+    status is unknown or completed, so the result is answered as after a completed one. No recorded session
+    has such a frame, so these cases are scripted.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -5403,14 +5431,6 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
     async with session:
         await session.send('Weather?')
         ws.push({'type': 'response.created', 'response': {'id': 'resp-1', 'status': 'in_progress', 'output': []}})
-        call = {
-            'id': 'item-call-1',
-            'type': 'function_call',
-            'call_id': 'call-1',
-            'name': 'get_weather',
-            'arguments': '{}',
-            'status': 'completed',
-        }
         ws.push(
             {
                 'type': 'response.function_call_arguments.done',
@@ -5431,8 +5451,8 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
         # The result is out while the calling response is still active; nothing more until it's done.
         assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
 
-        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': status, 'output': [call]}})
-        if status == 'cancelled':
+        ws.push({'type': 'response.done', 'response': done_response})
+        if isinstance(done_response, dict) and done_response['status'] == 'cancelled':
             for _ in range(50):
                 await asyncio.sleep(0)
             assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
