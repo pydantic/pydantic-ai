@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import importlib.util
 import re
+import sys
 from typing import Any
 
 import pytest
@@ -52,6 +54,10 @@ from pydantic_ai_harness.dynamic_workflow import (
 
 from .._deferred_tools import deferring_agent, pending_agent
 from ._concurrent_sub_agents import DeferredStarts
+
+requires_jsonschema = pytest.mark.skipif(
+    importlib.util.find_spec('jsonschema') is None, reason='jsonschema not installed'
+)
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -558,6 +564,13 @@ finding = await researcher(task='x', output_schema={
 [finding['claim'], finding['confidence']]"""
 
 
+def test_allow_output_schema_requires_jsonschema(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'jsonschema', None)
+    with pytest.raises(UserError, match=re.escape('`StructuredDict(validate=True)` requires the `jsonschema` package')):
+        WorkflowAgent(_sub_agent(), allow_output_schema=True)
+
+
+@requires_jsonschema
 async def test_output_schema_sets_the_call_output_type() -> None:
     seen_schemas: list[ObjectJsonSchema] = []
 
@@ -591,12 +604,14 @@ async def test_output_schema_sets_the_call_output_type() -> None:
     )
 
 
+@requires_jsonschema
 async def test_output_schema_replaces_a_structured_output_type() -> None:
     reviewer = _review_agent({'claim': 'c', 'confidence': 1}, name='researcher')
     ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=reviewer, allow_output_schema=True)])
     assert await _run_script(ts, _FINDING_SCHEMA_CODE) == ['c', 1]
 
 
+@requires_jsonschema
 async def test_output_schema_is_type_checked_per_call() -> None:
     # Without `output_schema`, the call still returns the agent's own `str`, which takes no string key.
     ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(name='researcher'), allow_output_schema=True)])
@@ -606,6 +621,7 @@ async def test_output_schema_is_type_checked_per_call() -> None:
         await _run_script(ts, "await researcher(task='x', output_schema='object')")
 
 
+@requires_jsonschema
 async def test_output_schema_is_shown_only_for_agents_that_allow_it() -> None:
     ts = DynamicWorkflowToolset[object](
         agents=[WorkflowAgent(_sub_agent(name='researcher'), allow_output_schema=True), _wf_agent(name='plain')]
@@ -644,6 +660,7 @@ async def test_tool_description_is_unchanged_without_output_schema() -> None:
     assert 'output_schema' not in desc
 
 
+@requires_jsonschema
 async def test_output_schema_fails_the_call_on_an_agent_with_output_validators() -> None:
     validated = _sub_agent(name='validated')
     validated.output_validator(lambda output: output)
@@ -676,10 +693,14 @@ _POINTER_SCHEMA = '{"type": "object", "properties": {"a": {"type": "string"}, "b
         (_DEFS_SCHEMA, 'properties.a.$ref: Extra inputs are not permitted; $defs: Extra inputs are not permitted'),
         (_POINTER_SCHEMA, 'properties.b.$ref: Extra inputs are not permitted'),
         ('{"$ref": "#"}', '$ref: Extra inputs are not permitted'),
-        ('{"type": "object", "minimum": 1}', 'minimum: Extra inputs are not permitted'),
+        (
+            '{"type": "object", "properties": {"a": {"pattern": "a"}}}',
+            'properties.a.pattern: Extra inputs are not permitted',
+        ),
     ],
     ids=['not-a-dict', 'not-an-object', 'defs', 'pointer', 'top-level-ref', 'unsupported-keyword'],
 )
+@requires_jsonschema
 async def test_unusable_output_schema_rejected_before_budget_is_spent(schema: str, error: str) -> None:
     # Smuggled through `json.loads` (typed `Any`), so only the runtime guard can catch it.
     ts = DynamicWorkflowToolset[object](
@@ -714,6 +735,7 @@ _KITCHEN_SINK_SCHEMA = {
 }
 
 
+@requires_jsonschema
 async def test_output_schema_reusing_a_dict_is_rejected_before_it_expands() -> None:
     ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)])
     # 40 levels that each reuse the level below twice: tiny in the sandbox, 2**40 values once expanded.
@@ -726,6 +748,7 @@ await sub(task='x', output_schema=s)"""
         await _run_script(ts, code)
 
 
+@requires_jsonschema
 async def test_output_not_matching_the_schema_is_retried() -> None:
     bad = {
         'extra': 1,
@@ -757,11 +780,11 @@ async def test_output_not_matching_the_schema_is_retried() -> None:
         'open': {'x': 1},
         'anything': [1],
     }
-    retry_prompts: list[str] = []
+    retry_prompts: list[object] = []
 
     def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         retry_prompts.extend(
-            str(part.content)
+            part.content
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -776,19 +799,38 @@ async def test_output_not_matching_the_schema_is_retried() -> None:
     assert await _run_script(ts, code) == good
     assert retry_prompts == snapshot(
         [
-            """\
-Output does not match the required schema:
-$.name: required
-$.extra: additional property not allowed
-$.flag: must be true
-$.pair: must be [1, {"k": true}]
-$.count: expected integer
-$.score: expected number
-$.ok: expected boolean
-$.note: expected string or null
-$.tags[1]: expected string
-$.kind: must be one of ["a", "b"]\
-"""
+            [
+                {
+                    'type': 'value_error',
+                    'loc': [],
+                    'msg': """\
+Value error, $.count: True is not of type 'integer'
+$.score: 'x' is not of type 'number'
+$.ok: 1 is not of type 'boolean'
+$.note: 3 is not of type 'string', 'null'
+$.tags[1]: 2 is not of type 'string'
+$.kind: 'c' is not one of ['a', 'b']
+$.version: 1 was expected
+$.flag: True was expected
+$.pair: [1, {'k': True}] was expected
+$.ref: 1.5 is not valid under any of the given schemas\
+""",
+                    'input': {
+                        'extra': 1,
+                        'flag': 1,
+                        'pair': [1, {'k': 1}],
+                        'count': True,
+                        'score': 'x',
+                        'ok': 1,
+                        'note': 3,
+                        'tags': ['a', 2],
+                        'kind': 'c',
+                        'version': 2,
+                        'ref': 1.5,
+                        'meta': {'k': 1},
+                    },
+                }
+            ]
         ]
     )
 
@@ -1845,6 +1887,7 @@ async def test_runtime_reveal_announces_and_makes_callable() -> None:
     assert out == 4
 
 
+@requires_jsonschema
 @pytest.mark.parametrize('baseline_allows', [False, True])
 async def test_reveal_of_an_agent_allowing_output_schema(baseline_allows: bool) -> None:
     workflow = DynamicWorkflow[object](

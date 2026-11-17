@@ -19,6 +19,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, cast
 
 from pydantic import Field, TypeAdapter
+from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
@@ -63,7 +64,7 @@ from pydantic_ai_harness._sub_agent_output import (
     without_resumable_outputs,
 )
 from pydantic_ai_harness._warn import renamed_duration_limit
-from pydantic_ai_harness.dynamic_workflow._output_schema import JsonObject, parse_output_schema, schema_output
+from pydantic_ai_harness.dynamic_workflow._output_schema import OutputSchema, output_schema_type
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.aws_lambda._bridge import StepBridge
@@ -209,9 +210,8 @@ values.\
 _OUTPUT_SCHEMA_DESCRIPTION = """\
 A sub-agent with an `output_schema` overload can return a result in a shape you choose: pass a JSON
 schema with `"type": "object"`, and the call returns a dict validated against it instead of the
-agent's own output. Write nested objects inline; the supported keywords are `type`, `properties`,
-`required`, `additionalProperties`, `items`, `enum`, `const`, `anyOf`, `title`, `description`,
-`default` and `examples`:
+agent's own output. Write nested objects inline. The schema can use only these keywords:
+{keywords}.
 
 ```python
 finding = await researcher(task="...", output_schema={
@@ -220,7 +220,7 @@ finding = await researcher(task="...", output_schema={
     "required": ["claim", "confidence"],
 })
 ```\
-"""
+""".replace('{keywords}', ', '.join(f'`{keyword}`' for keyword in OutputSchema.__annotations__))
 
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
@@ -605,7 +605,7 @@ def _completed_workflow_result(
 
 def _dispatched_call(
     agent_name: str, kwargs: Mapping[str, object], *, allow_output_schema: bool
-) -> tuple[str, Callable[[JsonObject], JsonObject] | None]:
+) -> tuple[str, type[JsonSchemaValue] | None]:
     """The `task` a sandbox call to sub-agent `agent_name` passed, and the output type its `output_schema` asks for."""
     # Monty does not validate kwargs against the sandbox signature at runtime, and the static
     # check can be evaded through `Any` (e.g. `json.loads` results) -- so check here: a dropped
@@ -626,7 +626,7 @@ def _dispatched_call(
     if schema is None:
         return task, None
     try:
-        return task, schema_output(parse_output_schema(schema))
+        return task, output_schema_type(schema)
     except ValueError as exc:
         raise TypeError(f'{agent_name}() output_schema is not usable: {exc}') from exc
 
@@ -665,6 +665,11 @@ class WorkflowAgent(Generic[AgentDepsT]):
     """Let the script pass `output_schema`, an object JSON schema that replaces the agent's
     `output_type` for that call. The returned dict is validated against the schema, and the agent's
     own output type, including any validation it does, is bypassed for the call."""
+
+    def __post_init__(self) -> None:
+        if self.allow_output_schema:
+            # Raises `UserError` now, rather than on the script's first call, if `jsonschema` is missing.
+            output_schema_type({'type': 'object'})
 
     @property
     def resolved_name(self) -> str | None:
@@ -940,7 +945,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         task: str,
         ctx: RunContext[AgentDepsT],
         branches: _LambdaBranches | None = None,
-        output_type: Callable[[JsonObject], JsonObject] | None = None,
+        output_type: type[JsonSchemaValue] | None = None,
     ) -> Any:
         """Run one sub-agent against the shared per-run budget.
 
@@ -976,7 +981,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         agent_name: str,
         task: str,
         ctx: RunContext[AgentDepsT],
-        output_type: Callable[[JsonObject], JsonObject] | None,
+        output_type: type[JsonSchemaValue] | None,
     ) -> Any:
         """Run one sub-agent, with `output_type` replacing its own, and return its output as JSON-compatible data."""
         # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent

@@ -399,7 +399,11 @@ class TextOutput(Generic[OutputDataT]):
 
 
 def StructuredDict(
-    json_schema: JsonSchemaValue, name: str | None = None, description: str | None = None
+    json_schema: JsonSchemaValue,
+    name: str | None = None,
+    description: str | None = None,
+    *,
+    validate: bool = False,
 ) -> type[JsonSchemaValue]:
     """Returns a `dict[str, Any]` subclass with a JSON schema attached that will be used for structured output.
 
@@ -407,6 +411,8 @@ def StructuredDict(
         json_schema: A JSON schema of type `object` defining the structure of the dictionary content.
         name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
         description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
+        validate: Validate the output against `json_schema`, so that output that doesn't match it is sent back
+            to the model to retry. Requires the `jsonschema` package, installed with `pydantic-ai-slim[jsonschema]`.
 
     Example:
     ```python {title="structured_dict.py"}
@@ -428,6 +434,7 @@ def StructuredDict(
     ```
     """
     json_schema = _utils.check_object_json_schema(json_schema)
+    validator = _json_schema_validator(json_schema) if validate else None
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
@@ -451,10 +458,13 @@ def StructuredDict(
         def __get_pydantic_core_schema__(
             cls, source_type: Any, handler: GetCoreSchemaHandler
         ) -> core_schema.CoreSchema:
-            return core_schema.dict_schema(
+            schema = core_schema.dict_schema(
                 keys_schema=core_schema.str_schema(),
                 values_schema=core_schema.any_schema(),
             )
+            if validator is None:
+                return schema
+            return core_schema.no_info_after_validator_function(validator, schema)
 
         @classmethod
         def __get_pydantic_json_schema__(
@@ -463,6 +473,37 @@ def StructuredDict(
             return json_schema
 
     return _StructuredDict
+
+
+_MAX_JSON_SCHEMA_ERRORS = 10
+
+
+def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """A function that returns a value matching `json_schema` unchanged, and raises `ValueError` listing why one doesn't."""
+    try:
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import SchemaError
+    except ImportError as e:
+        raise exceptions.UserError(
+            '`StructuredDict(validate=True)` requires the `jsonschema` package. '
+            'Install it with `pip install "pydantic-ai-slim[jsonschema]"`.'
+        ) from e
+    try:
+        Draft202012Validator.check_schema(json_schema)
+    except SchemaError as e:
+        raise exceptions.UserError(f'`StructuredDict` got an invalid JSON schema: {e.message}') from e
+    schema_validator = Draft202012Validator(json_schema)
+
+    def validate(value: dict[str, Any]) -> dict[str, Any]:
+        errors = [
+            f'{error.json_path}: {error.message}'
+            for error in schema_validator.iter_errors(value)  # pyright: ignore[reportUnknownMemberType]
+        ]
+        if errors:
+            raise ValueError('\n'.join(errors[:_MAX_JSON_SCHEMA_ERRORS]))
+        return value
+
+    return validate
 
 
 @dataclass(init=False)

@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import json
 import re
 import sys
@@ -207,6 +208,9 @@ from .conftest import (
 )
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
+requires_jsonschema = pytest.mark.skipif(
+    importlib.util.find_spec('jsonschema') is None, reason='jsonschema not installed'
+)
 requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_cohere = pytest.mark.skipif(CohereProvider is None, reason='cohere not installed')  # pyright: ignore[reportUnnecessaryComparison]
@@ -3095,6 +3099,72 @@ def test_structured_dict_recursive_refs():
         ),
     ):
         StructuredDict(schema)
+
+
+@requires_jsonschema
+def test_structured_dict_validate_retries_output_not_matching_the_schema():
+    PersonDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer', 'minimum': 0}},
+            'required': ['name', 'age'],
+            'additionalProperties': False,
+        },
+        validate=True,
+    )
+    retries: list[ToolReturnPart] = []
+
+    def return_person(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        retries.extend(
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        )
+        args = {'name': 'Ann', 'age': 30} if retries else {'age': -1, 'nickname': 'A'}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    result = Agent(FunctionModel(return_person), output_type=PersonDict).run_sync('Create a person')
+    assert result.output == {'name': 'Ann', 'age': 30}
+    assert [part.content for part in retries] == snapshot(
+        [
+            [
+                {
+                    'type': 'value_error',
+                    'loc': [],
+                    'msg': """\
+Value error, $.age: -1 is less than the minimum of 0
+$: 'name' is a required property
+$: Additional properties are not allowed ('nickname' was unexpected)\
+""",
+                    'input': {'age': -1, 'nickname': 'A'},
+                }
+            ]
+        ]
+    )
+
+
+def test_structured_dict_without_validate_accepts_output_not_matching_the_schema():
+    PersonDict = StructuredDict({'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']})
+
+    def return_person(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'age': 'x'})])
+
+    result = Agent(FunctionModel(return_person), output_type=PersonDict).run_sync('Create a person')
+    assert result.output == {'age': 'x'}
+
+
+@requires_jsonschema
+def test_structured_dict_validate_rejects_an_invalid_schema():
+    with pytest.raises(UserError, match=re.escape('`StructuredDict` got an invalid JSON schema: 5 is not valid')):
+        StructuredDict({'type': 'object', 'properties': {'a': {'type': 5}}}, validate=True)
+
+
+def test_structured_dict_validate_requires_jsonschema(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setitem(sys.modules, 'jsonschema', None)
+    with pytest.raises(UserError, match=re.escape('`StructuredDict(validate=True)` requires the `jsonschema` package')):
+        StructuredDict({'type': 'object'}, validate=True)
 
 
 def test_default_structured_output_mode():
