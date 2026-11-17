@@ -254,8 +254,8 @@ nested calls the snippet already made.
 
 Sleeping is not execution time, so it has its own allowance of the same length: a snippet may sleep
 for at most `max_duration_seconds` in total. A sleep that would go past it raises `TimeoutError` in the
-sandbox without waiting, and the session is kept. The allowance still applies inside a Temporal
-workflow, where the execution-time limit is off; only `resource_limits='unlimited'` removes it.
+sandbox without waiting, and the session is kept. The allowance still applies under durable
+execution, where the execution-time limit is off; only `resource_limits='unlimited'` removes it.
 
 Monty also limits cumulative suspensions with `max_suspensions` (default 1,000 per session).
 External calls, OS callbacks, name lookups and future resolutions each consume this budget, so
@@ -290,10 +290,14 @@ Nested tool calls also count toward the run's
 pending, and one that would exceed the limit ends the run with `UsageLimitExceeded`, as a top-level tool
 call does. Catching the error inside the snippet does not prevent this.
 
-When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_seconds`, including an
-explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
-make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
-time-bounded work behind a Temporal activity instead.
+When `CodeMode` runs under durable execution, such as a Temporal or DBOS workflow, it disables
+`max_duration_seconds`, including an explicit override. `run_code` is replayed in workflow code, so
+measuring elapsed time there could make replay choose a different path from the recorded workflow. The
+memory and suspension caps still apply, but nothing stops a loop that neither allocates nor calls a tool,
+apart from a remote pool's `request_timeout`. Put time-bounded work behind a durable step or activity instead.
+A replay that diverges from the recorded steps fails the run, as it does for a direct tool call, even when the
+snippet catches exceptions: with `DBOSUnexpectedStepError` under DBOS, and with `NonDeterministicExecutionError`
+under AWS Lambda (SDK 2.0 and later).
 
 ## Concurrent tool calls
 
@@ -405,7 +409,8 @@ Keep these limitations in mind:
   undone.
 - Eager execution is used only when `run_code` is the first tool call in a model response.
   Later tool calls wait for normal dispatch so they run in the order the model requested.
-- Eager mode is disabled when using durable execution such as Temporal or DBOS.
+- Eager mode is disabled under every durable execution engine. Eager feeding needs the model's
+  streamed arguments live in workflow code, which no engine provides.
 - Eager mode needs asyncio, like the rest of the sandbox executor.
 - If a statement is interrupted before it finishes, for example because the call failed
   validation, the session restarts and the next snippet must recreate its state.
@@ -545,8 +550,8 @@ Keep these limitations in mind:
 - Speculated tools must cooperate with asyncio cancellation. Cleanup requests cancellation
   and waits up to five seconds per streamed call, then stops waiting. A tool that suppresses
   cancellation can outlive the run; this timeout does not forcibly stop its work.
-- Enabling `speculate` puts runs in streaming mode, and the option is disabled under durable
-  execution such as Temporal or DBOS.
+- Enabling `speculate` puts runs in streaming mode, and the option is disabled under every
+  durable execution engine.
 
 `speculate` composes with `eager=True`: eager execution runs the statements the model has
 finished writing, and speculation starts the calls it has not reached yet (branch arms, calls
@@ -643,7 +648,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbo
 ```
 
 That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
-The configured `max_duration_seconds` still applies outside Temporal. Inside a Temporal workflow,
+The configured `max_duration_seconds` still applies outside durable execution. Under a durable engine,
 Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
 
 Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
@@ -907,7 +912,7 @@ CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})
 Sandboxed code then reads the worker's clock in that zone with no handler: `datetime.datetime.now()`,
 `astimezone()`, `%Z`, and `time.tzname` all agree. A `datetime` value in place of `'system'` freezes
 the clock; `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but reads its naive
-local time in that zone rather than as UTC. Inside a Temporal workflow a `'system'` clock or
+local time in that zone rather than as UTC. Under durable execution a `'system'` clock or
 `random_start` is read again on replay, so keep the defaults (or fixed values) there.
 
 > Monty-specific: these parameters use Monty's `AbstractOS`/`MountDir`/`OSPolicy` types.

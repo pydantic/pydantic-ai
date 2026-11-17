@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "`DBOSDurability.engine_spec` sets the new `DurabilityEngineSpec.nondeterminism_error_types` field to `(DBOSUnexpectedStepError,)`, so a diverged replay inside Code Mode's `run_code` fails the workflow as it does for a direct tool call. Every existing field keeps its value.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13527"
+}
