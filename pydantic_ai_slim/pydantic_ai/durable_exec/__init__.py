@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         durable_unit_scope,
     )
     from ._operation_names import DurableOperationNamer, JournalOperationNamer
+    from ._retry_after import model_error_retry_after
     from ._run_context import DurableRunContext
     from ._spec import DurabilityEngineSpec
     from ._toolset import CallToolResult, DynamicToolsResult, revalidate_function_call
@@ -125,6 +126,7 @@ __all__ = [
     'external_event_scope',
     'record_durable_unit',
     'replay_scope',
+    'model_error_retry_after',
 ]
 
 _exports = {
@@ -185,6 +187,7 @@ _exports = {
     'ExternalEventError': ('..external_events', 'ExternalEventError'),
     'ExternalEventWaiter': ('..external_events', 'ExternalEventWaiter'),
     'external_event_scope': ('..external_events', 'external_event_scope'),
+    'model_error_retry_after': ('._retry_after', 'model_error_retry_after'),
 }
 
 

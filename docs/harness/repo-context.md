@@ -199,6 +199,28 @@ Nested files are different: the model chooses which directories to read, and tho
 
 Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.
 
+### Pinning accepted files
+
+An app that asks the user to accept a workspace's instruction files, skills or sub-agent definitions before trusting them can pin what was accepted. Record [`file_digest(workspace, path)`][pydantic_ai_harness.repo_context.file_digest] when the user accepts a file, and before each run pass the recorded digests to [`pin_accepted_files`][pydantic_ai_harness.repo_context.pin_accepted_files]. A file whose content no longer matches is capped at `changed` (`'none'` by default) through an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace], so [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] reports the lower level until the user accepts the new content and the app records its new digest. Showing the user what changed is up to the app, which holds the accepted content.
+
+```python {test="skip"}
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.repo_context import file_digest, pin_accepted_files
+
+workspace = Workspace(LocalWorkspaceBackend('./project'))
+accepted = {'AGENTS.md': await file_digest(workspace, 'AGENTS.md')}  # when the user accepts it
+
+# Later, after AGENTS.md changed:
+pinned = await pin_accepted_files(workspace, accepted)
+print(await pinned.authority_of('AGENTS.md'))
+#> none
+# Pass `pinned` as the run's `workspace=`.
+```
+
+A changed file never rises above the level the workspace already gives it, and files not in `accepted` keep the workspace's level. Files are compared when `pin_accepted_files` is called, not when they are read later in the run.
+
+The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Files you didn't write](../workspace.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
+
 ## Cache cost
 
 Injecting file contents into the system prompt costs prompt-cache stability: a changed prefix re-bills the whole cached region. `RepoContext` keeps the two cache-relevant paths separate:
@@ -249,3 +271,7 @@ RepoContext(
 ::: pydantic_ai_harness.repo_context.AgentContextInventory
 
 ::: pydantic_ai_harness.repo_context.AssetRoot
+
+::: pydantic_ai_harness.repo_context.file_digest
+
+::: pydantic_ai_harness.repo_context.pin_accepted_files
