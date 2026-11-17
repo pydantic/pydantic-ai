@@ -311,7 +311,7 @@ def _time_reminder(ctx: RunContext[Any]) -> str:
     return f'It is now {CLOCK.now:%H:%M} UTC.'
 
 
-async def _goal_met(ctx: RunContext[Any], output: object) -> None:
+async def _goal_met(ctx: RunContext[None], output: object) -> None:
     return None
 
 
