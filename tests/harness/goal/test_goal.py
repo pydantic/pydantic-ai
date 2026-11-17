@@ -176,9 +176,24 @@ Continue within the supplied constraints; do not bypass approvals or fabricate s
         for _ in range(2):
             assert (await agent.run('Start')).output == 'done'
 
-    def test_goals_sharing_an_id_must_agree(self) -> None:
+    async def test_goals_sharing_an_id_must_agree(self) -> None:
+        checks: list[object] = []
+
+        async def verify(ctx: RunContext[object], output: object) -> None:
+            checks.append(output)
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.instructions is not None
+            assert info.instructions.count('Your goal is:') == 1
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[Goal(goal='Finish', verify=verify), Goal(goal='Finish', verify=verify)],
+        )
+        assert (await agent.run('Start')).output == 'done'
+        assert checks == ['done']
         goal = Goal(goal='Finish', verify=complete)
-        assert Agent(TestModel(), capabilities=[goal, Goal(goal='Finish', verify=complete)])
         with pytest.raises(UserError, match=r"disagree on 'goal'\. Give each its own `id`"):
             Agent(TestModel(), capabilities=[goal, Goal(goal='Also finish', verify=complete)])
 
