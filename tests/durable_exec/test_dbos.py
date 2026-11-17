@@ -5435,7 +5435,7 @@ class _CustomExecutingToolset(AbstractToolset[Any]):
     """A custom executing toolset the runtime-toolset guard has no kind for."""
 
     @property
-    def id(self) -> str | None:
+    def id(self) -> str | None:  # pragma: no cover
         return 'custom_executing'
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:  # pragma: no cover
