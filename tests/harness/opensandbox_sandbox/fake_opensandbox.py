@@ -30,7 +30,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qsl
 
 import anyio
@@ -74,7 +74,7 @@ class FakeSandbox:
     network_policy: dict[str, Any] | None = None
     credential_proxy: dict[str, object] | None = None
     secure_access: bool = False
-    credential_vault: dict[str, Any] | None = None
+    credential_vault: dict[str, object] | None = None
     """What the egress sidecar's Credential Vault was created with, values included."""
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
@@ -137,7 +137,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             raise httpx.ConnectError('connection refused')
         if self.refuse is not None:
             return _error(*self.refuse, f'refused: {self.refuse[1]}')
-        if request.url.host != DOMAIN:
+        # Any API address reaches the fake, so tests can set the domain clients see.
+        if request.url.host == f'execd.{DOMAIN}':
             return await self._execd(request)
         if self.api_key is not None and request.headers.get('open-sandbox-api-key') != self.api_key:
             return _error(401, 'INVALID_API_KEY', 'Authentication credentials are invalid.')
@@ -267,15 +268,17 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 return await self._command(sandbox, json.loads(request.content))
             case ['credential-vault'] if request.method == 'POST':
                 # The egress sidecar's vault, which answers with sanitized metadata only.
-                vault: dict[str, Any] = json.loads(request.content)
+                vault: dict[str, object] = json.loads(request.content)
                 sandbox.credential_vault = vault
+                # The SDK sends a list of credentials, each with a `name`.
+                credentials = cast(list[dict[str, object]], vault['credentials'])
                 return _json(
                     201,
                     {
                         'revision': 1,
                         'credentials': [
                             {'name': credential['name'], 'sourceType': 'inline', 'revision': 1}
-                            for credential in vault['credentials']
+                            for credential in credentials
                         ],
                         'bindings': [],
                     },

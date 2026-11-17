@@ -16,6 +16,7 @@ login reaches only `GITHUB_HOSTS`, and cannot install packages; one without keep
 from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import anyio
 
@@ -39,6 +40,8 @@ KEY_NAME = 'OPEN_SANDBOX_API_KEY'
 IMAGE = 'python:3.13'
 """Debian with `git`, which the checkout is cloned with."""
 
+LOOPBACK_HOSTS = ('localhost', '127.0.0.1', '::1')
+
 STAND_IN = 'placeholder'
 """What the sandbox's `git` and `gh` send as the token; the proxy replaces the whole header."""
 
@@ -57,7 +60,8 @@ class OpenSandboxProvider:
             return "OpenSandbox support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[opensandbox]'."
         if saved_key(DOMAIN_NAME) is None:
             return (
-                f"Add your OpenSandbox server's address in /keys as {DOMAIN_NAME}, such as localhost:8080, "
+                f"Add your OpenSandbox server's address in /keys as {DOMAIN_NAME}, such as localhost:8080 or "
+                'https://sandbox.example.com (an address without a scheme uses HTTPS unless it is this machine), '
                 f'and its API key as {KEY_NAME} if it needs one.'
             )
         return None
@@ -65,10 +69,15 @@ class OpenSandboxProvider:
     def _connection(self) -> 'ConnectionConfig':
         from opensandbox.config import ConnectionConfig
 
-        domain = saved_key(DOMAIN_NAME)
-        # The SDK takes the scheme of `domain` for the server's API only; command requests use `protocol`.
-        protocol = 'https' if domain is not None and domain.startswith('https://') else 'http'
-        return ConnectionConfig(domain=domain, api_key=saved_key(KEY_NAME), protocol=protocol)
+        domain = saved_key(DOMAIN_NAME) or ''
+        # The SDK takes the scheme of `domain` for the server's API only; command requests, and a domain without a
+        # scheme, use `protocol`. Plain HTTP would carry the API key and the GitHub token readable, so a domain
+        # without a scheme gets it only on this machine.
+        if domain.startswith(('http://', 'https://')):
+            protocol = domain.split(':', 1)[0]
+        else:
+            protocol = 'http' if urlsplit(f'//{domain}').hostname in LOOPBACK_HOSTS else 'https'
+        return ConnectionConfig(domain=domain or None, api_key=saved_key(KEY_NAME), protocol=protocol)
 
     async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
         from opensandbox.models.sandboxes import (

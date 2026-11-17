@@ -2876,8 +2876,9 @@ sandbox. The provider's network proxy, outside it, adds the token to requests fo
 agent must not have your token.
 
 `opensandbox` runs on your own [OpenSandbox](https://open-sandbox.ai) server, whose egress must be in
-`dns+nft` mode. Its credential proxy keeps the token in the memory of the sandbox's egress sidecar until
-the sandbox is deleted; if the sidecar restarts, the token is gone and `git` and `gh` there are signed
+`dns+nft` mode. A server address without a scheme uses HTTPS unless it is this machine (`localhost`,
+`127.0.0.1`, or `[::1]`). Its credential proxy keeps the token in the memory of the sandbox's egress
+sidecar until the sandbox is deleted; if the sidecar restarts, the token is gone and `git` and `gh` there are signed
 out. OpenSandbox's proxy is meant for sandboxes that reach only the hosts it allows, so a sandbox made with
 a `gh` login reaches only `github.com`, `api.github.com`, and `uploads.github.com`: it can't install
 packages or download release assets, archives, or Git LFS files. One made without a `gh` login keeps

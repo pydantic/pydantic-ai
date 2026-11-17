@@ -1863,7 +1863,8 @@ class TestOpenSandbox:
         monkeypatch.delenv('OPEN_SANDBOX_DOMAIN', raising=False)
         provider = opensandbox_provider.OpenSandboxProvider()
         assert provider.missing() == (
-            "Add your OpenSandbox server's address in /keys as OPEN_SANDBOX_DOMAIN, such as localhost:8080, "
+            "Add your OpenSandbox server's address in /keys as OPEN_SANDBOX_DOMAIN, such as localhost:8080 or "
+            'https://sandbox.example.com (an address without a scheme uses HTTPS unless it is this machine), '
             'and its API key as OPEN_SANDBOX_API_KEY if it needs one.'
         )
         monkeypatch.setenv('OPEN_SANDBOX_DOMAIN', 'https://sandbox.example.com')
@@ -1873,10 +1874,49 @@ class TestOpenSandbox:
             "OpenSandbox support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[opensandbox]'."
         )
 
-    def test_an_https_server_gets_https_commands(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv('OPEN_SANDBOX_DOMAIN', 'https://sandbox.example.com')
-        # Otherwise the SDK would send command requests, keys and all, over plain HTTP.
-        assert opensandbox_provider.OpenSandboxProvider()._connection().protocol == 'https'  # pyright: ignore[reportPrivateUsage]
+    @pytest.mark.parametrize(
+        ('domain', 'scheme'),
+        [
+            pytest.param('https://opensandbox.invalid', 'https', id='https'),
+            pytest.param('http://opensandbox.invalid', 'http', id='http'),
+            pytest.param('opensandbox.invalid:8080', 'https', id='no-scheme-remote'),
+            pytest.param('localhost:8080', 'http', id='no-scheme-localhost'),
+            pytest.param('[::1]:8080', 'http', id='no-scheme-ipv6-loopback'),
+        ],
+    )
+    async def test_the_server_scheme(
+        self,
+        fake_opensandbox: 'FakeOpenSandbox',
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        domain: str,
+        scheme: str,
+    ) -> None:
+        """Plain HTTP would carry the API key and the GitHub token readable, so only this machine gets it unasked."""
+        import httpx
+
+        from tests.harness.opensandbox_sandbox.fake_opensandbox import OwnedTransport
+
+        urls: list[httpx.URL] = []
+
+        class Recording(OwnedTransport):
+            async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+                urls.append(request.url)
+                return await super().handle_async_request(request)
+
+        def transport(**_: object) -> Recording:
+            return Recording(fake_opensandbox)
+
+        monkeypatch.setattr(httpx, 'AsyncHTTPTransport', transport)
+        save_key(name='OPEN_SANDBOX_DOMAIN', value=domain)
+        provider = opensandbox_provider.OpenSandboxProvider(working_dir=str(tmp_path.resolve()))
+        ref, backend = await provider.create(github=GITHUB)
+        assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
+        await provider.close(backend)
+        await provider.delete(ref)
+        # The API, the credential vault and the commands alike.
+        assert {url.path.rsplit('/', 1)[-1] for url in urls} >= {'sandboxes', 'credential-vault', 'command'}
+        assert {url.scheme for url in urls} == {scheme}
 
     async def test_create_reopen_delete(self, fake_opensandbox: 'FakeOpenSandbox', tmp_path: Path) -> None:
         provider = opensandbox_provider.OpenSandboxProvider(working_dir=str(tmp_path.resolve()))
