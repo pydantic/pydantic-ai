@@ -10,10 +10,32 @@ from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowCall
 
 SCRIPT = "import asyncio\nawait asyncio.gather(summarize(task='alpha'), summarize(task='beta'))"
 EXPECTED = "done: ['summary of alpha', 'summary of beta']"
+
+
+class DeferredStarts:
+    """A `WorkflowCallScheduler` that registers every call before the script's wait, then starts them together."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self._gates: list[asyncio.Future[None]] = []
+
+    async def run(self, call: WorkflowCall) -> object:
+        gate = asyncio.get_running_loop().create_future()
+        self._gates.append(gate)
+        self.events.append(f'register {call.agent_name}')
+        await gate
+        self.events.append(f'start {call.agent_name}')
+        return await call.start()
+
+    async def flush(self) -> None:
+        self.events.append('flush')
+        for gate in self._gates:
+            gate.set_result(None)
+        self._gates.clear()
 
 
 def summarize_model(
