@@ -21,7 +21,7 @@ from anyio import to_thread
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
@@ -46,7 +46,7 @@ from pydantic_clai2.runtime.session import ConversationWorkspace
 from pydantic_clai2.ui.menus.dialogs import RUNNERS, TerminalDialogs
 from pydantic_clai2.ui.rendering.status import StatusSegment
 
-__all__ = ('SandboxPlugin', 'TextPart',)
+__all__ = ('SandboxPlugin',)
 
 
 def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
