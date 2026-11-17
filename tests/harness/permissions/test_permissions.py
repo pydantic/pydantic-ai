@@ -581,23 +581,40 @@ class TestPermissionRules:
 
         assert await _verdict('git commit -m "release build"', rules, 'full') == 'deny'
 
-    async def test_path_globs_match_the_normalized_path_too(self, tmp_path: Path) -> None:
-        """`notes/../secrets/key` writes `secrets/key`, so the `notes/*` allow cannot vouch for it and `secrets/*` denies it."""
-        rules = [
-            PermissionRule('allow', tools=['write_file'], args={'path': 'notes/*'}),
-            PermissionRule('deny', tools=['write_file'], args={'path': 'secrets/*'}),
-        ]
+    @pytest.mark.parametrize(
+        ('rule', 'held'),
+        [
+            (PermissionRule('allow', tools=['write_file'], args={'path': 'notes/*'}), True),
+            (PermissionRule('deny', tools=['write_file'], args={'path': 'secrets/*'}), False),
+        ],
+    )
+    async def test_path_globs_match_the_normalized_path_too(
+        self, tmp_path: Path, rule: PermissionRule, held: bool
+    ) -> None:
+        """`notes/../secrets/key` writes `secrets/key`, so a `notes/*` allow cannot vouch for it and `secrets/*` denies it."""
         (tmp_path / 'notes').mkdir()
-        agent = Agent[None, str](
+        agent = Agent[None, 'str | DeferredToolRequests'](
             _calls(('write_file', {'path': 'notes/../secrets/key', 'content': 'x'})),
             deps_type=type(None),
-            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Permissions('full', rules=rules)],
+            output_type=[str, DeferredToolRequests],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Permissions('read-only', rules=[rule])],
         )
 
         result = await agent.run('go')
 
         assert not (tmp_path / 'secrets').exists()
-        assert result.output == 'A permission rule denied this file write, so it did not run. Do not retry it.'
+        assert isinstance(result.output, DeferredToolRequests) is held
+
+    async def test_windows_path_globs_ignore_case_and_separators(self) -> None:
+        def save(path: str) -> str:
+            return 'saved'
+
+        rules = [PermissionRule('deny', tools=['save'], args={'path': 'secrets/*'})]
+        agent = _rules_agent(_calls(('save', {'path': 'SECRETS\\key'})), rules, 'full', Tool(save))
+
+        result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
+
+        assert result.output == 'A permission rule denied this tool call, so it did not run. Do not retry it.'
 
     async def test_an_allow_rule_skips_read_only_asks_but_not_ask_commands(self) -> None:
         """`ask_commands` still asks about a command an allow rule matches; remove a pattern from it to opt out."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import ntpath
 import posixpath
 import re
 import shlex
@@ -212,11 +213,18 @@ def _command_rule(
     return deciders[0] if deciders else None
 
 
-def _arg_matches(rule: PermissionRule, value: object, glob: str) -> bool:
-    """Whether a string argument matches `glob`, as given and as a normalized path: both for `'allow'`, either otherwise."""
+def _arg_matches(rule: PermissionRule, value: object, glob: str, *, posix: bool) -> bool:
+    """Whether a string argument matches `glob`, as given and as a normalized path: both for `'allow'`, either otherwise.
+
+    On Windows paths are compared case-insensitively, with `/` for separators.
+    """
     if not isinstance(value, str):
         return False
-    matches = [fnmatchcase(value, glob), fnmatchcase(posixpath.normpath(value), glob)]
+    forms = [value, posixpath.normpath(value)]
+    if not posix:
+        forms = [form.replace('\\', '/').lower() for form in (value, ntpath.normpath(value))]
+        glob = glob.lower()
+    matches = [fnmatchcase(form, glob) for form in forms]
     return all(matches) if rule.verdict == 'allow' else any(matches)
 
 
@@ -225,10 +233,12 @@ def decide(
 ) -> PermissionRule | None:
     """The rule deciding a call to a tool `rules` all apply to, or `None` when no rule does.
 
-    A command on a non-POSIX shell, such as PowerShell, is never split: its quoting rules differ.
+    With `posix=False`, for a Windows workspace, a command is never split, since PowerShell quotes differently.
     """
     applicable = [
-        rule for rule in rules if all(_arg_matches(rule, args.get(name), glob) for name, glob in rule.args.items())
+        rule
+        for rule in rules
+        if all(_arg_matches(rule, args.get(name), glob, posix=posix) for name, glob in rule.args.items())
     ]
     found = [rule for rule in applicable if rule.command is None]
     if command is None:
