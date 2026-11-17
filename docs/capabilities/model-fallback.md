@@ -224,7 +224,7 @@ Each model attempted is an *attempt* within the same request step, not a new ste
 
 - `before_model_request` and `wrap_model_request` run once per step, and the model never sees a retry prompt.
 - [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] runs again for every attempt, with `request_context.model` set to the model about to serve it. [`RunContext.model`][pydantic_ai.tools.RunContext.model] stays the model selected for the step, so a hook that depends on the serving model, its [profile](../models/overview.md#inspecting-a-models-profile) or its context window reads `request_context.model`. The model's own message preparation and token counting are redone for each candidate, and so is any preparation a capability does in `prepare_model_request`, rather than inherited from the previous one. The built-in compaction capabilities, including the Harness ones, still run in `before_model_request` for now, so they decide once per step for the step's model, and every candidate inherits that decision. See [Retrying and falling back](custom.md#model-request-attempts).
-- Instructions and model settings are resolved again for each model after the first, with that model as `ctx.model`: the agent's and capabilities' [instructions](../agent.md#instructions), including toolsets' and [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] functions, and [`model_settings`](../agent.md#model-run-settings) and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] callables. So each model is sent the instructions and settings it would be sent on its own, and the request recorded in message history has the instructions and settings of the model that answered. Settings a `before_model_request` hook changed still apply on top. Instruction parts a `before_model_request` hook changed are sent to every model as the hook left them. Other hooks, and the run's tools, see the step's model as `ctx.model`. See [Instructions for each model](#instructions-for-each-model).
+- Instructions and model settings are resolved again for each model after the first, with that model as `ctx.model`: the agent's and capabilities' [instructions](../agent.md#instructions), including [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] functions, and [`model_settings`](../agent.md#model-run-settings) and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] callables. So each model is sent the instructions and settings it would be sent on its own, and the request recorded in message history has the instructions and settings of the model that answered. Settings a `before_model_request` hook changed still apply on top. Instruction parts a `before_model_request` hook changed are sent to every model as the hook left them. Other hooks, and the run's tools, see the step's model as `ctx.model`. See [Instructions for each model](#instructions-for-each-model).
 - A [native tool factory](../native-tools.md#dynamic-configuration) is called again for each model after the first, with that model as `ctx.model`, so each model is sent the native tools it would be sent on its own, and a [provider-adaptive tool](overview.md#provider-adaptive-tools)'s local fallback is offered to a model its native tool doesn't apply to. A native tool a `before_model_request` hook removed stays removed.
 - `after_model_request` hooks of capabilities outside `ModelFallback` only ever see the response that was accepted. `ModelFallback` is positioned innermost, so it judges a response before them.
 - `usage.requests` counts the step once, so [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds how many steps the agent takes rather than how many models it tried. The tokens and cost of every attempt that produced a response, including rejected ones, are counted in the run's usage and checked against token and cost limits before the next attempt.
@@ -235,6 +235,7 @@ Instructions and model settings that depend on the model can read it from `ctx.m
 
 ```python {title="model_fallback_instructions.py"}
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback
@@ -244,9 +245,9 @@ from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
-class PerModelTuning(AbstractCapability[None]):
+class PerModelTuning(AbstractCapability[Any]):
     def get_instructions(self):
-        def instructions(ctx: RunContext[None]) -> str:
+        def instructions(ctx: RunContext[Any]) -> str:
             if ctx.model.model_name == 'backup':
                 return 'Answer in one word.'
             return 'Answer briefly.'
@@ -254,7 +255,7 @@ class PerModelTuning(AbstractCapability[None]):
         return instructions
 
     def get_model_settings(self):
-        def settings(ctx: RunContext[None]) -> ModelSettings:
+        def settings(ctx: RunContext[Any]) -> ModelSettings:
             return {'temperature': 0.0 if ctx.model.model_name == 'backup' else 0.7}
 
         return settings
@@ -286,7 +287,7 @@ print(request.instructions)
 
 Text that depends on the model is best left with the default [`on_change='rewrite'`][pydantic_ai.messages.InstructionPart.on_change]: switching models starts a new prompt cache anyway, so rewriting the instructions costs nothing extra.
 
-Only the instructions and model settings are resolved again: a toolset from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], `before_model_request` and `wrap_model_request` hooks, and the tools the model calls see the model selected for the step as `ctx.model`. Instructions of [deferred capabilities][pydantic_ai.capabilities.AbstractCapability.defer_loading] the model has loaded are delivered through message history and resolved once per step too. A suspended response that's [continued](#continuing-suspended-responses) keeps the instructions it was sent.
+Only the instructions and model settings are resolved again: a toolset from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], `before_model_request` and `wrap_model_request` hooks, and the tools the model calls see the model selected for the step as `ctx.model`. Toolsets' instructions, like an MCP server's, are resolved once per step too, so an attempt doesn't ask a toolset for them again under durable execution. The instructions of [deferred capabilities][pydantic_ai.capabilities.AbstractCapability.defer_loading] the model has loaded, which are delivered through message history, are also resolved once per step. An agent or capability instruction function that makes a [durable call](../durable_execution/overview.md) runs again for each model after the first, and so makes that call again. A suspended response that's [continued](#continuing-suspended-responses) keeps the instructions it was sent.
 
 ## Failed attempts and telemetry
 
@@ -377,6 +378,14 @@ agent = Agent(
     ],
 )
 ```
+
+Instructions and model settings are resolved again for each model a step falls back to (see [Instructions for each model](#instructions-for-each-model)):
+
+!!! warning "Upgrading with runs in flight"
+    Resolving instructions and settings again for a fallback attempt changes what a run records once it falls back. Before upgrading, let in-flight runs finish, or deploy the upgrade as a new version:
+
+    - A run recorded before the upgrade that already fell back, and whose instructions make a durable call, schedules a durable unit on replay that its history doesn't have. That's a nondeterminism error on Temporal, Azure and Render, a `DBOSUnexpectedStepError` on DBOS, and shifted `#n` step names on Lambda, Absurd and pgtask.
+    - On Prefect, a flow run retried across the upgrade whose fallback attempt now gets different instructions or settings misses the model request's task cache and sends that request again.
 
 A `FallbackModel` instead runs its whole chain inside one activity, along with the deadlines it gives each model, and when every model fails, its [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] reaches the workflow without the attempts it lists, so the usage of the responses it rejected isn't recorded.
 

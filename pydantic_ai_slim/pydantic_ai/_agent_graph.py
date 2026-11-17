@@ -580,7 +580,7 @@ class _AttemptBaseline:
         """
         if not self.native_tool_factories or _unwrap_model(request_context.model) is _unwrap_model(self.model):
             return
-        attempt_context = replace(run_context, model=request_context.model)
+        attempt_context = _attempt_run_context(run_context, request_context)
         parameters = request_context.model_request_parameters
         native_tools: list[AbstractNativeTool | None] = list(parameters.native_tools)
         for factory, index in self.native_tool_factories:
@@ -653,9 +653,9 @@ class _StepRecording:
     resolved_loaded_parts: list[_messages.InstructionPart]
     """The loaded capabilities' instruction parts as of the before-chain, which the prefix is split from."""
     loaded_capability_ids: Collection[str]
-    instruction_records: list[list[_messages.ModelRequestPart]]
+    instruction_records: list[Sequence[_messages.ModelRequestPart]]
     """The instruction changes currently recorded on each target."""
-    settings_records: list[list[_messages.ModelRequestPart]]
+    settings_records: list[Sequence[_messages.ModelRequestPart]]
     """The model settings changes currently recorded on each target."""
     resolved: list[_messages.InstructionPart] | None
     """The instruction parts currently recorded, as resolved before the hooks."""
@@ -699,9 +699,27 @@ class _StepRecording:
         for target, tail in zip(self.targets, tails):
             target.parts = [*target.parts, *tail]
         if record_settings:
+            self._withdraw_settings_events(ctx)
             ends = [len(target.parts) for target in self.targets]
             self.effort = _record_model_settings_changes(ctx, model, model_settings, self.messages, self.targets)
             self.settings_records = [target.parts[end:] for target, end in zip(self.targets, ends)]
+
+    def _withdraw_settings_events(self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+        """Take the events for the settings changes about to be replaced out of the run's event buffer.
+
+        Each `ModelSettingsDeltaEvent` carries a part history records, so one whose part is replaced must not reach a
+        consumer that rebuilds history from the events. Attempts are made before the step's events are streamed, so
+        they're still buffered.
+        """
+        replaced = [part for records in self.settings_records for part in records]
+        buffer = ctx.state.event_stream_buffer
+        buffer[:] = [
+            event
+            for event in buffer
+            if not (
+                isinstance(event, _messages.ModelSettingsDeltaEvent) and any(event.part is part for part in replaced)
+            )
+        ]
 
     def _take_records(self, replaced: list[list[_messages.ModelRequestPart]]) -> list[list[_messages.ModelRequestPart]]:
         """Cut each target back to where the instruction changes start, returning what followed without `replaced`."""
@@ -728,6 +746,11 @@ class _StepRecording:
             else:
                 _apply_instruction_parts(target, sent)
         return sent
+
+
+def _attempt_run_context(run_context: RunContext[DepsT], request_context: ModelRequestContext) -> RunContext[DepsT]:
+    """The run context the hooks resolved again for an attempt at another model see: that model as `ctx.model`."""
+    return replace(run_context, model=request_context.model, _model_id=request_context.model_id)
 
 
 def _copy_settings(settings: ModelSettings | None) -> ModelSettings | None:
@@ -2433,6 +2456,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
     _step_instruction_parts: list[_messages.InstructionPart] | None = field(repr=False, init=False, default=None)
     """The instruction parts this request step resolved for its model, before the hooks ran, without the loaded ones."""
+    _step_toolset_instruction_parts: list[_messages.InstructionPart] = field(
+        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    )
+    """The toolsets' instruction parts this request step resolved, which an attempt at another model reuses."""
     _step_instruction_window: bool = field(repr=False, init=False, default=False)
     """Whether the history had an instruction window when this request step resolved its instructions."""
     _step_loaded_parts: list[_messages.InstructionPart] = field(
@@ -3109,7 +3136,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = await _prepare_request_parameters(
             ctx, instruction_parts, self._step_loaded_parts, native_tool_factories=self._native_tool_factories
         )
-        self._step_request_instruction_parts = model_request_parameters.instruction_parts
+        # A copy of the list and its parts, so a hook editing them in place, like redacting a part, counts as a change.
+        self._step_request_instruction_parts = (
+            [replace(part) for part in model_request_parameters.instruction_parts]
+            if model_request_parameters.instruction_parts is not None
+            else None
+        )
         model_settings = self._resolve_step_model_settings(ctx, run_context)
 
         request_context = ModelRequestContext(
@@ -3130,11 +3162,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
+        *,
+        for_attempt: bool = False,
     ) -> list[_messages.InstructionPart] | None:
-        """Resolve the step's instruction parts for `run_context.model`, sorted, without the loaded capabilities'."""
-        instruction_parts = await _get_instructions(ctx, run_context)
-        if instruction_parts:
-            instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
+        """Resolve the step's instruction parts for `run_context.model`, sorted, without the loaded capabilities'.
+
+        For an attempt at another model, only the agent's and capabilities' instructions are resolved again: the
+        toolsets' are the ones the step resolved. A toolset's instructions can come from a durable unit, like an MCP
+        server's under durable execution, and asking for them again per attempt would schedule a unit a replay of a
+        run recorded before doesn't have.
+        """
+        if not for_attempt:
+            self._step_toolset_instruction_parts = await collect_toolset_instructions(
+                ctx.deps.tool_manager.toolset, run_context
+            )
+        parts = [*(await ctx.deps.get_instructions(run_context) or ()), *self._step_toolset_instruction_parts]
+        instruction_parts = _messages.InstructionPart.sorted(parts) or None
         if instruction_parts is None and self._step_instruction_window:
             # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
             instruction_parts = []
@@ -3147,8 +3190,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelSettings:
         """Resolve the step's model settings, keeping the layers alone for an attempt at another model."""
         self._step_model_settings = ctx.deps.get_model_settings(run_context)
-        # A copy, so a hook editing the request's settings in place leaves the resolved ones to compare against.
-        model_settings = ModelSettings(**(self._step_model_settings.merged or {}))
+        # A copy, down to the containers inside it, so a hook editing the request's settings in place, like removing a
+        # header from `extra_headers`, leaves the resolved ones to compare against: the edit then counts as the
+        # hook's, and still applies when the settings are resolved again for another model.
+        model_settings = _copy_settings(self._step_model_settings.merged) or ModelSettings()
         run_context.model_settings = model_settings
         return model_settings
 
@@ -3470,9 +3515,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Resolve the instructions and model settings again for an attempt at another model than the step's.
 
-        Capabilities, the agent and toolsets may tailor them to `ctx.model`, so what they resolved for the step's
-        model may not be what another model should be sent, like when `ModelFallback` moves the request on. Only the
-        instructions and model settings see the model serving the attempt as `ctx.model`; to everything else,
+        The agent and capabilities may tailor them to `ctx.model`, so what they resolved for the step's model may not
+        be what another model should be sent, like when `ModelFallback` moves the request on. The toolsets'
+        instructions are the step's (see `_resolve_step_instructions`). Only the instructions and model settings see
+        the model serving the attempt as `ctx.model`; to everything else,
         `RunContext.model` stays the step's model. A `before_model_request` hook's changes to the settings still
         apply on top, and instruction parts a hook changed are kept as the hook left them. History records what
         the attempt was sent, so the accepted attempt's instructions and settings are the ones in history.
@@ -3486,11 +3532,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 self._recorded_for_other_model = False
             return
-        attempt_context = replace(run_context, model=request_context.model, _model_id=request_context.model_id)
+        attempt_context = _attempt_run_context(run_context, request_context)
         # A resumed suspended response is continued with the instructions it was sent (see `_prepare_resume_request`),
         # and instruction parts a hook changed stay as it left them.
         resolve_instructions = recording is not None and recording.parameters is not None
-        resolved = await self._resolve_step_instructions(ctx, attempt_context) if resolve_instructions else None
+        resolved = (
+            await self._resolve_step_instructions(ctx, attempt_context, for_attempt=True)
+            if resolve_instructions
+            else None
+        )
         request_context.model_settings = _copy_settings(
             baseline.with_hook_changes(ctx.deps.get_model_settings(attempt_context).layered)
         )
@@ -3499,8 +3549,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         recording.record(ctx, request_context.model, request_context.model_settings, resolved)
         self._recorded_for_other_model = True
         if resolve_instructions:
+            # Explicitly none rather than unset: unset parts make the model fall back to the instructions recorded
+            # on the request it's sent, which may be the step model's. A copy, like `restore` makes, so a hook editing
+            # them in place for one attempt doesn't change the next attempt's.
             request_context.model_request_parameters = replace(
-                request_context.model_request_parameters, instruction_parts=recording.sent
+                request_context.model_request_parameters, instruction_parts=_copy_container(recording.sent or [])
             )
 
     async def _prepare_attempt(
