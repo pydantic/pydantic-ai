@@ -571,10 +571,15 @@ class Session(RealtimeSession):
         return super().stream_audio()
 
 
-def session(**kwargs):
+class Unlisted(Session):
+    def new_messages(self):
+        raise RuntimeError('cannot list the new messages')
+
+
+def session(cls=Session, *, fails=False, **kwargs):
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_step=0)
     ctx.tool_manager = ToolManager(FunctionToolset(), ctx=ctx, tools={{}})
-    return Session(Scripted(fails=kwargs.pop('fails', False)), tool_manager=ctx.tool_manager, **kwargs)
+    return cls(Scripted(fails=fails), tool_manager=ctx.tool_manager, **kwargs)
 
 
 async def converse():
@@ -613,10 +618,18 @@ async def close_with_audio_unread():
     assert audio
 
 
+async def close_with_a_failing_read():
+    # A read the capture can't make stops the test, rather than leave a record without it.
+    with pytest.raises(RuntimeError, match='cannot list the new messages'):
+        async with session(Unlisted):
+            pass
+
+
 def test_session():
     asyncio.run(converse())
     asyncio.run(fail())
     asyncio.run(close_with_audio_unread())
+    asyncio.run(close_with_a_failing_read())
 
 
 def test_session_out_of_a_loop():
@@ -1450,6 +1463,11 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
                 ['all_messages', 'drops', 'new_messages', 'played_audio_bytes', 'usage'],
                 None,
             ),
+            ('test_session', 'SessionCore.apply', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'Unlisted.__aexit__', {'session': 3}, [], 'RuntimeError: cannot list the new messages'),
             (
                 'test_session_out_of_a_loop',
                 'Session.__init__',
