@@ -167,20 +167,24 @@ def _run_responses(record: DelegationTask) -> list[ModelResponse]:
     ]
 
 
-def _without_result(response: ModelResponse, final: FinalResultEvent | None) -> Sequence[ModelResponsePart]:
-    """`response`'s parts, less the final result it streamed, if any."""
-    if final is None:
-        return response.parts
-    if final.tool_call_id is not None:
-        return [
-            part
-            for part in response.parts
-            if not (isinstance(part, ToolCallPart) and part.tool_call_id == final.tool_call_id)
-        ]
-    if any(isinstance(part, ToolCallPart) for part in response.parts):
-        # Text next to tool calls doesn't end the run: the tools run and the model is asked again.
-        return response.parts
-    return [part for part in response.parts if not isinstance(part, TextPart)]
+@dataclass(kw_only=True)
+class _LiveRun:
+    """A running task whose history its owner sees as it streams."""
+
+    output_tools: frozenset[str] = frozenset()
+    final_text: int | None = None
+    """The index in the run of the response whose text streamed as a final result."""
+
+
+def _progress(response: ModelResponse, live: _LiveRun, index: int) -> Sequence[ModelResponsePart]:
+    """`response`'s parts, less any final result in it: an output tool call, or text that ends the run."""
+    parts = [
+        part for part in response.parts if not (isinstance(part, ToolCallPart) and part.tool_name in live.output_tools)
+    ]
+    if index != live.final_text or any(isinstance(part, ToolCallPart) for part in parts):
+        # Text next to a call of a tool that isn't an output tool doesn't end the run: the tool runs first.
+        return parts
+    return [part for part in parts if not isinstance(part, TextPart)]
 
 
 @dataclass(kw_only=True)
@@ -382,9 +386,7 @@ class DelegationTasks:
         self._stops: set[str] = set()
         self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
         self._starting: dict[str, int] = {}
-        self._live: dict[str, tuple[int, FinalResultEvent] | None] = {}
-        """The running tasks whose history this owner sees as it streams, each with its final result once streamed:
-        the index in the run of the response that streamed it, and the event."""
+        self._live: dict[str, _LiveRun] = {}
         self._open = False
 
     @staticmethod
@@ -517,17 +519,19 @@ class DelegationTasks:
         context_window: int | None = None,
     ) -> None:
         """Send correlated activity, and the child's model when known, to the application's observer."""
-        if isinstance(event, FinalResultEvent) and record.id in self._live:
+        live = self._live.get(record.id)
+        if live is not None and isinstance(event, FinalResultEvent) and event.tool_name is None:
             # The response streaming this event is not in the history yet, so it is the next one.
-            self._live[record.id] = (len(_run_responses(record)), event)
+            live.final_text = len(_run_responses(record))
         if self.observer is not None:
             await self.observer(
                 DelegationTaskEvent(task=record, event=event, model_name=model_name, context_window=context_window)
             )
 
-    def follow(self, record: DelegationTask) -> None:
-        """Note that this owner sees the history of `record`'s current run as it streams."""
-        self._live.setdefault(record.id, None)
+    def follow(self, record: DelegationTask, output_tools: frozenset[str]) -> None:
+        """Note that this owner sees the history of `record`'s current run as it streams, with these output tools."""
+        live = self._live.setdefault(record.id, _LiveRun())
+        live.output_tools |= output_tools
 
     def snapshot(self, task_id: str) -> DelegationSnapshot:
         """A bounded view of what a task is doing, cheap to take repeatedly while it runs.
@@ -538,13 +542,9 @@ class DelegationTasks:
         record = self.records[task_id]
         if task_id not in self._live:
             return self._snapshot(record, None, ())
-        final = self._live[task_id]
+        live = self._live[task_id]
         responses = _run_responses(record)
-        parts = [
-            part
-            for index, response in enumerate(responses)
-            for part in _without_result(response, final[1] if final is not None and final[0] == index else None)
-        ]
+        parts = [part for index, response in enumerate(responses) for part in _progress(response, live, index)]
         return self._snapshot(record, responses, parts)
 
     @staticmethod

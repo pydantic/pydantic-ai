@@ -1545,7 +1545,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Installed only for a record, and a record exists only under the owner that `current` returns.
         assert owner is not None and record is not None
         record.messages = child_ctx.messages
-        owner.follow(record)
+        tools = child_ctx.tool_manager.tools if child_ctx.tool_manager is not None else None
+        owner.follow(record, frozenset(name for name, tool in (tools or {}).items() if tool.tool_def.kind == 'output'))
 
         async def observed() -> AsyncIterable[AgentStreamEvent]:
             async for event in events:

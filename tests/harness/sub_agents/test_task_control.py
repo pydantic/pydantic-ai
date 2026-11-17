@@ -702,8 +702,14 @@ class TestSubAgentsTaskControl:
         assert checked.endswith('s, with 0 model requests.')
         assert 'first answer' not in checked
 
-    @pytest.mark.parametrize('structured', [False, True])
-    async def test_a_snapshot_never_shows_a_result_its_listeners_are_processing(self, structured: bool) -> None:
+    @pytest.mark.parametrize(
+        ('output', 'latest_text'),
+        # Text next to an output tool call is not the result, but it streams as one when text output is allowed.
+        [('text', None), ('tool', 'Done looking.'), ('text_or_tool', None)],
+    )
+    async def test_a_snapshot_never_shows_a_result_its_listeners_are_processing(
+        self, output: str, latest_text: str | None
+    ) -> None:
         snapshots: list[DelegationSnapshot] = []
         owners: list[DelegationTasks] = []
 
@@ -722,8 +728,12 @@ class TestSubAgentsTaskControl:
             answer: str
 
         finishing = ModelResponse(parts=[TextPart('Done looking.'), ToolCallPart('final_result', {'answer': 'secret'})])
-        child_agent: Agent[None, Answer] | Agent[None, str] = (
-            Agent(scripted(finishing), output_type=Answer) if structured else Agent(scripted(text('secret')))
+        child_agent: Agent[None, Answer] | Agent[None, str] | Agent[None, str | Answer] = (
+            Agent(scripted(text('secret')))
+            if output == 'text'
+            else Agent(scripted(finishing), output_type=Answer)
+            if output == 'tool'
+            else Agent(scripted(finishing), output_type=[str, Answer])
         )
 
         parent = Agent(
@@ -735,8 +745,7 @@ class TestSubAgentsTaskControl:
         [snapshot] = snapshots
         assert snapshot.usage is not None
         assert (snapshot.status, snapshot.usage.requests) == ('running', 1)
-        # Text next to the output tool call is not the result.
-        assert (snapshot.latest_text, snapshot.recent_tool_calls) == ('Done looking.' if structured else None, [])
+        assert (snapshot.latest_text, snapshot.recent_tool_calls) == (latest_text, [])
         assert result.output.endswith('[redacted]')
         # A settled task's history is in its file, not in the owner's view of the run.
         assert owners[0].snapshot(snapshot.task_id).usage is None
@@ -795,7 +804,7 @@ class TestSubAgentsTaskControl:
         owner.records[task.id] = task
         unseen = owner.snapshot(task.id)
         assert (unseen.usage, unseen.recent_tool_calls, unseen.latest_text) == (None, [], None)
-        owner.follow(task)
+        owner.follow(task, frozenset())
         snapshot = owner.snapshot(task.id)
         assert snapshot.usage is not None
         assert snapshot.usage == RunUsage(requests=2, tool_calls=7, input_tokens=30, output_tokens=5)
