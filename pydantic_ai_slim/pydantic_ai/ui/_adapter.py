@@ -1581,9 +1581,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # `id=None` opts this adapter-owned instance out of the fixed default `id`, so it never
             # occupies the `reinject_system_prompt` slot a user's own reinjector may hold. Keeping the
             # default here would make a user reinjector supplied for this run a hard duplicate-id
-            # error, and silently supersede an agent-level one. Server mode stays authoritative
-            # either way: this instance always runs, deriving a distinct id when it has to.
-            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True, id=None))
+            # error, and silently supersede an agent-level one.
+            # System prompts in `message_history` are trusted: the client input that a run starts
+            # from was already stripped in `sanitize_messages`. So this instance replaces nothing;
+            # it injects the configured prompt only into history that carries none.
+            run_capabilities.append(ReinjectSystemPrompt(replace_existing=False, id=None))
         if capabilities:
             run_capabilities.extend(capabilities)
 
