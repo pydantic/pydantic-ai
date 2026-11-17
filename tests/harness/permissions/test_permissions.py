@@ -507,6 +507,8 @@ class TestPermissionRules:
             ('ls | sh', 'ask'),
             ('echo `whoami`', 'ask'),
             ('git status $(pwd)', 'ask'),
+            ('ls; > ~/.bashrc', 'ask'),
+            ("echo $'a\\''; touch x # '", 'ask'),
             ('cat <<EOF', 'ask'),
             ('ls ;; ls', 'ask'),
             ("echo 'unbalanced", 'ask'),
@@ -524,6 +526,29 @@ class TestPermissionRules:
         assert await _verdict('ls $(pwd)', [PermissionRule('allow', command='git status'), deny], 'full') == 'allow'
         assert await _verdict('echo $(date)', [PermissionRule('allow', tool='run_command'), deny], 'full') == 'ask'
         assert await _verdict('sh -c "rm -rf /"', [PermissionRule('allow', tool='run_command'), deny], 'full') == 'deny'
+
+    async def test_a_quoted_argument_in_a_deny_rule_matches_the_same_command(self) -> None:
+        rules = [PermissionRule('deny', command='git commit -m "release build"')]
+
+        assert await _verdict('git commit -m "release build"', rules, 'full') == 'deny'
+
+    async def test_path_globs_match_the_normalized_path_too(self, tmp_path: Path) -> None:
+        """`notes/../secrets/key` writes `secrets/key`, so the `notes/*` allow cannot vouch for it and `secrets/*` denies it."""
+        rules = [
+            PermissionRule('allow', tool='write_file', args={'path': 'notes/*'}),
+            PermissionRule('deny', tool='write_file', args={'path': 'secrets/*'}),
+        ]
+        (tmp_path / 'notes').mkdir()
+        agent = Agent[None, str](
+            _calls(('write_file', {'path': 'notes/../secrets/key', 'content': 'x'})),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Permissions('full', rules=rules)],
+        )
+
+        result = await agent.run('go')
+
+        assert not (tmp_path / 'secrets').exists()
+        assert result.output == 'A permission rule denied this file write, so it did not run. Do not retry it.'
 
     async def test_an_allow_rule_overrides_ask_commands(self) -> None:
         assert await _verdict('git push', [], 'auto') == 'ask'

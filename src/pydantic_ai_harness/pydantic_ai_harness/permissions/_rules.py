@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import posixpath
 import re
 import shlex
 from collections.abc import Iterable, Mapping, Sequence
@@ -18,7 +19,7 @@ PermissionVerdict = Literal['allow', 'ask', 'deny']
 _SEVERITY: dict[PermissionVerdict, int] = {'allow': 0, 'ask': 1, 'deny': 2}
 _SEPARATORS = frozenset({';', '&', '&&', '|', '||', '|&'})
 _OPERATOR_CHARS = frozenset('();<>|&')
-_UNSPLITTABLE = ('$(', '${', '`', '<(', '>(', '\n')
+_UNSPLITTABLE = ('$(', '${', "$'", '$"', '`', '<(', '>(', '\n')
 _LOOSE_SPLIT = re.compile(r'[\s;&|()<>`${}]+')
 _UNSPLITTABLE_OPERATOR = re.compile(r'[()]|<<|;;')
 _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in range(10))})
@@ -107,7 +108,7 @@ def _segments(command: str) -> list[_Segment] | None:
         else:
             target = True
             segments[-1].redirected |= (token, following) not in _HARMLESS_REDIRECTS
-    return [segment for segment in segments if segment.words]
+    return [segment for segment in segments if segment.words or segment.redirected]
 
 
 def _loose(words: Iterable[str]) -> list[str]:
@@ -127,7 +128,7 @@ def _matches_segment(rule: PermissionRule, segment: _Segment) -> bool:
     words = _words(rule.command or '')
     if rule.verdict == 'allow':
         return not segment.redirected and segment.words[: len(words)] == words
-    return _contains(_loose(segment.words), words)
+    return _contains(_loose(segment.words), _loose(words))
 
 
 def _strictest(rules: Iterable[PermissionRule]) -> PermissionRule | None:
@@ -146,7 +147,7 @@ _UNSPLITTABLE_RULE = PermissionRule(
 def _unsplittable_rule(rules: Sequence[PermissionRule], command: str) -> PermissionRule | None:
     """Match a command too complex to split word by word, quotes removed, asking where a rule would allow it."""
     words = _loose([re.sub(r'[\'"\\]', '', command)])
-    matched = _strictest(rule for rule in rules if _contains(words, _words(rule.command or '')))
+    matched = _strictest(rule for rule in rules if _contains(words, _loose(_words(rule.command or ''))))
     return _UNSPLITTABLE_RULE if matched is not None and matched.verdict == 'allow' else matched
 
 
@@ -163,6 +164,14 @@ def _command_rule(
     return deciders[0] if deciders else None
 
 
+def _arg_matches(rule: PermissionRule, value: object, glob: str) -> bool:
+    """Whether a string argument matches `glob`, as given and as a normalized path: both for `'allow'`, either otherwise."""
+    if not isinstance(value, str):
+        return False
+    matches = [fnmatchcase(value, glob), fnmatchcase(posixpath.normpath(value), glob)]
+    return all(matches) if rule.verdict == 'allow' else any(matches)
+
+
 def decide(
     rules: Sequence[PermissionRule], *, tool_name: str, command: str | None, args: Mapping[str, Any]
 ) -> PermissionRule | None:
@@ -171,7 +180,7 @@ def decide(
         rule
         for rule in rules
         if fnmatchcase(tool_name, rule.tool)
-        and all(isinstance(args.get(name), str) and fnmatchcase(args[name], glob) for name, glob in rule.args.items())
+        and all(_arg_matches(rule, args.get(name), glob) for name, glob in rule.args.items())
     ]
     found = [rule for rule in applicable if rule.command is None]
     if command is None:
