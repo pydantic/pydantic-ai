@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, 
 from weakref import WeakValueDictionary
 
 import anyio
+import pydantic_core
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar
 
@@ -843,8 +844,13 @@ class _FailedAttempts:
         request_context: ModelRequestContext,
         failure: Exception | _messages.ModelResponse,
         start: AttemptStart,
+        retry: exceptions.RetryModelRequest | None = None,
     ) -> None:
-        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
+        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response.
+
+        `retry` is what a hook raised to move on from it, if it asked for another attempt: one without a model
+        retried the same model, and is recorded as a retry rather than a fallback.
+        """
         ledger = request_context._usage_response_ledger  # pyright: ignore[reportPrivateUsage]
         if isinstance(failure, _messages.ModelResponse):
             # Described by what the provider billed for it, recorded just before the hook rejected it: a copy
@@ -858,6 +864,7 @@ class _FailedAttempts:
             start,
             parent=policy.span if policy else None,
             tracer=policy.tracer if policy else None,
+            kind='retry' if retry is not None and retry.model is None else 'fallback',
         )
         if isinstance(failure, _messages.ModelResponse):
             # The rejected response now has its own span, which reports its usage, so the `chat` span
@@ -965,21 +972,26 @@ class GraphAgentState:
         # thread-safe list subclass. Pydantic deserialization also runs this hook.
         self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
 
-    def check_incomplete_tool_call(self) -> None:
-        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
+    def check_incomplete_tool_call(self, call: _messages.ToolCallPart | None = None) -> None:
+        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call.
+
+        When `call` is given, only raise if it is the tool call that was truncated.
+        """
         if (
             self.message_history
             and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
             and model_response.finish_reason == 'length'
             and model_response.parts
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+            and (call is None or call.tool_call_id == tool_call.tool_call_id)
+            and isinstance(tool_call.args, str)
+            and tool_call.args
         ):
+            # Only JSON that doesn't parse was cut off: complete JSON the schema rejects is retried like any other.
             try:
-                tool_call.args_as_dict(raise_if_invalid=True)
-            except Exception:
-                raise exceptions.IncompleteToolCall(
-                    f'Model token limit ({self.last_max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                )
+                pydantic_core.from_json(tool_call.args)
+            except ValueError:
+                raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 
     def consume_output_retry(
         self,
@@ -3050,8 +3062,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return await ctx.deps.root_capability.after_model_request(
                     run_context, request_context=request_context, response=response
                 )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, outcome, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, outcome, start, retry)
             await self._cancel_rejected_job(request_context, outcome, state)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
@@ -3961,8 +3973,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error
             )
-        except exceptions.RetryModelRequest:
-            failed.record(request_context, error, start)
+        except exceptions.RetryModelRequest as retry:
+            failed.record(request_context, error, start, retry)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
             failed.record_exhausted(request_context, error, start, unrecovered)
