@@ -24,7 +24,7 @@ import anyio
 from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
 
-from pydantic_ai import FunctionToolset, ToolsetTool
+from pydantic_ai import ExternalToolset, FunctionToolset, ToolsetTool
 from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
@@ -901,6 +901,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         ):
             return
 
+        tool_config_key = self.engine_spec.tool_config_key
+
+        def is_non_executing(leaf: AbstractToolset[AgentDepsT]) -> bool:
+            # Default-deny: only leaves known not to execute tools in the workflow are allowed.
+            if isinstance(leaf, ExternalToolset | CapabilityOwnedToolset):
+                return True
+            return (
+                isinstance(leaf, FunctionToolset)
+                and tool_config_key is not None
+                and bool(leaf.tools)
+                and all((tool.metadata or {}).get(tool_config_key) is False for tool in leaf.tools.values())
+            )
+
         def contributes_executing_toolset(capability: AbstractCapability[AgentDepsT]) -> bool:
             toolset = capability.get_toolset()
             if toolset is None:
@@ -908,11 +921,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             if callable(toolset):
                 # A dynamic toolset's contents are not known until runtime.
                 return True
-            try:
-                self._reject_runtime_toolsets(toolset)
-            except UserError:
-                return True
-            return False
+            leaves: list[AbstractToolset[AgentDepsT]] = []
+            toolset.apply(leaves.append)
+            return not all(is_non_executing(leaf) for leaf in leaves)
 
         def needs_registration(capability: AbstractCapability[AgentDepsT]) -> bool:
             # Durable operations are only registered for capabilities bound at construction, and only the

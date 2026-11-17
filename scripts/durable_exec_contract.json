@@ -6616,6 +6616,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._reject_runtime_toolsets",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.contributes_executing_toolset",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_unsupported_runtime_toolsets",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._bind_to_agent"
       ]
@@ -6890,6 +6891,17 @@
     }
   },
   "pydantic_ai_slim/pydantic_ai/toolsets/external.py": {
+    "ExternalToolset": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    },
     "TOOL_SCHEMA_VALIDATOR": {
       "engines": [
         "durable_exec"
@@ -7017,6 +7029,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.is_non_executing",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::toolset_selects_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_unsupported_runtime_toolsets.collect",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",

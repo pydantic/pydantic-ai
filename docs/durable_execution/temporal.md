@@ -315,9 +315,7 @@ running.
 
 ### Capabilities at Runtime
 
-Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
-
-Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or durable operations. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+Attach [capabilities](../capabilities/overview.md) that need registering when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. A per-run capability (`agent.run(capabilities=[...])`) that only adds hooks, instructions or settings is allowed inside a workflow. One that contributes an executing toolset or [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods raises a `UserError`, since it has no registered activities, and so does one that chooses or wraps the model (`resolve_model_id`, `get_model` or `get_wrapper_model`), since only the model ID reaches the model request activity. A contributed toolset counts as non-executing only if it's an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] or a `FunctionToolset` whose tools all opt out with `metadata={'temporal': False}`. This applies to capabilities, not raw per-run `toolsets=` entries, whose restrictions are unchanged. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
 
 ### Large Payloads
 
@@ -763,7 +761,10 @@ Model-name strings themselves never need registering. The agent's own model, set
 
 Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
-To use a test model with an agent built at module level, register it in your test setup with `register_model()` on the same `TemporalDurability` instance, then select it with `agent.override(model=...)`, by key or by that instance. The registered key is the identity carried through workflow replay and model activity resolution, so the worker process has to have registered it too (in tests, the worker usually runs in the same process).
+To use a test model with an agent built at module level, register it in your test setup with `register_model()` on the same `TemporalDurability` instance, then select it with `agent.override(model=...)`, by key or by that instance. Two things differ from DBOS and Prefect, because the workflow runs on the worker:
+
+- `agent.override(model=...)` sets a context variable, so enter it inside the workflow body, around the `agent.run` call, not around `client.execute_workflow`.
+- Temporal's sandboxed workflow runner re-imports your agent's module, so a registration made in test setup doesn't reach the workflow. Run the test worker with `workflow_runner=UnsandboxedWorkflowRunner()`, so the workflow uses the same agent and registry. The model activity then resolves the registered key in the test process.
 
 Here's an example showing how to pre-register and use multiple models:
 
@@ -827,10 +828,6 @@ class MultiModelWorkflow(PydanticAIWorkflow):
             result = await agent.run(prompt, model='{{ openai:small }}')
         return result.output
 ```
-
-### Capabilities at Runtime
-
-A per-run capability that only adds hooks, instructions or settings is allowed inside a workflow. Capabilities that contribute executing toolsets or `@durable_operation` methods must still be attached at agent construction so Temporal can register their activities, and so must capabilities that choose or wrap the model (`resolve_model_id`, `get_model` or `get_wrapper_model`), since only the model ID reaches the model request activity. This exemption applies to capabilities, not raw per-run `toolsets=` entries; their existing restrictions are unchanged.
 
 ### Toolsets at Runtime
 

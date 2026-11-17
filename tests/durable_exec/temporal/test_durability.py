@@ -2803,6 +2803,48 @@ async def test_durability_outer_capability_model_swap_rejected(client: Client):
             )
 
 
+# --- `register_model()` after construction ---
+
+
+_register_later_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+_register_later_agent = Agent(_rt_primary_model, name='register_model_later', capabilities=[_register_later_durability])
+
+
+@workflow.defn
+class RegisterModelLaterWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        # `agent.override` is a context variable, so it has to be entered where `agent.run` is: in the workflow.
+        with _register_later_agent.override(model='test'):
+            by_key = await _register_later_agent.run(prompt)
+        with _register_later_agent.override(model=_rt_alt_model):
+            by_instance = await _register_later_agent.run(prompt)
+        return [by_key.output, by_instance.output]
+
+
+async def test_durability_register_model_after_construction(client: Client):
+    """A model registered with `register_model` after the agent was built is selected by key or instance.
+
+    The workflow runs unsandboxed so it shares the test's agent and registry: a sandboxed workflow re-imports
+    the agent's module, so a registration made in test setup wouldn't reach it.
+    """
+    _register_later_durability.register_model('test', _rt_alt_model)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RegisterModelLaterWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        plugins=[AgentPlugin(_register_later_agent)],
+    ):
+        output = await client.execute_workflow(
+            RegisterModelLaterWorkflow.run,
+            args=['hello'],
+            id='RegisterModelLaterWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == ['alt-response', 'alt-response']
+
+
 # --- Unregistered `Model` instances are rejected ---
 
 
@@ -2931,6 +2973,20 @@ class _PerRunExternalToolset(AbstractCapability[None]):
 
 
 @dataclass
+class _PerRunFunctionToolset(AbstractCapability[None]):
+    opt_out: bool = False
+
+    def get_toolset(self) -> FunctionToolset[None]:
+        toolset = FunctionToolset[None](id='per_run_function')
+
+        @toolset.tool_plain(metadata={'temporal': False} if self.opt_out else None)
+        async def per_run_tool() -> str:  # pragma: no cover
+            return 'ran'
+
+        return toolset
+
+
+@dataclass
 class _PerRunDynamicToolset(AbstractCapability[None]):
     def get_toolset(self) -> Callable[[RunContext[None]], FunctionToolset[None]]:
         def factory(ctx: RunContext[None]) -> FunctionToolset[None]:  # pragma: no cover
@@ -2982,6 +3038,8 @@ class _ModelWrappingCombined(CombinedCapability[None]):
     ('capability', 'allowed'),
     [
         pytest.param(_PerRunExternalToolset(), True, id='non-executing-toolset'),
+        pytest.param(_PerRunFunctionToolset(opt_out=True), True, id='opted-out-function-toolset'),
+        pytest.param(_PerRunFunctionToolset(), False, id='function-toolset'),
         pytest.param(_HooksOnlyWrapper(wrapped=_SkipEveryModelRequest()), True, id='hooks-only-wrapper'),
         pytest.param(_PerRunDynamicToolset(), False, id='dynamic-toolset'),
         pytest.param(_PerRunDurableOperation(), False, id='durable-operation'),
