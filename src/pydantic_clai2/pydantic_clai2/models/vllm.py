@@ -15,6 +15,7 @@ from typing_extensions import override
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIAPIKey
 from pydantic_ai.providers.vllm import VLLMProvider
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
@@ -48,7 +49,7 @@ class RetryingProvider(VLLMProvider):
         self,
         *,
         base_url: str | None,
-        api_key: str | None,
+        api_key: OpenAIAPIKey | None,
         http_client: httpx.AsyncClient | httpx2.AsyncClient | None,
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:
