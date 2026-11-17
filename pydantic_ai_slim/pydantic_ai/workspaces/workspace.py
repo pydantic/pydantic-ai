@@ -35,7 +35,7 @@ from .protocol import (
 )
 from .unavailable import UnavailableWorkspace
 
-__all__ = ('Workspace', 'WorkspacePaths', 'WrapperWorkspace')
+__all__ = ('Workspace', 'WorkspacePaths', 'WrapperWorkspace', 'lowest_authority_under')
 
 
 class WorkspacePaths(Protocol):
@@ -729,3 +729,32 @@ def workspace_layers(workspace: Workspace) -> list[type[object]]:
             layers.append(type(layer))
         layer = layer._backend  # pyright: ignore[reportPrivateUsage]
     return [*layers, type(layer)]
+
+
+async def lowest_authority_under(workspace: Workspace, directory: str) -> Authority:
+    """The lowest [authority][pydantic_ai.messages.Authority] `workspace` gives any path at or under `directory`.
+
+    For a capability that hands a directory to something that reads it with one level, such as a delegate rooted
+    there or a check that decides whether to trust the files under it: every file it reads there gets no more than
+    `workspace` gives it. It's [`authority_of(directory)`][pydantic_ai.workspaces.Workspace.authority_of], lowered by
+    every wrapper's `path_authority` entry at or under `directory`, both where the entry is written and where it
+    leads, at the level `authority_of` caps a link's target at. Entries match ignoring case, as `authority_of` does,
+    keeping the lower level.
+
+    A directory outside the working directory that no `path_authority` entry contains is outside the workspace, at
+    `'none'`, as `authority_of` puts it. Symlinks under `directory` that no entry names aren't followed: the answer
+    comes from the workspace's levels, not from listing the files.
+    """
+    paths = workspace.paths
+    root = await workspace.working_dir()
+    written = await workspace.resolve(directory)
+    locations = {written.casefold(), (await workspace.realpath(written)).casefold()}
+    levels = [await workspace.authority_of(directory)]
+    for level, path_authority in workspace._authority_layers():  # pyright: ignore[reportPrivateUsage]
+        resolved = await workspace._resolve_path_authority(path_authority, level, root)  # pyright: ignore[reportPrivateUsage]
+        levels.extend(
+            entry_level
+            for entry, entry_level in resolved.items()
+            if any(is_within(entry.casefold(), location, sep=paths.sep) for location in locations)
+        )
+    return lowest_authority(levels)
