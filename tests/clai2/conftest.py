@@ -43,6 +43,9 @@ class FakeGh:
     def hang_on_token(self) -> None:
         (self.state / 'token-hang').write_text('')
 
+    def hang_on_api(self) -> None:
+        (self.state / 'api-hang').write_text('')
+
     def calls(self) -> list[str]:
         path = self.state / 'calls'
         return path.read_text().splitlines() if path.exists() else []

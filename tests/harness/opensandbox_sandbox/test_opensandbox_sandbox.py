@@ -29,6 +29,8 @@ from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBack
 from .._docs_examples import python_blocks
 from .fake_opensandbox import FakeOpenSandbox
 
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
+
 
 def _call_pwd_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     returned = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
@@ -62,10 +64,12 @@ class TestConfiguration:
         definitions = AgentSpec.model_json_schema_with_capabilities([OpenSandbox])['$defs']
         assert sorted(definitions['spec_params_OpenSandbox']['properties']) == [
             'allow_internet_access',
+            'authority',
             'description',
             'env',
             'id',
             'image',
+            'path_authority',
             'resource',
             'sandbox_timeout',
             'secure_access',

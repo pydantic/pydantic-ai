@@ -1,6 +1,6 @@
 """Pydantic AI's workspace backend conformance suite, run against `SpritesSandboxBackend`.
 
-`TestFakeSpritesSandboxBackend` runs everywhere, over the fake Sprites SDK, whose commands run in
+`TestFakeSpritesSandboxBackend` runs on POSIX hosts, over the fake Sprites SDK, whose commands run in
 local subprocesses under a temporary host directory. `TestLiveSpritesSandboxBackend` runs the same
 rules against a real Sprite and is gated like `test_sprites_live.py`.
 
@@ -10,6 +10,7 @@ filesystem, reattach, and destroy rules all run here.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
@@ -42,6 +43,7 @@ async def _teardown(backend: SpritesSandboxBackend) -> None:  # pragma: no cover
     await backend.aclose()
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeSpritesSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, transport: SpriteTransport) -> SpritesSandboxBackend:
