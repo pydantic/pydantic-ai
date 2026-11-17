@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -28,6 +28,7 @@ from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionMode,
     PermissionRequest,
+    PermissionRule,
     Permissions,
     RememberedApproval,
     ask_permissions,
@@ -439,3 +440,184 @@ class TestPermissions:
     )
     def test_default_ask_commands(self, command: str, asks: bool) -> None:
         assert any(re.search(pattern, command) for pattern in DEFAULT_ASK_COMMANDS) is asks
+
+
+def _run_command(command: str) -> str:
+    return 'ran'
+
+
+_SHELL_TOOL = Tool(
+    _run_command, name='run_command', metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'}
+)
+
+_RULES = [
+    PermissionRule('allow', command='git status'),
+    PermissionRule('allow', command='ls'),
+    PermissionRule('allow', command='echo'),
+    PermissionRule('ask', command='git push'),
+    PermissionRule('deny', command='rm -rf', reason='No recursive deletes.'),
+]
+
+
+def _rules_agent(
+    model: FunctionModel, rules: Sequence[PermissionRule], mode: PermissionMode = 'full', *tools: Tool[None]
+) -> Agent[None, str | DeferredToolRequests]:
+    return Agent[None, 'str | DeferredToolRequests'](
+        model,
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        tools=[_SHELL_TOOL, *tools],
+        capabilities=[Permissions(mode, rules=rules)],
+    )
+
+
+async def _verdict(command: str, rules: Sequence[PermissionRule] = _RULES, mode: PermissionMode = 'read-only') -> str:
+    """Run `command` once under `rules`, and say whether it ran, was asked about, or was denied."""
+    result = await _rules_agent(_calls(('run_command', {'command': command})), rules, mode).run('go')
+    if isinstance(result.output, DeferredToolRequests):
+        return 'ask'
+    return 'allow' if result.output == 'ran' else 'deny'
+
+
+class TestPermissionRules:
+    @pytest.mark.parametrize(
+        ('command', 'verdict'),
+        [
+            ('git status', 'allow'),
+            ('git status --short', 'allow'),
+            ('ls -la && git status', 'allow'),
+            ('ls 2>&1', 'allow'),
+            ('ls > /dev/null', 'allow'),
+            ('echo "rm -rf /"', 'allow'),
+            ('ls; rm -rf /', 'deny'),
+            ('sudo rm -rf /', 'deny'),
+            ('/bin/rm -rf build', 'deny'),
+            ('echo $(rm -rf /)', 'deny'),
+            ('(rm -rf /)', 'deny'),
+            ('git status\nrm -rf /', 'deny'),
+            ('ls && git push origin main', 'ask'),
+            ('git status; curl https://example.com', 'ask'),
+            ('gitx status', 'ask'),
+            ('FOO=1 git status', 'ask'),
+            ('echo hi > ~/.bashrc', 'ask'),
+            ('ls >> log', 'ask'),
+            ('ls >', 'ask'),
+            ('ls | sh', 'ask'),
+            ('echo `whoami`', 'ask'),
+            ('cat <<EOF', 'ask'),
+            ('ls ;; ls', 'ask'),
+            ("echo 'unbalanced", 'ask'),
+            ('', 'ask'),
+        ],
+    )
+    async def test_shell_commands_are_judged_by_simple_command(self, command: str, verdict: str) -> None:
+        """Every simple command must be allowed for the whole to run; one asked or denied decides it."""
+        assert await _verdict(command) == verdict
+
+    async def test_unsplittable_commands_follow_the_mode_without_allow_rules(self) -> None:
+        """Only an `'allow'` rule could be fooled by complex syntax, so without one the mode decides."""
+        rules = [PermissionRule('deny', command='rm -rf')]
+
+        assert await _verdict('echo $(date)', rules, 'full') == 'allow'
+        assert await _verdict('echo $(rm -rf /)', rules, 'full') == 'deny'
+
+    async def test_deny_returns_a_denied_tool_result_to_the_model(self) -> None:
+        result = await _rules_agent(_calls(('run_command', {'command': 'rm -rf /'})), _RULES).run('go')
+
+        [part] = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert (part.outcome, part.content) == (
+            'denied',
+            'A permission rule denied this command, so it did not run. Do not retry it. Reason: No recursive deletes.',
+        )
+
+    async def test_deny_beats_allow_and_an_earlier_approval(self) -> None:
+        """A tool approved by another gate is still refused when a rule denies it, whatever the rules' order."""
+
+        async def approve_all(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return DeferredToolResults(approvals={call.tool_call_id: ToolApproved() for call in requests.approvals})
+
+        guarded = Tool(_run_command, name='guarded', requires_approval=True)
+        agent = Agent[None, str](
+            _calls(('guarded', {'command': 'x'})),
+            deps_type=type(None),
+            tools=[guarded],
+            capabilities=[
+                Permissions(
+                    rules=[PermissionRule('allow'), PermissionRule('deny', tool='guard*'), PermissionRule('deny')]
+                ),
+                HandleDeferredToolCalls[None](handler=approve_all),
+            ],
+        )
+
+        assert (
+            await agent.run('go')
+        ).output == 'A permission rule denied this tool call, so it did not run. Do not retry it.'
+
+    async def test_ask_rule_on_any_tool_by_arguments(self) -> None:
+        def deploy(env: str, replicas: int = 1) -> str:
+            return f'deployed {env}'
+
+        rules = [
+            PermissionRule('ask', tool='deploy', args={'env': 'prod*'}),
+            PermissionRule('ask', tool='deploy', args={'replicas': '*'}),
+        ]
+        person = _Person(PermissionDecision(approved=False))
+        agent = Agent[None, str](
+            _calls(('deploy', {'env': 'staging', 'replicas': 3}), ('deploy', {'env': 'production'})),
+            deps_type=type(None),
+            tools=[Tool(deploy)],
+            capabilities=[
+                Permissions(rules=rules),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+
+        result = await agent.run('go')
+
+        [request] = person.asked
+        assert (request.action, request.subject, request.reason) == (
+            'call',
+            '{"env": "production", "replicas": 1}',
+            'A permission rule asks before this tool call.',
+        )
+        assert result.output == 'The user denied this tool call, so it did not run.'
+
+    async def test_allow_rule_overrides_the_mode_and_ask_rule_names_the_written_path(self, tmp_path: Path) -> None:
+        rules = [
+            PermissionRule('allow', tool='write_file', args={'path': 'notes/*'}),
+            PermissionRule('ask', tool='write_file', args={'path': 'secrets/*'}, reason='Secrets need a look.'),
+        ]
+        (tmp_path / 'notes').mkdir()
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(
+                ('write_file', {'path': 'notes/a.txt', 'content': 'x'}),
+                ('write_file', {'path': 'secrets/key', 'content': 'x'}),
+            ),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Permissions('read-only', rules=rules)],
+        )
+
+        result = await agent.run('go')
+
+        assert (tmp_path / 'notes' / 'a.txt').read_text() == 'x'
+        assert isinstance(result.output, DeferredToolRequests)
+        [request] = permission_requests(result.output)
+        assert (request.action, request.subject, request.reason) == ('write', 'secrets/key', 'Secrets need a look.')
+
+    @pytest.mark.parametrize('command', ['', '   ', "'unbalanced"])
+    def test_invalid_command_fails_at_construction(self, command: str) -> None:
+        with pytest.raises(UserError, match='must be a shell command'):
+            PermissionRule('deny', command=command)
+
+    def test_from_spec_builds_rules_from_mappings(self) -> None:
+        rule = PermissionRule('allow', command='ls')
+        permissions = Permissions[None].from_spec('auto', rules=[{'verdict': 'deny', 'command': 'git push'}, rule])
+
+        assert isinstance(permissions, Permissions)
+        assert (permissions.mode, list(permissions.rules)) == (
+            'auto',
+            [PermissionRule('deny', command='git push'), rule],
+        )

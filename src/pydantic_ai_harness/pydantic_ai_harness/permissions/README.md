@@ -1,6 +1,6 @@
 # Permissions
 
-Ask a person before the agent writes files or runs commands, by permission mode.
+Ask a person before the agent writes files or runs commands, by permission mode, and allow, ask about, or deny tool calls and shell commands by rule.
 
 > [!NOTE]
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
@@ -62,9 +62,43 @@ Approvals that other capabilities ask for, such as a tool registered with `requi
 - **File writes** are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by their tool kind, so a renamed or prefixed tool is still recognized. They only reach files inside the file system's root, so `'auto'` lets them run.
 - **Commands** are the tools whose metadata declares `code_arg_language='shell'` and a `code_arg_name`, the argument holding the command, as the `Shell` tools that take a command (`run_command`, `start_command`, and `shell`) do.
 - **Sub-agents** run only the capabilities that reach them. A delegate does not see a `Permissions` passed to the parent's run, so pass it in [`SubAgents(shared_capabilities=[permissions, handler])`](https://pydantic.dev/docs/ai/harness/subagents/) to check delegates too.
-- Every other tool runs in every mode. Gate a tool of your own with `requires_approval=True`, a [`ToolGuardrail`](https://pydantic.dev/docs/ai/harness/guardrails/), or a [`ToolCallJudge`](https://pydantic.dev/docs/ai/harness/tool-call-judge/).
+- Every other tool runs in every mode, unless a [rule](#rules) matches it. Gate a tool of your own with `requires_approval=True`, a [`ToolGuardrail`](https://pydantic.dev/docs/ai/harness/guardrails/), or a [`ToolCallJudge`](https://pydantic.dev/docs/ai/harness/tool-call-judge/).
 
 `ask_commands` is a list of regular expressions, each searched for anywhere in the command. `DEFAULT_ASK_COMMANDS` asks about forced or recursive deletes (`rm -rf`), `git push`, `git reset --hard` and `git clean`, `sudo`, network clients (`curl`, `wget`, `ssh`, and others), package installs, `dd`, and `mkfs`. It is a convenience, not a sandbox: a command can do the same thing in a form no pattern matches, such as a script it writes first. Use a [sandbox](https://pydantic.dev/docs/ai/core-concepts/workspace/) when the agent must not reach something.
+
+## Rules
+
+`rules` allow, ask about, or deny calls by tool name, arguments, and shell command, before the mode decides. A call no rule matches follows the mode:
+
+```python
+from pydantic_ai_harness.permissions import PermissionRule, Permissions
+
+permissions = Permissions(
+    'read-only',
+    rules=[
+        PermissionRule('allow', command='git status'),
+        PermissionRule('allow', command='rg'),
+        PermissionRule('ask', command='git push'),
+        PermissionRule('deny', command='rm -rf', reason='Delete files one at a time.'),
+        PermissionRule('allow', tool='write_file', args={'path': 'docs/*'}),
+        PermissionRule('ask', tool='deploy', args={'env': 'prod*'}),
+    ],
+)
+```
+
+A `PermissionRule` matches a call when every field it sets matches: `tool` is a glob for the tool name, `args` maps argument names to globs for their string values, and `command` is the words of a shell command. When several rules match, `'deny'` beats `'ask'`, which beats `'allow'`, whatever their order, so a broad allow rule cannot override a deny rule.
+
+- **`'allow'`** runs the call without asking, even in `'read-only'` mode.
+- **`'ask'`** holds the call like the mode does, with the rule's `reason` for the person deciding. A held call to a tool that neither writes files nor runs commands has the `action` `'call'` and its arguments as JSON for its `subject`.
+- **`'deny'`** refuses the call without running it, even when it was approved, for example by another capability's approval. The model gets a tool result with `outcome='denied'` saying a permission rule refused it, with the rule's `reason`.
+
+A `command` rule only matches tools that declare a shell command argument (see [Which calls are checked](#which-calls-are-checked)), and judges a compound command by each of its simple commands, split at `;`, `&&`, `||`, `|`, and `&`:
+
+- A command runs by rule only when an `'allow'` rule matches every simple command in it. An allow rule matches a simple command that starts with its words and has no redirection other than to `/dev/null` or a file descriptor, so `PermissionRule('allow', command='git status')` lets `ls && git status --short` run when `ls` is allowed too, but not `git status > ~/.bashrc` or `FOO=1 git status`.
+- An `'ask'` or `'deny'` rule matches a simple command that contains its words anywhere, so `sudo rm -rf /` and `ls; rm -rf /` match `'rm -rf'`, and its first word also matches a path ending in it, such as `/bin/rm`.
+- A command too complex to split, with command substitution (`$(...)`, backticks), process substitution, subshells, here-documents, line breaks, or unbalanced quotes, is checked word by word against the ask and deny rules. When none matches and an allow rule could have vouched for it, it asks.
+
+An allow rule trusts everything after its words, so allowing `find` also allows `find -exec rm {} \;`: allow the narrowest commands you can. Deny rules match words, not behavior, so `rm -r -f` does not match `'rm -rf'`. Like `ask_commands`, rules are a convenience, not a sandbox.
 
 ## Changing the mode during a run
 
@@ -79,7 +113,7 @@ permissions = Permissions(lambda ctx: current)
 
 ## Telemetry
 
-`Permissions` emits no spans of its own. A held call shows up in core's tool spans and in the run's deferred tool requests and results, which carry the request's `subject` and `reason` as metadata.
+`Permissions` emits no spans of its own. A held call shows up in core's tool spans and in the run's deferred tool requests and results, which carry the request's `subject` and `reason` as metadata. A call a rule denies shows up in core's tool span with the denial as its result, and in the history as a `ToolReturnPart` with `outcome='denied'`.
 
 ## Related
 

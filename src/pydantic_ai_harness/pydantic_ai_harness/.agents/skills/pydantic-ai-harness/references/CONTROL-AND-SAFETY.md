@@ -26,6 +26,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
+| Allow, ask about, or deny tool calls and shell commands by rule | `Permissions(rules=[PermissionRule(...)])` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -414,7 +415,13 @@ Gotchas:
 Holds the `FileSystem` writes and `Shell` commands a permission mode asks about by raising
 `ApprovalRequired`: `'full'` (default) asks about nothing, `'auto'` asks about commands matching
 `ask_commands` (`DEFAULT_ASK_COMMANDS`: `rm -rf`, `git push`, `sudo`, network clients, installs), and
-`'read-only'` asks about every write and command. Other tools are not checked.
+`'read-only'` asks about every write and command. Other tools are not checked unless a rule matches them.
+
+`rules=[PermissionRule(...)]` decide before the mode: each rule is `'allow'`, `'ask'`, or `'deny'` for calls
+matching its `tool` glob, `args` globs, and shell `command` words. `'deny'` beats `'ask'` beats `'allow'`, whatever
+the order. A compound command runs by rule only if an allow rule matches every simple command in it, while an ask
+or deny rule matching any one decides it. A denied call returns a `ToolReturnPart` with `outcome='denied'`, even
+when it was approved.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -451,8 +458,10 @@ Gotchas:
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
-- `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
-  reach something.
+- `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
+  must not reach something. An allow rule trusts everything after its words (`find` allows `find -exec`).
+- Commands with substitutions, subshells, here-documents, or line breaks cannot be split: they ask when an allow
+  rule could otherwise have vouched for them.
 
 ## SpendLimits
 

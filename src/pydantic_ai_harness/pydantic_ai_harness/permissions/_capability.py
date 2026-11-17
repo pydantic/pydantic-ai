@@ -1,16 +1,17 @@
-"""Ask before tool calls that write files or run commands, by permission mode."""
+"""Ask before tool calls that write files or run commands, by permission mode and rules."""
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Awaitable, Callable, MutableSet, Sequence
+from collections.abc import Awaitable, Callable, Mapping, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Any, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -24,6 +25,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
+from pydantic_ai_harness.permissions._rules import PermissionRule, decide
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.
@@ -33,8 +35,10 @@ PermissionMode = Literal['full', 'auto', 'read-only']
 - `'read-only'`: every file write and every command asks first.
 """
 
-PermissionAction = Literal['command', 'write']
-"""What a call that asks would do: run a shell command, or write a file."""
+PermissionAction = Literal['command', 'write', 'call']
+"""What a call that asks would do: run a shell command, write a file, or call another tool (asked by a rule)."""
+
+_WHAT: dict[PermissionAction, str] = {'command': 'command', 'write': 'file write', 'call': 'tool call'}
 
 DEFAULT_ASK_COMMANDS: tuple[str, ...] = (
     r'\brm\s+(-\S*[rRf]|--recursive\b|--force\b)',
@@ -106,13 +110,13 @@ class PermissionRequest:
     """The call waiting for approval, with the arguments it will run with."""
 
     action: PermissionAction
-    """Whether the call runs a command or writes a file."""
+    """Whether the call runs a command, writes a file, or calls another tool."""
 
     subject: str
-    """The command, or the path written."""
+    """The command, the path written, or for another tool its arguments as JSON."""
 
     reason: str
-    """Why the current mode asks about this call, for the person deciding."""
+    """Why the current mode or a rule asks about this call, for the person deciding."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -149,6 +153,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
     tools are not checked, and neither are sub-agents' runs this capability does not reach: pass it in
     `SubAgents(shared_capabilities=[...])` to check them too.
 
+    `rules` decide calls before the mode does: a matching `'allow'` rule runs the call, `'ask'` holds it,
+    and `'deny'` refuses it with a `ToolReturnPart` whose `outcome` is `'denied'`, even when it was approved.
+    Calls no rule matches follow the mode.
+
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
     """
@@ -157,6 +165,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     """The permission mode, or a function returning it for a run."""
 
     _: KW_ONLY
+
+    rules: Sequence[PermissionRule] = ()
+    """Rules that allow, ask about, or deny matching calls, checked before the mode."""
 
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
     """Regular expressions for the commands `'auto'` asks about, searched for anywhere in the command."""
@@ -185,6 +196,17 @@ class Permissions(AbstractCapability[AgentDepsT]):
         """Return the stable name used in agent specs."""
         return 'Permissions'
 
+    @classmethod
+    def from_spec(
+        cls, *args: Any, rules: Sequence[PermissionRule | Mapping[str, Any]] = (), **kwargs: Any
+    ) -> Permissions[Any]:
+        """Build from spec arguments, where each rule is a mapping of `PermissionRule` fields."""
+        return cls(
+            *args,
+            rules=[rule if isinstance(rule, PermissionRule) else PermissionRule(**rule) for rule in rules],
+            **kwargs,
+        )
+
     def mode_for(self, ctx: RunContext[AgentDepsT]) -> PermissionMode:
         """The permission mode for `ctx`'s run, as it stands now."""
         return self.mode(ctx) if callable(self.mode) else self.mode
@@ -197,7 +219,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        """Hold a call the mode asks about until it is approved, unless approved for the conversation already."""
+        """Refuse a call a rule denies, and hold one asked about until it is approved, unless remembered."""
         asked = self._asks(ctx, tool_def=tool_def, args=args)
         if asked is None:
             return args
@@ -240,9 +262,17 @@ class Permissions(AbstractCapability[AgentDepsT]):
         return replace(tool_return, metadata={**existing, **remembered.model_dump()})
 
     def _asks(self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]) -> _Asked | None:
-        """What to ask about this call in the current mode, or `None` to run it."""
+        """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
+        command = _command(tool_def, args)
+        rule = decide(self.rules, tool_name=tool_def.name, command=command, args=args)
+        if rule is not None and rule.verdict != 'allow':
+            action, subject = _subject(tool_def, args, command)
+            if rule.verdict == 'deny':
+                raise SkipToolExecution(ToolDenied(_rule_denial_message(action, rule.reason)))
+            reason = rule.reason or f'A permission rule asks before this {_WHAT[action]}.'
+            return _Asked(action=action, subject=subject, reason=reason)
         mode = self.mode_for(ctx)
-        if mode == 'full':
+        if rule is not None or mode == 'full':
             return None
         if tool_def.tool_kind in _WRITE_KINDS:
             # The file tools only reach files inside their root, so `'auto'` lets them write.
@@ -250,7 +280,6 @@ class Permissions(AbstractCapability[AgentDepsT]):
             if mode == 'read-only' and isinstance(path, str):
                 return _Asked(action='write', subject=path, reason='Read-only mode asks before every file write.')
             return None
-        command = _command(tool_def, args)
         if command is None:
             return None
         if mode == 'read-only':
@@ -272,6 +301,21 @@ def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
         return None
     command = args.get(name)
     return command if isinstance(command, str) else None
+
+
+def _subject(tool_def: ToolDefinition, args: dict[str, Any], command: str | None) -> tuple[PermissionAction, str]:
+    """What a call asked about by a rule does, and what it does it to."""
+    if command is not None:
+        return 'command', command
+    path = args.get('path')
+    if tool_def.tool_kind in _WRITE_KINDS and isinstance(path, str):
+        return 'write', path
+    return 'call', json.dumps(args, sort_keys=True, default=str)
+
+
+def _rule_denial_message(action: PermissionAction, reason: str | None) -> str:
+    message = f'A permission rule denied this {_WHAT[action]}, so it did not run. Do not retry it.'
+    return f'{message} Reason: {reason}' if reason else message
 
 
 def _nests_tool_return(result: object) -> bool:
@@ -335,6 +379,5 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
 
 def denial_message(request: PermissionRequest, *, reason: str | None = None) -> str:
     """What the model is told when `request` is denied, with the person's `reason` when they gave one."""
-    what = 'command' if request.action == 'command' else 'file write'
-    message = f'The user denied this {what}, so it did not run.'
+    message = f'The user denied this {_WHAT[request.action]}, so it did not run.'
     return f'{message} Their reason: {reason}' if reason else message
