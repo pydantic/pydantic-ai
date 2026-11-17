@@ -278,7 +278,11 @@ def echo(value: Any) -> Any:
 
 def blob() -> dict[str, Any]:
     """Return values plain JSON does not carry: bytes that are not UTF-8 and a NaN, nested too."""
-    return {'raw': b'\xff\x00', 'nan': float('nan'), 'nested': {'a': {'b': b'\xff', 'c': 2}, 't': [[1, b'x']]}}
+    return {
+        'raw': b'\xff\x00',
+        'nan': float('nan'),
+        'nested': {'a': {'b': b'\xff', 'c': 2}, 't': [[1, b'x']]},
+    }
 
 
 _CALL_SITE_SNIPPETS = [
@@ -301,8 +305,10 @@ _CALL_SITE_SNIPPETS = [
     '[P(1), arg_error]',
     # Values plain JSON would change, in a tool result and in the snippet's result.
     'v = await blob()\n'
+    'import datetime\n'
     'e = await echo(value=[(1, b"x"), {2: (b"y",)}])\n'
-    '[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], v["nested"], e, (1, ...), {(1, 2): {"k": (b"a",)}}]',
+    '[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], v["nested"], e, (1, ...),\n'
+    ' {(1, 2): {"k": (b"a",)}}, datetime.date(2026, 1, 1)]',
 ]
 
 
@@ -433,6 +439,15 @@ workflow_side_code_mode_agents = {
                 monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
                 mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent)),
             ),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    ),
+    'no_id': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_no_id_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[
+            CodeMode(monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
         ],
     ),
@@ -886,9 +901,10 @@ async def test_remote_turns_fall_back_without_stored_sessions(client: Client) ->
     assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
 
 
-@pytest.mark.parametrize('reason', ['overlay', 'repl_store'])
+@pytest.mark.parametrize('reason', ['overlay', 'no_id', 'repl_store'])
 async def test_remote_turns_stay_in_the_workflow(client: Client, reason: str) -> None:
-    """An `'overlay'` mount, the default mode, or a `repl_store` keeps every turn in the workflow."""
+    """An `'overlay'` mount (the default mode), a `CodeMode` without `id`, or a `repl_store` keeps every
+    turn in the workflow."""
     workflow_id = f'test_code_mode_temporal_workflow_side_{reason}'
     async with Worker(
         client,

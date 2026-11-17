@@ -78,10 +78,8 @@ def _scalar_to_wire(value: object) -> object:
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else {'float': repr(value)}
-    if isinstance(value, bytes | bytearray):
-        return {type(value).__name__: base64.b64encode(value).decode()}
-    if value is Ellipsis:
-        return {'ellipsis': None}
+    if isinstance(value, bytes):
+        return {'bytes': base64.b64encode(value).decode()}
     return {'json': value}
 
 
@@ -97,10 +95,6 @@ def from_wire(value: object) -> Any:
             return float(str(data))
         case 'bytes':
             return base64.b64decode(str(data))
-        case 'bytearray':
-            return bytearray(base64.b64decode(str(data)))
-        case 'ellipsis':
-            return ...
         case 'tuple':
             return tuple(from_wire(data))
         case 'dict':
