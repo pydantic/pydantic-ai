@@ -347,11 +347,11 @@ def estimate_context_tokens(
     request of a Google long decode, the last sampling pass of an Anthropic response that reported
     its passes. Only the messages after the anchor are estimated with *tokenizer* or ~4
     characters per token, priced up for non-ASCII scripts, base64-like runs and compact JSON,
-    without re-counting instructions, which the anchor already covers; when the instructions changed since the anchor, the estimate swaps the old set for
-    the new one rather than adding the new set on top. Tool schemas named by availability
-    deltas after the anchor are estimated from the pending request parameters. The tool
-    definitions the heuristic cannot see, and the exact count of token-dense content before the
-    anchor, are both inside the provider's number.
+    without re-counting instructions, which the anchor already covers; when the instructions
+    changed since the anchor, the estimate swaps the old set for the new one rather than adding
+    the new set on top. Tool schemas named by availability deltas after the anchor are estimated
+    from the pending request parameters. The tool definitions the heuristic cannot see, and the
+    exact count of token-dense content before the anchor, are both inside the provider's number.
 
     Without provider usage, the history's message text falls back to `estimate_token_count`,
     while schemas named by availability deltas are still estimated from the pending request
@@ -396,12 +396,13 @@ def estimate_message_tokens(
 
     The text estimate (`tokenizer`, or ~4 characters per token priced up for dense text) misses
     what a provider counts but does not return as text, such as thinking kept as an empty part
-    with a signature, and only approximates token-dense content. Usage measures both. A response counts at least its
-    `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
-    earlier one is exactly what the earlier response and the requests after it added, so those
-    messages share that difference in proportion to their estimates. Where the history did not grow
-    between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last. A response
+    with a signature, and only approximates token-dense content. Usage measures both. A response
+    counts at least its `output_tokens`. Between two responses that carry usage, the later
+    `input_tokens` minus the earlier one is exactly what the earlier response and the requests
+    after it added, so those messages share that difference in proportion to their estimates.
+    Where the history did not grow between two such responses, as across a compaction, the
+    difference measures nothing and the estimates stand; so do messages before the first such
+    response and after the last. A response
     whose usage sums several model requests enters the difference with its input tokens as
     `context_input_tokens` reads them, since its summed `input_tokens` re-count each request's context.
     An Anthropic last pass also read that response's own earlier passes, so the difference credits

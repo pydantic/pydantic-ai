@@ -210,8 +210,8 @@ after the anchor (and for whole histories with no reported usage), the estimator
 that is sent: prompts, system prompts, tool calls and their results, retry prompts,
 extended-thinking blocks, provider-side tool results, and the instructions, once. When the
 instructions changed since the anchor, the new set replaces the old one in the estimate rather than
-adding to it, since a request sends only one. That estimated portion is the text
-estimate described under Triggers, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
+adding to it, since a request sends only one. That estimated portion is the text estimate described
+under Triggers, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
 `FilePart` and the files a provider-side tool returns are not counted there -- their payload is
 binary, and its length in characters would mean nothing. For the same reason a file inside a tool
 return counts as the `See file <identifier>.` reference a text-only tool result carries in its place. Newly revealed tool schemas pending in the current request are conservatively estimated

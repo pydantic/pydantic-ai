@@ -2897,12 +2897,11 @@ class TestTieredCompaction:
         calls: list[str] = []
         t1 = _RecordingTier('t1', calls, drop=1)
         cap = TieredCompaction(tiers=[t1], target_tokens=800)
-        # ~87 tokens on the old character baseline, 232 each with the text estimate:
+        # ~87 tokens on the old character baseline, 278 each with the text estimate:
         # 4 tool returns plus the prompt cross the 800 target only under the new estimate.
-        payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
         messages: list[ModelMessage] = [
             _user('hi'),
-            *[_tool_return('tool', f'call-{i}', payload) for i in range(4)],
+            *[_tool_return('tool', f'call-{i}', _BASE64_PAYLOAD) for i in range(4)],
         ]
         rc = _make_request_context(messages)
         result = await cap.before_model_request(_make_ctx(rc.messages), rc)
