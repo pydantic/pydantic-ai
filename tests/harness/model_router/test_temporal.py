@@ -11,6 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.model_router import ModelChoice, ModelRouter
 
 pytest.importorskip('temporalio')
@@ -33,10 +34,6 @@ pytestmark = [
 ]
 
 
-def capable_answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart('capable')])
-
-
 def fast_answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('fast')])
 
@@ -47,7 +44,7 @@ def route(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'choice': 'fast'})])
 
 
-capable = FunctionModel(capable_answer)
+capable = TestModel()
 fast = FunctionModel(fast_answer)
 agent = Agent(
     capable,

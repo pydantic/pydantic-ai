@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -78,6 +78,22 @@ def _router(
         },
         router_model=router_model,
         default='capable',
+        mode=mode,
+        probability_threshold=probability_threshold,
+    )
+
+
+def _configured(
+    *,
+    choices: Mapping[str, ModelChoice] | None = None,
+    default: str = 'fast',
+    mode: Literal['once', 'per_step'] = 'once',
+    probability_threshold: float | None = None,
+) -> ModelRouter[object]:
+    return ModelRouter(
+        choices={'fast': ModelChoice('test', 'description')} if choices is None else choices,
+        router_model=_router_model('fast'),
+        default=default,
         mode=mode,
         probability_threshold=probability_threshold,
     )
@@ -522,35 +538,38 @@ class TestModelRouter:
         assert 'model_router' not in banner
 
     @pytest.mark.parametrize(
-        ('kwargs', 'message'),
+        ('build', 'message'),
         [
-            pytest.param({'choices': {}}, 'choices must not be empty', id='empty-choices'),
+            pytest.param(lambda: _configured(choices={}), 'choices must not be empty', id='empty-choices'),
             pytest.param(
-                {'choices': {'': ModelChoice('test', 'description')}},
+                lambda: _configured(choices={'': ModelChoice('test', 'description')}),
                 'choice names must not be empty',
                 id='empty-name',
             ),
             pytest.param(
-                {'choices': {'fast': ModelChoice('test', '')}},
+                lambda: _configured(choices={'fast': ModelChoice('test', '')}),
                 'choice descriptions must not be empty',
                 id='empty-description',
             ),
-            pytest.param({'default': 'missing'}, 'default must name a configured choice', id='unknown-default'),
-            pytest.param({'mode': 'sometimes'}, 'mode must be', id='mode'),
-            pytest.param({'probability_threshold': -0.1}, 'must be between 0 and 1', id='threshold-low'),
-            pytest.param({'probability_threshold': 1.1}, 'must be between 0 and 1', id='threshold-high'),
+            pytest.param(
+                lambda: _configured(default='missing'), 'default must name a configured choice', id='unknown-default'
+            ),
+            pytest.param(
+                lambda: _configured(mode='sometimes'),  # pyright: ignore[reportArgumentType]
+                'mode must be',
+                id='mode',
+            ),
+            pytest.param(
+                lambda: _configured(probability_threshold=-0.1), 'must be between 0 and 1', id='threshold-low'
+            ),
+            pytest.param(
+                lambda: _configured(probability_threshold=1.1), 'must be between 0 and 1', id='threshold-high'
+            ),
         ],
     )
-    async def test_validates_configuration(self, kwargs: dict[str, Any], message: str) -> None:
-        options: dict[str, Any] = {
-            'choices': {'fast': ModelChoice('test', 'description')},
-            'router_model': _router_model('fast'),
-            'default': 'fast',
-            **kwargs,
-        }
-
+    async def test_validates_configuration(self, build: Callable[[], ModelRouter[object]], message: str) -> None:
         with pytest.raises(UserError, match=message):
-            ModelRouter(**options)
+            build()
 
     async def test_an_unresolvable_router_model_is_rejected_at_construction(self) -> None:
         with pytest.raises(UserError, match='Unknown model'):
