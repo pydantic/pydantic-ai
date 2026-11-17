@@ -52,7 +52,10 @@ class PermissionRule:
     """
 
     args: Mapping[str, str] = field(default_factory=dict[str, str])
-    """Globs for string arguments by name, such as `{'path': 'docs/*'}`. A missing or non-string argument does not match."""
+    """Globs for string arguments by name, such as `{'path': 'docs/*'}`. A missing or non-string argument does not match.
+
+    Each value is matched as given and as a normalized path: an `'allow'` rule needs both to match, others either.
+    """
 
     reason: str | None = None
     """Why the rule asks or denies, shown to the person asked or to the model when denied."""
