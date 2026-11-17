@@ -59,6 +59,13 @@ result = graph.run_sync(inputs=3)
 
 Use `await graph.run(inputs=...)` from async code.
 
+For `BaseNode` workflows, use `g.add_reachable(RootNode)` to register reachable classes and infer missing outgoing edges.
+Configure bridge paths through steps, decisions and joins before discovery. Existing outgoing paths are preserved.
+Connect `g.start_node` explicitly. Node instances and constructor arguments still come from application code.
+For independent task functions, import the function and call `g.step(imported_function)` at the composition root.
+See [the graph guide](https://pydantic.dev/docs/ai/graph/graph/#registering-reachable-nodes) for recursive registration and module-qualified postponed annotations.
+
+
 ## Call the Model Without Using an Agent
 
 Use the direct API when the user wants a single model request without agent orchestration.
@@ -93,6 +100,8 @@ For runs long enough to approach Temporal's history limit, pass `TemporalDurabil
 To delegate to a nested durable agent under Temporal, run the delegating async function tool as a child workflow with `metadata={'temporal': {'child_workflow': ChildWorkflowConfig(...)}}` (or the same metadata through `SetToolMetadata`). The nested agent's model requests and tool calls then become activities in the child's own history instead of the parent's. List the nested agent in `__pydantic_ai_agents__` too, and register the worker through `PydanticAIPlugin` or `AgentPlugin`: `TemporalDurability.temporal_activities` raises when a tool uses a child workflow, because it would leave the child workflow definition unregistered. On a worker that only runs activities, use `AgentPlugin(agent, register_workflows=False)` so it doesn't also register the child workflow. The metadata must be in place when the worker is configured; tools added with `@agent.tool` count. An exception in the tool body fails the child workflow, like a failed activity. Child workflows aren't supported for sync, dynamic, or MCP tools.
 
 Under DBOS, use `metadata={'dbos': {'child_workflow': ChildWorkflowConfig(...)}}` (from `pydantic_ai.durable_exec.dbos`, or through `SetToolMetadata`) on an async tool in a `FunctionToolset` with a unique `id`, set before the agent is constructed (not with a later `@agent.tool`). The child's inputs (tool arguments, serialized run context, `deps`) must be serializable.
+
+When a durable engine owns model request retries, set `model_settings={'max_retries': 0}` so the provider SDK doesn't retry inside the durable unit. A model error's `retry_after` (a provider's `Retry-After`) is then waited durably before the engine's next attempt, capped: on Temporal by the retry policy's `maximum_interval`, on DBOS (with `model_step_config` retries) by the step's backoff or a minute, whichever is longer. Prefect applies `retry_delay_seconds` whatever the provider asked for.
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 

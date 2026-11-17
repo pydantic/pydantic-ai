@@ -14,7 +14,7 @@ from rich.console import Console, Group
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface

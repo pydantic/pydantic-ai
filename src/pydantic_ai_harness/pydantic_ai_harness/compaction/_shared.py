@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard,
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CompactionPart,
@@ -57,7 +58,7 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
     reset_receipt_scope,
 )
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness.file_system import READ_FILE_KIND
 
 if TYPE_CHECKING:
     from opentelemetry.util.types import AttributeValue
@@ -459,6 +460,17 @@ def exceeds(
 # ---------------------------------------------------------------------------
 
 
+def require_trigger(
+    strategy: str, max_messages: int | None, max_tokens: int | None, max_fraction: float | None
+) -> None:
+    """Reject *strategy* registered on an agent without a trigger, where its request hook would never compact."""
+    if max_messages is None and max_tokens is None and max_fraction is None:
+        raise UserError(
+            f'`{strategy}` registered as a capability needs one of max_messages, max_tokens, or max_fraction. '
+            'Without a trigger it only runs when its `compact` is called, as a `TieredCompaction` tier does.'
+        )
+
+
 def validate_token_trigger(
     max_tokens: int | None,
     max_fraction: float | None,
@@ -664,6 +676,28 @@ async def compact_with_span(
                     attributes['compaction.receipt.handle'] = receipt.handle
                 span.add_event(RECEIPT_EVENT_NAME, attributes)
     return compacted
+
+
+def record_failed_compaction(
+    ctx: RunContext[AgentDepsT],
+    *,
+    strategy: str,
+    skipped: str,
+    error: Exception,
+    messages: list[ModelMessage],
+    tokenizer: Callable[[str], int] | None = None,
+) -> None:
+    """Emit a `compact_messages` span recording a compaction attempt that raised *error* and was skipped."""
+    with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+        span.set_attributes(
+            {
+                'compaction.strategy': strategy,
+                'compaction.skipped': skipped,
+                'error.type': f'{type(error).__module__}.{type(error).__qualname__}',
+                'compaction.messages_before': len(messages),
+                'compaction.tokens_before': estimate_token_count(messages, tokenizer),
+            }
+        )
 
 
 async def compact_if_smaller(

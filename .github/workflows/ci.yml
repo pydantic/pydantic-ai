@@ -426,10 +426,61 @@ jobs:
 
       # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
       # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
-      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
-      # policy check does not hide type errors.
+      # that script enforces. The check runs whenever the install succeeded, so a failing pre-commit
+      # hook or policy check does not hide type errors.
+      #
+      # A pull request checks with pyright-rs first: a Rust port of pyright's command-line check
+      # that prints pyright's output and exit code for the same command line and configuration, in
+      # about a fifth of the time (https://github.com/dsfaccini/pyright-rs). The release is pinned
+      # by tag and checksum, and used only when it ports the pyright version `uv.lock` installs, so a
+      # pyright bump is never checked by an older port. When the install or the pyright-rs check
+      # fails, pyright checks, and its result counts, so a pull request never fails on a pyright-rs
+      # mistake. A merge group checks with pyright alone, so a wrong pyright-rs pass never reaches
+      # `main`; a push to `main` checks with pyright too.
+      - name: Install pyright-rs
+        id: pyright-rs
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        continue-on-error: true
+        env:
+          PYRIGHT_RS_RELEASE: v1.1.414-1
+          PYRIGHT_RS_SHA256: 8eacc246abfabff2bfc1d2735b756050047471b1468cb29a7ddcf42c56ae3cdc
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+          UV_NO_SYNC: "1"
+        run: |
+          trap 'echo "::warning title=pyright-rs::Installing pyright-rs failed, so pyright checks this run."' ERR
+          name="pyright-rs-$PYRIGHT_RS_RELEASE-x86_64-unknown-linux-gnu"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/dsfaccini/pyright-rs/releases/download/$PYRIGHT_RS_RELEASE/$name.tar.gz"
+          echo "$PYRIGHT_RS_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          ported=$("$RUNNER_TEMP/$name/pyright-rs" --version)
+          locked=$(uv run pyright --version)
+          if [ "$ported" != "$locked" ]; then
+            echo "::notice title=pyright-rs::pyright-rs ports $ported but uv.lock installs $locked, so pyright checks this run."
+            exit 0
+          fi
+          echo "path=$RUNNER_TEMP/$name/pyright-rs" >> "$GITHUB_OUTPUT"
+
+      - name: Type-check with pyright-rs
+        id: pyright-rs-check
+        if: ${{ !cancelled() && steps.pyright-rs.outputs.path != '' }}
+        continue-on-error: true
+        env:
+          PYRIGHT: ${{ steps.pyright-rs.outputs.path }}
+          # A failure here only hands the check to pyright and its own budget below, so a slowdown
+          # fails the pull request only when pyright shows it too. On 2026-11-12 eight runners each
+          # checked one pull request with both (https://github.com/pydantic/pydantic-ai/actions/runs/43321752660):
+          # pyright-rs took 35.3 to 47.6 s (median 40.0 s), and pyright 6.0 to 6.6 times as long. 55
+          # is pyright's 370 s budget divided by the highest of those ratios, so a pyright-rs run that
+          # points to a pyright run over that budget hands the check to pyright. It is about 1.15x the
+          # slowest of those pyright-rs runs, and a run 1.5x their median exceeds it.
+          PYRIGHT_TIME_BUDGET: "55"
+          UV_NO_SYNC: "1"
+        run: make typecheck-changed
+
       - name: Type-check with Pyright
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' && steps.pyright-rs-check.outcome != 'success' }}
         env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
@@ -470,6 +521,8 @@ jobs:
           # of 231 s. 370 is about 1.1x the `main` maximum. Passing `main` runs now reach the 328 s of
           # #8077's fastest regressed run, so the budget no longer fails that absolute range; #8077 took
           # the median from 88.5 s to at least 3.7x that, and a run 1.5x today's median fails 370.
+          # A pull request reaches this step only when pyright-rs did not run or did not pass. The
+          # budget times this step alone, so a pyright-rs run before it never counts against it.
           PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '370' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
@@ -782,7 +835,7 @@ jobs:
           assert importlib.util.find_spec('pymongo') is None, 'the base install must not include pymongo'
           assert importlib.util.find_spec('json_repair') is None, 'json-repair belongs to the coder and repair-tool-arguments extras'
           import pydantic_ai_harness, pydantic_ai_harness.media, pydantic_ai_harness.step_persistence
-          import pydantic_ai_harness.filesystem, pydantic_ai_harness.shell
+          import pydantic_ai_harness.file_system, pydantic_ai_harness.shell
           try:
               import pydantic_ai_harness.coder
           except ImportError as error:
@@ -1695,6 +1748,62 @@ jobs:
             uv run --package pydantic-clai2 pytest "${tests[@]}"
           fi
 
+  # `WindowsWorkspaceBackend` and the PowerShell side of the harness's file and shell tools run only on
+  # Windows, and every other test job runs on Linux. Their coverage joins the rest in the `coverage` job.
+  test-windows-workspace:
+    name: test Windows workspace
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CI: true
+      COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.windows-workspace
+      # See `test-clai2-clipboard`: no Git-sourced dependency is installed here.
+      GIT_CONFIG_COUNT: "0"
+      GIT_CONFIG_KEY_0: ""
+      GIT_CONFIG_VALUE_0: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: windows-workspace
+
+      - run: mkdir .coverage
+
+      # `grep` and `list_files` run `rg`; the tests cover both its presence and its absence.
+      - run: choco install ripgrep --no-progress -y
+
+      - run: uv sync --only-dev
+
+      - name: run tests
+        run: uv run --package pydantic-clai2 coverage run -m pytest tests/test_windows_workspace.py tests/harness/coder/test_windows.py
+
+      # The remote-sandbox fakes run commands as POSIX processes on the host, so their suites must skip here.
+      - name: run sandbox backend tests
+        run: >-
+          uv run --package pydantic-ai-harness --group dev
+          --extra coder --extra render --extra modal --extra e2b --extra sprites --extra boxd --extra opensandbox --extra daytona
+          coverage run -m pytest
+          tests/harness/boxd_sandbox tests/harness/daytona_sandbox tests/harness/e2b_sandbox tests/harness/modal_sandbox
+          tests/harness/opensandbox_sandbox tests/harness/render_sandbox tests/harness/sprites_sandbox
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --package pydantic-clai2 coverage combine
+
+      - name: store coverage files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-windows-workspace
+          path: .coverage
+          include-hidden-files: true
+
   test-clai2-web:
     name: test clai2 web UI
     needs: classify
@@ -1785,6 +1894,8 @@ jobs:
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
       azure_durable_task: ${{ steps.detect.outputs.azure_durable_task }}
+      kubernetes: ${{ steps.detect.outputs.kubernetes }}
+      bubblewrap: ${{ steps.detect.outputs.bubblewrap }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1817,11 +1928,16 @@ jobs:
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
           detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
-            "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
+            "$H/pydantic_ai_harness/spend_limits" tests/harness/step_persistence tests/harness/media tests/harness/spend_limits \
             tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
-          detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect redis "$H/pydantic_ai_harness/spend_limits" tests/harness/spend_limits "$H/integration_tests/redis"
           detect azure_durable_task "$H/pydantic_ai_harness/azure_durable_task" tests/harness/azure_durable_task \
             "$H/integration_tests/azure_durable_task"
+          detect kubernetes "$H/pydantic_ai_harness/kubernetes_sandbox" tests/harness/kubernetes_sandbox \
+            "$H/pydantic_ai_harness/_workspace_provider.py" "$H/pydantic_ai_harness/_workspace.py" \
+            "$H/integration_tests/kubernetes" pydantic_ai_slim/pydantic_ai/workspaces
+          detect bubblewrap "$H/pydantic_ai_harness/bubblewrap_sandbox" tests/harness/bubblewrap_sandbox \
+            tests/harness/_fake_remote_tools.py .github/actions/install-subprocess-isolation-deps
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -2021,6 +2137,80 @@ jobs:
 
       - run: make integration-azure-durable-task
 
+  # The unit suite runs the backend against a Python stand-in for sandboxd; this runs the same
+  # conformance rules against the real daemon, built from an agent-sandbox release tag. No cluster.
+  harness-kubernetes-integration:
+    name: harness Kubernetes sandbox integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.kubernetes == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SANDBOXD_REQUIRE_LIVE: "1"
+      SANDBOXD_BIN: ${{ github.workspace }}/.bin/sandboxd
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      # The oldest release the docs support; the nightly live job runs the newest. `GOTOOLCHAIN=auto`
+      # fetches the Go version its module requires.
+      - run: go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7
+        env:
+          GOBIN: ${{ github.workspace }}/.bin
+          GOTOOLCHAIN: auto
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-kubernetes
+
+      - run: make integration-kubernetes
+
+  # The `BubblewrapWorkspace` sandbox tests with a real `bwrap`: the `test` job has none, so it skips
+  # the tests that need one. Reproduce a failure with `BWRAP_REQUIRE_LIVE=1 make integration-bubblewrap`.
+  harness-bubblewrap-integration:
+    name: harness Bubblewrap integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.bubblewrap == 'true') }}
+    # The pinned bubblewrap package is a noble build.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # A `bwrap` that does not work is a skip locally and must be a failure here.
+      BWRAP_REQUIRE_LIVE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install bubblewrap and socat
+        uses: ./.github/actions/install-subprocess-isolation-deps
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-bubblewrap
+
+      # The runner image restricts unprivileged user namespaces through AppArmor, and `bwrap` needs one.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # Shows `bwrap`'s own error, which the tests only report as a failed requirement.
+      - run: bwrap --ro-bind / / --unshare-all true
+
+      - run: make integration-bubblewrap
+
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
   # SDK we cannot drive (the `anthropic` 1.0.0 case). `check` allows its failure below. Tag refs
@@ -2034,7 +2224,17 @@ jobs:
 
   coverage:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
+    needs:
+      [
+        classify,
+        test,
+        test-all-extras,
+        test-durable-exec,
+        test-lowest-versions,
+        test-fastmcp-4,
+        test-harness-browser-use,
+        test-windows-workspace,
+      ]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
     # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
     # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
@@ -2104,6 +2304,7 @@ jobs:
       - test-fastmcp-4
       - test-harness-browser-use
       - test-clai2-clipboard
+      - test-windows-workspace
       - test-clai2-web
       - harness-integration-changes
       - harness-localstack-integration
@@ -2111,6 +2312,8 @@ jobs:
       - harness-postgres-integration
       - harness-redis-integration
       - harness-azure-durable-task-integration
+      - harness-kubernetes-integration
+      - harness-bubblewrap-integration
       - latest-versions-canary
       - coverage
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
@@ -2134,20 +2337,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-windows-workspace,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

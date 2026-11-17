@@ -11,6 +11,7 @@ import shlex
 import uuid
 import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,15 @@ _OUTPUT_BYTES_PER_CHAR = 4
 
 _COMMAND_ID = re.compile(r'[0-9a-f]{32}')
 """A background command's ID: the name of its job directory."""
+
+_POSIX_JOB_HINT = '(e.g.\n`tail` in a later shell call) and stop the process with `kill` and the\nreturned PID.'
+"""How the `shell` description says to read a job's log and stop it; on a `'windows'` workspace it is replaced."""
+
+_WINDOWS_JOB_HINT = (
+    '(e.g.\n`Get-Content -Tail` in a later shell call) and stop the process tree with the\n'
+    'stop command the result names. Commands run in PowerShell, not `sh`.'
+)
+"""`_POSIX_JOB_HINT` for a `'windows'` workspace."""
 
 
 class ShellToolset(FunctionToolset[AgentDepsT]):
@@ -177,7 +187,14 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             require_workspace(ctx.workspace, 'ShellToolset', ctx.messages)
         if not supports_commands(ctx.workspace):
             return {}
-        return await super().get_tools(ctx)
+        tools = await super().get_tools(ctx)
+        if ctx.workspace.platform == 'windows':
+            # `run_command` and `persist_cwd` wrap a command in `sh` (`cd ... || exit`, `pwd`).
+            tools.pop('run_command', None)
+            if (shell := tools.get('shell')) is not None and shell.tool_def.description is not None:
+                description = shell.tool_def.description.replace(_POSIX_JOB_HINT, _WINDOWS_JOB_HINT)
+                tools['shell'] = replace(shell, tool_def=replace(shell.tool_def, description=description))
+        return tools
 
     async def call_tool(
         self,
@@ -256,7 +273,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         # A run ID can contain path separators; hash it rather than letting it choose a filename.
         assert ctx.run_id is not None
         run_key = hashlib.sha256(ctx.run_id.encode('utf-8')).hexdigest()
-        return posixpath.join(await self._jobs_base(ctx), 'run-state', run_key)
+        return ctx.workspace.paths.join(await self._jobs_base(ctx), 'run-state', run_key)
 
     async def clear_run_cwd(self, ctx: RunContext[AgentDepsT]) -> None:
         """Remove the run's saved directory once its agent run ends."""
@@ -276,7 +293,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         """The background command `command_id` names in the workspace, started by this run or an earlier one."""
         if not _COMMAND_ID.fullmatch(command_id):
             return None
-        return await Job.attach(ctx.workspace, posixpath.join(await self._jobs_base(ctx), command_id), combined=False)
+        directory = ctx.workspace.paths.join(await self._jobs_base(ctx), command_id)
+        return await Job.attach(ctx.workspace, directory, combined=False)
 
     def _first_denied_operator(self, command: str) -> str | None:
         """Return the first denied operator found in command, or None."""
@@ -493,7 +511,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             log_limit=self._max_log_bytes,
             job_id=_job_id(ctx),
         )
-        return f'Started background command: {command!r}\nID: {posixpath.basename(job.directory)}'
+        return f'Started background command: {command!r}\nID: {ctx.workspace.paths.basename(job.directory)}'
 
     async def _read_bg_output(self, job: Job) -> tuple[str, str]:
         """The retained tail of a background command's stdout and stderr logs."""

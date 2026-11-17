@@ -35,7 +35,11 @@ try:
     from pydantic_ai.durable_exec.temporal._durability import worker_registrations
     from pydantic_ai.durable_exec.temporal._operation_backend import registered_child_workflow_names
 
-    from ._shared import TASK_QUEUE, _workflow_failure_cause  # pyright: ignore[reportPrivateUsage]
+    from ._shared import (
+        TASK_QUEUE,
+        _workflow_failure_cause,  # pyright: ignore[reportPrivateUsage]
+        scheduled_activity_types,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -652,14 +656,6 @@ class DelegatingAgentWorkflow:
         return (await delegating_agent.run('delegate this')).output
 
 
-def _scheduled_activity_types(history: WorkflowHistory) -> list[str]:
-    return [
-        event.activity_task_scheduled_event_attributes.activity_type.name
-        for event in history.events
-        if event.HasField('activity_task_scheduled_event_attributes')
-    ]
-
-
 async def test_child_workflow_runs_nested_durable_agent(client: Client) -> None:
     workflow_id = 'test_child_workflow_runs_nested_durable_agent'
     # The agent is also listed in `__pydantic_ai_agents__`; its child workflow is registered once.
@@ -672,8 +668,8 @@ async def test_child_workflow_runs_nested_durable_agent(client: Client) -> None:
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     child_history = await client.get_workflow_handle(_child_start(history).workflow_id).fetch_history()
     # The nested agent's model request is a durable activity in the child's history, not the parent's.
-    assert _scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
-    assert 'agent__nested_sub_agent__model_request' not in _scheduled_activity_types(history)
+    assert scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
+    assert 'agent__nested_sub_agent__model_request' not in scheduled_activity_types(history)
 
 
 @workflow.defn
