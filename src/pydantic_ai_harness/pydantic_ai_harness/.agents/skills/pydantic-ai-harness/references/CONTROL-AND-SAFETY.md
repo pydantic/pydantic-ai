@@ -28,6 +28,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
+| Tell the model how much of its usage limits and spend budgets is left, every request | `ReportRemainingBudget(spend_limits=...)` |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
@@ -864,6 +865,38 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
   starts at zero, including one resumed after an approval round outside the run, so with approval
   rounds the budget is per round, not per task.
 - Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
+
+## ReportRemainingBudget
+
+In `before_model_request`, enqueues a request-scoped `SystemPromptPart` with what is left of the run's
+`UsageLimits` (read from `ctx.usage_limits` and `ctx.usage`) and, given `spend_limits=`, of each
+`SpendLimits` budget with a ceiling (read with `status(ctx)`). Disclosure only; enforcement stays with
+`UsageLimits` and `SpendLimits`.
+
+```python
+from decimal import Decimal
+
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
+from pydantic_ai_harness.spend_limits import Budget
+
+spend = SpendLimits(budgets=[Budget(usd=Decimal('10'), window='day')])
+agent = Agent('test', capabilities=[spend, ReportRemainingBudget(spend_limits=spend)])
+```
+
+```text
+Budget remaining:
+- this run: 8 requests including this one, about 38k total tokens, $1.42
+- today: $12.50
+```
+
+- The run line lists requests (including the one being sent), tool calls, input/output/total tokens and
+  `cost_limit`, for each limit set; `per_request_input_tokens_limit` isn't reported. Spend lines are labelled
+  by window (`this run`, `this conversation`, `today`, `this month`, `in total`) plus `name` unless
+  `'default'`; counter-only budgets are left out. Tokens of 1,000 or more are rounded (`about 38k`).
+- Pass the same `SpendLimits` instance the agent carries; its store is read on every request.
+- Nothing is sent when no limit applies. No spans: the status is part of the recorded model request.
 
 ## RefineOutput
 
