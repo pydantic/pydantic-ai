@@ -352,9 +352,10 @@ the model gets the handles back, does other work, and polls the status file.
 
 The command outlives the agent run and the event loop, so a server the model
 starts keeps serving for as long as the workspace does. Nothing wakes the agent
-when the command finishes; the model polls, or uses `run_command` with `BackgroundTools` (above). Cancelling a foreground call kills the command. Logs that were handed back are
-never deleted: clean them up yourself, and keep verbose commands' output
-bounded.
+when the command finishes; the model polls, or uses `run_command` with
+`BackgroundTools` (above). Cancelling a foreground call kills the command. Logs
+that were handed back are never deleted: clean them up yourself, and keep
+verbose commands' output bounded.
 
 `allowed_commands`, `denied_commands`, `denied_operators`, `allow_interactive`,
 `env`, `denied_env_patterns`, and `secret_env` apply to `shell` exactly as to
