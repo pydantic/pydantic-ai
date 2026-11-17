@@ -179,7 +179,11 @@ def test_curated_model_names_exclude_retired_sdk_ids():
 
 
 def test_deprecated_anthropic_models_warns_and_keeps_its_value():
-    with pytest.warns(PydanticAIDeprecationWarning, match='`DEPRECATED_ANTHROPIC_MODELS` is deprecated'):
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`DEPRECATED_ANTHROPIC_MODELS` is deprecated and will be removed in v3, as Pydantic AI no longer uses it\. '
+        r'Keep your own list of retired model ids',
+    ):
         retired_model_names = anthropic_module.DEPRECATED_ANTHROPIC_MODELS
     assert retired_model_names == {
         'claude-3-haiku-20240307',
