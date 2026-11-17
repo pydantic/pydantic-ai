@@ -2241,7 +2241,7 @@ def test_durability_temporal_activities_rejects_omitting_child_workflows():
 
     with pytest.raises(
         UserError,
-        match='cannot be used when a tool is configured to run as a child workflow',
+        match=r'cannot be used when a tool is configured to run as a child workflow(?s:.*)`AgentPlugin\(agent, register_workflows=False\)`',
     ):
         _ = bound.temporal_activities
 
@@ -2261,7 +2261,7 @@ def test_durability_temporal_activities_rejects_child_workflow_metadata_capabili
 
     with pytest.raises(
         UserError,
-        match='cannot be used when a tool is configured to run as a child workflow',
+        match=r'cannot be used when a tool is configured to run as a child workflow(?s:.*)`AgentPlugin\(agent, register_workflows=False\)`',
     ):
         _ = bound.temporal_activities
 
