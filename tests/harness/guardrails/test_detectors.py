@@ -239,7 +239,7 @@ class TestSecretRedaction:
         assert redact_secrets(f'k={jwt}').replacement == 'k=[redacted:jwt]'
 
     def test_a_header_segment_holding_dash_eyj_is_not_matched(self):
-        """The cost of the linear scan: a `-` directly before `eyJ` ends the header segment."""
+        """A header segment holding `-eyJ` is not matched: the header segment ends at that `-`."""
         jwt = 'eyJhbGciOi-eyJIUzI1NiJ9.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
 
         assert redact_secrets(jwt).action == 'allow'
