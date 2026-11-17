@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from pydantic import BaseModel, Field
 from pydantic_core import to_jsonable_python
-from vcr.cassette import Cassette
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import TestEnv, try_import
+
+if TYPE_CHECKING:
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from pydantic_ai.models.typesafe import TypeSafeModel
