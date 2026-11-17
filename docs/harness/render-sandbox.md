@@ -169,7 +169,7 @@ To keep results, read them through `ctx.workspace` in `after_run` before calling
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds a new sandbox lives before Render terminates it, at most `86_400`. Default: `3_600`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve from, created on a new sandbox. Default: `None`, the sandbox's home directory. |
-| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment is passed. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment is passed. Add a variable to a `RenderSandboxBackend`'s `env` to give it to that backend's later commands. |
 
 `RenderSandbox` needs asyncio; on Trio it raises `UserError`.
 

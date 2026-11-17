@@ -8031,6 +8031,9 @@ modal = [
 opensandbox = [
     { name = "pydantic-ai-harness", extra = ["opensandbox"] },
 ]
+render = [
+    { name = "pydantic-ai-harness", extra = ["render"] },
+]
 sprites = [
     { name = "pydantic-ai-harness", extra = ["sprites"] },
 ]
@@ -8056,6 +8059,7 @@ requires-dist = [
     { name = "pydantic-ai-harness", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "openai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "pydantic_ai_slim" },
@@ -8068,7 +8072,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets", specifier = ">=15.0" },
 ]
-provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "sprites", "typesafe"]
+provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites", "typesafe"]
 
 [[package]]
 name = "pydantic-core"

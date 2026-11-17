@@ -46,6 +46,7 @@ from pydantic_ai.workspaces import (
     SupportsFilesystem,
     WorkspaceCommand,
     WorkspaceRef,
+    WorkspaceUnavailableError,
 )
 from pydantic_clai2 import Session
 from pydantic_clai2.builtin_plugins import sandbox
@@ -59,6 +60,7 @@ from pydantic_clai2.builtin_plugins.sandbox.providers import (
     kubernetes as kubernetes_provider,
     modal as modal_provider,
     opensandbox as opensandbox_provider,
+    render as render_provider,
     sprites as sprites_provider,
 )
 from pydantic_clai2.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
@@ -94,6 +96,7 @@ if TYPE_CHECKING:
     from tests.harness.kubernetes_sandbox.fake_sandboxd import FakeCluster
     from tests.harness.modal_sandbox.fake_modal import FakeModal
     from tests.harness.opensandbox_sandbox.fake_opensandbox import FakeOpenSandbox
+    from tests.harness.render_sandbox.workspace_helpers import WorkspaceHarness
     from tests.harness.sprites_sandbox.fake_sprites import SpriteTransport
 
 CLONE_URL = 'https://github.com/owner/repo.git'
@@ -460,6 +463,7 @@ class TestCommand:
             'daytona',
             'opensandbox',
             'modal',
+            'render',
             'sprites',
             'kubernetes',
             'delete',
@@ -1627,6 +1631,89 @@ class TestModal:
         fake_modal.create_error = OSError('Modal is down')
         with pytest.raises(OSError, match='Modal is down'):
             await modal_provider.ModalProvider(working_dir=str(workspace)).create(github=GITHUB)
+
+
+@pytest.fixture
+def fake_render(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[WorkspaceHarness]':
+    """The harness's Render fake, whose commands run here; every client CLAI makes is wired to it."""
+    import render
+
+    from tests.harness.render_sandbox.workspace_helpers import client_is_closed, make_workspace_harness
+
+    harness = make_workspace_harness(monkeypatch, tmp_path)
+    made: list[render.RenderAsync] = []
+    real = render.RenderAsync
+
+    def client(*, token: str | None, owner_id: str | None) -> render.RenderAsync:
+        assert (token, owner_id) == ('rnd_key', 'tea-1')
+        opened = real(token=token, owner_id=owner_id)
+        harness.install(opened)
+        made.append(opened)
+        return opened
+
+    monkeypatch.setattr(render, 'RenderAsync', client)
+    monkeypatch.delenv(render_provider.KEY_NAME, raising=False)
+    monkeypatch.delenv(render_provider.WORKSPACE_KEY_NAME, raising=False)
+    yield harness
+    assert all(client_is_closed(opened) for opened in made)
+
+
+@pytest.mark.skipif(find_spec('render') is None, reason='render not installed')
+class TestRender:
+    """Render, through the SDK fake the harness's own Render tests use."""
+
+    def test_missing(self, fake_render: 'WorkspaceHarness', monkeypatch: pytest.MonkeyPatch) -> None:
+        provider = render_provider.RenderProvider()
+        message = (
+            'Add your Render API key in /keys as RENDER_API_KEY, and the tea-... ID of a workspace with sandboxes '
+            'as RENDER_WORKSPACE_ID. Make a key as https://render.com/docs/api#1-create-an-api-key says.'
+        )
+        assert provider.missing() == message
+        save_key(name='RENDER_API_KEY', value='rnd_key')
+        assert provider.missing() == message
+        monkeypatch.setenv('RENDER_WORKSPACE_ID', 'tea-1')
+        assert provider.missing() is None
+        monkeypatch.setattr(render_provider, 'find_spec', not_installed)
+        assert provider.missing() == (
+            "Render support is not installed. Install CLAI with it: uv tool install 'pydantic-clai2[render]'."
+        )
+
+    async def test_create_reopen_delete(self, fake_render: 'WorkspaceHarness', tmp_path: Path) -> None:
+        save_key(name='RENDER_API_KEY', value='rnd_key')
+        save_key(name='RENDER_WORKSPACE_ID', value='tea-1')
+        provider = render_provider.RenderProvider(working_dir=str(tmp_path / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        assert ref == backend.ref == WorkspaceRef(provider='render', id='sb-1')
+        # Render's longest lifetime, and the backend made the working folder.
+        assert fake_render.create_calls['sb-1'].timeout_seconds == 86_400
+        assert (tmp_path / 'workspace').is_dir()
+        assert (await backend.run(['printenv', 'GIT_TERMINAL_PROMPT'])).stdout == '0\n'
+        await give_github_login(backend, GITHUB)
+        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
+        # The token went by file transfer, never in a command.
+        assert not any('gho_x' in str(command) for command in fake_render.commands)
+        reopened = provider.reopen(ref)
+        await provider.set_env(reopened, 'API_KEY', 'sk-1')
+        assert (await reopened.run(['printenv', 'API_KEY'])).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.close(backend)  # Closing again has nothing left to close.
+        await provider.delete(ref)
+        assert fake_render.terminated == ['sb-1']
+
+    async def test_a_failed_create_leaves_nothing_behind(self, fake_render: 'WorkspaceHarness', tmp_path: Path) -> None:
+        save_key(name='RENDER_API_KEY', value='rnd_key')
+        save_key(name='RENDER_WORKSPACE_ID', value='tea-1')
+        # Render made the sandbox, but the working folder cannot be made there.
+        (tmp_path / 'file').touch()
+        provider = render_provider.RenderProvider(working_dir=str(tmp_path / 'file/workspace'))
+        with pytest.raises(WorkspaceUnavailableError, match='is unavailable in the sandbox'):
+            await provider.create(github=GITHUB)
+        assert fake_render.terminated == ['sb-1']
+        fake_render.create_error = OSError('Render is down')
+        with pytest.raises(OSError, match='Render is down'):
+            await provider.create(github=GITHUB)
+        assert fake_render.created == ['sb-1']
 
 
 @pytest.fixture

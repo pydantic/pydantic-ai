@@ -55,6 +55,14 @@ async def test_configured_env_reaches_every_command_under_command_env(workspace_
     assert result.stdout == 'base-command'
 
 
+async def test_a_variable_added_to_env_reaches_later_commands(workspace_harness: WorkspaceHarness) -> None:
+    backend = workspace_harness.backend(env={'BASE': 'base'})
+    await backend.run(['true'])
+    backend.env['ADDED'] = 'added'
+    result = await backend.run('printf %s-%s "$BASE" "$ADDED"', shell=True)
+    assert result.stdout == 'base-added'
+
+
 async def test_command_arguments_are_copied_before_sandbox_creation(workspace_harness: WorkspaceHarness) -> None:
     # Hold sandbox creation at the fake SDK boundary so another caller can edit
     # its command list while this operation is waiting for the remote environment.
@@ -230,7 +238,7 @@ async def test_failed_create_lets_a_later_operation_create(
     # As on E2B: a failed create records no sandbox, so the next operation tries again.
     workspace_harness.create_error = error
     backend = workspace_harness.backend()
-    with pytest.raises(expected):
+    with pytest.raises(expected, match=str(error)):
         await backend.working_dir()
     assert backend.ref is None
     workspace_harness.create_error = None

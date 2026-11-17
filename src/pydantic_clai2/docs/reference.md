@@ -50,7 +50,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
-| `/sandbox [e2b\|boxd\|daytona\|opensandbox\|modal\|sprites\|kubernetes\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
+| `/sandbox [e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -2842,7 +2842,7 @@ no agent telemetry spans.
 
 ### Cloud sandboxes: `/sandbox`
 
-Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `sprites`, or `kubernetes`) in a new
+Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`, `sprites`, or `kubernetes`) in a new
 conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
 uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
 there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
@@ -2863,6 +2863,7 @@ Without a `gh` login, the sandbox has no GitHub access, and its copy has no `ori
 | `daytona` | `pydantic-clai2[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token | for this CLAI session, sent to Daytona inside each command |
 | `opensandbox` | `pydantic-clai2[opensandbox]` | `OPEN_SANDBOX_DOMAIN`, and `OPEN_SANDBOX_API_KEY` if your server needs one | your OpenSandbox server's credential proxy, in the memory of the sandbox's egress sidecar | anyone with your server's API key can use it; anyone who can read the sidecar's memory on the server's machine | for this CLAI session |
 | `modal` | `pydantic-clai2[modal]` | Modal's own login: `modal token new` | in the sandbox | anything run in the sandbox | for this CLAI session |
+| `render` | `pydantic-clai2[render]` | `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` | in the sandbox | anything run in the sandbox | for this CLAI session, sent to Render inside each command |
 | `sprites` | `pydantic-clai2[sprites]` | `SPRITE_TOKEN` | in the Sprite | anything run in the Sprite | for this CLAI session, sent to Sprites in each command's URL |
 | `kubernetes` | `pydantic-clai2[kubernetes]` | `CLAI_KUBERNETES_WARM_POOL`, and `CLAI_KUBERNETES_NAMESPACE` if it is not `default`; `kubectl`'s current context | in the sandbox pod | anything run in the pod, and anyone who can exec into it | for this CLAI session |
 
@@ -2890,7 +2891,7 @@ sandbox answers without a token.
 `/sandbox delete` deletes with the sandbox. A sandbox deleted outside CLAI, in Daytona's dashboard or CLI
 or by Daytona's auto-delete, leaves its secret behind: delete it on Daytona's Secrets page.
 
-**In the sandbox** (`modal`, `sprites`, `kubernetes`): these have no proxy that can add it, so
+**In the sandbox** (`modal`, `render`, `sprites`, `kubernetes`): these have no proxy that can add it, so
 CLAI saves the token in the sandbox's home folder for `git` and `gh`. Anything run there, the agent
 included, can read it, and it goes when the sandbox does. A `kubernetes` sandbox is a pod CLAI claims from
 your [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool, on the cluster `kubectl`'s current
@@ -2898,8 +2899,8 @@ context names, and reaches through `kubectl port-forward`. Its pod runs commands
 uploads, so the token travels base64-encoded inside a command to the pod.
 
 How long a sandbox lasts differs. An `e2b` sandbox that times out is paused, and Daytona stops an idle
-one; both keep their files, so delete them when you are done. A `modal` sandbox ends after
-24 hours, with its files and any unpushed work, and cannot be paused. A Sprite has no
+one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
+24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
 
 With `boxd`, a command in the sandbox can still learn the token. boxd puts the real token

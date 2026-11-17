@@ -62,6 +62,7 @@ _HARNESS_DOCS = (
     'posthog',
     'pylon',
     'refine_output',
+    'render_sandbox',
     'repo_context',
     'shell',
     'skills',
