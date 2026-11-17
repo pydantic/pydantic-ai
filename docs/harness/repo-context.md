@@ -274,6 +274,8 @@ RepoContext(
 
 `RepoContext()` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, and surfaces nested instruction files by default, inlining up to 32,000 characters of their contents per conversation before surfacing the rest as pointers (`nested_max_chars=None` removes the cap). To get close to the old behavior, pass `RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False)`. It only approximates it: no setting loads both files from one directory any more, so a directory holding both loads only `CLAUDE.md`. Durable runs started before the upgrade record fewer workspace calls than a new run makes, so let them finish or version the deployment first.
 
+Nested traversal no longer surfaces instruction files under `node_modules`, `.venv`, `venv` or `site-packages` below the working directory, nor anything beneath them; pass `nested_exclude=()` to surface them again. It also skips the workspace calls it used to make for those directories, so a durable run that read a file under one of them before the upgrade records more workspace calls than its replay makes: let such runs finish or version the deployment first.
+
 ## Further reading
 
 - [Pydantic AI capabilities](../capabilities/overview.md)
