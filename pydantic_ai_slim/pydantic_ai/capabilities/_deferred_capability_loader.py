@@ -43,8 +43,8 @@ async def _render_deferred_capability_catalog(
     #
     # The cost of keeping the list stable is that a loaded capability still appears as
     # "loadable". That is intentional and cheap: the model rarely re-loads something whose
-    # instructions and tools it can already see, and if it does, the loader tool bounces the
-    # redundant call with an "already active" ModelRetry. One occasional wasted retry is
+    # instructions and tools it can already see, and if it does, the loader tool answers the
+    # redundant call with an "already active" no-op return. One occasional wasted call is
     # far cheaper than busting the prefix cache on every load.
     entries = '\n'.join(
         f'- {entry.id}: {entry.description}' if entry.description else f'- {entry.id}' for entry in catalog
