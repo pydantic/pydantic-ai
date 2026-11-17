@@ -11,11 +11,11 @@ import json
 from collections.abc import AsyncIterator, Callable
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, NativeOutput, RunContext, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability, RawOutput
@@ -26,7 +26,6 @@ from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail, OutputBlocked, OutputGuardrail
-from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 
 class Invoice(BaseModel):
@@ -34,18 +33,25 @@ class Invoice(BaseModel):
     total: int
 
 
+class PositiveInvoice(Invoice):
+    total: int = Field(gt=0)
+
+
 class Receipt(BaseModel):
     payment_id: str
 
 
-ORDERS = {'ord_8Kq2ZpVxL0mN3rT6yB1c': {'lines': [1250, 4999]}}
+class Order(TypedDict):
+    id: str
+    lines: list[int]
 
 
-# `Any` on purpose: with a precise return type, Monty's type checker would reject `total=order['id']` before the code
-# runs, and `test_rejected_output_keeps_the_repl_for_a_fix` needs a value that only output validation rejects, at run time.
-def load_order(order_id: str) -> dict[str, Any]:
+ORDERS = {'ord_8Kq2ZpVxL0mN3rT6yB1c': [1250, 4999]}
+
+
+def load_order(order_id: str) -> Order:
     """Load an order by its ID."""
-    return {'id': order_id, **ORDERS[order_id]}
+    return {'id': order_id, 'lines': ORDERS[order_id]}
 
 
 def run_code_model(*snippets: str) -> FunctionModel:
@@ -94,7 +100,7 @@ final_result_Receipt(payment_id='pay_' + order['id'])
 REJECTED = """
 order = await load_order(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c')
 print('submitting')
-submit_invoice(order_id=order['id'], total=order['id'])
+submit_invoice(order_id=order['id'], total=len(order['lines']) - 2)
 """
 
 
@@ -216,17 +222,17 @@ class TestCodeModeFinalOutput:
         assert result.output == 'Order ord_8Kq2ZpVxL0mN3rT6yB1c is ready.'
 
     async def test_rejected_output_keeps_the_repl_for_a_fix(self):
-        """A value only known at run time is rejected by validation, and the REPL keeps `order` for the retry."""
+        """A value only validation rejects is rejected at run time, and the REPL keeps `order` for the retry."""
         agent = Agent(
             run_code_model(REJECTED, FIXED),
             tools=[load_order],
-            output_type=ToolOutput(Invoice, name='submit_invoice'),
+            output_type=ToolOutput(PositiveInvoice, name='submit_invoice'),
             capabilities=[CodeMode(allow_final_output=True)],
         )
 
         result = await agent.run('Invoice the order.')
 
-        assert result.output == Invoice(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c', total=6249)
+        assert result.output == PositiveInvoice(order_id='ord_8Kq2ZpVxL0mN3rT6yB1c', total=6249)
         rejected, accepted = run_code_returns(result.all_messages())
         assert rejected.outcome == 'retried'
         assert [call.tool_name for call in rejected.metadata['tool_calls'].values()] == ['load_order', 'submit_invoice']
@@ -237,11 +243,11 @@ submitting
 The output was rejected:
 [
   {
-    "type": "int_parsing",
+    "type": "greater_than",
     "loc": [
       "total"
     ],
-    "msg": "Input should be a valid integer, unable to parse string as an integer"
+    "msg": "Input should be greater than 0"
   }
 ]\
 """)
@@ -376,31 +382,26 @@ caught: This code already submitted the final output, or had a submission blocke
         with pytest.raises(OutputBlocked, match='Invoices need a review'):
             await agent.run('Invoice the order.')
 
-    async def test_eager_submission_waits_for_a_parallel_input_guardrail(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_eager_submission_waits_for_a_parallel_input_guardrail(self):
         """An output function can have side effects, so an eager submission waits for the guard's verdict too."""
         submitted: list[Invoice] = []
-        submission_reached = asyncio.Event()
-        """Set once the submission either waits for the verdict or runs, so the guard decides then."""
-
-        async def allow(ctx: RunContext[object]) -> bool:
-            submission_reached.set()
-            return await input_guardrails_allow(ctx)
-
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.input_guardrails_allow', allow)
+        code_sent = asyncio.Event()
 
         def record_invoice(order_id: str, total: int) -> Invoice:
             submitted.append(invoice := Invoice(order_id=order_id, total=total))  # pragma: no cover
-            submission_reached.set()  # pragma: no cover
             return invoice  # pragma: no cover
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
             args = json.dumps({'code': "submit_invoice(order_id='ord_1', total=1)\nprint('done')\n'end'"})
             # The submission's statement is closed once the next one is, so eager execution runs it now.
             yield {0: DeltaToolCall('run_code', json_args=args[: args.index("'end'")], tool_call_id='call-0')}
+            code_sent.set()
             await asyncio.Event().wait()
 
         async def guard(prompt: str) -> GuardrailResult:
-            await submission_reached.wait()
+            await code_sent.wait()
+            # Time for a submission that doesn't wait for the verdict to run, so `submitted` would show it.
+            await asyncio.sleep(0.2)
             return GuardrailResult.block('blocked')
 
         agent = Agent(
