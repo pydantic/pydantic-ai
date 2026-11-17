@@ -40,7 +40,7 @@ class _HostZone(tzinfo):
         return timedelta(hours=3)
 
     def dst(self, dt: datetime | None) -> timedelta:
-        return timedelta(0)  # pragma: no cover
+        return timedelta(0)  # pragma: lax no cover - only some Python versions ask for it
 
     def tzname(self, dt: datetime | None) -> str | None:
         return self.name
