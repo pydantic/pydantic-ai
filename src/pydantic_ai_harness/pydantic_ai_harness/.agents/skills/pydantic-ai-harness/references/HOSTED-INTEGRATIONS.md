@@ -218,9 +218,10 @@ annotate its tools. Note the underscore in the default `id`, `'day_ai'`.
 **StackOne** is the odd one out: HTTP Basic auth plus an account header, not bearer auth.
 
 - `StackOne(account_id, *, auth=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
-  include_instructions=True, metadata=None, client=None)`. `auth` resolves as in the table above, except that
-  a string `'oauth'` is sent as the key; a function returning `'oauth'` raises `UserError`. `api_key=` is its deprecated alias; passing both raises `UserError`. There is
-  no `read_only` or `tool_prefix`, and `client` combines with `auth`.
+  include_instructions=True, metadata=None, client=None)`. `auth` resolves as in the table above, except
+  that a string `'oauth'` is sent as the key; a function returning `'oauth'` raises `UserError`. `api_key=`
+  is its deprecated alias; passing both raises `UserError`. There is no `read_only` or `tool_prefix`, and
+  `client` combines with `auth`.
 - `tool_mode='search_execute'` (the default when `actions` is empty) exposes two meta-tools: a search tool
   that returns runtime `action_id`s and an execute tool that takes them. `'individual'` registers one
   tool per action. Passing `actions` (case-insensitive `fnmatch` globs over `{connector}_{action}_{entity}`
