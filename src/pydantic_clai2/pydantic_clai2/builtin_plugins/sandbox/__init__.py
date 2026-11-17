@@ -99,7 +99,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
-            f'only once they are pushed. git and gh are signed in to GitHub as the user{_HOW_SIGNED_IN[provider.token_in_sandbox]}. '
+            f'only once they are pushed. git, and gh if it is installed, are signed in to GitHub as the user{_HOW_SIGNED_IN[provider.token_in_sandbox]}. '
             'Never run `gh auth login`.'
         )
 
