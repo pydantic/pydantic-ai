@@ -94,7 +94,10 @@ def unavailable() -> httpx2.Response:
 
 
 def anthropic_message(request: httpx2.Request, text: str) -> httpx2.Response:
-    """An Anthropic Messages response, streamed as `AnthropicModel` asks for it."""
+    """An Anthropic Messages response, streamed as `AnthropicModel` asks for it.
+
+    `AnthropicModel` streams every request behind the scenes, so a non-streamed agent run gets this SSE body too.
+    """
     assert json.loads(request.content)['stream']
     message = {**_anthropic_response(Turn(text=text), 0), 'model': 'claude-sonnet-4-5'}
     return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=_anthropic_event_stream(message))
