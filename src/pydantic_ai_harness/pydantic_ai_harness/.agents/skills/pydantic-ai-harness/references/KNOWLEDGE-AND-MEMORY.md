@@ -331,8 +331,10 @@ Gotchas:
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
   catalog selection, not access control. A skill whose `SKILL.md` is below `'operator'`
   workspace authority (`authority_of(path)`, e.g. an untrusted repo) stays out of the catalog and
-  `load_capability`: the model gets `list_skills` (name -> description) and `load_skill(name)`,
-  both returning tool output, with a fixed note telling it to check `list_skills` at the start of a task.
+  `load_capability`: the model gets `list_skills` (`{'skills': {name: description}}`, plus `'skipped'`
+  messages when a re-read skips one) and `load_skill(name)`, both returning tool output, with a fixed note
+  telling it to check `list_skills` at the start of a task. The tools re-read only the skills the run started
+  with; skips warn once, at run start.
 - Instructions that are not `SKILL.md` packages in a directory go in a core deferred
   `Capability(id=..., description=..., instructions=..., defer_loading=True)` instead: ones defined
   in Python, files in a custom format
