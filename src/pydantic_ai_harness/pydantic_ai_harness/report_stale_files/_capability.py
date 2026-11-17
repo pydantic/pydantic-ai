@@ -44,10 +44,10 @@ class StaleFilesPart(InstructionCapabilityPart, namespace='report_stale_files', 
     """
 
     changed: tuple[str, ...] = ()
-    """The changed files, as the notice names them. Never sent to the model as a field."""
+    """Every changed file found, named as the file tools take them; the text names at most `max_reported_files`."""
 
     deleted: tuple[str, ...] = ()
-    """The deleted files, as the notice names them. Never sent to the model as a field."""
+    """Every deleted file found, named as the file tools take them; the text names at most `max_reported_files`."""
 
 
 @dataclass(frozen=True)

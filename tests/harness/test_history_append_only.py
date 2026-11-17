@@ -85,6 +85,7 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
+from pydantic_ai_harness.report_stale_files import StaleFilesPart
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import (
@@ -163,21 +164,6 @@ def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
 def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
     (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
     return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
-
-
-_stale_notes: list[Path] = []
-"""The file `ReportStaleFiles`'s scenario changes between runs, set by its fixture."""
-
-
-def _report_stale_files(tmp_path: Path) -> list[AbstractCapability[Any]]:
-    (tmp_path / 'notes.md').write_text('Sunny.\n')
-    _stale_notes[:] = [tmp_path / 'notes.md']
-    return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)]
-
-
-async def _change_notes() -> None:
-    """Change the file the model read from outside the run, so the second run's requests carry a notice."""
-    _stale_notes[0].write_text('Snowy.\n')
 
 
 def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
@@ -378,7 +364,6 @@ FIXTURES: dict[str, Fixture] = {
     'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
     'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'RepoContext': _repo_context,
-    'ReportStaleFiles': _report_stale_files,
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
     'Shell': _workspace(Shell),
@@ -551,13 +536,6 @@ SCENARIOS: dict[str, Scenario] = {
             Turn(text='Here is more.'),
             Turn(text='Here is more, checked.'),
         )
-    ),
-    'ReportStaleFiles': Scenario(
-        state_calls=(
-            ('read_file', {'path': 'notes.md'}),
-            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
-        ),
-        between_runs=_change_notes,
     ),
     'RepoContext': Scenario(
         state_calls=(
@@ -827,8 +805,38 @@ def _peer_message(
     return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
 
 
+def _stale_files(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A file the model read and edited changes from outside between the runs, so the second run gets notices."""
+    notes = tmp_path / 'notes.md'
+    notes.write_text('Sunny.\n')
+
+    async def change() -> None:
+        notes.write_text('Snowy.\n')
+
+    def notified(result: ConversationResult) -> None:
+        parts = [
+            part
+            for message in result.history
+            for part in getattr(message, 'parts', ())
+            if isinstance(part, StaleFilesPart)
+        ]
+        assert parts, 'expected a stale-file notice in the second run'
+
+    scenario = Scenario(
+        state_calls=(
+            ('read_file', {'path': 'notes.md'}),
+            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+        ),
+        between_runs=change,
+    )
+    return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)], scenario, notified
+
+
 CONVERSATIONS = {
     'Peers': _peer_message,
+    'ReportStaleFiles': _stale_files,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
