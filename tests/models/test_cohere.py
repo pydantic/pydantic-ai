@@ -1485,7 +1485,7 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'TOOL_CALL'},
-                provider_response_id='1defc2f3-bc25-4cdb-9042-90340d7e547b',
+                provider_response_id='9c122db1-c91a-4802-b8e3-f3ae2738db8f',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1506,11 +1506,11 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
             ModelResponse(
                 parts=[TextPart(content='The temperature in Paris is 24 degrees Celsius.')],
                 usage=RequestUsage(
-                    details={'input_tokens': 57, 'output_tokens': 11},
-                    input_tokens=1538,
+                    details={'input_tokens': 72, 'output_tokens': 11},
+                    input_tokens=1555,
                     output_tokens=23,
-                    cache_read_tokens=1024,
-                    cost=Decimal('0.000061125'),
+                    cache_read_tokens=1488,
+                    cost=Decimal('0.0000617625'),
                 ),
                 model_name='command-r7b-12-2024',
                 model_id='cohere:command-r7b-12-2024',
@@ -1518,7 +1518,7 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
-                provider_response_id='f0becd6d-5bff-42b1-9b4d-598f083891d0',
+                provider_response_id='cbdf0fda-9519-4780-801d-16eed5b1a671',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1527,11 +1527,11 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
     )
     assert result.usage == snapshot(
         RunUsage(
-            details={'input_tokens': 107, 'output_tokens': 34},
+            details={'input_tokens': 122, 'output_tokens': 34},
             output_tokens=76,
-            cache_read_tokens=2048,
-            input_tokens=2988,
-            cost=Decimal('0.000123450'),
+            cache_read_tokens=2512,
+            input_tokens=3005,
+            cost=Decimal('0.0001240875'),
             requests=2,
             tool_calls=1,
         )
@@ -1597,8 +1597,31 @@ async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests
 
     result = await agent.run('Use get_temperature to find the temperature in Paris, then report the result.')
 
-    assert result.all_messages()[1].parts == snapshot()
-    assert json.loads(sent[1].content)['messages'][1] == snapshot()
+    assert result.all_messages()[1].parts == snapshot(
+        [
+            ThinkingPart(
+                content='I will use the get_temperature tool to find the temperature in Paris.',
+                provider_name='cohere',
+                provider_details={'tool_plan': True},
+            ),
+            ToolCallPart(
+                tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='get_temperature_k7d4nf42pe3e'
+            ),
+        ]
+    )
+    assert json.loads(sent[1].content)['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'tool_calls': [
+                {
+                    'id': 'get_temperature_k7d4nf42pe3e',
+                    'type': 'function',
+                    'function': {'name': 'get_temperature', 'arguments': '{"city":"Paris"}'},
+                }
+            ],
+            'tool_plan': 'I will use the get_temperature tool to find the temperature in Paris.',
+        }
+    )
 
 
 ROLL_DIE_CALL = ToolCallPart(tool_name='roll_die', args='{}', tool_call_id='roll_die_1')
