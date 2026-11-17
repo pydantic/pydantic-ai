@@ -331,7 +331,9 @@ model loads it. The tool reads nothing from a workspace whose backend
 implements neither `SupportsRealpath` nor `SupportsCommands`, since it cannot
 resolve symlinks. When two `Skills` combine, only the libraries of one with
 `read_files=True` are readable. With a `scanner`, the text a read returns is
-scanned first, and withheld if flagged.
+scanned first, along with 1,000 characters on each side, and withheld if
+flagged, with a zero-duration `artifact_scan flagged` span whose action is
+`withheld`.
 
 `Skills` reads the libraries itself: the model does not need `FileSystem` or
 `Shell` to load a skill, and adding either does not change which files `Skills`
@@ -339,7 +341,7 @@ reads.
 
 [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills), a
 community package by [Doug Trajano](https://github.com/DougTrajano) that builds
-on `Skills`, offered skill-scoped file tools first. It also runs a skill's
+on `Skills`, was the first to offer skill-scoped file tools. It also runs a skill's
 scripts through sandboxed executors and loads skill libraries from Git and S3.
 For a library kept elsewhere, you can also sync it to a directory in the
 workspace and point `Skills` at that directory.

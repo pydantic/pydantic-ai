@@ -34,6 +34,8 @@ from pydantic_ai_harness.skills._loader import (
 _MAX_DESCRIPTION_LENGTH = 1024
 _MAX_READ_CHARS = 50_000
 """The most of a skill file `read_skill_file` returns, and scans, at once, as `FileSystem` caps a read."""
+_SCAN_OVERLAP = 1_000
+"""How far past each end of a window the scan reaches, so a phrase split between two windows is still seen."""
 _MAX_FILE_BYTES = 10 * 1024 * 1024
 """The largest skill file `read_skill_file` reads, since a workspace read loads the whole file."""
 
@@ -374,7 +376,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         end = offset + _MAX_READ_CHARS
         window = text[offset:end]
         scanner = entry.source.scanner
-        if scanner is not None and (scan := scanner.scan(window, source=f'skill:{skill}/{path}')).flagged:
+        scanned = text[max(0, offset - _SCAN_OVERLAP) : end + _SCAN_OVERLAP]
+        if scanner is not None and (scan := scanner.scan(scanned, source=f'skill:{skill}/{path}')).flagged:
             record_flagged(
                 ctx.tracer, scan, artifact='skill', action='withheld', include_content=ctx.trace_include_content
             )
