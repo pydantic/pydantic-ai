@@ -607,7 +607,7 @@ class TestPermissionRules:
 
     async def test_windows_path_globs_ignore_case_and_separators(self) -> None:
         def save(path: str) -> str:
-            return 'saved'
+            raise NotImplementedError
 
         rules = [PermissionRule('deny', tools=['save'], args={'path': 'secrets/*'})]
         agent = _rules_agent(_calls(('save', {'path': 'SECRETS\\key'})), rules, 'full', Tool(save))
