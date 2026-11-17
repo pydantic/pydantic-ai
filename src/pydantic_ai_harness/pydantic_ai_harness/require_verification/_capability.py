@@ -70,7 +70,8 @@ _FAILED = (
     '[terminated by signal',
 )
 """The last line of a failed command's result from `Shell`'s tools and ACP's `run_command`."""
-_RUNNING = ('Status: ', 'ID: ')
+_SUPERVISOR = re.compile(r'PID: \d+ \(supervisor\b')
+"""The handles header of the `shell` tool's result, before its output, log, and status lines."""
 
 
 @dataclass(kw_only=True)
@@ -259,14 +260,16 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
 def _passed(result: object) -> bool | None:
     """Whether a shell tool's result reports a command that passed; `None` while it is still running.
 
-    Read in the formats of `Shell`'s tools and ACP's `run_command`: any other last line is a pass.
+    The `shell` tool's result ends with its handles and, once the command finished, its JSON status;
+    `start_command` only reports that it started. Any other result is read by its last line, in the formats
+    of `run_command` and ACP's `run_command`: a failure trailer, or a pass.
     """
     if not isinstance(result, str):
         return None
-    last = result.rstrip().rpartition('\n')[2]
-    if last.startswith('{'):
+    lines = result.rstrip().rsplit('\n', 3)
+    if len(lines) == 4 and _SUPERVISOR.match(lines[0]):
         try:
-            status = json.loads(last)
+            status = json.loads(lines[3])
         except ValueError:
             return None
         match status:
@@ -274,6 +277,6 @@ def _passed(result: object) -> bool | None:
                 return exit_code == 0
             case _:
                 return None
-    if last.startswith(_RUNNING):
+    if len(lines) >= 3 and _SUPERVISOR.match(lines[-3]) or result.startswith('Started background command:'):
         return None
-    return not last.startswith(_FAILED)
+    return not lines[-1].startswith(_FAILED)

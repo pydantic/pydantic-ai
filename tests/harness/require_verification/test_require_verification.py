@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import anyio
@@ -11,9 +12,10 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, PendingModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks, LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.tools import Tool
@@ -26,6 +28,7 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
 )
 from pydantic_ai_harness.require_verification import CompletionUnverifiedEvent, VerificationRequiredPart
+from tests.harness._deferred_tools import BackgroundModel
 
 _SHELL = {'code_arg_language': 'shell', 'code_arg_name': 'command'}
 
@@ -291,7 +294,8 @@ class TestRequireVerification:
         [
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s',
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{"pid": 7, "exit_code": null}',
-            '{not json',
+            'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{not json',
+            'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n[1, 2]',
             "Started background command: 'pytest'\nID: 1",
             {'ok': True},
         ],
@@ -302,6 +306,15 @@ class TestRequireVerification:
         result = await agent.run('Fix the bug')
 
         assert _attempts(result.new_messages()) == [1, 2]
+
+    @pytest.mark.parametrize('output', ['{"numFailedTests": 0, "success": true}', 'collected 3 items\nStatus: ok'])
+    async def test_run_command_output_is_read_by_its_trailer_only(self, tmp_path: Path, output: str) -> None:
+        result = await _agent(tmp_path, _write(), _run('npx jest --json'), 'Done.', outputs=lambda command: output).run(
+            'Fix the bug'
+        )
+
+        assert result.output == 'Done.'
+        assert _redirects(result.new_messages()) == []
 
     async def test_the_latest_run_of_each_check_counts(self, tmp_path: Path) -> None:
         outputs = iter(['[exit code: 1]', '(no output)', '(no output)', '[exit code: 1]', '(no output)'])
@@ -500,6 +513,46 @@ class TestRequireVerification:
 
         assert isinstance(result.output, DeferredToolRequests)
         assert _redirects(result.new_messages()) == []
+
+    async def test_a_run_paused_for_a_background_response_is_not_sent_back(self, tmp_path: Path) -> None:
+        turns = iter([ModelResponse(parts=[_write()])])
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return next(turns, ModelResponse(parts=[], provider_response_id='job-1', state='suspended'))
+
+        agent = Agent[None, str | PendingModelResponse](
+            BackgroundModel(model),
+            deps_type=type(None),
+            output_type=[str, PendingModelResponse],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), RequireVerification()],
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert isinstance(result.output, PendingModelResponse)
+        assert _redirects(result.new_messages()) == []
+
+    async def test_an_output_from_no_model_request_is_not_sent_back(self, tmp_path: Path) -> None:
+        hooks = Hooks[None]()
+
+        @hooks.on.after_model_request
+        async def drop_model_name(
+            ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            return replace(response, model_name=None) if response.text == 'Blocked.' else response
+
+        result = await _agent(tmp_path, _write(), 'Blocked.', extra=[hooks]).run('Fix the bug')
+
+        assert result.output == 'Blocked.'
+        assert _redirects(result.new_messages()) == []
+
+    async def test_run_stream_ends_at_the_first_output_without_a_redirect(self, tmp_path: Path) -> None:
+        agent = _agent(tmp_path, _write(), 'Done.')
+
+        async with agent.run_stream('Fix the bug') as stream:
+            assert await stream.get_output() == 'Done.'
+
+        assert _redirects(stream.all_messages()) == []
 
     async def test_shell_tools_without_a_command_argument_are_ignored(self, tmp_path: Path) -> None:
         def odd_shell(command: int) -> str:
