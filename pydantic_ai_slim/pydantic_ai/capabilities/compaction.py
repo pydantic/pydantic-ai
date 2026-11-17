@@ -1,8 +1,7 @@
 """Lifecycle events for history compaction.
 
-One event family shared by everything that compacts history: the provider-native
-[`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] and
-[`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capabilities, and the
+One event family shared by everything that compacts history client-side: the provider-native
+[`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability in stateless mode, and the
 model-agnostic [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/) strategies.
 Subscribers use one vocabulary regardless of which mechanism is doing the compacting.
 
