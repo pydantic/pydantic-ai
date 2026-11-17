@@ -37,7 +37,7 @@ from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.file_system import READ_FILE_KIND
+from pydantic_ai_harness.file_system import GREP_KIND, READ_FILE_KIND, SEARCH_FILES_KIND
 from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
@@ -393,7 +393,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if tool_def.tool_kind in _EXEMPT_KINDS or await _reads_a_spill(ctx, tool_def, args):
+        if tool_def.tool_kind in _EXEMPT_KINDS or await _queries_a_spill(ctx, tool_def, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -764,20 +764,25 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return action
 
 
-async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
-    """Whether this is a `READ_FILE_KIND` read of a file under the run workspace's spill directory.
+_SPILL_READER_KINDS = frozenset({READ_FILE_KIND.id, SEARCH_FILES_KIND.id, GREP_KIND.id})
+"""`FileSystem` tools whose reads and searches of a spill are exempt from reduction."""
 
-    Its result is the spill itself, or a page of it, so reducing it again would spill the spill.
+
+async def _queries_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
+    """Whether this is a `FileSystem` read or search of a path in the run workspace's spill directory.
+
+    Its result is the spill itself, or part of it, so reducing it again would spill the spill.
     Only the path is compared, so a spill written by an earlier run, or another configuration, counts too.
     """
-    if tool_def.tool_kind != READ_FILE_KIND.id or not isinstance(path := args.get('path'), str):
+    if tool_def.tool_kind not in _SPILL_READER_KINDS or not isinstance(path := args.get('path'), str):
         return False
     # Ordinary reads are told apart without asking the workspace for its working directory.
     workspace = ctx.workspace
-    if f'{METADATA_DIR}/{SPILL_DIR}/' not in posixpath.normpath(path) or not workspace.attached:
+    if f'{METADATA_DIR}/{SPILL_DIR}' not in posixpath.normpath(path) or not workspace.attached:
         return False
     spill_dir = posixpath.join(await workspace.working_dir(), METADATA_DIR, SPILL_DIR)
-    return (await workspace.resolve(path)).startswith(spill_dir + '/')
+    resolved = await workspace.resolve(path)
+    return resolved == spill_dir or resolved.startswith(spill_dir + '/')
 
 
 def _next_action(action: Action) -> Action | None:
@@ -1051,15 +1056,15 @@ class _Reader:
     handle: str
     name: str
 
-    def _call(self, args: str) -> str:
+    def call(self, args: str) -> str:
         return f'{self.name}(handle={self.handle!r}, {args})'
 
     def omitted(self, start: int, end: int) -> str:
-        return f'context lines {start + 1}-{end + 1} omitted ({self._call(f"offset={start}, limit={end - start + 1}")})'
+        return f'context lines {start + 1}-{end + 1} omitted ({self.call(f"offset={start}, limit={end - start + 1}")})'
 
     def cut(self, offset: int) -> str:
         args = f"unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}"
-        return f'the cut line continues at {self._call(args)}'
+        return f'the cut line continues at {self.call(args)}'
 
 
 def _reader(ctx: RunContext[Any], handle: str) -> _Reader:
@@ -1112,7 +1117,9 @@ async def _line_slice(
     total, window = await _matching_window(store, handle, pattern, offset, limit, from_end=from_end)
     first = max(0, max(0, total - offset) - limit) if from_end else offset
     page = await _fill(_aiter(_Entry('', line, index, True) for index, line in window))
-    more = f'the next line is at offset={first + page.shown}, from_end=False' if page.shown < len(window) else ''
+    filtered = '' if pattern is None else f', pattern={pattern!r}'
+    next_lines = reader.call(f'offset={first + page.shown}{filtered}')
+    more = f'the next lines are at {next_lines}' if page.shown < len(window) else ''
     capped = await _capped(store, page, more, reader)
     return '\n'.join([f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}]', *page.lines])
 

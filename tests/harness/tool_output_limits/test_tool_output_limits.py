@@ -1721,7 +1721,7 @@ class TestReadToolResultCap:
         header, body = out.split('\n', 1)
         assert header.endswith(
             ': 3 matching line(s); showing 1, output capped at 50,000 chars; the cut line continues at '
-            "read_tool_result(handle='<h>', unit='bytes', offset=50007, limit=50000); the next line is at offset=2, from_end=False]"
+            "read_tool_result(handle='<h>', unit='bytes', offset=50007, limit=50000); the next lines are at read_tool_result(handle='<h>', offset=2)]"
         )
         assert body == 'x' * 50_000
         hint = re.search(r"unit='bytes', offset=(\d+), limit=(\d+)", header)
@@ -1742,9 +1742,12 @@ class TestReadToolResultCap:
         out = await query_spill(tmp_path, payload, READ_TOOL_NAME, {'limit': 3, 'from_end': True})
         header, body = out.split('\n', 1)
         assert header.endswith(
-            ': 3 matching line(s); showing 1, output capped at 50,000 chars; the next line is at offset=1, from_end=False]'
+            ': 3 matching line(s); showing 1, output capped at 50,000 chars; the next lines are at '
+            "read_tool_result(handle='<h>', offset=1)]"
         )
         assert body == 'a' * 30_000
+        out = await query_spill(tmp_path, '\n'.join(['xa' * 15_000, 'xb' * 15_000]), READ_TOOL_NAME, {'pattern': 'x'})
+        assert out.split('\n', 1)[0].endswith("read_tool_result(handle='<h>', offset=1, pattern='x')]")
 
 
 # ---------------------------------------------------------------------------

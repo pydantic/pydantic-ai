@@ -81,8 +81,8 @@ agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), ToolOu
 
 The capability registers the `read_tool_result` and `grep_tool_result` tools so the model can page
 back into, and search, any spilled payload. Their own returns are exempt from reduction. With
-`FileSystem` on the agent, both step aside for its tools for spills in the run's workspace, and
-`read_file` reads of spills are exempt too
+`FileSystem` on the agent, both step aside for its tools for spills in the run's workspace, and its
+reads and searches of spills are exempt too
 ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability` and
 `search_tools` returns are never reduced either: core reads them back from history to know which
 [on-demand capabilities](../capabilities/on-demand.md) are loaded and which tools are revealed.
@@ -380,9 +380,9 @@ spill marker then names that tool as it is called in the run, with the spill's p
 [Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
 ```
 
-A `read_file` call whose path is under `.pydantic-ai-harness/tool-output/` is exempt from
-reduction, as `read_tool_result` is, so reading a spill back does not spill it again; `read_file`
-bounds its own output. Other `read_file` calls are reduced as usual. `read_tool_result` is
+A `read_file`, `search_files` or `grep` call whose path is in `.pydantic-ai-harness/tool-output/`
+is exempt from reduction, as the query tools are, so reading or searching a spill does not spill it
+again; those tools bound their own output. Other calls are reduced as usual. `read_tool_result` is
 recognized by its kind, `READ_TOOL_RESULT_KIND`, not its name, so a prefixed reader is exempt too.
 
 `WorkspaceOverflowStore(workspace=...)`, `LocalFileOverflowStore` and other `OverflowStore`s keep spills where
