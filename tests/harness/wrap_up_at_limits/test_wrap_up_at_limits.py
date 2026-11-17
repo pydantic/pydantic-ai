@@ -257,8 +257,9 @@ class TestWrapUpAtLimits:
         looked_up: list[str] = []
         agent = Agent(FunctionModel(model), capabilities=[WrapUpAtLimits()])
 
+        # Never called: core refuses the batch before running any of it.
         @agent.tool_plain
-        def look_up(topic: str) -> str:
+        def look_up(topic: str) -> str:  # pragma: no cover
             looked_up.append(topic)
             return topic
 
