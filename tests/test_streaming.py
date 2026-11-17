@@ -7816,6 +7816,43 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     assert cleanup_finished.is_set()
 
 
+@pytest.mark.parametrize('entry', ['run_stream', 'run_stream_events'])
+async def test_stream_cancelled_at_any_point_leaves_no_task_behind(entry: Literal['run_stream', 'run_stream_events']):
+    """Cancelling a streamed run at any point of its lifecycle must not leave a task it started pending.
+
+    On Python 3.11, draining the finished `ready_waiter` at the stream handoff yields to the event loop, so a
+    cancellation can land after `_streaming_handler` has parked on `stream_done.wait()`, which only the error
+    path's cleanup unblocks. See https://github.com/pydantic/pydantic-ai/issues/13716.
+    """
+    agent = Agent(TestModel())
+
+    async def consume() -> None:
+        if entry == 'run_stream':
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+        else:
+            async with agent.run_stream_events('Hello') as stream:
+                async for _ in stream:
+                    pass
+
+    for ticks in range(500):  # pragma: no branch
+        tasks_before = asyncio.all_tasks()
+        task = asyncio.create_task(consume())
+        for _ in range(ticks):
+            await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)
+            assert asyncio.all_tasks() - tasks_before == set(), f'task left pending when cancelled after {ticks} ticks'
+        else:
+            # The run finished before the cancellation arrived, so every point of it has been covered.
+            break
+    else:  # pragma: no cover
+        pytest.fail('run never completed before being cancelled')
+
+
 # endregion
 
 

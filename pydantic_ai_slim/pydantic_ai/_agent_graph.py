@@ -2489,9 +2489,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
             await _serve_stream_offers(handoff, ready_waiter, wrap.task)
+            # Inside the `try`: on Python 3.11, draining even a finished `ready_waiter` yields to the event loop, so a
+            # cancellation can land here after `_streaming_handler` has parked on `stream_done.wait()`. Nothing has
+            # reached the consumer yet, so it needs the same cleanup as one that lands before the handoff.
+            await cancel_and_drain(ready_waiter)
         except BaseException as exc:
-            # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
-            # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            # `BaseException` to also catch `CancelledError`. The stream hasn't been yielded to the
+            # consumer, so both tasks are still ours; drain them so cleanup runs before we re-raise.
             #
             # Unblock `_streaming_handler` before draining: if `wrap.task`'s model
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
@@ -2510,10 +2514,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 request_messages = (_handler_request_context or wrap_request_context).messages
                 self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
-        else:
-            # Handoff succeeded: `wrap.task` is owned by the rest of the streaming
-            # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
-            await cancel_and_drain(ready_waiter)
 
         # `_prepare_request` ran in this task before wrap hooks were added. Preserve that
         # behavior by carrying ContextVar writes from its new location in the wrap task back

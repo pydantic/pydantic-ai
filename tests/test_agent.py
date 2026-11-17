@@ -11069,6 +11069,33 @@ async def test_run_handoff_survives_absorbed_cancellation():
         pytest.fail('run completed instead of ending cancelled')
 
 
+async def test_run_cancelled_at_any_point_leaves_no_task_behind():
+    """Cancelling a run at any point of its lifecycle must not leave a task it started pending.
+
+    On Python 3.11, draining the finished `_ready_waiter` yields to the event loop, so a cancellation
+    can land after `_do_run` has parked on `_run_done.wait()`, which only the error path's cleanup
+    unblocks. See https://github.com/pydantic/pydantic-ai/issues/13716.
+    """
+    agent = Agent(TestModel())
+
+    for ticks in range(500):  # pragma: no branch
+        tasks_before = asyncio.all_tasks()
+        run = asyncio.create_task(agent.run('test'))
+        for _ in range(ticks):
+            await asyncio.sleep(0)
+        run.cancel()
+        try:
+            await run
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)
+            assert asyncio.all_tasks() - tasks_before == set(), f'task left pending when cancelled after {ticks} ticks'
+        else:
+            # The run finished before the cancellation arrived, so every point of it has been covered.
+            break
+    else:  # pragma: no cover
+        pytest.fail('run never completed before being cancelled')
+
+
 async def test_streaming_handoff_survives_absorbed_cancellation():
     """Streaming counterpart of #6422: model request survives cancellation without deadlock.
 
