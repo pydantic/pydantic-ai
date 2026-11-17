@@ -9,7 +9,13 @@ from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent, FunctionToolset, RunContext, Tool, ToolDefinition
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace, ToolSearch
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    HandleDeferredToolCalls,
+    LocalWorkspace,
+    ToolSearch,
+)
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -390,3 +396,33 @@ class TestToolBridge:
         assert _returns(result.all_messages()) == [
             "No tool named 'cat_file' is available through `tool_call`. Use `tool_search` to find one."
         ]
+
+    async def test_native_fallbacks_stay_native(self):
+        async def fallback(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+            return replace(tool_def, unless_native='web_search')
+
+        seen: list[list[str]] = []
+        agent = Agent(
+            _scripted([], seen), tools=[Tool(_get_weather, prepare=fallback), _get_time], capabilities=[ToolBridge()]
+        )
+
+        await agent.run('hi')
+
+        assert seen == [['_get_weather', 'tool_search', 'tool_describe', 'tool_call']]
+
+    async def test_deferred_capability_tools_stay_native(self):
+        weather = Capability(
+            id='weather', description='Weather forecasts.', tools=[Tool(_get_weather)], defer_loading=True
+        )
+        seen: list[list[str]] = []
+        model = _scripted(
+            [_call('load_capability', id='weather'), _call('_get_weather', city='Kyiv')],
+            seen,
+        )
+        agent = Agent(model, capabilities=[weather, ToolBridge()])
+
+        result = await agent.run('weather?')
+
+        assert seen[0] == ['load_capability', 'tool_search', 'tool_describe', 'tool_call']
+        assert '_get_weather' in seen[-1]
+        assert _returns(result.all_messages())[-1] == 'Sunny in Kyiv'

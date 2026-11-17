@@ -134,14 +134,15 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     async def _bridges(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
         """Whether a wrapped tool goes behind the bridge.
 
-        Framework control tools, local fallbacks for native tools, and tools that need approval or run
-        outside the agent stay native. A hidden tool a capability owns is bridged once it's revealed.
+        Framework control tools, local fallbacks for native tools, tools that need approval or run outside
+        the agent, and deferred tools a capability owns stay native, the last so core's tool search and
+        capability loading reveal them without changing the tool definitions already sent.
         """
         return (
             tool_def.kind == 'function'
             and tool_def.tool_kind not in FRAMEWORK_CONTROL_TOOL_KINDS
             and not tool_def.unless_native
-            and (tool_def.capability_id is None or ctx.is_tool_available(tool_def))
+            and not (tool_def.defer_loading and tool_def.capability_id is not None)
             and await matches_tool_selector(self.tools, ctx, tool_def)
         )
 
