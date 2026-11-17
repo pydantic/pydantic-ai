@@ -2730,9 +2730,10 @@ async def test_chat_completions_function_tools_explicit_effort_error_names_effor
 ) -> None:
     """With an explicit `openai_reasoning_effort`, which wins over `thinking`, the error names `'none'` for it instead.
 
-    A unit test: the guard fires before any request, so there is nothing to record.
+    Setting it lets the tools through. A unit test of the request shape: the guard fires before any request, and live,
+    gpt-6-luna accepts a tool with `reasoning_effort='none'`.
     """
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='unused', role='assistant')))
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
     m = OpenAIChatModel('gpt-6-luna', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
@@ -2747,6 +2748,12 @@ async def test_chat_completions_function_tools_explicit_effort_error_names_effor
         "OpenAI rejects tools, output tools included, while reasoning is enabled on 'gpt-6-luna' over Chat Completions. Use `OpenAIResponsesModel`, or set `openai_reasoning_effort='none'` instead."
     )
     assert get_mock_chat_completion_kwargs(mock_client) == []
+
+    result = await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='none'))
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('reasoning_effort') == 'none'
+    assert kwargs.get('tools')
 
 
 @pytest.mark.parametrize(

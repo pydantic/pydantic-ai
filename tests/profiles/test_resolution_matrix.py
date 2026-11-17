@@ -533,7 +533,8 @@ def test_openai_gpt_6_astra():
 def test_openai_gpt_6_sol_luna(model_name: str):
     """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots.
 
-    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation.
+    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation and the
+    flag for Chat Completions rejecting tools while reasoning is on.
     """
 
     profile = OpenAIProvider.model_profile(model_name)
