@@ -203,6 +203,7 @@ from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
 from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
+from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -1045,7 +1046,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Submit encoded requests that share a `group` as one batch job.
 
         A failed submission is not retried, because the provider may have created the job before the connection
-        failed: check the provider's jobs before submitting the requests again.
+        failed: check the provider's jobs before submitting the requests again. A retrying transport on the provider's
+        HTTP client does send it again after an error response, unless its `validate_response`
+        [skips batch creates](../../batch.md#retrying-transports).
         """
         raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
@@ -1457,6 +1460,33 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if provider is None or response.provider_url is None:
             return True
         return provider.shares_server_state_with(response.provider_url)
+
+    def _restore_response_scoped_tool_call_ids(
+        self, messages: Sequence[ModelMessage], *, previous_response_id: str | None = None
+    ) -> list[ModelMessage]:
+        """Restore the tool call IDs [`tool_call_ids_are_response_scoped`][pydantic_ai.profiles.ModelProfile.tool_call_ids_are_response_scoped] qualified to the ones the provider sent.
+
+        A model whose profile sets the flag calls this before mapping a history onto its API. The calls in a response
+        this model [`accepts_server_state`][pydantic_ai.models.Model.accepts_server_state] from, and the results in the
+        requests that follow it, are restored: another provider or endpoint didn't issue those IDs, so it gets the
+        stored ones, which are unique. `previous_response_id` names the response a request continues on the server,
+        whose results lead `messages` without it. Only the returned copy changes.
+        """
+        if not self.profile.get('tool_call_ids_are_response_scoped', False):
+            return list(messages)
+        restored: list[ModelMessage] = []
+        scopes: tuple[str, ...] = (previous_response_id,) if previous_response_id else ()
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                scopes = (
+                    response_tool_call_id_scopes(message.provider_response_id, message.timestamp)
+                    if self.accepts_server_state(message)
+                    else ()
+                )
+            if scopes:
+                message = with_unqualified_tool_call_ids(message, scopes)
+            restored.append(message)
+        return restored
 
     @property
     def _canonical_system_stamp(self) -> str | None:
@@ -2133,8 +2163,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         from .._tool_search import synthesize_local_tool_search_messages
 
+        untranslated = messages
         messages = synthesize_local_tool_search_messages(
-            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
+            messages,
+            keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None,
+            pair_returns=self.profile.get('rejects_unpaired_tool_calls', False),
         )
 
         if not clears_request_scoped_prompts:
@@ -2158,11 +2191,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _order_tool_results_by_call(messages)
+        # After the reorder above, so the returns land where an agent run's repair after this method puts them.
+        messages = self._repair_dangling_translated_tool_search_calls(messages, untranslated)
 
         if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _repair_dangling_translated_tool_search_calls(
+        self, messages: list[ModelMessage], untranslated: list[ModelMessage]
+    ) -> list[ModelMessage]:
+        """Answer the tool-search calls translated from `untranslated` that have no return, where the API requires it.
+
+        See `_tool_search.repair_dangling_translated_calls` and the profile's `rejects_unpaired_tool_calls`.
+        """
+        if not self.profile.get('rejects_unpaired_tool_calls', False):
+            return messages
+        from .._tool_search import repair_dangling_translated_calls
+
+        return repair_dangling_translated_calls(messages, untranslated)
 
     def _translate_legacy_tool_reveals(
         self,
@@ -5275,24 +5323,11 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
     return new_messages if changed else messages
 
 
-_BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-
-
-def _hashed_tool_call_id(tool_call_id: str, length: int) -> str:
-    """The low-order `length` base62 digits of the SHA-256 of `tool_call_id`."""
-    number = int.from_bytes(hashlib.sha256(tool_call_id.encode()).digest())
-    digits: list[str] = []
-    for _ in range(length):
-        number, remainder = divmod(number, 62)
-        digits.append(_BASE62_ALPHABET[remainder])
-    return ''.join(digits)
-
-
 def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelMessage]:
     """Replace the function tool call IDs that aren't exactly `length` ASCII alphanumerics with ones that are.
 
     Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
-    replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
+    replaced with `hashed_tool_call_id` of it, so the same history always renders the same bytes and the
     provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
     so a call, its result (a retried one included), and the `<pyai:tool_result>` tags rendered from the result's ID keep
     pairing up.
@@ -5320,11 +5355,11 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
                 "(the profile's `tool_call_id_length`)."
             )
         fits = len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
-        replacement = tool_call_id if fits else _hashed_tool_call_id(tool_call_id, length)
+        replacement = tool_call_id if fits else hashed_tool_call_id(tool_call_id, length)
         attempt = 0
         while replacement in taken:
             attempt += 1
-            replacement = _hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
+            replacement = hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
         replacements[tool_call_id] = replacement
         taken.add(replacement)
         return replacement
@@ -5373,7 +5408,8 @@ the parts every adapter already knows how to map, or drops it. So an adapter mee
 step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
 a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
-adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
+adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts. An adapter
+that maps its parts without it, as `OpenAIDecisionsModel` does, needs an arm of its own for each.
 """
 
 

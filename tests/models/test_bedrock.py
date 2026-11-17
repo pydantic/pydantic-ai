@@ -8544,6 +8544,60 @@ async def test_bedrock_zai_glm_5_3_inlines_defs(allow_model_requests: None, env:
     )
 
 
+async def test_bedrock_minimax_inlines_defs(allow_model_requests: None, env: TestEnv):
+    """MiniMax stringifies nested `$ref` arguments, so its tool schemas go out with `$defs` inlined.
+
+    Not a VCR test: the request is aborted at `before-send` to pin the schema the real botocore pipeline sends, which
+    cassette matching does not check. See https://github.com/pydantic/pydantic-ai/issues/12077.
+    """
+    env.remove('AWS_BEARER_TOKEN_BEDROCK')
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    model = BedrockConverseModel('us.minimax.minimax-m2.5', provider=provider)
+    bodies: list[str | bytes] = []
+
+    class RequestCaptured(Exception):
+        pass
+
+    def capture(request: AWSPreparedRequest, **_: object) -> None:
+        assert isinstance(request.body, str | bytes)
+        bodies.append(request.body)
+        raise RequestCaptured
+
+    model.client.meta.events.register_last('before-send.bedrock-runtime.Converse', capture)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def save(outer: _NestedOuter) -> str:
+        return 'saved'  # pragma: no cover
+
+    try:
+        with pytest.raises(RequestCaptured):
+            await agent.run('Save the tags.')
+    finally:
+        model.client.close()
+
+    [body] = bodies
+    assert json.loads(body)['toolConfig']['tools'][0]['toolSpec']['inputSchema']['json'] == snapshot(
+        {
+            'properties': {
+                'inner': {
+                    'properties': {
+                        'tags': {'contains': {'type': 'string'}, 'items': {'type': 'string'}, 'type': 'array'}
+                    },
+                    'required': ['tags'],
+                    'type': 'object',
+                }
+            },
+            'required': ['inner'],
+            'type': 'object',
+        }
+    )
+
+
 @pytest.mark.vcr()
 async def test_bedrock_moonshotai_tool_call(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Moonshot AI Kimi via Bedrock supports tool calls (registered under the `moonshot.` prefix here)."""

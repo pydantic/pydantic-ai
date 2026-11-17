@@ -48,6 +48,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
+    EXEC_SCRIPT,
     absolute_path,
     check_env,
     check_provider,
@@ -100,21 +101,8 @@ _HOST_UNAVAILABLE = frozenset(
 )
 """Codes for a host that can't run a local VM at all, so no retry can succeed."""
 
-# `sh` resolves the program on `PATH` and exits 127 when it is missing, as the protocol asks;
-# `exec` keeps the argv literal and replaces the shell with the program. BusyBox and bash read a
-# program named like `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is
-# resolved to its path first. smolmachines 1.22 leaves a streamed command's stdin open, so it is
-# closed here. The command's `env` is the shell's own environment, and assigning a variable the
-# environment has changes what the program inherits, so the script assigns none on the usual path
-# and only a reserved name for a program named like an option.
-_EXEC_SCRIPT = """case $1 in
--*/*) PYDANTIC_AI_HARNESS_PROGRAM=./$1 ;;
--*) PYDANTIC_AI_HARNESS_PROGRAM=$(command -v -- "$1") || { printf 'sh: %s: not found\\n' "$1" >&2; exit 127; } ;;
-*) exec "$@" </dev/null ;;
-esac
-shift
-exec "$PYDANTIC_AI_HARNESS_PROGRAM" "$@" </dev/null"""
-_EXEC = ('/bin/sh', '-c', _EXEC_SCRIPT, 'sh')
+# smolmachines 1.22 leaves a streamed command's stdin open, which `EXEC_SCRIPT` closes.
+_EXEC = ('/bin/sh', '-c', EXEC_SCRIPT, 'sh')
 
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024

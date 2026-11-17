@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import detach_dbos_logging, try_import, without_admin_server
+from tests.conftest import try_import
 from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator, summarize_model
 
 with try_import() as imports_successful:
@@ -32,13 +32,12 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         'name': 'dynamic_workflow_dbos',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 @pytest.fixture
