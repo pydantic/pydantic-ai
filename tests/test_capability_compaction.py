@@ -62,6 +62,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -319,6 +320,63 @@ async def test_discarded_attempt_compacts_again_for_the_next_model():
     assert usage.input_tokens == 2 * COMPACTION_USAGE.input_tokens + responses.input_tokens
     assert usage.output_tokens == 2 * COMPACTION_USAGE.output_tokens + responses.output_tokens
     assert usage.requests == 1
+
+
+@dataclass
+class PerModel(AbstractCapability[Any]):
+    """Instructions and a `temperature` tailored to `ctx.model`."""
+
+    def get_instructions(self):
+        def instructions(ctx: RunContext[Any]) -> str:
+            return f'You are {ctx.model.model_name}.'
+
+        return instructions
+
+    def get_model_settings(self):
+        def settings(ctx: RunContext[Any]) -> ModelSettings:
+            return {'temperature': 0.9 if ctx.model.model_name == 'fallback' else 0.1}
+
+        return settings
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_compaction_sees_the_serving_models_instructions_and_settings(stream: bool):
+    """Compaction runs after the instructions and settings are resolved again for the model serving the attempt."""
+
+    async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelAPIError('primary', 'down')
+        yield ''  # pragma: no cover
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hello')])
+
+    async def answer_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    summarize = Summarize()
+    agent = Agent(
+        FunctionModel(failure, stream_function=failing_stream, model_name='primary'),
+        capabilities=[
+            PerModel(),
+            RequestOnce(),
+            summarize,
+            ModelFallback(FunctionModel(answer, stream_function=answer_stream, model_name='fallback')),
+        ],
+    )
+    if stream:
+        async with agent.run_stream('hi') as streamed:
+            await streamed.get_output()
+    else:
+        await agent.run('hi')
+
+    assert [
+        (
+            request.conversation_request.model.model_name,
+            [part.content for part in request.conversation_request.parameters.instruction_parts or []],
+            (request.conversation_request.settings or {}).get('temperature'),
+        )
+        for request in summarize.calls
+    ] == [('primary', ['You are primary.'], 0.1), ('fallback', ['You are fallback.'], 0.9)]
 
 
 @dataclass

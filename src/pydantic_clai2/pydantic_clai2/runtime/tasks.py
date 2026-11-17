@@ -2,10 +2,12 @@
 
 import asyncio
 import copy
+import ctypes
 import logging
+import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Coroutine, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -216,6 +218,12 @@ class TaskRouter:
         async with self._lock:
             if not self._users:
                 await self._stack.enter_async_context(self.owner.opened())
+                # Loading the saved tasks parsed each one's full history and then dropped it, and glibc keeps
+                # that freed memory for reuse instead of returning it: hundreds of megabytes for a large task
+                # directory. Other C libraries either return it themselves or have no `malloc_trim`.
+                if sys.platform == 'linux':
+                    with suppress(AttributeError):
+                        ctypes.CDLL(None).malloc_trim(0)
             self._users += 1
         try:
             yield self.owner
