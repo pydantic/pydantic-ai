@@ -456,9 +456,9 @@ Tools use `ctx.workspace` as they would in a plain run. A tool that must run its
 the workflow (for example, to approve a file change before writing) can set
 [`durable=False`](durable_execution/overview.md#running-a-tool-outside-the-durable-unit) on its
 tool definition; workspace calls it makes still run as the engine's activities, steps or tasks.
-The engine-specific opt-outs work too: `metadata={'temporal': False}`, and on
-[Azure Durable Task](harness/azure-durable-task.md) and [Render Workflows](harness/render-workflows.md)
-`metadata={'azure_durable_task': False}` and `metadata={'render_workflows': False}`; the harness
+The engine-specific keys work too: `metadata={'temporal': False}` on Temporal,
+`metadata={'azure_durable_task': False}` on [Azure Durable Task](harness/azure-durable-task.md) and
+`metadata={'render_workflows': False}` on [Render Workflows](harness/render-workflows.md); the harness
 `FileSystem` write tools set all three.
 
 - Inside a workflow or flow, a run creates or attaches its environment when it starts, even if no
