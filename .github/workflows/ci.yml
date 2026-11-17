@@ -2669,7 +2669,7 @@ jobs:
         run: |
           # The author and the branch name together pick out the pull requests this job opened:
           # the App opens other pull requests too, and people can name a branch anything.
-          pin_prs=$(gh pr list --state open --author app/pydantic-docs \
+          pin_prs=$(gh pr list --state open --author app/pydantic-docs --limit 100 \
             --json number,headRefName --jq '.[] | [.number, .headRefName] | @tsv')
           current=$(awk -F '\t' -v branch="gh-aw-engine-pin-${RELEASED}" '$2 == branch { print $1 }' <<< "$pin_prs")
           if [[ -z "$current" ]]; then
