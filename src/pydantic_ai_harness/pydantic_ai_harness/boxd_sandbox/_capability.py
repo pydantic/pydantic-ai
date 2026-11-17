@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace import innermost_backend
+from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env,
     check_integer,
+    check_path_authority,
     check_provider,
     check_working_dir,
     reject_defer_loading,
@@ -89,15 +91,34 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also on an attached machine; a command's `env` is
     layered on top. Nothing is read from the host."""
 
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+    secrets: Sequence[str] | None = None
+    """Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in
+    its machine spec. A secret bound to domains is set in the machine's environment as a placeholder that
+    boxd's proxy, outside the machine, replaces with the real value on requests to those domains, so the
+    agent's commands can send it without it being in their environment; a secret without domains is set
+    as its real value. An attached machine keeps the ones it was created with."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         check_integer('auto_suspend_timeout', self.auto_suspend_timeout, minimum=0, optional=True)
         if self.vcpu is not None and (type(self.vcpu) is not int or self.vcpu not in _VCPUS):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
         if self.snapshot is not None and self.vcpu is not None:
             raise UserError('`snapshot` keeps the size it was saved at, so it cannot be combined with `vcpu`.')
+        if isinstance(self.secrets, str):
+            raise UserError(f'`secrets` takes a list of secret names, such as [{self.secrets!r}], not a string.')
         check_env(self.env)
 
     @classmethod
@@ -113,6 +134,9 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
+        secrets: Sequence[str] | None = None,
     ) -> BoxdSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -130,6 +154,9 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=auto_suspend_timeout,
             working_dir=working_dir,
             env=env,
+            authority=authority,
+            path_authority=path_authority,
+            secrets=secrets,
         )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
@@ -160,6 +187,10 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             await backend.aclose()
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
         if ref is not None and ref.provider != 'boxd':
             return None
@@ -173,6 +204,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             auto_suspend_timeout=self.auto_suspend_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            secrets=self.secrets,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

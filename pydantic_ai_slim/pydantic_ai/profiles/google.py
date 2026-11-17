@@ -238,6 +238,9 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
     # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
     ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
+    # Verified live 2026-11-15 against the Gemini API on `gemma-4-31b-it` and `gemma-4-26b-a4b-it`: `MINIMAL` and
+    # `HIGH` are accepted, `LOW`, `MEDIUM` and `XHIGH` return 400 `Thinking level is not supported for this model`.
+    ('gemma-4', frozenset(('MINIMAL', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
@@ -262,12 +265,17 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     is_older_gemini = is_gemini_2_5 or is_pre_gemini_2_5
     is_gemma = 'gemma' in model_name
 
-    # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
-    # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
+    # Thinking support: Gemini 3+ and Gemma 4 use thinking_level; whether Gemma 4 thinks by default depends on
+    # the host. Gemma 4 rejects any `thinking_budget` on the Gemini API (`Thinking budget is not supported for this
+    # model`, verified live 2026-11-15).
+    # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma up to 3 do not support thinking.
     # `gemini-2.5-flash-image` doesn't think either: verified live 2026-10-23, the Gemini API 400s any thinking
     # config with `Thinking is not enabled for this model`, and Vertex rejects `include_thoughts` and any nonzero
     # budget with `thinking is not supported by this model`.
-    if is_gemma or is_pre_gemini_2_5 or 'gemini-2.5-flash-image' in model_name:
+    # `gemma4` is Ollama's spelling. `_MODEL_THINKING_LEVELS` lists only `gemma-4`: its level sets matter only to
+    # `GoogleModel`, and the Gemini API names the model `gemma-4-*`.
+    is_gemma_4 = model_name.startswith(('gemma-4', 'gemma4'))
+    if (is_gemma and not is_gemma_4) or is_pre_gemini_2_5 or 'gemini-2.5-flash-image' in model_name:
         supports_thinking = False
         google_supports_thinking_level = False
     elif is_gemini_2_5:
@@ -281,8 +289,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     is_modern_gemini = not is_older_gemini and not is_gemma
 
     # `VALIDATED` function-calling mode is available on thinking-capable Gemini models (2.5 and newer);
-    # image models don't support function tools, so leave it off there.
-    supports_strict_tool_definition = supports_thinking and not is_image_model
+    # image models don't support function tools, so leave it off there. Gemma 4 is not verified on it.
+    supports_strict_tool_definition = supports_thinking and not is_image_model and not is_gemma
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = supports_thinking and is_pro
