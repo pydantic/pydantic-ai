@@ -549,7 +549,10 @@ async def test_structured_output_arrives_as_dict() -> None:
 _FINDING_SCHEMA_CODE = """\
 finding = await researcher(task='x', output_schema={
     'type': 'object',
-    'properties': {'claim': {'type': 'string'}, 'confidence': {'type': 'number'}},
+    'properties': {
+        'claim': {'type': 'string', 'title': 'Claim', 'description': 'One finding.', 'default': '', 'examples': ['x']},
+        'confidence': {'type': 'number'},
+    },
     'required': ['claim', 'confidence'],
 })
 [finding['claim'], finding['confidence']]"""
@@ -572,7 +575,16 @@ async def test_output_schema_sets_the_call_output_type() -> None:
         [
             {
                 'type': 'object',
-                'properties': {'claim': {'type': 'string'}, 'confidence': {'type': 'number'}},
+                'properties': {
+                    'claim': {
+                        'default': '',
+                        'description': 'One finding.',
+                        'examples': ['x'],
+                        'title': 'Claim',
+                        'type': 'string',
+                    },
+                    'confidence': {'type': 'number'},
+                },
                 'required': ['claim', 'confidence'],
             }
         ]
