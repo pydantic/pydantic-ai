@@ -10,7 +10,7 @@ import subprocess
 import sys
 import urllib.request
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import category_classify_opencode
 import douwebot_opencode_run
-from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, check_symlinks
+from douwebot_opencode_run import OPENCODE_GO, OPENCODE_ZEN_FREE, ZAI, ZAI_BACKUP, Provider, check_symlinks
 
 LIMIT = (
     'OpenCode Go 5 hour usage limit reached. Switch to a free model, '
@@ -176,6 +176,7 @@ class OpenCodeConfig(BaseModel):
 
     agents: dict[str, dict[str, object]]
     policies: list[dict[str, str]]
+    providers: dict[str, object] = {}
 
 
 @dataclass
@@ -221,7 +222,8 @@ def fake_opencode(
 
 
 def assert_runs_on(launch: Launch, provider: Provider) -> None:
-    """The run names `provider`'s model, allows only that provider, and holds only its key."""
+    """The run names `provider`'s model, declares it only for a configured link, allows only that provider, and holds
+    only its key."""
     assert launch.args[launch.args.index('--model') + 1] == provider.model
     assert launch.config.agents['title']['model'] == provider.model
     assert launch.config.agents['compaction']['model'] == provider.model
@@ -230,11 +232,13 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
     ]
+    model = provider.model.partition('/')[2]
+    assert launch.config.providers == ({provider.name: {'models': {model: {}}}} if provider.declares_model else {})
     secrets = {'OPENCODE_API_KEY': 'go-key', 'ZAI_API_KEY': 'zai-key', 'ZAI_BACKUP_API_KEY': 'zai-backup-key'}
     names = {*secrets, OPENCODE_GO.key_variable, ZAI.key_variable}
-    assert {name: value for name, value in launch.env.items() if name in names} == {
-        provider.key_variable: secrets[provider.secret_variable]
-    }
+    assert {name: value for name, value in launch.env.items() if name in names} == (
+        {provider.key_variable: secrets[provider.secret_variable]} if provider.secret_variable else {}
+    )
     assert 'GH_TOKEN' not in launch.env
 
 
@@ -812,6 +816,124 @@ def test_coding_plan_failure_names_its_error_type(
     assert_runs_on(invoked[1], ZAI)
     assert review_env.read_text(encoding='utf-8') == ''
     assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
+
+
+GLM = 'zai-coding-plan/glm-5.3-flash'
+# The example value `.github/workflows/AGENTS.md` gives for `PR_REVIEW_MODEL_CHAIN`, so the tests keep it valid.
+HY4_CHAIN = (WORKFLOW.parent / 'AGENTS.md').read_text(encoding='utf-8').partition('```json\n')[2].partition('```')[0]
+GO_DEEPSEEK = replace(OPENCODE_GO, declares_model=True)
+GO_HY4 = replace(OPENCODE_GO, model='opencode-go/hy4-flash-free', declares_model=True)
+ZEN_HY4 = replace(OPENCODE_ZEN_FREE, declares_model=True)
+
+
+def review_on(review_env: Path, configured_chain: str, matrix_index: int = 0) -> Provider:
+    """Run the fallback chain the way `PR Review Checks` does, with `configured_chain`; return the provider that served."""
+    _, provider = douwebot_opencode_run.run_with_fallback(
+        lambda command, env, stream: subprocess.run(
+            command, input='', text=True, cwd=review_env.parent, env=env, stdout=stream, check=True, timeout=None
+        ),
+        agent='reviewer',
+        output=review_env.parent / 'review.ndjson',
+        matrix_index=matrix_index,
+        configured_chain=configured_chain,
+    )
+    return provider
+
+
+def test_configured_chain_hands_go_refusals_to_the_zen_free_tier_without_a_key(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Each configured link runs its entry's model, declared in its config, and Zen's free tier runs with no key."""
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (REFUSED, refusal), (FINISHED, None))
+    assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
+    assert_runs_on(invoked[0], GO_DEEPSEEK)
+    assert_runs_on(invoked[1], GO_HY4)
+    assert_runs_on(invoked[2], ZEN_HY4)
+    limit = 'failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
+    zen = 'opencode/hy4-flash-free on the OpenCode Zen free tier'
+    assert capsys.readouterr().out == (
+        f'{GO_LIMIT_LOG}\n'
+        'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
+        'retrying on opencode-go/hy4-flash-free on OpenCode Go.\n'
+        f'OpenCode run on opencode-go/hy4-flash-free on OpenCode Go {limit}\n'
+        f'opencode-go/hy4-flash-free refused the run before its first step; retrying on {zen}.\n'
+        f'OpenCode run served by {zen}.\n'
+    )
+
+
+@pytest.mark.parametrize('kind', ['provider.quota', 'provider.rate-limit'])
+def test_zen_free_tier_refusal_hands_the_run_to_the_coding_plan(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """A spent Zen free allowance, which OpenCode types `provider.quota`, or a rate limit hands the run on."""
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    zen_refused = [REFUSED[0], {'type': 'error', 'error': {'type': kind, 'status': 429}}]
+    invoked = fake_opencode(
+        monkeypatch, (REFUSED, refusal), (REFUSED, refusal), (zen_refused, refusal), (FINISHED, None)
+    )
+    assert review_on(review_env, HY4_CHAIN) == replace(ZAI, declares_model=True)
+    assert_runs_on(invoked[3], replace(ZAI, declares_model=True))
+
+
+@pytest.mark.parametrize(('run_number', 'first'), [('3188', ZAI), ('3189', ZAI_BACKUP)])
+def test_configured_chain_alternates_consecutive_links_on_one_model(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, run_number: str, first: Provider
+) -> None:
+    """Consecutive links on one model rotate with the run number, as the default chain's Coding Plan accounts do."""
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
+    accounts = [{'model': GLM, 'secret': 'ZAI_API_KEY'}, {'model': GLM, 'secret': 'ZAI_BACKUP_API_KEY'}]
+    invoked = fake_opencode(monkeypatch, (FINISHED, None))
+    assert review_on(review_env, json.dumps(accounts)) == replace(first, declares_model=True)
+    assert_runs_on(invoked[0], replace(first, declares_model=True))
+
+
+def test_configured_chain_leaves_out_a_link_without_its_key(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A link whose secret is empty is left out, even Go's, and a chain with no link left fails before any run."""
+    monkeypatch.setenv('OPENCODE_API_KEY', '')
+    monkeypatch.delenv('ZAI_API_KEY')
+    invoked = fake_opencode(monkeypatch, (FINISHED, None))
+    assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
+    assert_runs_on(invoked[0], ZEN_HY4)
+    keyed = json.dumps([{'model': 'opencode-go/hy4-flash-free', 'secret': 'OPENCODE_API_KEY'}])
+    with pytest.raises(ValueError, match='No `PR_REVIEW_MODEL_CHAIN` link has its secret set'):
+        review_on(review_env, keyed)
+    assert len(invoked) == 1
+
+
+@pytest.mark.parametrize(
+    'entries',
+    [
+        pytest.param('sk-live-pasted-key', id='not-json'),
+        pytest.param([], id='empty'),
+        pytest.param({'model': 'opencode/hy4-flash-free', 'secret': None}, id='not-a-list'),
+        pytest.param([{'model': 'opencode/hy4-flash-free'}], id='no-secret-field'),
+        pytest.param([{'model': 'opencode/hy4-flash-free', 'secret': None, 'key': 'x'}], id='extra-field'),
+        pytest.param([{'model': 'hy4-flash-free', 'secret': None}], id='no-provider'),
+        pytest.param([{'model': 'opencode/Hy4 Flash', 'secret': None}], id='model-shape'),
+        pytest.param([{'model': 'openrouter/hy4', 'secret': 'OPENCODE_API_KEY'}], id='unknown-provider'),
+        pytest.param([{'model': 'opencode-go/hy4-flash-free', 'secret': 'ZAI_API_KEY'}], id='another-providers-key'),
+        pytest.param([{'model': GLM, 'secret': 'OPENCODE_API_KEY'}], id='go-key-to-zai'),
+        pytest.param([{'model': 'opencode-go/hy4-flash-free', 'secret': 'GH_TOKEN'}], id='unlisted-secret'),
+        pytest.param([{'model': 'opencode-go/hy4-flash-free', 'secret': None}], id='keyless-go'),
+        pytest.param([{'model': GLM, 'secret': None}], id='keyless-zai'),
+        pytest.param([{'model': 'opencode/hy4-flash-free', 'secret': 'OPENCODE_API_KEY'}], id='keyed-zen'),
+    ],
+)
+def test_invalid_configured_chain_runs_the_default_chain(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], entries: object
+) -> None:
+    """An entry that is not a known provider with a secret it accepts warns, without the value, and changes nothing."""
+    value = entries if isinstance(entries, str) else json.dumps(entries)
+    invoked = fake_opencode(monkeypatch, (FINISHED, None))
+    assert review_on(review_env, value) == OPENCODE_GO
+    assert_runs_on(invoked[0], OPENCODE_GO)
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == (
+        '::warning::The `PR_REVIEW_MODEL_CHAIN` variable is invalid, so this run uses the default chain; '
+        'see `.github/workflows/AGENTS.md` for its format.'
+    )
+    assert value not in out
 
 
 def classifier_answer(text: str) -> list[dict[str, object]]:
