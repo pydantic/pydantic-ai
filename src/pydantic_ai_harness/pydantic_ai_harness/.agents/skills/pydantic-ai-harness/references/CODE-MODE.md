@@ -243,8 +243,8 @@ against the 2 seconds and replay reads turn results from history. Runs stay work
 default mode; use `'read-only'` or `'read-write'`), or when the workflow started before this change.
 Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
 the workflow with `ActivityError`. In a turn activity `max_duration_seconds` applies again, so keep
-`start_to_close_timeout` above it. A retried turn repeats its `'read-write'` mount writes. A result
-with no JSON form comes back as its `repr`; nested-call arguments with no JSON form raise `TypeError`.
+`start_to_close_timeout` above it. A retried turn repeats its `'read-write'` mount writes. Values keep
+their types across turns; nested-call arguments with no JSON form raise `TypeError`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

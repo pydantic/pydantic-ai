@@ -61,6 +61,7 @@ try:
         TurnCall,
         TurnRequest,
         TurnResume,
+        from_wire,
         settled_data,
     )
 except ImportError as _import_error:  # pragma: no cover
@@ -355,7 +356,7 @@ class TurnFeed:
             case 'waiting':
                 return TurnFutureSnapshot(self, turn.pending_call_ids)
             case 'complete':
-                return TurnComplete(turn.output)
+                return TurnComplete(from_wire(turn.output))
             case 'failed':
                 assert turn.failure is not None
                 raise MontyTurnFailed(turn.failure)

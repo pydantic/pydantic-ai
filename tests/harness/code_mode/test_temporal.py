@@ -271,6 +271,11 @@ def double(n: int) -> int:
     return n * 2
 
 
+def blob() -> dict[str, bytes | float]:
+    """Return bytes that are not UTF-8 and a NaN, neither of which plain JSON carries."""
+    return {'raw': b'\xff\x00', 'nan': float('nan')}
+
+
 _CALL_SITE_SNIPPETS = [
     # Only a fresh session's first snippet is type-checked: this one fails and resets the session,
     # the next one passes, and the third runs unchecked.
@@ -284,13 +289,13 @@ _CALL_SITE_SNIPPETS = [
     'line = Path("/tests/stored_sessions.py").read_text().splitlines()[0]\n'
     'f"{double(n=n)} | {error} | {line}"',
     'def broken(:',
-    # Values with no JSON form: an argument raises at the call site, and results come back as their
-    # `repr`, as CodeMode renders them outside an activity.
+    # An argument with no JSON form raises at the call site; a result with none comes back as its `repr`.
     'from dataclasses import dataclass\n'
     '@dataclass\nclass P:\n    x: int\n'
     'try:\n    await add(a=P(1), b=2)\nexcept TypeError as e:\n    arg_error = str(e)\n'
     '[P(1), arg_error]',
-    'b"\\xff"',
+    # Values plain JSON would change, in a tool result and in the snippet's result.
+    'v = await blob()\n[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], (1, ...), {1: b"a"}]',
 ]
 
 
@@ -304,7 +309,7 @@ def _call_site_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
         if isinstance(part, ToolReturnPart)
     ]
     if len(returns) == len(_CALL_SITE_SNIPPETS):
-        return ModelResponse(parts=[TextPart(content=json.dumps(returns))])
+        return ModelResponse(parts=[TextPart(content=json.dumps(returns, default=repr))])
     code = _CALL_SITE_SNIPPETS[len(returns)]
     return ModelResponse(
         parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id=f'site_{len(returns)}')]
@@ -314,7 +319,7 @@ def _call_site_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
 call_site_code_mode_agent = Agent(
     FunctionModel(_call_site_model),
     name='code_mode_temporal_call_site_agent',
-    toolsets=[FunctionToolset(tools=[add, Tool(double, sequential=True)], id='math')],
+    toolsets=[FunctionToolset(tools=[add, Tool(double, sequential=True), blob], id='math')],
     capabilities=[
         CodeMode(
             id='code',
@@ -823,24 +828,35 @@ async def test_remote_turns_fall_back_without_stored_sessions(client: Client) ->
     assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
 
 
+async def _run_call_sites(client: Client, workflow_id: str, *, stores: bool) -> list[Any]:
+    SERVER.stores = stores
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[CallSiteWorkflow],
+            plugins=[AgentPlugin(call_site_code_mode_agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            output = await client.execute_workflow(
+                CallSiteWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE, execution_timeout=timedelta(seconds=30)
+            )
+    finally:
+        SERVER.stores = True
+    return json.loads(output)
+
+
 async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
     """Calls resolved at the call site resume the stored snapshot with their result, errors included.
 
-    The `TypeError` crosses the activity boundary as data and is raised in the sandbox as the same type
-    with the same message, and a syntax error comes back as a failed turn with Monty's report.
+    Every snippet returns what it returns on the workflow-side path, which a server that stores nothing
+    falls back to, except for an argument with no JSON form, which raises `TypeError` at the call site.
     """
     workflow_id = 'test_code_mode_temporal_call_sites'
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[CallSiteWorkflow],
-        plugins=[AgentPlugin(call_site_code_mode_agent)],
-        workflow_runner=_workflow_runner(),
-    ):
-        output = await client.execute_workflow(
-            CallSiteWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE, execution_timeout=timedelta(seconds=30)
-        )
-    type_error, added, call_sites, syntax_error, no_json_form, raw_bytes = json.loads(output)
+    returns = await _run_call_sites(client, workflow_id, stores=True)
+    workflow_side = await _run_call_sites(client, f'{workflow_id}_workflow_side', stores=False)
+
+    type_error, added, call_sites, syntax_error, no_json_form, values = returns
     assert type_error.startswith('Type error in code:\nerror[missing-argument]')
     assert added == 2
     first_line = (Path(__file__).parent / 'stored_sessions.py').read_text().splitlines()[0]
@@ -852,23 +868,23 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         'Syntax error in code:\nTraceback (most recent call last):\n  File "<python-input-2>", line 1\n'
         '    def broken(:\n               ~\nSyntaxError: Expected a parameter or the end of the parameter list'
     )
-
     assert no_json_form == [
         "MontyClassProxy(name='P', attributes={'x': 1})",
         'add() got an argument that has no JSON form, so it cannot be sent to the tool',
     ]
-    assert raw_bytes == "b'\\xff'"
+    # On the workflow-side path that argument fails the tool's validation, which fails the snippet.
+    assert [*returns[:4], values] == [*workflow_side[:4], workflow_side[5]]
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     # The type-checked snippet that fails and the syntax error are one turn each. The mounted file read
-    # and the undefined name are answered inside a turn; only `double` and `add` leave it.
+    # and the undefined name are answered inside a turn; only `double`, `add` and `blob` leave it.
     assert _activity_types(history) == [
         *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn'],
-        *['model_request', 'monty_turn', 'model_request'],
+        *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn', 'model_request'],
     ]
     replay_result = await Replayer(
         workflows=[CallSiteWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()

@@ -37,7 +37,6 @@ from pydantic_monty import (
     MontyComplete,
     MontyCrashedError,
     MontyDisconnectError,
-    MontyError,
     MontyRuntimeError,
     MontySyntaxError,
     MontyTypingError,
@@ -58,6 +57,58 @@ SLEEP_FUNCTIONS = frozenset({'time.sleep', 'asyncio.sleep', 'system.sleep', 'sys
 _EXCEPTION_TYPES = {name.rpartition('.')[2]: name for name in get_args(ExcType)}
 
 
+def to_wire(value: object) -> object:
+    """`value` as JSON that `from_wire` turns back into an equal value of the same types.
+
+    Temporal's converter writes activity inputs and results as JSON, which would turn bytes into text
+    and tuples into lists, and fails on bytes that are not UTF-8. Every value whose JSON form would
+    differ is tagged, and every dict is tagged too, so a dict the snippet built is never read as a tag.
+    A value of any other type, such as a `datetime`, crosses as its JSON form.
+    """
+    if _is_list_or_tuple(value):
+        items = [to_wire(item) for item in value]
+        return {'tuple': items} if isinstance(value, tuple) else items
+    if is_mapping(value):
+        return {'dict': [[to_wire(key), to_wire(item)] for key, item in value.items()]}
+    return _scalar_to_wire(value)
+
+
+def _scalar_to_wire(value: object) -> object:
+    if value is None or isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else {'float': repr(value)}
+    if isinstance(value, bytes | bytearray):
+        return {type(value).__name__: base64.b64encode(value).decode()}
+    if value is Ellipsis:
+        return {'ellipsis': None}
+    return {'json': value}
+
+
+def from_wire(value: object) -> Any:
+    """The value `to_wire` encoded."""
+    if _is_list_or_tuple(value):
+        return [from_wire(item) for item in value]
+    if not is_mapping(value):
+        return value
+    ((tag, data),) = value.items()
+    match tag:
+        case 'float':
+            return float(str(data))
+        case 'bytes':
+            return base64.b64decode(str(data))
+        case 'bytearray':
+            return bytearray(base64.b64decode(str(data)))
+        case 'ellipsis':
+            return ...
+        case 'tuple':
+            return tuple(from_wire(data))
+        case 'dict':
+            return {from_wire(key): from_wire(item) for key, item in from_wire(data)}
+        case _:
+            return data
+
+
 def settled_data(result: ExternalSettledResult) -> SettledData:
     """`result` with any exception instance replaced by the type and message Monty gives the sandbox for it.
 
@@ -66,7 +117,10 @@ def settled_data(result: ExternalSettledResult) -> SettledData:
     `json.JSONDecodeError` match only classes from that module, so a user's own `Error` class is not
     read as `binascii.Error`.
     """
-    if 'exception' not in result:
+    if 'return_value' in result:
+        return ExternalReturnValue(return_value=to_wire(result['return_value']))
+    if 'exception' not in result:  # pragma: no cover
+        # Already data. The executor settles every call with a value or an exception instance.
         return result
     exc = result['exception']
     # `BaseException` is one of Monty's types, so every exception's MRO reaches a match.
@@ -235,7 +289,8 @@ class MontyTurn:
     prints: str = ''
     call: TurnCall | None = None
     pending_call_ids: list[int] = field(default_factory=list[int])
-    output: Any = None
+    output: object = None
+    """The snippet's result, as `to_wire` encodes it."""
     failure: MontyFailure | None = None
 
 
@@ -272,8 +327,9 @@ async def run_monty_turn(
         capture = CollectString()
         try:
             paused = await _load(session, request, mount=mount, capture=capture)
-        except MontyError:
+        except MontyRuntimeError:
             # The stored record could not be loaded, for example because the server let it expire.
+            # Connection errors are other `MontyError`s and raise, so the activity retry loads it again.
             return _SESSION_LOST
         try:
             if paused is None:
@@ -295,9 +351,7 @@ async def run_monty_turn(
         state = await _dump(session)
         prints = capture.output
         if isinstance(snapshot, MontyComplete):
-            output = model_safe_result(snapshot.output)
-            # `model_safe_result` keeps `bytes`, which have no JSON form unless they are UTF-8.
-            output = output if _serializes(output) else repr(snapshot.output)
+            output = to_wire(model_safe_result(snapshot.output))
             return MontyTurn('complete', state=state, prints=prints, output=output)
         if isinstance(snapshot, AsyncFunctionSnapshot):
             call = TurnCall(
@@ -359,13 +413,19 @@ async def _dump(session: AsyncMontySession) -> str:
     return base64.b64encode(await session.dump()).decode()
 
 
+def _settled(data: SettledData) -> ExternalSettledResult:
+    if 'return_value' in data:
+        return ExternalReturnValue(return_value=from_wire(data['return_value']))
+    return data
+
+
 async def _resume(snapshot: AsyncSnapshot, resume: TurnResume) -> AsyncSnapshot:
     if isinstance(snapshot, AsyncFutureSnapshot):
-        return await snapshot.resume(dict[int, ExternalSettledResult](resume.settled))
+        return await snapshot.resume({call_id: _settled(data) for call_id, data in resume.settled.items()})
     assert isinstance(snapshot, AsyncFunctionSnapshot), 'a turn only pauses at a call or at deferred calls'
     match resume.kind:
         case 'deferred':
             return await snapshot.resume({'future': ...})
         case _:
             assert resume.result is not None
-            return await snapshot.resume(resume.result)
+            return await snapshot.resume(_settled(resume.result))
