@@ -13,13 +13,14 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    ApprovalRequired,
     CallDeferred,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
     ToolApproved,
 )
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition
@@ -208,6 +209,42 @@ async def test_external_call_carries_validated_args():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='lookup', args={'target': 'HTTPS://Example.COM'}, tool_call_id='call')],
             validated_args={'call': {'target': 'https://example.com/'}},
+        )
+    )
+
+
+async def test_call_deferred_again_after_inline_approval_carries_validated_args():
+    """A call a handler approves that its tool then defers again joins the pending requests with its validated arguments."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('step', {'x': '1'}, tool_call_id='re1'),
+                ToolCallPart('step', {'x': '2'}, tool_call_id='un1'),
+            ]
+        )
+
+    async def approve_re1(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={'re1': True})
+
+    agent = Agent(
+        FunctionModel(respond),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[HandleDeferredToolCalls(handler=approve_re1)],
+    )
+
+    @agent.tool
+    def step(ctx: RunContext[Any], x: int) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        raise CallDeferred
+
+    result = await agent.run('go')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart('step', {'x': '1'}, tool_call_id='re1')],
+            approvals=[ToolCallPart('step', {'x': '2'}, tool_call_id='un1')],
+            validated_args={'un1': {'x': 2}, 're1': {'x': 1}},
         )
     )
 

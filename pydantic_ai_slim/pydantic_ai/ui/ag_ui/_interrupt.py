@@ -21,6 +21,7 @@ from pydantic.alias_generators import to_camel
 from pydantic.json_schema import WithJsonSchema
 from pydantic_core import to_json
 
+from ..._utils import is_str_dict
 from ...exceptions import UserError
 from ...messages import ToolCallPart
 from ...tools import DeferredToolApprovalResult, DeferredToolRequests, GenerateToolJsonSchema, ToolApproved, ToolDenied
@@ -129,20 +130,30 @@ for _property in _RESUME_RESPONSE_SCHEMA['properties'].values():
 def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) -> Interrupt:
     """Build an AG-UI `Interrupt` from a pending approval `ToolCallPart` in `requests` (outbound).
 
-    The `message` shows the arguments the tool will receive, from `requests.validated_args`, and
-    the model's arguments only for a request that doesn't carry them, such as one built by hand.
+    The `message` shows the arguments the model sent, each with the value the tool will receive from
+    `requests.validated_args`. A parameter's default and an argument a validation hook added aren't in
+    it: they can hold server-side values, and the message goes to the client. A request that doesn't
+    carry validated arguments, such as one built by hand, shows the model's arguments.
     The `response_schema` describes the shape clients must put in `ResumeEntry.payload`;
     it is generated from `_ResumePayload`, the same model that validates the payload on
     resume. `editedArgs`, when present, replaces the proposed `ToolCallPart.args`
     (see `ToolApproved.override_args`).
     """
-    validated_args = requests.validated_args.get(call.tool_call_id)
-    args = call.args_as_json_str() if validated_args is None else to_json(validated_args).decode()
+    args = call.args_as_dict()
+    validated_args = requests.validated_args.get(call.tool_call_id, {})
+    only_value = next(iter(validated_args.values())) if len(validated_args) == 1 else None
+    if is_str_dict(only_value) and not validated_args.keys() & args.keys():
+        # A tool whose only parameter is a model takes that model's fields unwrapped. A field the validated
+        # model doesn't have was dropped, or is excluded from its serialization.
+        args = {key: only_value[key] for key in args if key in only_value}
+    else:
+        # A key the validated arguments don't have may be a parameter's alias, so it keeps the model's value.
+        args = {key: validated_args.get(key, value) for key, value in args.items()}
     return Interrupt(
         id=f'{INTERRUPT_ID_PREFIX}{call.tool_call_id}',
         reason='tool_call',
         tool_call_id=call.tool_call_id,
-        message=f'Approve {call.tool_name}({args})?',
+        message=f'Approve {call.tool_name}({to_json(args).decode()})?',
         # Copied per interrupt: pydantic only rebuilds the outer dict for a `dict[str, Any]`
         # field, so sharing the constant would let a consumer mutating one interrupt's schema
         # alter every other interrupt's in the same process.

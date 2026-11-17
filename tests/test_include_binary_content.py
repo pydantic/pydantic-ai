@@ -422,6 +422,8 @@ CASES = [
             }
         ),
     ),
+    # Omitted rather than redacted: the redacted shape leaves `validated_args` out, so nothing of the image
+    # it holds is recorded, not even its media type.
     Case(
         id='deferred_requests_validated_args',
         build=approval_with_validated_image_agent,
