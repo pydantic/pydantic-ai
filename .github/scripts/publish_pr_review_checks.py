@@ -166,7 +166,7 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
     return True
 
 
-def trusted(github: ReviewChecksGitHub) -> bool:
+def is_trusted(github: ReviewChecksGitHub) -> bool:
     """Whether a user with write access opened the pull request or applied `RUN_LABEL` to it last."""
     pull = github.pull_request()
     return _author_trusted(github, pull) or _run_label_trusted(github, {label.name for label in pull.labels})
@@ -403,7 +403,7 @@ def main() -> None:
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
             output.write(f'review={str(review).lower()}\n')
     elif sys.argv[1] == 'trusted':
-        result = trusted(github)
+        result = is_trusted(github)
         print(f'Trusted: {result}')
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
             output.write(f'trusted={str(result).lower()}\n')

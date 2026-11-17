@@ -26,8 +26,8 @@ from publish_pr_review_checks import (
     ReviewFinding,
     gate,
     publish,
+    is_trusted,
     review_payload,
-    trusted,
     verdict,
 )
 
@@ -170,7 +170,7 @@ def test_run_label_changes_nothing_for_a_trusted_author() -> None:
 def test_trusted_matches_the_review_gate(author: Actor, labeled_by: Actor | None, expected: bool) -> None:
     """The other workflows the run label activates trust exactly whom the review gate trusts, and write nothing."""
     github = FakeGitHub(author=author, labels=[RUN_LABEL] if labeled_by else [], labeled_by=labeled_by)
-    assert trusted(github) is expected
+    assert is_trusted(github) is expected
     assert github.statuses == []
 
 
