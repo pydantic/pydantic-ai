@@ -44,6 +44,7 @@ agent = Agent(
   forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is
   skipped and checked again on the next request. A file whose size the workspace doesn't report is not read, and
   one that grew past `max_checked_bytes` between its `stat` and its read is forgotten until the model reads it again.
+  A file replaced by a directory counts as deleted.
 - Paths are named the way the file tools take them: relative to the workspace's working directory, or absolute
   when outside it. The most recently read or written file comes first.
 - The notice is request-scoped: the model sees it for the request it is sent with, and it stays in the message
@@ -79,7 +80,8 @@ the bytes read; lower `max_tracked_files` if requests slow down.
   An instance keeps the 1,024 most recently used conversations.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
 - **A check doesn't follow a path that now leads elsewhere.** A recorded file whose real path changed since it was
-  read, such as one replaced by a symlink to a file the file tools would refuse, is skipped rather than read.
+  read, such as one replaced by a symlink to a file the file tools would refuse, is forgotten rather than read,
+  until the model reads it again.
 - **Durable execution is refused.** Under a durability capability such as `TemporalDurability`, the run fails at its
   start: the records are process memory, which a replay or another worker does not have.
 

@@ -172,7 +172,8 @@ class TestReportStaleFiles:
             [[], [], ['These files you read or wrote were deleted from the workspace:\n- `old.py`'], []]
         )
 
-    async def test_unreadable_file_is_skipped_and_checked_again(self, tmp_path: Path) -> None:
+    @pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
+    async def test_file_replaced_by_a_directory_is_reported_deleted_once(self, tmp_path: Path) -> None:
         target = tmp_path / 'data.txt'
         target.write_text('one\n')
 
@@ -192,7 +193,7 @@ class TestReportStaleFiles:
             (None, 'done'),
         )
         result = await agent.run('go')
-        assert _notices(result.all_messages()) == [[], [], [], [f'{CHANGED}\n- `data.txt`']]
+        assert _notices(result.all_messages()) == [[], [], [f'{DELETED}\n- `data.txt`'], []]
 
     async def test_paths_are_named_as_the_file_tools_take_them(self, tmp_path: Path) -> None:
         """The working directory is inside the `FileSystem` root, so event paths are relative to a different root."""

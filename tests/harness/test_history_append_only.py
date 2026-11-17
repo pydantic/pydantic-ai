@@ -807,7 +807,7 @@ def _peer_message(
 
 def _stale_files(
     tmp_path: Path,
-) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+) -> tuple[list[AbstractCapability[None]], Scenario, Callable[[ConversationResult], None]]:
     """A file the model read and edited changes from outside between the runs, so the second run gets notices."""
     notes = tmp_path / 'notes.md'
     notes.write_text('Sunny.\n')

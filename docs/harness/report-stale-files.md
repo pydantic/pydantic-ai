@@ -34,7 +34,7 @@ agent = Agent(
     - `src/config.py`
     ```
 
-- A changed file is named on every request until the model reads it again. A deleted file is named once, then forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is skipped and checked again on the next request. A file whose size the workspace doesn't report is not read, and one that grew past `max_checked_bytes` between its `stat` and its read is forgotten until the model reads it again.
+- A changed file is named on every request until the model reads it again. A deleted file is named once, then forgotten. A file that can't be read for another reason, such as a permission error or a workspace failure, is skipped and checked again on the next request. A file whose size the workspace doesn't report is not read, and one that grew past `max_checked_bytes` between its `stat` and its read is forgotten until the model reads it again. A file replaced by a directory counts as deleted.
 - Paths are named the way the file tools take them: relative to the workspace's working directory, or absolute when outside it. The most recently read or written file comes first.
 - The notice is request-scoped: the model sees it for the request it is sent with, and it stays in the message history without moving the cached prefix (see [request-scoped system prompts](../message-history.md#request-scoped-system-prompts)).
 - The paths are named by whoever can write to the workspace, so the notice has the [authority](../workspace.md#workspace-authority) of the workspace's files: in the application's voice by default, and framed as data for a workspace with less, such as `LocalWorkspace('.', authority='none')`. A path that looks like a framework frame, such as one holding `<system>`, is counted rather than named. Find notices in history with `isinstance(part, StaleFilesPart)`; its `changed` and `deleted` fields hold the paths.
@@ -53,7 +53,7 @@ Every check reads each recorded file in full, which detects a rewrite that keeps
 
 - **Observations are in-process memory, per conversation.** They are held on the instance the agent was built with and keyed by the run's `conversation_id`, so a run continued from an earlier run's `message_history` is told about changes made between the runs. A conversation continued through another instance, process, or worker starts with no records, and a run in another workspace than the one a file was read in doesn't check that file. An instance keeps the 1,024 most recently used conversations.
 - **It sees only files reported through the events.** A file the model read with a shell command is not recorded.
-- **A check doesn't follow a path that now leads elsewhere.** A recorded file whose real path changed since it was read, such as one replaced by a symlink to a file the file tools would refuse, is skipped rather than read.
+- **A check doesn't follow a path that now leads elsewhere.** A recorded file whose real path changed since it was read, such as one replaced by a symlink to a file the file tools would refuse, is forgotten rather than read, until the model reads it again.
 - **Durable execution is refused.** Under a durability capability such as `TemporalDurability`, the run fails at its start: the records are process memory, which a replay or another worker does not have.
 
 ## Telemetry

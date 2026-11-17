@@ -165,7 +165,7 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
                 continue
             state, read = await _state(ctx.workspace, path, observation, budget)
             budget -= read
-            if state in ('deleted', 'too_large'):
+            if state in ('deleted', 'dropped'):
                 self._observations.pop(path, None)
             if state == 'deleted':
                 deleted.append(path)
@@ -192,18 +192,21 @@ class ReportStaleFiles(AbstractCapability[AgentDepsT]):
 
 async def _state(
     workspace: Workspace, path: str, observation: _Observation, budget: int
-) -> tuple[Literal['fresh', 'changed', 'deleted', 'unknown', 'too_large'], int]:
+) -> tuple[Literal['fresh', 'changed', 'deleted', 'unknown', 'dropped'], int]:
     """Whether the file at `path` still has the observed content, and how many bytes were read to tell.
 
-    `'unknown'` when it can't be read, its size isn't known or is larger than `budget`, or it now leads somewhere
-    else, such as through a link to a file the file tools would refuse to read. `'too_large'` when it grew past
-    `budget` between its `stat` and its read, so it isn't read again.
+    `'deleted'` also when a directory replaced it. `'dropped'`, so it isn't checked again until it's read again, when
+    it now leads somewhere else (such as through a link to a file the file tools would refuse to read) or grew past
+    `budget` between its `stat` and its read. `'unknown'`, to check again on the next request, when it can't be read
+    now, or its size isn't known or is larger than `budget`.
     """
     try:
         entry = await workspace.stat(path)
+        if entry.is_dir:
+            return 'deleted', 0
         if await workspace.realpath(path) != observation.realpath:
-            return 'unknown', 0
-        if entry.is_dir or entry.size is None or entry.size > budget:
+            return 'dropped', 0
+        if entry.size is None or entry.size > budget:
             return 'unknown', 0
         content = await workspace.read_bytes(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -211,7 +214,7 @@ async def _state(
     except (OSError, WorkspaceError):
         return 'unknown', 0
     if len(content) > budget:
-        return 'too_large', len(content)
+        return 'dropped', len(content)
     return ('fresh' if bytes_hash(content) == observation.content_hash else 'changed'), len(content)
 
 
