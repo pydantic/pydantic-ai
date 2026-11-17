@@ -359,6 +359,10 @@ agent = Agent(
 - Without `path_authority`, every file in the working directory is at `authority`.
 - A wrapper's `path_authority` never raises a level another wrapper set: with several, the lowest wins.
 
+[`lowest_authority_under(workspace, directory)`][pydantic_ai.workspaces.lowest_authority_under] gives the lowest
+level of any path at or under a directory, for a capability that reads a whole directory at one level, such as a
+delegate rooted there: no file it reads gets more than the workspace gives it.
+
 `path_authority` is not access control. It sets the authority of the text capabilities put in the prompt
 from those files, not what the agent can read, write or run: the agent's tools reach every path as before.
 A file the agent reads with a tool, such as `read_file`, comes back as tool output whatever its level.

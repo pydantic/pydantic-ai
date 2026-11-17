@@ -7,6 +7,7 @@
             - WrapperWorkspace
             - ReadOnlyWorkspace
             - AuthorityWorkspace
+            - lowest_authority_under
             - LocalWorkspaceBackend
             - WindowsWorkspaceBackend
             - UnavailableWorkspace

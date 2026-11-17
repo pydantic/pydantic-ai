@@ -28,7 +28,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai.workspaces import AuthorityWorkspace, SupportsCommands, SupportsRealpath, Workspace
+from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    SupportsCommands,
+    SupportsRealpath,
+    Workspace,
+    lowest_authority_under,
+)
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, innermost_backend, require_workspace, workspace_path
 from pydantic_ai_harness.file_system import DirectoryListedEvent, FileEditedEvent, FileReadEvent, FileWrittenEvent
@@ -328,10 +334,13 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
-        # Known before `get_instructions`, which runs before `before_run`: in a workspace with any file below
-        # `'operator'`, the precedence sentence mustn't rank its files over the operator's. Neither check costs I/O,
-        # unlike `authority_of`.
-        run._lowered = ctx.workspace.authority != 'operator' or _lowers_some_path(ctx.workspace)
+        # Known before `get_instructions`, which runs before `before_run`: with any file below `'operator'` where nested
+        # traversal reads, the precedence sentence mustn't rank its files over the operator's. Without a workspace,
+        # `before_run` fails the run.
+        workspace = ctx.workspace
+        run._lowered = (
+            workspace.attached and await lowest_authority_under(workspace, await workspace.working_dir()) != 'operator'
+        )
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -657,16 +666,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Serialization name for agent-spec support."""
         return 'RepoContext'
-
-
-def _lowers_some_path(workspace: Workspace) -> bool:
-    """Whether a `path_authority` entry on any of the workspace's wrappers puts some path below `'operator'`.
-
-    Core has no public way to ask this without I/O yet, so this reads the wrapper chain's private layers, as
-    `Workspace.authority` does.
-    """
-    layers = workspace._authority_layers()  # pyright: ignore[reportPrivateUsage]
-    return any(level != 'operator' for _, path_authority in layers for level in path_authority.values())
 
 
 def _walk_up_view(
