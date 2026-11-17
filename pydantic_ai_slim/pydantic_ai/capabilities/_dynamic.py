@@ -93,7 +93,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         capability = await self._call(ctx)
         if capability is None:
             return None
-        capability = await capability._for_run_keeping_authority(ctx)  # pyright: ignore[reportPrivateUsage]
+        capability = await capability._for_run_keeping_authority(ctx)
         return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
     async def _call(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
@@ -106,7 +106,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             return None
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
         # The factory's capability keeps its own authority through its lifecycle hooks, as any other does.
-        return capability._keep_authority(capability.for_agent(ctx.agent))  # pyright: ignore[reportPrivateUsage]
+        return capability._keep_authority(capability.for_agent(ctx.agent))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         called = _called_factories.get()
@@ -118,7 +118,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         if capability is None:
             return self
         return ResolvedDynamicCapability(
-            wrapped=await capability._for_run_keeping_authority(ctx),  # pyright: ignore[reportPrivateUsage]
+            wrapped=await capability._for_run_keeping_authority(ctx),
             dynamic_toolset=self.get_toolset(),
         )
 
