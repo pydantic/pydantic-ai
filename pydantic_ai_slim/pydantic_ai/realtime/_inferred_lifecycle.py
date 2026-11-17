@@ -675,7 +675,11 @@ class InferredLifecycle:
     def _speech_turn(
         self, turn: _Turn | None, item_id: str | None, after: list[LifecycleEvent], *, transcribed: bool
     ) -> _Turn | None:
-        """The turn of its own that speech after `turn` is, to join the conversation: `None` if it names no item."""
+        """The new turn that speech after `turn` starts, ending `turn` first.
+
+        `None` when the speech names no item: its audio is committed as an unnamed turn, unless its words were already
+        transcribed.
+        """
         self._audio_since_reply = False
         if item_id is None:
             if not transcribed:

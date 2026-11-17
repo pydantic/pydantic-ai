@@ -115,7 +115,7 @@ def _interrupted_at(part: SpeechPart, interrupted_at_ms: int | None) -> SpeechPa
 
 
 def _cut_off_last_speech(parts: list[ModelResponsePart], interrupted_at_ms: int | None) -> None:
-    """Replace the last `SpeechPart` in `parts` with it interrupted `interrupted_at_ms` into its audio."""
+    """Replace the last `SpeechPart` in `parts` with a copy interrupted `interrupted_at_ms` into its audio."""
     for index in range(len(parts) - 1, -1, -1):
         if isinstance(part := parts[index], SpeechPart):
             parts[index] = _interrupted_at(part, interrupted_at_ms)
