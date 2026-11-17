@@ -2242,6 +2242,39 @@ async def test_function_toolset_defaults_stay_off_a_shared_tool():
     ] == [('my_tool', None, None, False, False)]
 
 
+async def test_function_toolset_lists_a_tool_it_leaves_unchanged_as_is():
+    """A toolset that changes none of a `Tool`'s values lists the `Tool` itself.
+
+    `prepare_tool_def` runs on the `Tool` the toolset holds, so a `Tool` subclass keeps the state it sets on `self`
+    across listings, in a toolset and in an agent's own toolset alike.
+
+    Not a VCR test: it pins which object the toolset prepares; no request is involved.
+    """
+
+    class RecordingTool(Tool[None]):
+        calls = 0
+        prepared_on: list[Tool[None]]
+
+        async def prepare_tool_def(self, ctx: RunContext[None]) -> ToolDefinition | None:
+            self.calls += 1
+            self.prepared_on.append(self)
+            return await super().prepare_tool_def(ctx)
+
+    def my_tool() -> str:  # pragma: no cover
+        return 'hello'
+
+    tool = RecordingTool(my_tool)
+    tool.prepared_on = []
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    toolset = FunctionToolset([tool])
+    for _ in range(2):
+        await toolset.get_tools(ctx)
+    await Agent(TestModel(call_tools=[]), deps_type=type(None), tools=[tool]).run('Hello')
+
+    assert tool.calls == 3
+    assert [prepared is tool for prepared in tool.prepared_on] == [True, True, True]
+
+
 def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():
     """Toolset `sequential`/`defer_loading=True` wins over a raw `Tool`'s plain `False`.
 

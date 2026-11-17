@@ -764,19 +764,31 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """`tool` as this toolset lists it under `name`.
 
         A `Tool` instance gets the toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` on a
-        copy, so the `Tool` itself keeps its own values for every other toolset and agent holding it.
+        copy, so the `Tool` itself keeps its own values for every other toolset and agent holding it. When they change
+        nothing, the toolset lists the `Tool` itself.
         """
         if name not in self._tool_instance_names:
             return tool
+        strict = tool.strict if tool.strict is not None else self.strict
+        include_return_schema = (
+            tool.include_return_schema if tool.include_return_schema is not None else self.include_return_schema
+        )
+        sequential = self.sequential and not tool.sequential
+        defer_loading = self._defer_loading and not tool.defer_loading
+        if (strict, include_return_schema, sequential, defer_loading) == (
+            tool.strict,
+            tool.include_return_schema,
+            False,
+            False,
+        ):
+            return tool
         listed = copy(tool)
-        if listed.strict is None:
-            listed.strict = self.strict
-        if listed.include_return_schema is None:
-            listed.include_return_schema = self.include_return_schema
-        if self.sequential and not listed.sequential:
+        listed.strict = strict
+        listed.include_return_schema = include_return_schema
+        if sequential:
             listed.sequential = True
             listed._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
-        if self._defer_loading and not listed.defer_loading:
+        if defer_loading:
             listed.defer_loading = True
             listed._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
         return listed
