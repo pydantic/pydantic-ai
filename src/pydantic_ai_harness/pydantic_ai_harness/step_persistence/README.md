@@ -428,7 +428,9 @@ configured retention can delete older snapshots.
   Needs the `mongodb` extra
   (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a
   connection string as `db_url=` (the store then owns the client -- call
-  `await store.aclose()` to release it).
+  `await store.aclose()` to release it). A store-owned client adds `pydantic-ai-harness`
+  and its version to the driver metadata of the MongoDB connection handshake, which server
+  logs show; a `client=` you pass is left as you configured it.
   Externalizes individual parts at or above `media_threshold_bytes` by
   default to a `MongoMediaStore` on the same client. That is a per-value
   offload, not an aggregate cap: a message of many below-threshold parts can

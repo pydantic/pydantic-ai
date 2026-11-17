@@ -33,7 +33,7 @@ The model gets four tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
+| `write_memory` | Append to a file or replace one unique text fragment. In a file with `\r\n` line endings, an `old_text` with `\n` line endings, as the injected snapshot shows them, matches too. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
 | `read_memory` | Read a bounded prefix of one memory file. Left out when `FileSystem` can read the files ([Reading memory with `FileSystem`](#reading-memory-with-filesystem)). |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
