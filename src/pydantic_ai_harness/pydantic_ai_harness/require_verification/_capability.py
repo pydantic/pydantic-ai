@@ -158,7 +158,12 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
         """Note how many edits preceded a verification command, as calls in one response run in parallel."""
-        if (command := shell_command(tool_def, args)) is not None and self._verifies(command):
+        # A command started in the background is not a check, even if it finished before the tool returned.
+        if (
+            (command := shell_command(tool_def, args)) is not None
+            and args.get('mode') != 'background'
+            and self._verifies(command)
+        ):
             self._started[call.tool_call_id] = self._edits
         return args
 
@@ -247,7 +252,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         if _SHORT_CIRCUIT.search(command) or '$(' in command or '`' in command:
             return False
         # Separators and pipes inside quotes are literal text, not shell syntax.
-        text = _FD_DUPLICATION.sub('', _QUOTED.sub("''", command))
+        text = _FD_DUPLICATION.sub('', _QUOTED.sub("''", command.replace('\\\n', ' ')))
         statements = [statement for statement in _STATEMENT_SEPARATOR.split(text) if statement.strip()]
         if not statements:
             return False

@@ -924,7 +924,8 @@ from pydantic_ai_harness import FileSystem, RequireVerification, Shell
 agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()])
 ```
 
-- Any edit makes every earlier check stale. Edits to `exempt_paths` (`*.md`, `*.mdx`, `*.rst`) don't count.
+- Any edit makes every earlier check stale. `write_file`/`edit_file` edits to `exempt_paths` (`*.md`, `*.mdx`,
+  `*.rst`) don't count; shell edit commands always count, since the file they touch isn't known.
 - Commands come from tools whose metadata sets `code_arg_language='shell'` and `code_arg_name`, as
   `Shell`'s do. A check is an `&&`-joined step of the last `;`/newline statement that starts with a
   `verification_commands` match (`cd pkg; pytest` counts, `pytest; echo done` does not). `|`, `||`,

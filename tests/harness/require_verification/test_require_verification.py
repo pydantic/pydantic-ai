@@ -225,6 +225,7 @@ class TestRequireVerification:
             'pytest -q > /dev/null 2>&1',
             "pytest -k 'parse|render'",
             'cd pkg; uv run pytest',
+            'uv run pytest \\\n  tests/test_app.py -q',
             'uv run --no-sync pytest tests/test_app.py',
             'uv run --frozen pyright',
             'uv run -m pytest',
@@ -553,6 +554,21 @@ class TestRequireVerification:
             assert await stream.get_output() == 'Done.'
 
         assert _redirects(stream.all_messages()) == []
+
+    async def test_a_background_shell_command_is_not_a_check_even_when_it_finished(self, tmp_path: Path) -> None:
+        def shell(command: str, mode: str = 'foreground') -> str:
+            return 'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{"pid": 7, "exit_code": 0}'
+
+        agent = Agent[None, str](
+            _scripted(_write(), ToolCallPart('shell', {'command': 'pytest -q', 'mode': 'background'}), 'Done.'),
+            deps_type=type(None),
+            tools=[Tool(shell, metadata=_SHELL)],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), RequireVerification(max_attempts=1)],
+        )
+
+        result = await agent.run('Fix the bug')
+
+        assert _attempts(result.new_messages()) == [1]
 
     async def test_shell_tools_without_a_command_argument_are_ignored(self, tmp_path: Path) -> None:
         def odd_shell(command: int) -> str:

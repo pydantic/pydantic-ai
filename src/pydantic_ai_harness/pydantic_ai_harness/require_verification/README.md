@@ -29,7 +29,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[FileSystem(), Shell(), 
 
 `RequireVerification` records what the agent's tool calls do during a run:
 
-- An **edit** is a successful [`FileSystem`](../file_system/) `write_file` or `edit_file` call, recognized by its tool kind whatever it is named, or a shell command matching `edit_commands`, such as `ruff format .`, `sed -i`, `git checkout`, `mv`, `rm`, an `sh -c`, `python -c`, or `node -e` script, or a `>` redirect. Edits to files matching `exempt_paths` don't count.
+- An **edit** is a successful [`FileSystem`](../file_system/) `write_file` or `edit_file` call, recognized by its tool kind whatever it is named, or a shell command matching `edit_commands`, such as `ruff format .`, `sed -i`, `git checkout`, `mv`, `rm`, an `sh -c`, `python -c`, or `node -e` script, or a `>` redirect. Edits that `write_file` or `edit_file` make to files matching `exempt_paths` don't count. Shell edit commands always count, since the file they touch isn't known.
 - A **check** is a shell command matching `verification_commands`, such as `pytest`, `uv run --no-sync pyright`, `.venv/bin/pytest`, `pnpm -r test`, or `cargo build`. The [`Shell`](../shell/) tool's result tells whether it passed.
 
 Each edit makes every earlier check result stale. When the run would end after an edit, and checks have run since then, the latest run of each must have passed. Otherwise an instruction carrying `instructions` is added to the conversation and the model answers again, with its tools available. After `max_attempts` of these redirects in one run, the run ends anyway and reports it with a `CompletionUnverifiedEvent`.
