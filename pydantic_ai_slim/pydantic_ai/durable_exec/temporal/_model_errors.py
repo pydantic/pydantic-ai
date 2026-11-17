@@ -278,8 +278,10 @@ def rebuilt_retry_requests() -> Generator[None]:
     """In the workflow, re-raise a `RetryModelRequest` a capability operation's activity raised, as itself."""
     try:
         yield
-    except ActivityError as activity_error:
-        cause = activity_error.cause
+    except (ActivityError, ApplicationError) as activity_error:
+        # A regular activity's failure arrives as an `ActivityError` caused by the `ApplicationError`, a local
+        # activity's as the `ApplicationError` itself.
+        cause = activity_error.cause if isinstance(activity_error, ActivityError) else activity_error
         if (
             isinstance(cause, ApplicationError)
             and cause.details

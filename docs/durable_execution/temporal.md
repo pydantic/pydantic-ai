@@ -1031,6 +1031,16 @@ without such tools register only their activities, as before. Metadata that firs
 for example from a capability that rewrites tool definitions during a run, fails the tool call
 with a `UserError`.
 
+### Local activities
+
+A capability operation marked with [`@durable_operation(name=..., local=True)`][pydantic_ai.capabilities.durable_operation]
+runs as a Temporal [local activity](https://docs.temporal.io/local-activity): on the worker that runs the
+workflow code, in the same process, without a round trip through a task queue. Use it for a short call,
+a few seconds at most, that needs state that process holds, such as a live session the capability caches
+in the worker, and that would otherwise block the workflow while it waits on I/O. Its timeouts and retry
+policy come from `activity_config`; a local activity has no task queue and doesn't heartbeat, so
+`task_queue` and `heartbeat_timeout` don't apply. Anything longer belongs in a regular activity.
+
 ## Activity Retries
 
 On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, and a retry inside the activity waits out the provider's `Retry-After` there, holding the worker, rather than as Temporal's retry delay described below.

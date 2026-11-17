@@ -330,6 +330,9 @@ class DurableOperation(Generic[ParamsT, WireT, ResultT]):
         result_codec: Codec for the handler result.
         config_role: Coarse configuration category for the operation.
         invocation_label: Optional per-call display or naming label.
+        local: Whether `@durable_operation(local=True)` asked to run the operation in the worker process that
+            runs the durable container's code. An engine whose durable units can run elsewhere honors it where
+            its SDK can, as Temporal does with a local activity.
     """
 
     operation_id: DurableOperationId
@@ -339,6 +342,7 @@ class DurableOperation(Generic[ParamsT, WireT, ResultT]):
     result_codec: ResultCodec[ResultT]
     config_role: OperationConfigRole
     invocation_label: Callable[[ParamsT], str] | None = None
+    local: bool = False
 
 
 class IdentityParameterTransport(ParameterTransport[ParamsT, ParamsT], Generic[ParamsT]):

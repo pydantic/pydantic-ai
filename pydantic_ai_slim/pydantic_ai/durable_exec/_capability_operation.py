@@ -157,6 +157,7 @@ class CapabilityMethodDeclaration:
     result_type: object
     ctx_parameter: str | None
     model_request_parameter: str | None = None
+    local: bool = False
 
     @property
     def model_request_hook(self) -> bool:
@@ -182,6 +183,7 @@ class _DurableOperationMarker:
     _: KW_ONLY
     function: Callable[..., Awaitable[Any]]
     base_hook: bool = False
+    local: bool = False
 
 
 Marker = _DurableOperationMarker
@@ -206,7 +208,7 @@ def _validate_operation_name(name: object) -> str:
     return name
 
 
-def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
+def durable_operation(name: str, *, local: bool = False) -> Callable[[Callable[P, A]], Callable[P, A]]:
     """Declare an async capability method as a durable operation.
 
     The method keeps its original signature. During a run with a durability capability, calls
@@ -230,6 +232,11 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
 
     Args:
         name: The stable operation name. This can be passed positionally or by keyword.
+        local: Run the operation in the worker process that runs the agent's durable workflow code,
+            for a short call (a few seconds, no heartbeats) that needs state that process holds, such
+            as a live session cached in the worker. Temporal runs it as a
+            [local activity](https://docs.temporal.io/local-activity). Other engines run it as their
+            usual activity, step, or task.
 
     Returns:
         The marked method with its parameter and return types preserved.
@@ -257,7 +264,7 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 )
                 return target
             raise TypeError('`durable_operation` can only decorate async methods')
-        marker = Marker(name=name, function=cast(Callable[..., Awaitable[Any]], target))
+        marker = Marker(name=name, function=cast(Callable[..., Awaitable[Any]], target), local=local)
 
         @wraps(target)
         async def decorated(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> Any:
@@ -404,6 +411,7 @@ def collect_capability_operations(
             result_type=result_type,
             ctx_parameter=ctx_parameter,
             model_request_parameter=model_request_parameter,
+            local=original is not None and original.local,
         )
     return declarations
 

@@ -699,6 +699,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         capability_operation_result_type(declaration.result_type),
                     ),
                     config_role='capability',
+                    local=declaration.local,
                 )
                 self._bound_capability_operations[key] = backend.bind(operation)
                 self._capability_declarations[key] = declaration
