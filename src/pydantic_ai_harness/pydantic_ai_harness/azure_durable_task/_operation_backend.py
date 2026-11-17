@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import math
 import re
 from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Generic, Literal, TypeVar
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from durabletask import task
 from durabletask.grpc_options import GrpcChannelOptions
+from durabletask.internal import helpers as _helpers, orchestrator_service_pb2 as _pb
 from durabletask.worker import TaskHubGrpcWorker
+from google.protobuf.json_format import MessageToDict, ParseDict
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError
 
@@ -25,9 +30,11 @@ from pydantic_ai.durable_exec import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     durable_unit_scope,
+    model_error_retry_after,
 )
 from pydantic_ai.exceptions import UserError
 
+from .._retry_after import MINIMUM_RETRY_AFTER_CAP, MODEL_OPERATION_IDS
 from ._bridge import current_loop
 from ._transports import INPUT, JsonTransport
 
@@ -38,6 +45,7 @@ __all__ = ('AzureDurableTaskOperationBackend',)
 
 
 _JSON = TypeAdapter[JsonValue](JsonValue)
+_JSON_OBJECT = TypeAdapter[dict[str, JsonValue]](dict[str, JsonValue])
 _RESULT_FORMAT: Literal['pydantic-ai-durabletask-result-v1'] = 'pydantic-ai-durabletask-result-v1'
 _ESCAPED_NAME_CHARACTER = re.compile(r'-|[^a-zA-Z0-9_.`+:-]')
 _DEFAULT_CONFIG = object()
@@ -62,6 +70,13 @@ class _ActivityResult:
     format: Literal['pydantic-ai-durabletask-result-v1']
     value: JsonValue = None
     error: str | None = None
+    retry_after: float | None = None
+    """The wait a model error asked for before the model activity is attempted again.
+
+    See `_BoundOperation._call_waiting_retry_after`.
+    """
+    failure: dict[str, JsonValue] | None = None
+    """The `TaskFailureDetails` the model error would have failed the activity with, as JSON."""
 
 
 _RESULT = TypeAdapter(_ActivityResult)
@@ -69,6 +84,51 @@ _RESULT = TypeAdapter(_ActivityResult)
 
 def _failure(error: UserError) -> object:
     return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, error=str(error)), mode='json')
+
+
+def _retry_after_result(error: Exception) -> object | None:
+    """The result a model activity records instead of failing with `error`, when a model error asked to wait.
+
+    The SDK's retry policy can't wait longer or shorter than its own backoff for one failure, so the activity completes
+    with the wait instead, and the orchestration waits it on a durable timer before attempting the activity again; see
+    `_BoundOperation._call_waiting_retry_after`. The failure details travel with it, so an orchestration that doesn't
+    attempt the activity again fails the way the activity would have.
+    """
+    retry_after = model_error_retry_after(error, maximum=math.inf)
+    if retry_after is None:
+        return None
+    # The SDK builds an activity's failure details with this internal helper; there is no public equivalent.
+    failure = _JSON_OBJECT.validate_python(MessageToDict(_helpers.new_failure_details(error)))
+    return _RESULT.dump_python(
+        _ActivityResult(format=_RESULT_FORMAT, retry_after=retry_after, failure=failure), mode='json'
+    )
+
+
+def _retry_after_cap(policy: task.RetryPolicy, attempts: int) -> float:
+    """The longest wait before the attempt after `attempts`: the policy's `max_retry_interval`, if it sets one.
+
+    Without one, the policy's own backoff for the attempt or a minute, whichever is longer.
+    """
+    if policy.max_retry_interval is not None:
+        return policy.max_retry_interval.total_seconds()
+    backoff = policy.first_retry_interval.total_seconds() * (policy.backoff_coefficient or 1.0) ** (attempts - 1)
+    return max(backoff, MINIMUM_RETRY_AFTER_CAP)
+
+
+def _continued_policy(policy: task.RetryPolicy, attempts: int, elapsed: timedelta) -> task.RetryPolicy:
+    """The retry policy for the attempts `policy` has left after `attempts`, with the backoff where it left off."""
+    # In seconds, as the SDK works out its backoff, so a long one is capped before it can overflow a `timedelta`.
+    first_retry_interval = policy.first_retry_interval.total_seconds() * (policy.backoff_coefficient or 1.0) ** attempts
+    if policy.max_retry_interval is not None:
+        first_retry_interval = min(first_retry_interval, policy.max_retry_interval.total_seconds())
+    retry_timeout = policy.retry_timeout
+    return task.RetryPolicy(
+        first_retry_interval=timedelta(seconds=first_retry_interval),
+        max_number_of_attempts=policy.max_number_of_attempts - attempts,
+        backoff_coefficient=policy.backoff_coefficient,
+        max_retry_interval=policy.max_retry_interval,
+        retry_timeout=max(retry_timeout - elapsed, timedelta()) if retry_timeout is not None else None,
+    )
 
 
 class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
@@ -99,17 +159,63 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
             config, task.RetryPolicy
         ):  # pragma: no cover - typed resolvers return a policy
             raise UserError('Durable Task activity configuration must be a `durabletask.task.RetryPolicy`.')
-        pending = loop.context.call_activity(
-            self._name,
-            input=_JSON.validate_python(self.operation.parameter_transport.dump(params)),
-            retry_policy=config,
-            return_type=object,
+        recorded = await self._call_waiting_retry_after(
+            _JSON.validate_python(self.operation.parameter_transport.dump(params)), config
         )
-        result = await loop.wait(pending)
-        recorded = _RESULT.validate_python(result)
         if recorded.error is not None:
             raise UserError(recorded.error)
         return self.operation.result_codec.load(recorded.value)
+
+    async def _call_waiting_retry_after(self, payload: JsonValue, policy: task.RetryPolicy | None) -> _ActivityResult:
+        """Call the activity, and again after each wait a model error asked for, within the retry policy.
+
+        Only a model activity whose retry policy allows another attempt asks for a wait; see `_retry_after_result`.
+        Each call carries the retry policy, continued from the attempts before it, so a failure that asks for no wait
+        gets the policy's own backoff and the activity is attempted no more often than the policy allows.
+        `asyncio.sleep` waits on a durable timer here.
+        """
+        loop = current_loop()
+        assert loop is not None
+        started = loop.time()
+        attempts = 0
+        call_policy = policy
+        while True:
+            pending = loop.context.call_activity(
+                self._name, input=payload, retry_policy=call_policy, return_type=object
+            )
+            recorded = _RESULT.validate_python(await loop.wait(pending))
+            if recorded.retry_after is None:
+                return recorded
+            assert policy is not None, 'Only a model activity with a retry policy asks for a wait.'
+            # The SDK counts a retried activity's attempts on the task, but doesn't expose the count.
+            attempts += pending._attempt_count if isinstance(pending, task.RetryableTask) else 1  # pyright: ignore[reportPrivateUsage]
+            if attempts >= policy.max_number_of_attempts or (
+                policy.retry_timeout is not None and loop.time() - started >= policy.retry_timeout.total_seconds()
+            ):
+                assert recorded.failure is not None
+                failure = ParseDict(recorded.failure, _pb.TaskFailureDetails())
+                raise task.TaskFailedError(
+                    f'{loop.context.instance_id}: Activity {self._name!r} failed: {failure.errorMessage}', failure
+                )
+            await asyncio.sleep(min(recorded.retry_after, _retry_after_cap(policy, attempts)))
+            call_policy = _continued_policy(policy, attempts, timedelta(seconds=loop.time() - started))
+
+
+async def _run_operation(
+    operation: DurableOperation[ParamsT, WireT, ResultT], params: ParamsT, *, wait_retry_after: bool
+) -> object:
+    """Run the operation in its activity, and record its result, or the wait a model error asked for."""
+    try:
+        result = await operation.handler(params)
+    except Exception as exc:
+        if not wait_retry_after or (waiting := _retry_after_result(exc)) is None:
+            raise
+        return waiting
+    try:
+        value = _JSON.validate_python(operation.result_codec.dump(result))
+    except (ValidationError, PydanticSerializationError, UnicodeDecodeError) as exc:
+        return _failure(SerializationFailure(exc))
+    return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, value=value), mode='json')
 
 
 class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPolicy | None]):
@@ -155,6 +261,13 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
         if not isinstance(transport, JsonTransport):  # pragma: no cover - this capability installs every transport
             raise TypeError(f'{type(transport).__name__} does not accept the Durable Task JSON wire.')
         json_transport: JsonTransport[ParamsT] = transport
+        # Bound model operations are always called with the policy they're registered with. Without one that allows
+        # another attempt, a model activity fails natively, as it would without waiting `retry_after`.
+        wait_retry_after = (
+            isinstance(operation.operation_id, MODEL_OPERATION_IDS)
+            and config is not None
+            and config.max_number_of_attempts > 1
+        )
 
         async def execute(payload: object) -> object:
             try:
@@ -168,12 +281,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
                             params = json_transport.load(payload, runtime=self)
                         except ValidationError as exc:
                             return _failure(SerializationFailure(exc))
-                        result = await operation.handler(params)
-                        try:
-                            value = _JSON.validate_python(operation.result_codec.dump(result))
-                        except (ValidationError, PydanticSerializationError, UnicodeDecodeError) as exc:
-                            return _failure(SerializationFailure(exc))
-                        return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, value=value), mode='json')
+                        return await _run_operation(operation, params, wait_retry_after=wait_retry_after)
             except UserError as exc:
                 # SDK RetryPolicy retries every activity exception. Raise recorded codec and
                 # configuration failures in orchestration code instead, outside its retry boundary.
