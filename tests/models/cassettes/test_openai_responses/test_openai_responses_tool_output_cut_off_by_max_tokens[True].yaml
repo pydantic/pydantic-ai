@@ -1,0 +1,186 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "690"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: List the 20 largest cities in the world.
+        max_output_tokens: 40
+        reasoning:
+          context: all_turns
+        tool_choice: required
+        tools:
+        - name: final_result
+          parameters:
+            properties:
+              cities:
+                items:
+                  $ref: "#/$defs/City"
+                type: array
+            required:
+            - cities
+            type: object
+            additionalProperties: false
+            $defs:
+              City:
+                properties:
+                  name:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - name
+                - country
+                type: object
+                additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "201"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_05f3cf6941c417f3006af3a5d7135487d1808fc32c86f92a7a","object":"response","created_at":1794352599,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":null,"max_output_tokens":40,"max_tool_calls":null,"model":"gpt-5.4-mini-2026-03-17","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"required","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"The final response which ends this conversation","name":"final_result","output_schema":null,"parameters":{"properties":{"cities":{"items":{"$ref":"#/$defs/City"},"type":"array"}},"required":["cities"],"type":"object","additionalProperties":false,"$defs":{"City":{"properties":{"name":{"type":"string"},"country":{"type":"string"}},"required":["name","country"],"type":"object","additionalProperties":false}}},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_05f3cf6941c417f3006af3a5d7135487d1808fc32c86f92a7a","object":"response","created_at":1794352599,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"instructions":null,"max_output_tokens":40,"max_tool_calls":null,"model":"gpt-5.4-mini-2026-03-17","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"required","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"The final response which ends this conversation","name":"final_result","output_schema":null,"parameters":{"properties":{"cities":{"items":{"$ref":"#/$defs/City"},"type":"array"}},"required":["cities"],"type":"object","additionalProperties":false,"$defs":{"City":{"properties":{"name":{"type":"string"},"country":{"type":"string"}},"required":["name","country"],"type":"object","additionalProperties":false}}},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","type":"function_call","status":"in_progress","arguments":"","call_id":"call_SrdVVmT77BC4T0ko9B2sQifG","name":"final_result"},"output_index":0,"sequence_number":2}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"sy0bHQX6JTFGhG","output_index":0,"sequence_number":3}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"cities","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"7DUWvutxZc","output_index":0,"sequence_number":4}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":[","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"rD8T9CUIOMcHV","output_index":0,"sequence_number":5}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"sCs2ToOBcF4hHZ","output_index":0,"sequence_number":6}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"name","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"rUWIPBnrNP5U","output_index":0,"sequence_number":7}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"6oRDibiAbCmDy","output_index":0,"sequence_number":8}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Tokyo","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"IjEqaZTAnok","output_index":0,"sequence_number":9}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\",\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"WngFhvUcf6lFi","output_index":0,"sequence_number":10}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"country","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"RXObBcqXB","output_index":0,"sequence_number":11}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"GVY5CPsY5wIWF","output_index":0,"sequence_number":12}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Japan","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"78pqMFR7AZA","output_index":0,"sequence_number":13}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"},{\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"elopxD7smXh","output_index":0,"sequence_number":14}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"name","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"pVf1Idyc3prR","output_index":0,"sequence_number":15}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"nokvQd5fKOU0a","output_index":0,"sequence_number":16}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Delhi","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"Q3xEuoYlbQv","output_index":0,"sequence_number":17}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\",\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"PEDMh8cNi2iH8","output_index":0,"sequence_number":18}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"country","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"LLgD8aKNl","output_index":0,"sequence_number":19}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"lZWy4ofdT50Sr","output_index":0,"sequence_number":20}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"India","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"Xj0nXLUE7T7","output_index":0,"sequence_number":21}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"},{\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"ytiWA4JvPrp","output_index":0,"sequence_number":22}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"name","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"gjWc04itvV4S","output_index":0,"sequence_number":23}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"asYDkJ9zXEmVO","output_index":0,"sequence_number":24}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"Shanghai","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"WE28GFFf","output_index":0,"sequence_number":25}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\",\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"rv6luFqRAp4fx","output_index":0,"sequence_number":26}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"country","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"PIvDhzweC","output_index":0,"sequence_number":27}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"q43RSeHut7d2V","output_index":0,"sequence_number":28}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"China","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"8ES03IOibFb","output_index":0,"sequence_number":29}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"},{\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","obfuscation":"myOnPZ3wuND","output_index":0,"sequence_number":30}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China\"},{\"","item_id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","output_index":0,"sequence_number":31}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","type":"function_call","status":"incomplete","arguments":"{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China\"},{\"","call_id":"call_SrdVVmT77BC4T0ko9B2sQifG","name":"final_result"},"output_index":0,"sequence_number":32}
+
+        event: response.incomplete
+        data: {"type":"response.incomplete","response":{"id":"resp_05f3cf6941c417f3006af3a5d7135487d1808fc32c86f92a7a","object":"response","created_at":1794352599,"status":"incomplete","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":{"reason":"max_output_tokens"},"instructions":null,"max_output_tokens":40,"max_tool_calls":null,"model":"gpt-5.4-mini-2026-03-17","moderation":null,"output":[{"id":"fc_05f3cf6941c417f3006af3a5d78bac87d1882d0b6913a84386","type":"function_call","status":"incomplete","arguments":"{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China\"},{\"","call_id":"call_SrdVVmT77BC4T0ko9B2sQifG","name":"final_result"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"required","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"The final response which ends this conversation","name":"final_result","output_schema":null,"parameters":{"properties":{"cities":{"items":{"$ref":"#/$defs/City"},"type":"array"}},"required":["cities"],"type":"object","additionalProperties":false,"$defs":{"City":{"properties":{"name":{"type":"string"},"country":{"type":"string"}},"required":["name","country"],"type":"object","additionalProperties":false}}},"strict":true}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":63,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":40,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":103},"user":null,"metadata":{}},"sequence_number":33}
+
+  recorded_at: 2026-11-10T23:16:39.922360+00:00
