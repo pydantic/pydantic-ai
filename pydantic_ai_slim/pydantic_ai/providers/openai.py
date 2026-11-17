@@ -162,7 +162,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
                 # GPT-6 rejects function tools on Chat Completions while reasoning is on, asking for
                 # `/v1/responses` or `reasoning_effort='none'` (verified live on gpt-6-luna, gpt-6-sol,
-                # gpt-6.1-terra, gpt-6-astra and gpt-6.1-sol, 2026-11). `OpenAIChatModel` raises a
+                # gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra, 2026-11). `OpenAIChatModel` raises a
                 # `ModelRequestRejectedError` before sending. Set here rather than in `openai_model_profile` because the
                 # restriction is unverified on the OpenAI-compatible endpoints that share it.
                 openai_chat_function_tools_require_reasoning_off=model_name.startswith(_GPT_6_MODEL_PREFIXES),

@@ -133,28 +133,37 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')
+_GPT_6_MODEL_PREFIXES = (
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6.1-sol',
+    'gpt-6.1-terra',
+    'gpt-6.2-sol',
+    'gpt-6.2-astra',
+)
+
+_GPT_6_ASTRA_REASONING = _ReasoningSupport(
+    enabled_by_default=True,
+    can_be_disabled=False,
+    supports_mode=True,
+    supports_context=True,
+    efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
+)
+"""GPT-6 Astra's reasoning: on by default, efforts `low` through `max`, no `effort='none'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
     # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
     # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
-    'gpt-6-astra': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6-astra': _GPT_6_ASTRA_REASONING,
     # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol
-    'gpt-6.1-sol': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6.1-sol': _GPT_6_ASTRA_REASONING,
+    # GPT-6.2 Sol and Astra follow GPT-6 Astra too (live-verified 2026-11).
+    # https://developers.openai.com/api/docs/guides/latest-model
+    'gpt-6.2-sol': _GPT_6_ASTRA_REASONING,
+    'gpt-6.2-astra': _GPT_6_ASTRA_REASONING,
     # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
     'gpt-6.1-terra': _ReasoningSupport(
@@ -424,7 +433,7 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When enabled, `OpenAIChatModel` raises a `ModelRequestRejectedError` for a request that sends tools, output tools
     included, with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at
     `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
-    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra and gpt-6.1-sol). `openai_model_profile` leaves it off,
+    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra). `openai_model_profile` leaves it off,
     because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
     `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
     these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
