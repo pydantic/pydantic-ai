@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
+import socket
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -192,6 +194,9 @@ def _format_result(title: str | None, url: str, body: str) -> str:
     return '\n'.join(lines)
 
 
+_IPV4_SHORTHAND = re.compile(r'[0-9a-fx.]+')
+
+
 def _domain(domain: str) -> str:
     return domain.strip().lower().strip('.')
 
@@ -221,12 +226,24 @@ def _check_page_url(url: str) -> None:
         parsed = None
     if parsed is None or parsed.scheme not in ('http', 'https') or not parsed.host:
         raise ModelRetry(f'{url!r} is not an absolute http(s) URL.')
-    try:
-        ipaddress.ip_address(parsed.host.split('%', 1)[0])
-    except ValueError:
-        return
-    if is_private_ip(parsed.host):
+    host = _domain(parsed.host)
+    address = _ip_address(host)
+    if host == 'localhost' or host.endswith('.localhost') or (address is not None and is_private_ip(address)):
         raise ModelRetry(f'{url!r} names a private or local address, which `get_page` does not read.')
+
+
+def _ip_address(host: str) -> str | None:
+    """The IP address `host` spells, including the shorthand IPv4 forms (`127.1`, `0x7f000001`) URL parsers accept."""
+    try:
+        return str(ipaddress.ip_address(host.split('%', 1)[0]))
+    except ValueError:
+        pass
+    if not _IPV4_SHORTHAND.fullmatch(host):
+        return None
+    try:
+        return socket.inet_ntoa(socket.inet_aton(host))
+    except OSError:
+        return None
 
 
 def _source_list(sources: Mapping[str, str | None]) -> list[FirecrawlSource]:
@@ -336,14 +353,14 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
 
     @recoverable('Firecrawl')
     async def web_search(self, query: str) -> ToolReturn[str]:
-        """Search the web and return matching pages, each with its most relevant excerpts.
+        """Search the web and return matching pages, each with relevant excerpts or its page content.
 
         Args:
             query: The search query. Natural-language questions and keyword
                 queries both work.
 
         Returns:
-            The matching pages, each with title, URL, and excerpts.
+            The matching pages, each with title, URL, and excerpts or page content.
         """
         if self._operations is not None:
             return raise_retry(await self._operations.web_search(query))

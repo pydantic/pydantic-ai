@@ -417,6 +417,14 @@ class TestFirecrawlSearchToolset:
             'http://127.0.0.1:8080/',
             'http://[::1]/',
             'http://169.254.169.254/',
+            # Shorthand IPv4 forms that URL parsers, including the scraper's, rewrite to loopback or metadata.
+            'http://127.1/',
+            'http://2130706433/',
+            'http://0x7f000001/',
+            'http://0177.0.0.1/',
+            'http://2852039166/',
+            'http://localhost:3000/',
+            'http://api.localhost/',
         ],
     )
     async def test_get_page_refuses_urls_a_scraper_should_not_fetch(self, url: str):
@@ -427,12 +435,13 @@ class TestFirecrawlSearchToolset:
             await FirecrawlSearch[None](client=client).get_toolset().get_page(url)
         assert client.urls == []
 
-    async def test_get_page_reads_a_public_ip_address(self):
+    @pytest.mark.parametrize('url', ['http://93.184.215.14/', 'http://1572395022/', 'https://deadbeef.cafe/'])
+    async def test_get_page_reads_public_addresses_and_hex_like_hostnames(self, url: str):
         client = FakeClient(page={'markdown': '# Page'})
 
-        await FirecrawlSearch[None](client=client).get_toolset().get_page('http://93.184.215.14/')
+        await FirecrawlSearch[None](client=client).get_toolset().get_page(url)
 
-        assert client.urls == ['http://93.184.215.14/']
+        assert client.urls == [url]
 
     async def test_web_search_reports_no_results(self):
         returned = await FirecrawlSearch[None](client=FakeClient()).get_toolset().web_search('cats')
