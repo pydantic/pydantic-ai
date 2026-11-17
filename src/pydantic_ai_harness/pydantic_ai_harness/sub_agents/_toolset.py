@@ -402,34 +402,26 @@ def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     return tool_def is not None and tool_def.capability_id is not None
 
 
-def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
-    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+def _tree_has(toolset: AbstractToolset[AgentDepsT], predicate: Callable[[AbstractToolset[AgentDepsT]], bool]) -> bool:
+    """Whether a toolset in `toolset`'s tree matches `predicate`."""
     found = False
 
     def visit(node: AbstractToolset[AgentDepsT]) -> None:
         nonlocal found
-        if isinstance(node, CapabilityOwnedToolset):
-            found = True
+        found = found or predicate(node)
 
     toolset.apply(visit)
     return found
+
+
+def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
+    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+    return _tree_has(toolset, lambda node: isinstance(node, CapabilityOwnedToolset))
 
 
 def _exposes(name: str, original: str) -> bool:
     """Whether `name` is `original`, or `original` with a prefix a wrapper added."""
     return name == original or name.endswith(f'_{original}')
-
-
-def _contains(toolset: AbstractToolset[AgentDepsT], target: AbstractToolset[AgentDepsT]) -> bool:
-    """Whether `toolset`'s tree contains `target`."""
-    found = False
-
-    def visit(node: AbstractToolset[AgentDepsT]) -> None:
-        nonlocal found
-        found = found or node is target
-
-    toolset.apply(visit)
-    return found
 
 
 def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
@@ -1207,7 +1199,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             name
             for name, tool in (tool_manager.tools or {}).items()
             if max((own for own in self.tools if _exposes(name, own)), key=len, default=None) == self._tool_name
-            and _contains(tool.toolset, self)
+            and _tree_has(tool.toolset, lambda node: node is self)
         ]
         resume = f'with `agent_name={record.agent_name!r}` and `resume={record.id!r}`.'
         if len(names) != 1:
