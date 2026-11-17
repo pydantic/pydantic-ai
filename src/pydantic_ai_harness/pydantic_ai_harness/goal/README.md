@@ -115,4 +115,4 @@ Use `run()` or `run_sync()` when rejected output must stay private. Partial stre
 
 ## Telemetry
 
-Each completion check emits a `goal.verify` span through `ctx.tracer`. `goal.met` records whether the check accepted. `goal.description` and, for a rejection, `goal.gap` are recorded only when `trace_include_content` is enabled. Verifier exceptions are recorded by the span. Interactive runs and partial outputs emit no goal spans. Core instrumentation already records the resulting model requests and retry flow.
+Each completion check emits a `goal.verify` span through `ctx.tracer`. `goal.met` records whether the check accepted. `goal.description` and, for a rejection, `goal.gap` are recorded only when `trace_include_content` is enabled. With `trace_include_content`, the span also records verifier exceptions; otherwise they are left to the enclosing run span, which withholds their messages. Interactive runs and partial outputs emit no goal spans. Core instrumentation already records the resulting model requests and retry flow.

@@ -18,13 +18,6 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.goal import Goal
 from tests.harness._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 async def complete(ctx: RunContext[object], output: object) -> str | None:
     return None if output == 'done' else 'Produce the completed work.'
@@ -32,6 +25,20 @@ async def complete(ctx: RunContext[object], output: object) -> str | None:
 
 class Result(BaseModel):
     done: bool
+
+
+def _traced_context(include_content: bool) -> tuple[RunContext[None], InMemorySpanExporter]:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        tracer=provider.get_tracer('test'),
+        trace_include_content=include_content,
+    )
+    return ctx, exporter
 
 
 class TestGoal:
@@ -144,16 +151,7 @@ class TestGoal:
     @pytest.mark.parametrize('include_content', [False, True])
     @pytest.mark.parametrize('accepted', [False, True])
     async def test_telemetry(self, *, include_content: bool, accepted: bool) -> None:
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        ctx = RunContext(
-            deps=None,
-            model=TestModel(),
-            usage=RunUsage(),
-            tracer=provider.get_tracer('test'),
-            trace_include_content=include_content,
-        )
+        ctx, exporter = _traced_context(include_content)
         goal = Goal(goal='Finish', verify=complete)
         output_context = OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
         if accepted:
@@ -169,6 +167,25 @@ class TestGoal:
             if not accepted:
                 expected['goal.gap'] = 'Produce the completed work.'
         assert dict(span.attributes or {}) == expected
+
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_verifier_error_telemetry_follows_content_setting(self, include_content: bool) -> None:
+        async def fail(ctx: RunContext[None], output: object) -> None:
+            raise ValueError(f'Evidence unavailable for {output}')
+
+        ctx, exporter = _traced_context(include_content)
+        output_context = OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
+        with pytest.raises(ValueError):
+            await Goal(goal='Finish', verify=fail).after_output_process(
+                ctx, output_context=output_context, output='secret'
+            )
+        (span,) = exporter.get_finished_spans()
+        if include_content:
+            assert span.status.description == 'ValueError: Evidence unavailable for secret'
+            assert [event.name for event in span.events] == ['exception']
+        else:
+            assert span.status.description is None
+            assert span.events == ()
 
     async def test_partial_output_is_not_verified(self) -> None:
         ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), partial_output=True)

@@ -93,7 +93,11 @@ class Goal(AbstractCapability[AgentDepsT]):
         """Reject incomplete final answers using the runtime's retry machinery."""
         if not self.headless or ctx.partial_output:
             return output
-        with ctx.tracer.start_as_current_span('goal.verify') as span:
+        with ctx.tracer.start_as_current_span(
+            'goal.verify',
+            record_exception=ctx.trace_include_content,
+            set_status_on_exception=ctx.trace_include_content,
+        ) as span:
             gap = await self._verify(ctx, output)
             if gap is not None and not gap.strip():
                 raise UserError('Goal verifier must return None or a nonempty explanation.')
