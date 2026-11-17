@@ -23,6 +23,7 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness._shell_command import shell_command
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
 
 PermissionMode = Literal['full', 'auto', 'read-only']
@@ -250,7 +251,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
             if mode == 'read-only' and isinstance(path, str):
                 return _Asked(action='write', subject=path, reason='Read-only mode asks before every file write.')
             return None
-        command = _command(tool_def, args)
+        command = shell_command(tool_def, args)
         if command is None:
             return None
         if mode == 'read-only':
@@ -262,16 +263,6 @@ class Permissions(AbstractCapability[AgentDepsT]):
                 reason='Auto mode asks before commands that delete, push, install, or reach the network.',
             )
         return None
-
-
-def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
-    """The shell command a call runs, when its tool declares one."""
-    metadata = tool_def.metadata or {}
-    name = metadata.get('code_arg_name')
-    if metadata.get('code_arg_language') != 'shell' or not isinstance(name, str):
-        return None
-    command = args.get(name)
-    return command if isinstance(command, str) else None
 
 
 def _nests_tool_return(result: object) -> bool:

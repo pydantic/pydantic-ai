@@ -15,6 +15,7 @@ from pydantic_ai.capabilities import AbstractCapability, AgentNode, CapabilityOr
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.messages import InstructionCapabilityPart, OperatorSource, OperatorText, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai_harness._shell_command import shell_command
 from pydantic_ai_harness.file_system._tool_kinds import EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_ai_harness.require_verification._events import CompletionUnverifiedEvent
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
@@ -57,7 +58,6 @@ _ASSIGNMENTS = re.compile(r'^(?:env\s+)?(?:\w+=\S*\s+)*')
 _MASKING = re.compile(r'[|&]')
 _STATEMENT_SEPARATOR = re.compile(r'[;\n]')
 _PROBE = re.compile(r'(?<!\S)(?:--version|--help|-h|--collect-only|--co)(?!\S)')
-_CHANGES_DIRECTORY = re.compile(r'(?<![\w-])(?:cd|pushd|popd)\b')
 _SHORT_CIRCUIT = re.compile(r'(?<![\w-])(?:exit|exec|return)\b')
 _FD_DUPLICATION = re.compile(r'(?<!\d)\d*[<>]&(?:\d+|-)')
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
@@ -126,10 +126,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
     _edit: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
     _edits: int = field(default=0, init=False, repr=False, compare=False)
     _started: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
-    _directory_changes: int = field(default=0, init=False, repr=False, compare=False)
-    _results: dict[tuple[int, str], bool] = field(
-        default_factory=dict[tuple[int, str], bool], init=False, repr=False, compare=False
-    )
+    _results: dict[str, bool] = field(default_factory=dict[str, bool], init=False, repr=False, compare=False)
     _attempts: int = field(default=0, init=False, repr=False, compare=False)
     _reported: bool = field(default=False, init=False, repr=False, compare=False)
 
@@ -160,7 +157,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
         """Note how many edits preceded a verification command, as calls in one response run in parallel."""
-        if (command := _command(tool_def, args)) is not None and self._verifies(command):
+        if (command := shell_command(tool_def, args)) is not None and self._verifies(command):
             self._started[call.tool_call_id] = self._edits
         return args
 
@@ -179,7 +176,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             path = args.get('path')
             if not (isinstance(path, str) and any(fnmatch(path, pattern) for pattern in self.exempt_paths)):
                 self._mark_edit()
-        elif (command := _command(tool_def, args)) is not None:
+        elif (command := shell_command(tool_def, args)) is not None:
             self._record_command(command, edits_before, result)
         return result
 
@@ -188,18 +185,13 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         if any(pattern.search(unquoted) for pattern in self._edit):
             self._mark_edit()
             return
-        # With `Shell(persist_cwd=True)` the same command can run elsewhere later, so results are kept per
-        # directory context, and a later pass elsewhere cannot hide an earlier failure.
-        if _CHANGES_DIRECTORY.search(unquoted):
-            self._directory_changes += 1
         # A verification that an edit in a parallel call may have raced, or no verification at all, records nothing.
         if edits_before != self._edits:
             return
-        key = (self._directory_changes, command)
         if (passed := _passed(result)) is None:
-            self._results.pop(key, None)
+            self._results.pop(command, None)
         else:
-            self._results[key] = passed
+            self._results[command] = passed
 
     async def after_node_run(
         self,
@@ -235,7 +227,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             ctx.tracer.start_span(
                 'completion unverified', attributes={'require_verification.attempts': self._attempts}
             ).end()
-            failed = [command for (_, command), passed in self._results.items() if not passed]
+            failed = [command for command, passed in self._results.items() if not passed]
             await ctx.emit(CompletionUnverifiedEvent(attempts=self._attempts, failed_commands=failed))
         return result
 
@@ -262,16 +254,6 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
         if any(_MASKING.search(step) for step in steps):
             return False
         return any(not _PROBE.search(step) and pattern.match(step) for step in steps for pattern in self._verification)
-
-
-def _command(tool_def: ToolDefinition, args: ValidatedToolArgs) -> str | None:
-    """The shell command a call ran, when its tool declares one."""
-    metadata = tool_def.metadata or {}
-    name = metadata.get('code_arg_name')
-    if metadata.get('code_arg_language') != 'shell' or not isinstance(name, str):
-        return None
-    command = args.get(name)
-    return command if isinstance(command, str) else None
 
 
 def _passed(result: object) -> bool | None:

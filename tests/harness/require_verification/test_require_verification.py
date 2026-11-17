@@ -403,22 +403,22 @@ class TestRequireVerification:
         [(instructions, _)] = _redirects(result.new_messages())
         assert 'not piped' in instructions
 
-    async def test_a_pass_in_another_directory_does_not_hide_a_failure(self, tmp_path: Path) -> None:
+    async def test_a_rerun_after_changing_directory_replaces_an_earlier_failure(self, tmp_path: Path) -> None:
         outputs = iter(['[exit code: 1]', '(no output)', '(no output)'])
         agent = _agent(
             tmp_path,
             _write(),
             _run('pytest -q'),
-            _run('cd other'),
+            _run('cd tests && ls'),
             _run('pytest -q'),
             'Done.',
-            capability=RequireVerification(max_attempts=1),
             outputs=lambda command: next(outputs),
         )
 
         result = await agent.run('Fix the bug')
 
-        assert _attempts(result.new_messages()) == [1]
+        assert result.output == 'Done.'
+        assert _redirects(result.new_messages()) == []
 
     async def test_reads_the_result_before_tool_output_limits_rewrite_it(self, tmp_path: Path) -> None:
         output = 'passed\n' * 5_000

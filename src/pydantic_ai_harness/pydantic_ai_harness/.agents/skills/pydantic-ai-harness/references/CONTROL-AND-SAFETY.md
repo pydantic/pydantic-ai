@@ -932,7 +932,7 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
   text are ignored. Pass/fail is read from `Shell`'s `[exit code: N]`/timeout/file-limit trailer, the `shell`
   tool's `exit_code`, or ACP's `[exited with code N]`/`[terminated by signal S]` (other formats pass); a background or still-running command never counts and clears that
   command's earlier result. A check that an edit in a parallel call of the same response overtook
-  records nothing. Results are kept per `cd`/`pushd`/`popd` context; probes (`--version`, `--help`,
+  records nothing. Results are keyed by command text, not working directory; probes (`--version`, `--help`,
   `--collect-only`) are not checks; results are read inside `ToolOutputLimits`. `edit_commands` match outside quotes (defaults include formatters, `--fix`, `sed -i`,
   `git checkout`/`stash`/..., `mv`/`cp`/`rm`, `sh -c`/`python -c`/`node -e`, and `>` except `->`, `>&`, `/dev/null`).
 - The redirect is a `VerificationRequiredPart` (an `InstructionCapabilityPart` from
