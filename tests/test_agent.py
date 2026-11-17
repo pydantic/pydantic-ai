@@ -11079,17 +11079,19 @@ async def test_run_cancelled_at_any_point_leaves_no_task_behind():
     agent = Agent(TestModel())
 
     for ticks in range(500):  # pragma: no branch
-        tasks_before = asyncio.all_tasks()
-        run = asyncio.create_task(agent.run('test'))
-        for _ in range(ticks):
+        with no_leaked_tasks():
+            run = asyncio.create_task(agent.run('test'))
+            for _ in range(ticks):
+                await asyncio.sleep(0)
+            run.cancel()
+            try:
+                await run
+            except asyncio.CancelledError:
+                completed = False
+            else:
+                completed = True
             await asyncio.sleep(0)
-        run.cancel()
-        try:
-            await run
-        except asyncio.CancelledError:
-            await asyncio.sleep(0)
-            assert asyncio.all_tasks() - tasks_before == set(), f'task left pending when cancelled after {ticks} ticks'
-        else:
+        if completed:
             # The run finished before the cancellation arrived, so every point of it has been covered.
             break
     else:  # pragma: no cover
