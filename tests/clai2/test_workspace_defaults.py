@@ -22,7 +22,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, Work
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
 from pydantic_clai2 import Session
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 
 
 @pytest.mark.parametrize('stock', [False, True])

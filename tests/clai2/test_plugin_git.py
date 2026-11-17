@@ -7,10 +7,13 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 from collections.abc import Generator
 from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from typing import Literal
 
 import anyio
 import pytest
@@ -19,7 +22,7 @@ from pydantic_clai2.commands import plugins_command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.plugin_requirements import Requirements
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins._git import clone_repository, parse_repository
+from pydantic_clai2.plugins.git import clone_repository, parse_repository
 from pydantic_clai2.plugins.loader import PluginError
 
 from .test_plugin_loader import SEGMENT, Harness
@@ -106,16 +109,65 @@ class Tagged(Plugin[Options, None]):
     def save_configured(
         plugin: PluginSettings, *, requires: Requirements | None = None, overwrite: bool = True
     ) -> None:
+        assert not overwrite
         save(plugin, requires=requires, overwrite=overwrite)
-        if not overwrite:
-            # Another session may configure the declaration before activation learns its requirements.
-            save(plugin.model_copy(update={'settings': {'mode': 'custom'}}))
+        # Another session may configure the declaration before activation learns its requirements.
+        save(plugin.model_copy(update={'settings': {'mode': 'custom'}}))
 
     monkeypatch.setattr(harness.store, 'save_plugin', save_configured)
     await harness.loader.command(['add', repository.as_uri()])
     assert requests == [('add', 'demo_plugin')]
     assert harness.store.plugin_requirements('demo_plugin') == {'mode': ['git-plugin-mode']}
     assert harness.store.plugins()[0].settings == {'mode': 'custom'}
+    await harness.loader.close('exit')
+
+
+@pytest.mark.parametrize('change', ['remove', 'replace'])
+@pytest.mark.parametrize('activation', ['enable', 'git-add'])
+async def test_activation_keeps_a_plugin_changed_by_another_store(
+    tmp_path: Path, repository: Path, activation: Literal['enable', 'git-add'], change: Literal['remove', 'replace']
+) -> None:
+    harness = Harness(tmp_path)
+    replacement = PluginSettings(
+        id='demo_plugin', factory='other_plugin', path=str(repository / '__init__.py'), settings={'mode': 'custom'}
+    )
+    changed = (
+        'store.delete_plugin(self.host.name)'
+        if change == 'remove'
+        else f'store.save_plugin(PluginSettings.model_validate_json({replacement.model_dump_json()!r}))'
+    )
+    source = f"""
+from pathlib import Path
+from pydantic import BaseModel
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import Plugin
+
+class Options(BaseModel):
+    mode: str = 'plain'
+
+class Tagged(Plugin[Options, None]):
+    @classmethod
+    def from_host(cls, host):
+        return cls(host, host.settings(Options, requires={{'mode': ['git-plugin-mode']}}))
+
+    async def on_session_start(self, event):
+        store = SettingsStore(Path({str(harness.store.path)!r}))
+        {changed}
+"""
+    (repository / '__init__.py').write_text(source)
+    git(repository, 'add', '.')
+    git(repository, 'commit', '-m', 'Change declaration through a second store during activation')
+    if activation == 'enable':
+        harness.store.save_plugin(
+            PluginSettings(id='demo_plugin', factory='demo_plugin', path=str(repository / '__init__.py'), enabled=False)
+        )
+        await harness.loader.enable('demo_plugin')
+    else:
+        await harness.loader.command(['add', repository.as_uri()])
+
+    assert harness.store.plugins() == ([] if change == 'remove' else [replacement])
+    assert harness.store.plugin_requirements('demo_plugin') is None
     await harness.loader.close('exit')
 
 
@@ -197,6 +249,21 @@ async def test_add_git_plugin_lifecycle(tmp_path: Path, repository: Path, entryp
     await restarted.loader.close('exit')
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='requires creating a directory symlink without special privileges')
+async def test_add_git_plugin_under_a_symlinked_plugins_folder(tmp_path: Path, repository: Path) -> None:
+    """The checkout path is saved resolved, and still counts as inside a plugins folder reached through a symlink."""
+    (tmp_path / 'real-plugins').mkdir()
+    (tmp_path / 'plugins').symlink_to(tmp_path / 'real-plugins')
+    harness = Harness(tmp_path)
+    assert (await harness.loader.command(['add', repository.as_uri()])).startswith('Added and loaded demo_plugin.')
+    await harness.loader.close('exit')
+
+    fresh = Harness(tmp_path)
+    await fresh.loader.load_all()
+    assert await fresh.commands.execute_async('/git_hello') == 'Hello from Git'
+    await fresh.loader.close('exit')
+
+
 async def test_remove_git_plugin_with_a_missing_entrypoint(tmp_path: Path, repository: Path) -> None:
     harness = Harness(tmp_path)
     await harness.loader.command(['add', repository.as_uri()])
@@ -266,7 +333,7 @@ async def test_module_without_id_does_not_start_a_git_install(tmp_path: Path, so
 
 def test_shell_git_install_directs_user_to_a_clai_session(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    with pytest.raises(ValueError, match=r'only inside a CLAI session: /plugins add GIT_URL'):
+    with pytest.raises(ValueError, match=r'Run `/plugins add https://example.com/plugin.git` in a CLAI session'):
         plugins_command(harness.store, ['add', 'https://example.com/plugin.git'])
     assert harness.store.plugins() == []
     assert not (harness.store.plugins_dir / '_git').exists()
@@ -324,6 +391,8 @@ async def test_add_usage_mentions_git_urls(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     with pytest.raises(ValueError, match='Usage: /plugins add GIT_URL'):
         await harness.loader.command(['add'])
+    with pytest.raises(ValueError, match=r'Usage: plugins list\|add ID MODULE\[:ATTR\] \[JSON\]'):
+        await harness.loader.command(['add', 'one', 'module:Factory', '{}', 'extra'])
     assert harness.store.plugins() == []
 
 
@@ -408,14 +477,15 @@ async def test_interrupted_clone_is_cleaned_up(tmp_path: Path, monkeypatch: pyte
 
     async def interrupted_clone(url: str, destination: Path) -> tuple[int, bytes]:
         assert url == 'https://example.com/plugin.git'
-        (destination / '__init__.py').write_text('raise AssertionError("Not installed yet")')
+        entry = destination / '__init__.py'
+        await anyio.to_thread.run_sync(entry.write_text, 'raise AssertionError("Not installed yet")')
         assert harness.loader.entries() == []
         cloning.set()
         if cancel:
             await anyio.sleep_forever()
         raise TimeoutError
 
-    monkeypatch.setattr('pydantic_clai2.plugins._git.clone_repository', interrupted_clone)
+    monkeypatch.setattr('pydantic_clai2.plugins.git.clone_repository', interrupted_clone)
     if cancel:
         async with anyio.create_task_group() as group:
             group.start_soon(harness.loader.command, ['add', 'https://example.com/plugin.git'])
@@ -441,10 +511,10 @@ async def test_plugin_created_while_cloning_is_preserved(
         if origin == 'saved':
             other.save_plugin(existing)
         else:
-            harness.write('demo_plugin')
+            await anyio.to_thread.run_sync(harness.write, 'demo_plugin')
         return result
 
-    monkeypatch.setattr('pydantic_clai2.plugins._git.clone_repository', concurrent_clone)
+    monkeypatch.setattr('pydantic_clai2.plugins.git.clone_repository', concurrent_clone)
     with pytest.raises(ValueError, match='already exists'):
         await harness.loader.command(['add', repository.as_uri()])
     assert not (harness.store.plugins_dir / '_git' / 'demo_plugin').exists()
@@ -512,7 +582,7 @@ async def test_clone_terminates_git_and_ssh_helper(
         else:
             await harness.loader.command(['add', 'ssh://example.invalid/demo-plugin.git'])
 
-    monkeypatch.setattr('pydantic_clai2.plugins._git.fail_after', controlled_timeout)
+    monkeypatch.setattr('pydantic_clai2.plugins.git.fail_after', controlled_timeout)
     git_pid: int | None = None
     ssh_pid: int | None = None
     try:
@@ -545,6 +615,55 @@ async def test_clone_terminates_git_and_ssh_helper(
             # A helper reparented to init may briefly be a zombie, but it must no longer be running.
             assert all(state.strip().startswith('Z') for state in states.stdout.splitlines())
     finally:
+        if git_pid is not None:
+            with suppress(ProcessLookupError):
+                os.killpg(git_pid, signal.SIGKILL)
+    assert harness.store.plugins() == []
+    assert not (harness.store.plugins_dir / '_git' / 'demo_plugin').exists()
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses an SSH helper with POSIX process groups and a Unix socket')
+@pytest.mark.parametrize('taskkill', ['launch_failure', 'nonzero_exit'])
+async def test_cancelled_clone_is_not_held_by_a_descendant_when_taskkill_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, taskkill: str
+) -> None:
+    """Windows falls back to killing only Git; a descendant still holding stderr must not block cleanup."""
+    harness = Harness(tmp_path)
+    false = shutil.which('false')
+    assert false is not None
+    monkeypatch.setattr('pydantic_clai2.runtime.processes.sys', SimpleNamespace(platform='win32'))
+    monkeypatch.setattr(
+        'pydantic_clai2.runtime.processes.taskkill_path',
+        lambda: str(tmp_path / 'missing-taskkill.exe') if taskkill == 'launch_failure' else false,
+    )
+    git_pid: int | None = None
+    ssh_pid: int | None = None
+    watchdog: threading.Timer | None = None
+    try:
+        with TemporaryDirectory(prefix='clai-git-') as directory:
+            socket_path = str(Path(directory) / 'ready')
+            monkeypatch.setenv(
+                'GIT_SSH_COMMAND',
+                shlex.join([sys.executable, str(Path(__file__).with_name('plugin_git_ssh.py')), socket_path]),
+            )
+            monkeypatch.setenv('GIT_SSH_VARIANT', 'ssh')
+            listener = await anyio.create_unix_listener(socket_path)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                async with listener, anyio.create_task_group() as group:
+                    group.start_soon(harness.loader.command, ['add', 'ssh://example.invalid/demo-plugin.git'])
+                    async with await listener.accept() as ready:
+                        data = bytearray()
+                        async for chunk in ready:
+                            data.extend(chunk)
+                    git_pid, ssh_pid = map(int, data.decode().split())
+                    # Shielded cleanup ignores the deadline above, so end a hang by releasing stderr instead.
+                    watchdog = threading.Timer(READINESS_WAIT_TIMEOUT / 3, os.kill, (ssh_pid, signal.SIGKILL))
+                    watchdog.start()
+                    group.cancel_scope.cancel()
+            assert watchdog is not None and watchdog.is_alive(), 'cleanup waited for the descendant holding stderr'
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
         if git_pid is not None:
             with suppress(ProcessLookupError):
                 os.killpg(git_pid, signal.SIGKILL)

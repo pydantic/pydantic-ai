@@ -25,7 +25,7 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
@@ -78,8 +78,8 @@ async def test_temporal_history_replays_veto_and_background_job_once(tmp_path: P
         capabilities=[LocalWorkspace(tmp_path), FileSystem(), Shell(), TemporalDurability()],
     )
 
-    @agent.on_event(FileChangeRequestEvent)
-    async def veto(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @agent.on_event(FileChangeRequestedEvent)
+    async def veto(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         _vetoes.append(event.path)
         event.cancel('denied')
 

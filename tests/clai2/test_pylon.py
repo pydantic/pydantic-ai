@@ -103,7 +103,7 @@ async def for_run(loaded: LoadedPlugin[None]) -> Pylon[None] | None:
     running = capability(CTX)
     assert inspect.isawaitable(running)
     result = await running
-    assert result is None or isinstance(result, Pylon)
+    assert result is None or (isinstance(result, Pylon) and result.defer_loading)
     return result
 
 
@@ -114,9 +114,9 @@ async def built(loaded: LoadedPlugin[None]) -> Pylon[None]:
     return result
 
 
-def config(settings: pylon.PylonSettings | None = None) -> pylon.PylonConfig:
+def config(settings: pylon.PylonSettings | None = None) -> pylon.PylonSource:
     saved: list[pylon.PylonSettings] = []
-    return pylon.PylonConfig(settings or pylon.PylonSettings(), saved.append)
+    return pylon.PylonSource(settings or pylon.PylonSettings(), saved.append)
 
 
 def reset(key: str) -> MenuResult:

@@ -72,7 +72,9 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         if isinstance(auth, KeyReference):
             return (
                 DayAI[DepsT](
-                    auth=SavedKey(name=auth.name, setup=SETUP), include_instructions=self.settings.include_instructions
+                    defer_loading=True,
+                    auth=SavedKey(name=auth.name, setup=SETUP),
+                    include_instructions=self.settings.include_instructions,
                 ),
             )
         return (self.for_run,)
@@ -84,7 +86,9 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         # Checked per run, so signing in from the menu or `/day_ai login` applies to the next prompt.
         if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
             return None
-        return DayAI[DepsT](client=SIGN_IN.client(), include_instructions=self.settings.include_instructions)
+        return DayAI[DepsT](
+            defer_loading=True, client=SIGN_IN.client(), include_instructions=self.settings.include_instructions
+        )
 
     def settings_menu(self) -> SettingsMenu:
         source = DayAISource(self.host)
@@ -94,7 +98,7 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         console = self.host.console
         auth = self.settings.auth
         if isinstance(auth, KeyReference):
-            if auth.name not in load_keys():
+            if auth.name not in await to_thread.run_sync(load_keys):
                 # Each run fails closed until the key is saved.
                 console.print(
                     f'Day AI has no token: {auth.name} is not in /keys. {SETUP}',

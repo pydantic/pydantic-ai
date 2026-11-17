@@ -1,0 +1,942 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: 01707a52-3905-4b02-8104-f660d76bca16
+    session:
+      id: a16d8c70a9f94be4bc2ee41323f00bd9
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-3.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      tools:
+      - type: function
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        description: Look up the weather for a city.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: de087b28-efb5-4b3d-9ecd-0a5361499438
+    conversation:
+      id: 49b88a09-075e-4537-924e-6cf9606ff6a3
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: ping
+    event_id: e271878a-a5ce-45b1-8044-a718d2b95ecf
+    timestamp: 1792709530978
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.13
+  data:
+    session:
+      instructions: Always call get_weather for a weather question, then answer in
+        one short sentence.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+      model: grok-voice-3.0
+      tools:
+      - type: function
+        function:
+          name: get_weather
+          description: Look up the weather for a city.
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 18e44f08-86eb-4ed2-88f4-9d068bc05ffd
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.13
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  at: 0.13
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.198
+  data:
+    type: conversation.item.added
+    event_id: 66352b73-e0cf-4aef-bb42-678b9cbdcd42
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.202
+  data:
+    type: response.created
+    event_id: 84d3da86-d33d-4079-8812-7ee9ab410c08
+    response:
+      id: 4af99349-6738-406f-bc0d-6d929cc2cba6
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.694
+  data:
+    type: response.output_item.added
+    event_id: 1cf55496-08da-4844-a1e6-fff65a5956dd
+    item:
+      id: 9ec71861-b493-4f1e-81d9-6e83790440eb
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: user
+      call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    response_id: 4af99349-6738-406f-bc0d-6d929cc2cba6
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.694
+  data:
+    type: conversation.item.added
+    event_id: 915a4154-874e-476a-887a-4c2fd8a2e57e
+    item:
+      id: 9ec71861-b493-4f1e-81d9-6e83790440eb
+      object: realtime.item
+      type: function_call
+      status: in_progress
+      role: tool
+      call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+      name: get_weather
+      arguments: ''
+      replayed: false
+    previous_item_id: pydantic_ai_item_0
+- kind: message
+  direction: received
+  at: 0.694
+  data:
+    type: response.function_call_arguments.delta
+    event_id: c61a40cb-a7c4-4cf0-8d65-02ea8e2440e1
+    item_id: 9ec71861-b493-4f1e-81d9-6e83790440eb
+    response_id: 4af99349-6738-406f-bc0d-6d929cc2cba6
+    delta: '{"city":"London"}'
+    call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.694
+  data:
+    type: response.function_call_arguments.done
+    event_id: 4bd7dc78-7424-4084-ab4a-603072deabd2
+    item_id: 9ec71861-b493-4f1e-81d9-6e83790440eb
+    response_id: 4af99349-6738-406f-bc0d-6d929cc2cba6
+    output_index: 0
+    call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+    name: get_weather
+    arguments: '{"city":"London"}'
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.695
+  data:
+    type: response.output_item.done
+    event_id: 929acd59-cd6f-4820-9445-b2ffc12f9ce7
+    item:
+      id: 9ec71861-b493-4f1e-81d9-6e83790440eb
+      object: realtime.item
+      type: function_call
+      status: completed
+      role: user
+      call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+      name: get_weather
+      arguments: '{"city":"London"}'
+      replayed: false
+    response_id: 4af99349-6738-406f-bc0d-6d929cc2cba6
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.695
+  data:
+    type: response.done
+    event_id: 73b805f9-bdd0-4cb1-b2bf-cbd3ad6d435f
+    response:
+      id: 4af99349-6738-406f-bc0d-6d929cc2cba6
+      object: realtime.response
+      output:
+      - id: 9ec71861-b493-4f1e-81d9-6e83790440eb
+        object: realtime.item
+        type: function_call
+        status: completed
+        role: user
+        call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+        name: get_weather
+        arguments: '{"city":"London"}'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    response_id: 4af99349-6738-406f-bc0d-6d929cc2cba6
+    usage:
+      input_tokens: 7
+      input_token_details:
+        text_tokens: 7
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 0
+      output_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      total_tokens: 7
+      output_audio_seconds: 0.0
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.695
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+      output: '{"error":"The tool raised an unhandled error."}'
+- kind: message
+  direction: sent
+  at: 0.696
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.762
+  data:
+    type: conversation.item.added
+    event_id: 2c5e4e87-7125-46f3-a332-04eb60e3fbad
+    item:
+      id: 15a8878a-c526-4e8a-939d-1957e95da756
+      object: realtime.item
+      type: function_call_output
+      status: completed
+      role: tool
+      call_id: call-ad0fd613-a652-49a3-9abd-57f5e963ba99-0
+      output: '{"error":"The tool raised an unhandled error."}'
+      replayed: false
+    previous_item_id: 9ec71861-b493-4f1e-81d9-6e83790440eb
+- kind: message
+  direction: received
+  at: 0.766
+  data:
+    type: response.created
+    event_id: 7d3069a1-4711-4616-beb2-4c36e6f5eed6
+    response:
+      id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.954
+  data:
+    type: response.output_item.added
+    event_id: 54e8d293-093a-4dc2-b156-3b1488273949
+    item:
+      id: a6a38696-7341-460b-b12c-6aa15bf58b10
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.954
+  data:
+    type: conversation.item.added
+    event_id: 46495829-4c90-4613-9839-9dd49347f799
+    item:
+      id: a6a38696-7341-460b-b12c-6aa15bf58b10
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: 15a8878a-c526-4e8a-939d-1957e95da756
+- kind: message
+  direction: received
+  at: 0.955
+  data:
+    type: response.content_part.added
+    event_id: 6a68b0ce-b2c2-4f0c-831a-9b3c1cb6f49f
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 1.129
+  data:
+    type: response.output_audio.delta
+    event_id: b125c67a-6f7d-4c82-9e4b-cf492fcd8d08
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: DQATABYAFQANAAYAAwACAAQACwASABMAEQAPAAwACgAH
+    content_index: 0
+    output_index: 0
+    rid: 02f21cb1-62b6-42db-b034-fcc12570a180
+    latency: '0.32'
+    audio_duration_ms: 489
+    ts: 1792709532080
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.13
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 02f21cb1-62b6-42db-b034-fcc12570a180
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: I wasn't able to retrieve the weather
+    content_index: 0
+    output_index: 0
+    rid: 02f21cb1-62b6-42db-b034-fcc12570a180
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.13
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: c834d674-41fd-4841-8b93-cfabb05fbc37
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: ' for London right now.'
+    content_index: 0
+    output_index: 0
+    rid: c834d674-41fd-4841-8b93-cfabb05fbc37
+    start_time: 1.6
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.166
+  data:
+    type: response.output_audio.delta
+    event_id: d00a6d27-4138-43a2-85d7-54fae0bc32e7
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: lgJG/Vr4OveS90b48PqjAKwF3AU5AKT58fWb9zX7lf+g
+    content_index: 0
+    output_index: 0
+    rid: 02f21cb1-62b6-42db-b034-fcc12570a180
+    audio_duration_ms: 642
+    ts: 1792709532145
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.315
+  data:
+    type: response.output_audio.delta
+    event_id: 8e668988-9ca2-4b35-a848-c6b73248efc2
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: hwD/AAABjgAxAL//T/8x/4T/7v8bAFIAlgCIAFkAHAC8
+    content_index: 0
+    output_index: 0
+    rid: 02f21cb1-62b6-42db-b034-fcc12570a180
+    audio_duration_ms: 398
+    ts: 1792709532300
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.323
+  data:
+    type: response.output_audio.delta
+    event_id: e6e1481b-e3da-4931-a00c-b6b53c8f00c1
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: 5vXA+Ov7hP6OAKUCdwOxA4YDegPhA1kEpAOmAbb/rf6o
+    content_index: 0
+    output_index: 0
+    rid: c834d674-41fd-4841-8b93-cfabb05fbc37
+    audio_duration_ms: 550
+    ts: 1792709532306
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.346
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: c6938d97-0c74-45c6-8f5d-86886f1cd1bf
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: ' Want me to try again?'
+    content_index: 0
+    output_index: 0
+    rid: c6938d97-0c74-45c6-8f5d-86886f1cd1bf
+    start_time: 2.88
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.365
+  data:
+    type: response.output_audio.delta
+    event_id: afe69ed1-12c4-48c0-96fc-147ed8323907
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: cgA1APX/sv9t/y3/8v63/oP+Vf4r/gf+6P3L/br9uv2+
+    content_index: 0
+    output_index: 0
+    rid: c834d674-41fd-4841-8b93-cfabb05fbc37
+    audio_duration_ms: 642
+    ts: 1792709532347
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.366
+  data:
+    type: response.output_audio.delta
+    event_id: ea6cbf90-9113-4b39-af6b-202bd31874f7
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: 5f/l/+X/5v/o/+v/8f/4//7////9//f/8//w/+3/7f/t
+    content_index: 0
+    output_index: 0
+    rid: c834d674-41fd-4841-8b93-cfabb05fbc37
+    audio_duration_ms: 61
+    ts: 1792709532351
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.482
+  data:
+    type: response.output_audio.delta
+    event_id: a647a9cb-4bd6-4d52-8bb1-74b0f5331074
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: BgAEAAQAAwADAAIAAQAAAAAAAAAAAP////8AAAAAAgAC
+    content_index: 0
+    output_index: 0
+    rid: c6938d97-0c74-45c6-8f5d-86886f1cd1bf
+    audio_duration_ms: 550
+    ts: 1792709532465
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.616
+  data:
+    type: response.output_audio.delta
+    event_id: b180a5fe-653b-4fd9-8b42-0e59b305923c
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: AgULBQYF/gQABRMFHwUmBSEFEwUNBQ0FCwUIBQgFCgUF
+    content_index: 0
+    output_index: 0
+    rid: c6938d97-0c74-45c6-8f5d-86886f1cd1bf
+    audio_duration_ms: 612
+    ts: 1792709532597
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.662
+  data:
+    type: response.output_audio.delta
+    event_id: 66f1a83e-1cdc-4e35-80ad-656e17c73fe2
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: 0wYeBfEDiQMSA+4BcQBf/+D+XP5Q/QT8C/tw+sb5wPiL
+    content_index: 0
+    output_index: 0
+    rid: c6938d97-0c74-45c6-8f5d-86886f1cd1bf
+    audio_duration_ms: 367
+    ts: 1792709532647
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.663
+  data:
+    type: response.output_audio.delta
+    event_id: 3e465fa2-7f14-4e0f-a086-3f035c42af6b
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: BwAHAAcACAAHAAcABgAFAAMAAgAAAAAAAAD///7//v/+
+    content_index: 0
+    output_index: 0
+    rid: c6938d97-0c74-45c6-8f5d-86886f1cd1bf
+    audio_duration_ms: 61
+    ts: 1792709532651
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.666
+  data:
+    type: response.output_audio.delta
+    event_id: 80d9610d-bd0a-4dc6-b497-9ba92b5e2271
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    delta: +v/5//n/+f/5//n/+f/5//r/+//7//z//P/9//7//v//
+    content_index: 0
+    output_index: 0
+    rid: c6938d97-0c74-45c6-8f5d-86886f1cd1bf
+    audio_duration_ms: 87
+    ts: 1792709532653
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.666
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 2981f616-da77-463d-8c8a-9d17b24d7bdd
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    transcript: I wasn't able to retrieve the weather for London right now. Want me
+      to try again?
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.667
+  data:
+    type: response.content_part.done
+    event_id: f4a498b3-3153-4413-bfad-e79b655ebe35
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.667
+  data:
+    type: response.output_audio.done
+    event_id: 01e158f0-728c-4a0f-b86f-42ee1f1dc171
+    item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.667
+  data:
+    type: response.output_item.done
+    event_id: 067d5566-0858-4d77-9a90-e111bacbc410
+    item:
+      id: a6a38696-7341-460b-b12c-6aa15bf58b10
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.667
+  data:
+    type: response.done
+    event_id: d71331bf-7c9c-4832-8212-66a29ec83716
+    response:
+      id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+      object: realtime.response
+      output:
+      - id: a6a38696-7341-460b-b12c-6aa15bf58b10
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: I wasn't able to retrieve the weather for London right now.
+            Want me to try again?
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    response_id: 480a4e9c-3926-48ca-a088-342b7d7de8b5
+    usage:
+      input_tokens: 0
+      input_token_details:
+        text_tokens: 0
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 238
+      output_token_details:
+        text_tokens: 18
+        audio_tokens: 220
+        grok_tokens: 0
+      total_tokens: 238
+      output_audio_seconds: 4.4
+      billable_audio_seconds: 1
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 1.667
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.2
+    item:
+      id: pydantic_ai_item_2
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is two plus two? Answer with just the number.
+- kind: message
+  direction: sent
+  at: 1.667
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.2
+    response:
+      metadata:
+        pydantic_ai_inputs: '2'
+- kind: message
+  direction: received
+  at: 1.734
+  data:
+    type: conversation.item.added
+    event_id: 108e3af5-f8d0-4180-9a93-8bc9ab6c06ec
+    item:
+      id: pydantic_ai_item_2
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is two plus two? Answer with just the number.
+      replayed: false
+    previous_item_id: a6a38696-7341-460b-b12c-6aa15bf58b10
+- kind: message
+  direction: received
+  at: 1.741
+  data:
+    type: response.created
+    event_id: 415aa83a-d08b-4b5d-9462-a0d1efc2eb25
+    response:
+      id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.563
+  data:
+    type: response.output_item.added
+    event_id: de3e50f8-da62-4548-8a5b-467e225af68d
+    item:
+      id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.563
+  data:
+    type: conversation.item.added
+    event_id: 68254ca3-11f9-4b5a-b228-1a7006909b44
+    item:
+      id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_2
+- kind: message
+  direction: received
+  at: 2.563
+  data:
+    type: response.content_part.added
+    event_id: 804c7d6a-21d9-41ae-9c34-befd16b7d90c
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 2.804
+  data:
+    type: response.output_audio.delta
+    event_id: f18151c3-623b-46a4-8d4b-b2eca7bc30d6
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    delta: CgAPABQAEgALAAUAAgAAAAIACQAQABEADgAMAAkABgAE
+    content_index: 0
+    output_index: 0
+    rid: 62357eeb-8f54-455a-adcc-782f208052d4
+    latency: '1.03'
+    audio_duration_ms: 489
+    ts: 1792709533754
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.804
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 62357eeb-8f54-455a-adcc-782f208052d4
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    delta: '4'
+    content_index: 0
+    output_index: 0
+    rid: 62357eeb-8f54-455a-adcc-782f208052d4
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.805
+  data:
+    type: response.output_audio.delta
+    event_id: 388c36db-b738-4cfd-9f6b-a0734bc23b1d
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    delta: NwAvACEAEQACAPn/9P/2//7/BgAOABMAEgAPAAkAAQD8
+    content_index: 0
+    output_index: 0
+    rid: 62357eeb-8f54-455a-adcc-782f208052d4
+    audio_duration_ms: 61
+    ts: 1792709533759
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.805
+  data:
+    type: response.output_audio.delta
+    event_id: b31951dd-7887-4c5e-ba1e-9a71be14ba0d
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    delta: AAAAAAAAAAAAAP///v/9//v/+//6//r/+v/6//r/+//8
+    content_index: 0
+    output_index: 0
+    rid: 62357eeb-8f54-455a-adcc-782f208052d4
+    audio_duration_ms: 80
+    ts: 1792709533760
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.805
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 187b78dd-6ab7-4289-827c-925964f3cee1
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    transcript: '4'
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.805
+  data:
+    type: response.content_part.done
+    event_id: 28dc2006-6065-49f2-ad3c-aae3323b407b
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.805
+  data:
+    type: response.output_audio.done
+    event_id: 231c4852-5bba-4a57-a51c-9d5571adebf2
+    item_id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.805
+  data:
+    type: response.output_item.done
+    event_id: 43b33764-7678-42fc-829d-53b43186fae3
+    item:
+      id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.805
+  data:
+    type: response.done
+    event_id: b993ef00-c2d1-4358-910b-3cc81ca7b58a
+    response:
+      id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+      object: realtime.response
+      output:
+      - id: 43a24b5c-df3a-401d-a82d-92594a8f9c1d
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: '4'
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '2'
+      status_details: unimplemented
+      usage: {}
+    response_id: 9e97f8ad-d2da-4f08-9c4d-219948b921e9
+    usage:
+      input_tokens: 12
+      input_token_details:
+        text_tokens: 12
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 34
+      output_token_details:
+        text_tokens: 2
+        audio_tokens: 32
+        grok_tokens: 0
+      total_tokens: 46
+      output_audio_seconds: 0.64
+      billable_audio_seconds: 3
+    previous_item_id: null

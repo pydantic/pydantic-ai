@@ -93,18 +93,20 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         capability = await self._call(ctx)
         if capability is None:
             return None
-        capability = await capability.for_run(ctx)
+        capability = await capability._for_run_keeping_authority(ctx)  # pyright: ignore[reportPrivateUsage]
         return await _evaluate_agent_toolset(capability.get_toolset(), ctx)
 
     async def _call(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
         """Call the factory and bind what it returns to the agent, without calling its `for_run`."""
-        capability = self.capability_func(ctx)
+        # The factory is this capability's code, so what it enqueues is held to this capability's authority.
+        capability = self.capability_func(ctx._attributed_to(self))  # pyright: ignore[reportPrivateUsage]
         if inspect.isawaitable(capability):
             capability = await capability
         if capability is None:
             return None
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
-        return capability.for_agent(ctx.agent)
+        # The factory's capability keeps its own authority through its lifecycle hooks, as any other does.
+        return capability._keep_authority(capability.for_agent(ctx.agent))  # pyright: ignore[reportPrivateUsage]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         called = _called_factories.get()
@@ -115,7 +117,10 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             capability = await self._call(ctx)
         if capability is None:
             return self
-        return ResolvedDynamicCapability(wrapped=await capability.for_run(ctx), dynamic_toolset=self.get_toolset())
+        return ResolvedDynamicCapability(
+            wrapped=await capability._for_run_keeping_authority(ctx),  # pyright: ignore[reportPrivateUsage]
+            dynamic_toolset=self.get_toolset(),
+        )
 
 
 @dataclass

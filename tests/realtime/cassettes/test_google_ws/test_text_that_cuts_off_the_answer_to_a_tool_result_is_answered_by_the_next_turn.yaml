@@ -1,0 +1,134 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Keep replies to one short sentence. Use the lookup tool for any order.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Look up an order's status.
+          name: lookup
+          parameters:
+            properties:
+              order:
+                type: STRING
+            required:
+            - order
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.147
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.156
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the status of my order 4411?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.546
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.566
+  data:
+    toolCall:
+      functionCalls:
+      - name: lookup
+        args:
+          order: '4411'
+        id: fc_11136937295486020284
+- kind: message
+  direction: sent
+  at: 0.57
+  data:
+    tool_response:
+      functionResponses:
+      - id: fc_11136937295486020284
+        name: lookup
+        response:
+          output: Order 4411 has shipped and arrives on Friday.
+- kind: message
+  direction: sent
+  at: 0.571
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Also, what is 2 plus 2? Answer with the number.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.61
+  data:
+    serverContent:
+      interrupted: true
+- kind: message
+  direction: received
+  at: 0.829
+  data:
+    sessionResumptionUpdate:
+      newHandle: c7a83281-32ff-4b28-9520-1cef5efdc39e
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.89
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 216
+      responseTokenCount: 13
+      totalTokenCount: 229
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 169
+- kind: message
+  direction: received
+  at: 1.179
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 1.198
+  data:
+    serverContent:
+      outputTranscription:
+        text: '4'
+- kind: message
+  direction: received
+  at: 1.199
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 1.215
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 280
+      totalTokenCount: 280
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 205

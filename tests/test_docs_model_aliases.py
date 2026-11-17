@@ -66,7 +66,7 @@ _KINDS = {
     )
 }
 # Models the providers serve that Pydantic AI doesn't list as known yet; drop each once it does.
-_NOT_YET_KNOWN = {'xai:grok-4.7', 'openai:gpt-image-2.5-flare'}
+_NOT_YET_KNOWN = {'openai:gpt-image-2.5-flare'}
 # Chat models the tiers don't cover, such as audio and research models, may be named directly.
 _UNTIERED = re.compile(r'image|audio|tts|whisper|guard|moderation|computer-use|research|codex|multi-agent|^o\d')
 

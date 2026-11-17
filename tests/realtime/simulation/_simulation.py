@@ -189,7 +189,15 @@ class Simulation(ABC):
         self.operations: list[Operation] = []
         self.waiters: list[Waiter] = []
         self.events: list[RealtimeEvent] = []
-        self.consumer_error: BaseException | None = None
+        self.turn_completes: list[Waiter] = []
+        """Each `RealtimeTurnCompleteEvent` the session streamed, as a wait that returned as it was queued."""
+        self.consumer_errors: list[BaseException] = []
+        """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
+        self.exchanges_abandoned_at: list[int] = []
+        """When the session parked each failure that ends the exchange in progress (a usage limit a tool's result would
+        pass, a tool result that failed to send), on the shared clock: the moment the exchange ended, which is before
+        the failure is raised from `async for`. Not a tool that raised, whose failure result goes out on every
+        provider: the model answers it, so the exchange goes on."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False
@@ -266,6 +274,7 @@ class Simulation(ABC):
                 async with realtime.session(handle_barge_in=self.options.handle_barge_in) as session:
                     self.session = session
                     self.checker.attach(session)
+                    self._record_parked_failures(session)
                     self.observe_connection(session._connection)  # pyright: ignore[reportPrivateUsage]
                     self._view = session.stream_audio()
                     ready.set()
@@ -296,13 +305,41 @@ class Simulation(ABC):
 
         return agent
 
+    def _record_parked_failures(self, session: RealtimeSession) -> None:
+        park = session._park_error  # pyright: ignore[reportPrivateUsage]
+
+        def park_and_record(error: BaseException, *, abandons_exchange: bool = True) -> None:
+            if abandons_exchange:
+                self.exchanges_abandoned_at.append(self._now())
+            park(error, abandons_exchange=abandons_exchange)
+
+        session._park_error = park_and_record  # pyright: ignore[reportPrivateUsage]
+
     async def _consume(self) -> None:
-        assert self.session is not None
+        """Iterate the session as an app that reports a failure and keeps listening does, until receiving ends.
+
+        A tool that raised, or a usage limit tripped by a tool's result, is raised from `async for` while the session
+        goes on receiving: iterating again picks the conversation up where it was.
+        """
+        session = self.session
+        assert session is not None
         try:
-            async for event in self.session:
-                self.events.append(event)
-        except BaseException as e:
-            self.consumer_error = e
+            while True:
+                try:
+                    async for event in session:
+                        self.events.append(event)
+                    return
+                except BaseException as e:
+                    self.consumer_errors.append(e)
+                    # Iterate again while the session is still reading the provider. (Once closed, iterating again
+                    # raises at once: stop rather than spin.)
+                    if (
+                        isinstance(e, asyncio.CancelledError)
+                        or session.closed
+                        or session._pump_finished  # pyright: ignore[reportPrivateUsage]
+                        or session._receive_ending  # pyright: ignore[reportPrivateUsage]
+                    ):
+                        return
         finally:
             self.receive_ended = True
             self.receive_ended_at = self._now()
@@ -310,7 +347,7 @@ class Simulation(ABC):
     receive_ended = False
     """Whether the session's event stream has ended: it reads nothing more from the provider.
 
-    Usually with `consumer_error` set, but not when a send was the first to be told why it ended.
+    Usually with `consumer_errors` set, but not when a send was the first to be told why it ended.
     """
     receive_ended_at: int | None = None
     """When the session's event stream ended, on the shared clock."""
@@ -610,7 +647,9 @@ class Simulation(ABC):
 
         try:
             self.loop.run_until_complete(handoff())
-        except Exception as e:  # pragma: no cover (only when a standard run rejects the history)
+        # Only when a standard run rejects the history, which fails the scenario. `lax`: Python 3.11's tracer has
+        # recorded stray arcs onto this line in CI, with other arcs past the end of `_loop.py` in the same data.
+        except Exception as e:  # pragma: lax no cover
             self.checker.report('history.handoff', [(f'a standard run rejected the history: {e!r}', {})])
 
     # --- views for the invariants -------------------------------------------------------------------

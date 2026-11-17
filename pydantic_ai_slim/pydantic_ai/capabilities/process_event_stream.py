@@ -88,8 +88,9 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]),
         this capability's handler always runs in workflow or flow code and must be
         deterministic because it re-runs on workflow replay. Tool-call and final-output
-        events arrive live; model events are the real captured events replayed after each
-        model-request activity, step, or task completes. For handler I/O that must run
+        events arrive live; model events are replayed from the final response after each
+        model-request activity, step, or task completes, one `PartStartEvent` per part
+        rather than the streamed deltas. For handler I/O that must run
         exactly once inside a durable boundary, pass `event_stream_handler=` to the
         durability capability instead.
     """

@@ -6,7 +6,7 @@ terminal path through `configure` with scripted widget runners.
 
 import io
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TypeGuard
 
@@ -135,6 +135,7 @@ def only(loader: PluginLoader[None]) -> Linear[None]:
     """The capability the next run gets with an API key."""
     [capability] = loader.capabilities()
     assert is_linear(capability)
+    assert capability.defer_loading
     return capability
 
 
@@ -145,7 +146,9 @@ async def for_run(loader: PluginLoader[None]) -> Linear[None] | None:
     plugin = entry.loaded.plugin
     assert isinstance(plugin, linear.LinearPlugin)
     assert loader.capabilities() == [plugin.for_run]
-    return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+    capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+    assert capability is None or capability.defer_loading
+    return capability
 
 
 async def connected(loader: PluginLoader[None]) -> Linear[None]:
@@ -158,7 +161,9 @@ def token(loader: PluginLoader[None]) -> str | None:
     """What the next run connects with."""
     capability = only(loader)
     assert callable(capability.auth)
-    return capability.auth(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    token = capability.auth(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    assert not isinstance(token, Awaitable)
+    return token
 
 
 async def run(commands: Commands, text: str) -> str:

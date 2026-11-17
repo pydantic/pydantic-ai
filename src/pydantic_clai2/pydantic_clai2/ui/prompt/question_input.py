@@ -22,7 +22,7 @@ class Paste:
 
 @dataclass(frozen=True, kw_only=True)
 class TranscriptKey:
-    """A page key or mouse report that scrolls or selects the transcript above the question, never the answer."""
+    """A page key or mouse report that scrolls the transcript or selects painted text, never input to the answer."""
 
     key: str
     data: str = ''
@@ -39,8 +39,8 @@ def question_input() -> Generator[Callable[[], QuestionKey]]:
     source = create_input()
 
     def feed(key: str, data: str) -> None:
-        # Inline questions keep Ctrl-J as confirmation, unlike the multiline editor.
-        if key == 'ctrl-j':
+        # Inline questions keep Ctrl-J and Ctrl-Enter as confirmation, unlike the multiline editor.
+        if key in ('ctrl-j', 'ctrl-enter'):
             key = 'enter'
         if key in TRANSCRIPT_KEYS:
             pending.put(TranscriptKey(key=key, data=data))

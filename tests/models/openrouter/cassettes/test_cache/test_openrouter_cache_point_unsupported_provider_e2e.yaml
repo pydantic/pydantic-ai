@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
       accept:
       - application/json
@@ -8,88 +11,104 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '458'
+      - "443"
       content-type:
       - application/json
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content:
-        - text: 'Some context. Some context. Some context. Some context. Some context. Some context. Some context. Some context.
-            Some context. Some context. Some context. Some context. Some context. Some context. Some context. Some context.
-            Some context. Some context. Some context. Some context. '
-          type: text
-        - text: Summarize in one sentence.
-          type: text
-        role: user
-      model: openai/gpt-5-mini
-      stream: false
-    uri: https://openrouter.ai/api/v1/chat/completions
+    body:
+      type: json
+      content:
+        model: openai/gpt-5-mini
+        stream: false
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Some context. Some context. Some context. Some context. Some context. Some
+              context. Some context. Some context. Some context. Some context. Some context. Some
+              context. Some context. Some context. Some context. Some context. Some context.
+              Some context. Some context. Some context.
+            type: text
+          - text: Summarize in one sentence.
+            type: text
   response:
+    status: 200
     headers:
       access-control-allow-origin:
-      - '*'
+      - "*"
       access-control-expose-headers:
-      - X-Generation-Id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '3039'
       content-type:
       - application/json
       permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
       referrer-policy:
       - no-referrer, strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        logprobs: null
-        message:
-          content: The passage consists of the phrase "Some context" repeated many times as placeholder text.
-          reasoning: null
-          reasoning_details:
-          - data: gAAAAABqIyQ7ILg5uoZ-3weyz1PyI17vmGRxvBIPH055J7wpLwI68Uagj-fKd_M71nCDiSz2VdT4_gNSSovsNfZVEtcFt-xVbhXmJSIM_VnE0vgLIQknv_MUSBg4o4kgEdm1w4MTOYoDvV4F7_grxyWIhhMYJfG1y0dCYWVM4931tYN5jhNiY9r4CDlEgVb92wRNKBhEyokeAULlTKSYIt_5ag1ZvLSMCy20JXgpt3rIhtvF86bBmTwHUi4sINMDt3oFLsn6nwssLnkR5LMjOUme4RjOpQdkVRPrr5by0Ma713jrEtBEwxFTkJcquK5iP9B5ZoJ5flw4XWO9CXJO9U835AhVGe66CCUNwKhwuwVO_QY5qY7f9B9rhgDMPjrvS_zabaCXgbF-zt9RixuOx_JLwPp5TMskuyZquvdoa7PhnESRenwM-GNlDmxerVjLdU7C14jAZlNYitt9Oc-wBdgNrTdoDdXkAz8o_E8-KPC2C9jIrtrH4_7xnFkCxGTYY5aoi9IybnCubJd2DAnGuP4gEA8tCRS0svAM_NXoY4OOb_S8dcRe5gQCoy_K34PnFlGK3xUqhqbWzQtk-FGFLe5dWK4-jODpAJbzAlBWbeX4EPh20Aik1R0GFHtlXnPfcBCLJwcbtPUs69JP6xwdmdkGqgS7Zm3ADEYJZgtF0kNkXDN70S-11MCURr2LAZSEr_hSG5B7IRX1Yb5WcHZOU5NffnHw7VDiPnHHEEZIK9cY3Gp0KlyAVP2__vzH52-g5I2W0bMHfEEYd0uet_JqOfQ9oTJsWKMF-VXb2Ko3jOIdIVbRgeC-vFOrP2Ksu0vrOsfE1L--1L2rfMeHysZqNjk6yAN6B1gz3MNkCgh_PvC9Y8QJBqrwJ_GU9avBeyMutZIyr7pNnJtcQpagVN1YuV1rbfASLoOm48OdrwJXkcKx03MoVwC6j_iPBWvhHadFnlm6X5edmjB2-L2OSDRAMjCG-xPtQFNUw5kfo76aMf8RyTN1ZXqb4XS2s80gWLKyahmuRjOlkIwJ24OaxoCDs9FFTFijkwQmuZ740rCHevOrAvHnf1prL6ErlFylJEI7qhEMU54bBsw9AjBoZbh2yIX0QOMW68PCEHT4ksDaPQuveBN_1cPnzy1YnoHIr4lRgRySuXPij4R240ocWHWdBXERMSYBM_qk1k1UBcgGkyLpHaQvhjHQS2xjkuNjzAG6gHrcth5OH5BTqhRiXPqSt4WipCcGEEZjso_nGs5hUcQ_uKzFO2Q6XAB-Wu6SS_SVXACtZYZ5r_s0SkRaAavMcDyfSPiiiLPzYqIWdMjGfEt-mkYaAs-Kp_SwP8FDGfQsnYhGbIA0917O4rnNwz2vB5BsIOdvVIaC25zFw5A0Q1AjoJmgQVNzeoF80GsS7ONQQP625_6NKNTY9x0K3jX-mk6PQXmBMD-BCPkM_HAIiTKtvuT-5-sn_vE9Hte7btlOKsAj1kdqXLczuhhsXzB2RCHF1K-ZynjOH4E2DsrfIzfiM7-AeY03-5K9AxylgvLGgSiX_g1aKHZ_ghRH4iC3L6fQegGhwrXSw_vE7_gdwYejO3PzmqAnCP-OShlzzvbjN_JJ624WNBfGHvncrtER4m84_vun1toBCkm6-FQnVpdUrgRJJGk-z28QkVEL7z5I4ZpdspTSwAPdSP4HUio8Z-yFa2HhdLP9b2HxtMp69yT4qfktm_LYW8LjWp9ot1nnyYvjyqP98UZXZ1qNM0FSyGe9AnXJz71IusH2Sr6mm_8MqHpYn0JMNF883DvtGFcN-oRr-PFIo2ZE9ESFuRJC7ETPMUOAc8BnmOSnL1xfhvjq0q153S35ZdXoxY4TwuLd6Y3uWyuC5g9zZ3xKE9gdWZMKrcvDXooZ7w==
-            format: openai-responses-v1
-            id: rs_03f20f185dc3521b016a232439d9dc8193a10b3262cd8cd77b
-            index: 0
-            type: reasoning.encrypted
-          refusal: null
-          role: assistant
-        native_finish_reason: completed
-      created: 1780687929
-      id: gen-1780687929-N11vOR9p4zj9yq5Lb4ss
-      model: openai/gpt-5-mini-2025-08-07
-      object: chat.completion
-      provider: OpenAI
-      service_tier: default
-      system_fingerprint: null
-      usage:
-        completion_tokens: 162
-        completion_tokens_details:
-          audio_tokens: 0
-          image_tokens: 0
-          reasoning_tokens: 128
-        cost: 0.00034225
-        cost_details:
-          upstream_inference_completions_cost: 0.000324
-          upstream_inference_cost: 0.00034225
-          upstream_inference_prompt_cost: 1.825e-05
-        is_byok: false
-        prompt_tokens: 73
-        prompt_tokens_details:
-          audio_tokens: 0
-          cache_write_tokens: 0
-          cached_tokens: 0
-          video_tokens: 0
-        total_tokens: 235
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        id: gen-1793763588-C1JdCy5jL9Kk3SBorJrk
+        object: chat.completion
+        created: 1793763588
+        model: openai/gpt-5-mini
+        provider: OpenAI
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: >-
+              The passage repeatedly states "Some context," emphasizing that contextual
+              information is present but without providing any specific details.
+            refusal: null
+            reasoning: |-
+              **Summarizing repeated context**
+
+              It seems the user is looking for a one-sentence summary of the content, which consists solely of the phrase "Some context" repeated 21 times. I could respond with something like: "The text emphasizes 'some context' repeatedly without providing any substantive details." I'll make sure to keep it concise and directly to the point as the user requested! I think that fits perfectly for what they're after.
+            reasoning_details:
+            - type: reasoning.summary
+              summary: |-
+                **Summarizing repeated context**
+
+                It seems the user is looking for a one-sentence summary of the content, which consists solely of the phrase "Some context" repeated 21 times. I could respond with something like: "The text emphasizes 'some context' repeatedly without providing any substantive details." I'll make sure to keep it concise and directly to the point as the user requested! I think that fits perfectly for what they're after.
+              format: openai-responses-v1
+              index: 0
+            - type: reasoning.encrypted
+              data: >-
+                gAAAAABq6qkHVEsohNytAx37Yij1L7mN14vLcfKlRsFgi9xbkJlwGOZZi1xEZoCMFKslpty9eu_2lfQvsmlieVSQ-g3J9JXdMWoK1M2N5U8Z12wzzuIc9Tb3Spxauu1FJL5tLlUYbkhKaWiGcGGNAtpdUWmPg0xfZ-2SA5zDBjp0o8YFmAqSG0MtfpI4WyixIo0WTCYRSq27tg3UjwgcU63s3SmxIB_hsVoxT5DK77P5BIP5djWfxEWDNwM9oMue7Vo2Lxai7bLLahk_ZSmmKNxrZ4PhiNbp8aILpZNR76enWHrJ2E_Zdbsh8zA4KyEJdSJMWLOE4k10f7KzUNadM19HT6HdwWdZ7F2zf8aMnmqHtVxW4lblnkL_-e5EqrWE5KWsai2F3qk8d4yIRXQJ53sHePnCjLvwNNYToQJrAXKRDkYfKY6LbZv6Ts_tTlEjQjIZTkbwDXUvzgUz3FHRJxjevdDnRzVL-XolIsHoDRngtnVyNrRfur6YTKzFeCiMoVw3XDRKQzq4ySsTZTb-cwJ83WVYOmALyhmAPtDmQk8wRvs1YkuKpzKr-xeIVrathbfmjQIEuja6ulCsrTz8u_84nf-Oa6k-k6YAs2R87PgoNJChOaVLv1q8l1H8xWv_Wh2B-1lJA4A3ECO9A5qt61DZMVItcKI_dCqSpCJ-7BlNQ1D8WUgcc1uQ6wIHDJbmbqvrC3oAjgcQ27gQtMcxjpGml4GHViGXVsD03NjRLvRcu5n3pvrZ8gDhqyby3tFX3kqBVCTW2m_Sx4qRIyro1feQTp-MbGPYHABGOXhCmrrkJuuprjSNB1F02slbZbg9FmiVczhqBvjVJCdebar_7oCUMiMQPoIK2uXnL1dD5P0I1HiI4MxvLjlcfyKYUPRTj-jcI2g7n1Ixk7-P3uijyGfON6YPz8BFf1ywWQYOkjFOfG23jrfZLihhyTdyJy6_hvfizHlnVdeMyNpU3qV0v0nHb9LJNlMIEQL4jYDcaR7rBMqbRasNwmdVhYJl2Wxd2Ii3tjj_N4x2fB2FCodHvRzdlSeABJ5bkzFtBJHWRdyFonBr0DZ0fY7yAqkoD1Sj4kjtH2aVuIntU-fokYvoqEP4YVjBaR1wyEv0nKn8nXAC5cbrmFxCDquC1xZ89bjESn14GD2vHBi2pcRyh88cfRGgPA9MJfW8Na_s02R-ihdrsDBGNWbEiuBcfWtP6eHEYv1YUhkJfreY2LZRtr5_4eX0DdFUBaA9zBsMJPj4Kt30VhdVxWkX72MG3mAGRz3nje459yzEcLnkji_Fu-btMuqZ3HO-SwtBbhez4SbCBLhY-LBs35a0lMcEEmdC5LDyGffkLi60FisjyugbjMfxhtZMJw6BaJqhjbmxCfKafFzjBz_yaPsuWGBtEPPC19G3tk61wykkWTt-U9CZbipEitROuKE-lCmzVH6Dq30bF4FbFH0FDRW7hChvCReSHhNtnp1piD0WpFIDvuq_LvUq2Mzs-BwBiFXHXmDPfUrC3EKRkCtxKkarLy7zq6MJjEXLdul1rkXT4GyfnLt0mz3G3hd327CGYnErW-x3G5TiVdY3hs0SkuWN596UXCqEHtCQe3kopuKSSEMszsWekPu-o2pKaEdEjHstaPM1mUK0-ZXaRRsF6utzO76J1tnNR-UFcoyazozUv7h_xS9h6GP52AbiLzoWS6lNrc8GsAnRsF0oRN7FhP3OPXB_gMe1BRmVI-xzdazVhUwaCQoYM-3RXmig5gDAFpto7ef9eAUv1Pd0lThszLmVWWd0WRtMQ6kbd9Wu4x9G7Vm6Sz5TbKhkD-s_GXpR5WSomxdlGcTvtnQypNSrVYaFlSmrAt9x1F36eJlN63ZY9BOyJauHg2tskhUDq7UB1Droug_7-G3si3XCf6vd-HIyDVVUpkrVclvH0-trIVPSlTv_B7wv6GAMo2GS41HU2Lx5gdOX7JsEyl8laQhDqHR7oFgGiLg5IQ5f4sgBhtp8YlyJjfmFn4KIMK3fU5bY7Z4TX---4g8jdGJkbDzd20lYx4IHvJeoDidTEoEWK-9vzVvtQPkNwPeJZDh5hgJ266_frkGNRgSsrst1OoxD4dh2yvwNL85E6GbICTll_Rowq1j5mDEPRER2khmbocI-qfrv1b1Lt6tP5_GiV1-Gx7OrEOJqHC1T8_xkRqtWIzBwu11gwDNWrXJReQaIJOrQ_YJgSUTBi_HX1WTFOeaMatWMDnU28Z_epFBcgt0ZCVG_3PDzJNwxPv535clrIfsJndBwjTHQNUZ-weIzCGoE0oGUekqceF-VoCjzNbekVJHflPyDVxFOzyLf7MAlG-Cfe2DR9L_7XIDhtQII1wxaZNBzpD_pIq-KgewND3mZG9-CY3_K7-m3WfcF86mDFQOmv3Y4yHUB3AuurEyQEo6oGIdc5_aZ4wBsYxyqjpS5tmgpzOk_ihV2Qx46WRCtq-tD49bi6RiwrT2XRKVShxBNAveRpUVdN9pDRaNZfzDC1InYrlRegkf_GtDomoPndbPBB7nOkNWNtdyZhYZQVZZYZn48A62PfcDfyHlvDkpcqTkDAyUnuQ4yDbMsJL53alec3CWUR4LzUmNszIAa-_KqgUyqKqWK4r4TxhTc8YGHFQDoY2nXiIbX1xf2QHbQR5XTRRkzZen8MkdkLJyizAVFvQUxjF6Pfx8d_kAuiY5_lFy1gtbBgiLZchRLjhQuS7aORg_Ox1SofeoUSrNJV6NIePZUf46B43LfJFYbVfLZJZEdrX0XCGaaQZeiVfkTKXHCIcONMCr1IWbt5CH6nHTTiIZlSAkiCMpKPh1Qogl94pedaW2Jbi_XuwRniFszfKwrKNk6KwxDGnJDVVgTUHJJz-isphFV7pys0uinx_zrBC1lvA_TYWL4oawZTc7z07pMLftdYdDGhZAPcqzTbcQ3jlNJ3ThO1v82E996p_ve0UKT4FyOMkJdgalhO88ACRh3G6I10RbD18Lx2m_vcTjSI5g3_PJXOXIx0mBpn_nInz-R8YEexEkY00AqjebH1Rzo-8f2iUskxvjhy14xAzINKQhTv1k=.eyJlbmRwb2ludF9zbHVnIjoib3BlbmFpL2dwdC01LW1pbmktMjAyNS0wOC0wN3xvcGVuYWkifQ
+              format: openai-responses-v1
+              id: rs_073df8cfc2eb61e0016aeaa904f96487d1854dab8508808581
+              index: 1
+        usage:
+          prompt_tokens: 73
+          completion_tokens: 130
+          total_tokens: 203
+          cost: 0.00027825
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00027825
+            upstream_inference_prompt_cost: 0.00001825
+            upstream_inference_completions_cost: 0.00026
+          completion_tokens_details:
+            reasoning_tokens: 64
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-04T03:39:51.472870+00:00

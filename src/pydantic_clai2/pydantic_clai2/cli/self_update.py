@@ -6,6 +6,8 @@ and core sdists from the same commit, whose exact dev pins are not on PyPI. Rele
 API requests, so neither the check nor the install needs `git` or meets the unauthenticated API rate limit. A
 source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation,
 serving its web UI again on the same port with the same token when one ran.
+The install replaces the environment's files, so it is refused while another `clai2` process runs from it; one
+started while uv installs is not covered.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
 CLAI exits.
 """
@@ -13,24 +15,26 @@ CLAI exits.
 import base64
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass, field
+from functools import partial
 from importlib import metadata
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import IO, TYPE_CHECKING, Annotated
 
 from anyio import CancelScope, open_process, run_process, to_thread
 from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_clai2.config import UpdateChannel
-from pydantic_clai2.plugins import UpdateProgress, UpdateStage
+from pydantic_clai2.plugins import InstallProgress, UpdateStage
 from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
@@ -61,7 +65,7 @@ class _VcsInfo(TypedDict):
     commit_id: str
 
 
-class _DirectUrl(TypedDict, total=False):
+class _DirectURL(TypedDict, total=False):
     url: str
     vcs_info: _VcsInfo
 
@@ -78,7 +82,7 @@ class _Manifest(TypedDict):
     commit: Annotated[str, StringConstraints(pattern=r'^[0-9a-f]{40}$')]
 
 
-_DIRECT_URL = TypeAdapter(_DirectUrl)
+_DIRECT_URL = TypeAdapter(_DirectURL)
 _PYPI_PROJECT = TypeAdapter(_PyPIProject)
 _MANIFEST = TypeAdapter(_Manifest)
 
@@ -109,7 +113,7 @@ def installed() -> Installed:
     """
     distribution = metadata.distribution(DISTRIBUTION)
     text = distribution.read_text('direct_url.json')
-    direct_url = _DIRECT_URL.validate_json(text) if text else _DirectUrl()
+    direct_url = _DIRECT_URL.validate_json(text) if text else _DirectURL()
     archive = _COMMIT_ARCHIVE.fullmatch(direct_url.get('url', ''))
     vcs = direct_url.get('vcs_info')
     return Installed(
@@ -153,11 +157,16 @@ class Update:
         return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
-        """The `uv tool install` that replaces the current install; `main` reads `overrides`."""
+        """The `uv tool install` that replaces the current install; `main` reads `overrides`.
+
+        `--compile-bytecode` writes the `.pyc` files during the install, so the restart into the new build
+        does not compile every module it imports.
+        """
+        install = [uv, 'tool', 'install', '--force', '--compile-bytecode']
         if self.channel == 'stable':
-            return [uv, 'tool', 'install', '--force', f'{DISTRIBUTION}=={self.target}']
+            return [*install, f'{DISTRIBUTION}=={self.target}']
         assert overrides is not None, 'a main install needs the overrides file'
-        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), DISTRIBUTION]
+        return [*install, '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
@@ -262,11 +271,82 @@ class Relaunch(SystemExit):
         self.web = web
 
 
+async def _tool_dir(uv: str, *options: str) -> Path | None:
+    result = await run_process([uv, 'tool', 'dir', *options], check=False)
+    return Path(result.stdout.decode().strip()) if result.returncode == 0 else None
+
+
 async def tool_executable(uv: str) -> str | None:
     """The `clai2` that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
-    result = await run_process([uv, 'tool', 'dir', '--bin'], check=False)
-    path = Path(result.stdout.decode().strip(), 'clai2')
-    return str(path) if result.returncode == 0 and path.is_file() else None
+    directory = await _tool_dir(uv, '--bin')
+    path = None if directory is None else directory / 'clai2'
+    return str(path) if path is not None and await to_thread.run_sync(path.is_file) else None
+
+
+RUNNING = 'clai2-running'
+"""The folder in a `uv tool` environment where each `clai2` running from it locks a `PID-NAMESPACE-TOKEN.lock` file."""
+
+
+def _process_prefix() -> str:
+    # Containers sharing the environment can reuse a PID; on Linux, their PID namespaces tell them apart.
+    namespace = Path('/proc/self/ns/pid')
+    return f'{os.getpid()}-{namespace.stat().st_ino if namespace.exists() else 0}-'
+
+
+def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
+    """Mark this process as running from the `uv tool` environment at `prefix` while the returned file stays open.
+
+    `None` outside a `uv tool` environment, on Windows (whose install waits for CLAI to exit), or where the lock
+    cannot be taken. The kernel releases the lock however the process ends; `running_elsewhere` then removes the file.
+    """
+    if sys.platform == 'win32' or not (prefix / 'uv-receipt.toml').is_file():
+        return None
+    import fcntl
+
+    # The token keeps the name of a file left behind before `/update` restarted this process apart.
+    pending = prefix / RUNNING / f'{_process_prefix()}{secrets.token_hex(4)}.pending'
+    try:
+        pending.parent.mkdir(exist_ok=True)
+        file = pending.open('wb')
+    except OSError:
+        return None
+    try:
+        fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Named `.lock` only once locked, so `running_elsewhere` never takes it for one left behind.
+        pending.rename(pending.with_suffix('.lock'))
+    except OSError:
+        file.close()
+        pending.unlink(missing_ok=True)
+        return None
+    return file
+
+
+def running_elsewhere(environment: Path) -> list[str]:
+    """The PIDs of the other `clai2` processes running from `environment`; removes the files of ones that exited."""
+    if sys.platform == 'win32':  # pragma: no cover -- `fcntl` is POSIX only, and Windows installs after CLAI exits.
+        return []
+    import fcntl
+
+    pids: list[str] = []
+    own = _process_prefix()
+    for path in (environment / RUNNING).glob('*.lock'):
+        if path.name.startswith(own):
+            continue
+        try:
+            with path.open('rb') as file:
+                fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                path.unlink()
+        except BlockingIOError:
+            pids.append(path.stem.partition('-')[0])
+        except OSError:  # Removed meanwhile by another check.
+            continue
+    return sorted(pids)
+
+
+async def sibling_processes(uv: str) -> list[str]:
+    """The PIDs of other `clai2` processes running from the `uv tool` environment an install would replace."""
+    directory = await _tool_dir(uv)
+    return [] if directory is None else await to_thread.run_sync(running_elsewhere, directory / DISTRIBUTION)
 
 
 def _in_thread(work: Callable[[], None]) -> None:
@@ -312,67 +392,135 @@ def _write_overrides(text: str) -> Path:
     return Path(name)
 
 
+CHECK_MAX_AGE = 3600.0
+"""Seconds before the footer checks for a newer CLAI again."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class UpdateCheck:
+    """What a check of `channel` found: a newer CLAI in `update`, none, or the `error` that kept it from telling."""
+
+    channel: UpdateChannel
+    update: Update | None = None
+    error: str | None = None
+    checked: float = field(default=0.0, compare=False)
+    """When the answer landed, on `Updates.clock`."""
+
+
 @dataclass(kw_only=True)
 class Updates:
-    """The footer's update notice and the `/update` command, for the channel the settings name."""
+    """The footer's update notice, the update menu's status, and the `/update` install, for the channel the settings name."""
 
     channel: Callable[[], UpdateChannel]
     current: Installed = field(default_factory=installed)
     fetch: Callable[[UpdateChannel], str] = latest
     spawn: Callable[[Callable[[], None]], None] = _in_thread
     """Runs the background check; tests run it inline."""
+    clock: Callable[[], float] = time.monotonic
+    """Times the check's answers, to check again once they are old."""
     run: Callable[[Sequence[str], Output | None], Awaitable[int]] = _run_uv
     """Runs uv, handing its lines to the output when there is one."""
-    report: Callable[[], Callable[[UpdateProgress], Awaitable[None]] | None] = lambda: None
+    report: Callable[[], Callable[[InstallProgress], Awaitable[None]] | None] = lambda: None
     """Who hears how an install goes: the shell's plugins, while one listens."""
     capture: Callable[[], bool] = lambda: False
     """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
+    serving: Callable[[], WebHandoff | None] = lambda: None
+    """The web UI served now, for the new `clai2` to serve again once `/update` restarts CLAI."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
     """Starts the Windows install that runs after CLAI exits."""
     locate: Callable[[str], Awaitable[str | None]] = tool_executable
     """Finds the installed `clai2` from the uv executable."""
+    others: Callable[[str], Awaitable[list[str]]] = sibling_processes
+    """Finds the other `clai2` processes the install would break, from the uv executable."""
     restart_required: bool = False
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
     """The new `clai2` to start once the shell has exited, when the install found one."""
+    failed: bool = False
+    """Set when an update was found but not installed: uv failed, is not on `PATH`, or other `clai2`s run from it."""
+    web: WebHandoff | None = None
+    """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
-    _found: Update | None = field(default=None, init=False)
+    _result: UpdateCheck | None = field(default=None, init=False)
+    _done: threading.Event = field(default_factory=threading.Event, init=False)
+    _started: float = field(default=0.0, init=False)
+
+    async def _in_use(self, uv: str | None, update: Update) -> str | None:
+        """Why `update` cannot replace the install now: other `clai2` processes run from it and would break."""
+        if uv is None or self.windows or not (others := await self.others(uv)):
+            return None
+        self.failed = True
+        return (
+            f'Not updating to {update.label}: other clai2 processes run from the install it would replace, '
+            f'and would break (PID {", ".join(others)}). Quit them, then update again.'
+        )
 
     def segment(self) -> str:
-        """A status-row hint once a background check finds an update; checks again when the channel changes.
+        """A status-row hint once a background check finds an update; checks again on a channel change or after an hour.
 
         Only `uv tool` installs check, so a source checkout never contacts PyPI or GitHub on its own.
         """
         if not self.current.tool:
             return ''
-        channel = self.channel()
-        if channel != self._checked:
-            self._checked, self._found = channel, None
-            self.spawn(lambda: self._check(channel))
-        found = self._found
-        return f'update {found.label}: /update' if found is not None and found.channel == channel else ''
+        found = self.check()
+        return f'update {found.update.label}: /update' if found is not None and found.update is not None else ''
 
-    def _check(self, channel: UpdateChannel) -> None:
+    def check(self, *, wait: float = 0.0, max_age: float = CHECK_MAX_AGE) -> UpdateCheck | None:
+        """The check of the current channel, started in the background unless one ran for it within `max_age` seconds.
+
+        `None` while the channel's first check runs; an older answer stays until a newer one lands. Waits for the
+        answer until `wait` seconds after the check started, so a menu opened at once can show it.
+        """
+        channel = self.channel()
+        stale = self._result is not None and self.clock() - self._result.checked > max_age
+        if channel != self._checked or (self._done.is_set() and stale):
+            if channel != self._checked:
+                self._result = None
+            done = threading.Event()
+            self._checked, self._done, self._started = channel, done, time.monotonic()
+            self.spawn(lambda: self._check(channel, done))
+        if (left := self._started + wait - time.monotonic()) > 0:
+            self._done.wait(left)
+        found = self._result
+        return found if found is not None and found.channel == channel else None
+
+    def _check(self, channel: UpdateChannel, done: threading.Event) -> None:
         import httpx
 
-        # Offline or rate-limited: no notice. `/update` reports the error when asked directly.
-        with suppress(httpx.HTTPError, ValueError):
-            self._found = find_update(channel, self.current, self.fetch(channel))
+        try:
+            update = find_update(channel, self.current, self.fetch(channel))
+            found = UpdateCheck(channel=channel, update=update, checked=self.clock())
+        except (httpx.HTTPError, ValueError) as exc:
+            # Offline or rate-limited: no footer notice. The menu says why, and `/update now` reports it too.
+            error = str(exc).partition('\n')[0] or type(exc).__name__
+            found = UpdateCheck(channel=channel, error=error, checked=self.clock())
+        if channel == self._checked:  # Not a check of a channel the settings have since left.
+            self._result = found
+        done.set()
 
     async def command(self, args: list[str]) -> str:
-        """Install the newest CLAI on the current channel with `uv tool install`, then restart into it."""
-        if args:
-            raise ValueError('Usage: /update. Pick the channel with /set updates.channel stable|main.')
+        """Install the newest CLAI on the current channel with `uv tool install`, then restart into it.
+
+        `/update now` in a session, where bare `/update` opens the menu; `clai2 --update` passes no arguments.
+        """
+        if args not in ([], ['now']):
+            raise ValueError(
+                'Usage: /update opens the update menu; /update now installs the newest CLAI. '
+                'Pick the channel with /set updates.channel stable|main.'
+            )
         channel = self.channel()
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
             return f'CLAI {self.current.label} is the newest on the {channel} channel.'
-        uv = self.find_uv()
-        overrides = _write_overrides(update.overrides()) if channel == 'main' else None
+        uv = await to_thread.run_sync(self.find_uv)
+        if (refusal := await self._in_use(uv, update)) is not None:
+            return refusal
+        overrides = await to_thread.run_sync(_write_overrides, update.overrides()) if channel == 'main' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:
+            self.failed = True
             # Keep the overrides file: the printed command reads it.
             shown = powershell(command) if self.windows else shlex.join(command)
             return (
@@ -391,7 +539,7 @@ class Updates:
 
         async def tell(stage: UpdateStage, text: str = '') -> None:
             if report is not None:
-                await report(UpdateProgress(stage=stage, target=update.label, text=text))
+                await report(InstallProgress(stage=stage, target=update.label, text=text))
 
         async def line(text: str) -> None:
             await tell('output', text)
@@ -399,18 +547,24 @@ class Updates:
         # Cancelling uv halfway could leave the environment half replaced, so let it finish.
         code: int | None = None
         try:
+            # Read now: once uv has run, a module imported for the first time is the new build's, which may need
+            # names the old build's modules already in memory lack.
+            served = self.serving()
             with CancelScope(shield=True):
                 await tell('installing')
                 code = await self.run(command, line if report is not None and self.capture() else None)
         finally:
             if overrides is not None:
-                overrides.unlink(missing_ok=True)
+                with CancelScope(shield=True):
+                    await to_thread.run_sync(partial(overrides.unlink, missing_ok=True))
             if code != 0:  # Also when uv could not run at all.
                 await tell('failed')
         if code != 0:
+            self.failed = True
             return f'uv exited with status {code}; see its output above.'
         self.restart_required = True
         self.relaunch = await self.locate(uv)
+        self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
             return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'

@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "Harness 0.x: a dynamic reminder may now also return a `GeneratedReminder`, which `LLMReminder` returns so `SystemReminders` quotes model-generated text as data instead of sending it in system voice. Every callable that returned `str | None` still matches.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+}

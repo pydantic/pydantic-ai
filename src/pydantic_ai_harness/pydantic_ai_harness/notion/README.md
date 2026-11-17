@@ -4,6 +4,28 @@ Let an agent search and change content in a Notion workspace. `Notion` gives the
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Notion: search and edit a workspace through Notion's MCP server
+    accDescr: Inside your agent, the model calls tools of the Notion capability, such as notion-search, and gets their results. The capability gets a token for each run from your auth function, and with read_only=True it drops the tools not marked read-only. It calls the Notion MCP server at mcp.notion.com/mcp with an OAuth access token, and the server rejects a Notion integration token.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        notion["Notion()<br/>notion-search,<br/>notion-&lt;tool&gt;"]:::capability
+    end
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    server["Notion MCP server<br/>mcp.notion.com/mcp"]:::external
+    rejected["Notion integration token"]:::blocked
+    model <-->|"tool call, result"| notion
+    auth -->|"token for each run"| notion
+    notion <-->|"OAuth access token"| server
+    notion -.-x|"drops"| dropped
+    server -.-x|"rejects"| rejected
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Install and connect
 
 uv:
@@ -38,7 +60,7 @@ print(result.output)
 | Not set, `None`, or `''` | `NOTION_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Notion tools. A function never uses `NOTION_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Notion tools. A function never uses `NOTION_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `NOTION_ACCESS_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -65,13 +87,19 @@ agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Notion(auth=no
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only` applies to every user.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Notion" button that signs them in with Notion OAuth and saves the access token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Notion" button that signs them in with Notion OAuth and saves the access token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
-With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `notion`, so `defer_loading=True` works without one. To add more than one `Notion` to an agent, give each a distinct `id` and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `notion`, so `defer_loading=True` works without one. To add more than one `Notion` to an agent, give each a distinct `id` and `tool_prefix`; two that share an `id` but differ raise an error.
 
 ## Provider settings
 
 Connect with a Notion OAuth access token. Notion integration tokens are a different kind of credential and do not work with the hosted MCP server. Notion decides which pages and tools the user can reach. Some search and connected-source tools need a matching Notion plan and permissions.
+
+## Tool names
+
+`Notion` has no default prefix, unlike most hosted MCP capabilities: the server's tool names already start with the service, as in `notion-search`, so a default prefix would repeat it (`notion_notion-search`). The agent sees the names as they are. Set `tool_prefix` to put a prefix and `_` in front of them, for example `tool_prefix='work'` gives `work_notion-search`.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
 
 ## Tool selection and approval
 
@@ -96,8 +124,8 @@ Handle the approval requests with the [deferred tools workflow](https://pydantic
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's instructions from reaching the model.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's instructions from reaching the model.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/).
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/notion/)

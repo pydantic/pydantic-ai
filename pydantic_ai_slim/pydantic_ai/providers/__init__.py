@@ -10,7 +10,8 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self
+from urllib.parse import urlsplit
 
 import anyio
 from typing_extensions import TypeVar
@@ -38,6 +39,22 @@ def missing_api_key_error(message: str) -> UserError:
     dead-ends the getting-started experience.
     """
     return UserError(f'{message} {_KEYLESS_HINT}')
+
+
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+
+def _normalized_url(url: str) -> str:
+    """`url` with a lowercase scheme and host, an explicit default port and no trailing `/`, for comparing endpoints."""
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme.lower())
+    except ValueError:  # a malformed stored URL, such as an unclosed IPv6 bracket or an out-of-range port
+        return url
+    scheme = parts.scheme.lower()
+    netloc = f'{parts.hostname or ""}:{port}' if port else parts.hostname or ''
+    query = f'?{parts.query}' if parts.query else ''
+    return f'{scheme}://{netloc}{parts.path.rstrip("/")}{query}'
 
 
 class Provider(ABC, Generic[InterfaceClient]):
@@ -81,6 +98,64 @@ class Provider(ABC, Generic[InterfaceClient]):
         raise NotImplementedError()
 
     @property
+    def canonical_system(self) -> str:
+        """The service behind this provider, whose replayed signed data and provider-native features it shares.
+
+        Code that decides by service rather than by provider, such as which model IDs a provider-native
+        tool takes, reads this instead of `name`, so a renamed subclass keeps working. It doesn't group
+        providers by wire protocol: `AzureProvider`, and an `OpenAIProvider` subclass for another service,
+        each have their own.
+
+        For replay, it's the system whose keys and format verify the stateless signed or encrypted data
+        this provider returns. That data is encrypted reasoning, thinking and thought signatures,
+        redacted thinking and OpenAI compaction items.
+        A model sends it back only to a provider whose `canonical_system` matches, or
+        lists it in [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems]; other
+        providers get the fallback each model uses for foreign data, such as thinking rendered as text.
+        Server-side state, such as response, item and container IDs, is judged by endpoint instead: see
+        [`shares_server_state_with`][pydantic_ai.providers.Provider.shares_server_state_with].
+
+        Defaults to `name`. Built-in providers return a fixed value, so a subclass that only changes
+        `name` (one that authenticates differently against the same API, say) keeps sharing data with the
+        provider it extends. `OpenAIProvider` is the exception: a subclass with its own `name` is assumed
+        to talk to another service, and gets that name. Override this when your provider returns data
+        another provider's keys verify, like a transparent proxy.
+        """
+        return self.name
+
+    _canonical_system_follows_client: ClassVar[bool] = False
+    """Whether `canonical_system` depends on the client the provider was created with, not only on `name`.
+
+    Responses then always record their canonical system, so one name covering two systems (`google` on the Gemini
+    API or Google Cloud, `openai` on OpenAI or Azure) is never ambiguous in new history.
+    """
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """Other canonical systems whose stateless signed or encrypted data this provider also verifies.
+
+        One-way: listing a system here sends its data to this provider, not this provider's data to it.
+        See [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]. Empty by default.
+        """
+        return frozenset()
+
+    def shares_server_state_with(self, provider_url: str) -> bool:
+        """Whether this provider can look up server-side state created at the endpoint `provider_url`.
+
+        Server-side state is what the API stores and refers to by ID: stored responses (`previous_response_id`),
+        output items, conversations and code execution containers. A model sends those IDs back only when the
+        response that holds them has this provider's [`name`][pydantic_ai.providers.Provider.name] and this method
+        accepts the response's [`provider_url`][pydantic_ai.messages.ModelResponse.provider_url]; a response
+        without a `provider_url` is accepted by name alone. Other content in the response, such as text and
+        client tool calls, is sent either way.
+
+        Defaults to comparing `provider_url` with [`base_url`][pydantic_ai.providers.Provider.base_url], ignoring
+        the case of the scheme and host, a default port and a trailing `/`. Override this when two URLs reach the
+        same stored state, like a proxy alias for the API.
+        """
+        return _normalized_url(provider_url) == _normalized_url(self.base_url)
+
+    @property
     def model_id_namespace(self) -> str:
         """The namespace used to fully qualify model IDs routed through this provider."""
         return self._model_id_namespace or self.name
@@ -101,6 +176,13 @@ class Provider(ABC, Generic[InterfaceClient]):
     def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile for the named model as this provider instance is configured, which models use.
+
+        `model_profile`, unless a provider takes a profile when it's created, like `OpenAICompatibleProvider`.
+        """
+        return self.model_profile(model_name)
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile | None:
@@ -182,168 +264,169 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         provider = normalize_gateway_provider(provider)
 
-    if provider in ('openai', 'openai-chat', 'openai-responses'):
-        from .openai import OpenAIProvider
+    match provider:
+        case 'openai' | 'openai-chat' | 'openai-responses' | 'openai-decisions':
+            from .openai import OpenAIProvider
 
-        return OpenAIProvider
-    elif provider == 'openai-codex':
-        from .openai_codex import OpenAICodexProvider
+            return OpenAIProvider
+        case 'openai-codex':
+            from .openai_codex import OpenAICodexProvider
 
-        return OpenAICodexProvider
-    elif provider == 'openai-chatgpt':
-        from .openai_chatgpt import OpenAIChatGPTProvider
+            return OpenAICodexProvider
+        case 'openai-chatgpt':
+            from .openai_chatgpt import OpenAIChatGPTProvider
 
-        return OpenAIChatGPTProvider
-    elif provider == 'openai-decisions':
-        from .openai_decisions import OpenAIDecisionsProvider
+            return OpenAIChatGPTProvider
+        case 'deepseek':
+            from .deepseek import DeepSeekProvider
 
-        return OpenAIDecisionsProvider
-    elif provider == 'deepseek':
-        from .deepseek import DeepSeekProvider
+            return DeepSeekProvider
+        case 'openrouter':
+            from .openrouter import OpenRouterProvider
 
-        return DeepSeekProvider
-    elif provider == 'openrouter':
-        from .openrouter import OpenRouterProvider
+            return OpenRouterProvider
+        case 'vercel':
+            from .vercel import VercelProvider
 
-        return OpenRouterProvider
-    elif provider == 'vercel':
-        from .vercel import VercelProvider
+            return VercelProvider
+        case 'azure' | 'azure-responses':
+            from .azure import AzureProvider
 
-        return VercelProvider
-    elif provider in ('azure', 'azure-responses'):
-        from .azure import AzureProvider
+            return AzureProvider
+        case 'google' | 'google-decisions':
+            from .google import GoogleProvider
 
-        return AzureProvider
-    elif provider == 'google':
-        from .google import GoogleProvider
+            return GoogleProvider
+        case 'google-cloud':
+            from .google_cloud import GoogleCloudProvider
 
-        return GoogleProvider
-    elif provider == 'google-cloud':
-        from .google_cloud import GoogleCloudProvider
+            return GoogleCloudProvider
+        case 'bedrock':
+            from .bedrock import BedrockProvider
 
-        return GoogleCloudProvider
-    elif provider == 'bedrock':
-        from .bedrock import BedrockProvider
+            return BedrockProvider
+        case 'bedrock-mantle':
+            from .bedrock_mantle import BedrockMantleProvider
 
-        return BedrockProvider
-    elif provider == 'bedrock-mantle':
-        from .bedrock_mantle import BedrockMantleProvider
+            return BedrockMantleProvider
+        case 'groq':
+            from .groq import GroqProvider
 
-        return BedrockMantleProvider
-    elif provider == 'groq':
-        from .groq import GroqProvider
+            return GroqProvider
+        case 'anthropic':
+            from .anthropic import AnthropicProvider
 
-        return GroqProvider
-    elif provider == 'anthropic':
-        from .anthropic import AnthropicProvider
+            return AnthropicProvider
+        case 'mistral':
+            from .mistral import MistralProvider
 
-        return AnthropicProvider
-    elif provider == 'mistral':
-        from .mistral import MistralProvider
+            return MistralProvider
+        case 'cerebras':
+            from .cerebras import CerebrasProvider
 
-        return MistralProvider
-    elif provider == 'cerebras':
-        from .cerebras import CerebrasProvider
+            return CerebrasProvider
+        case 'cohere':
+            from .cohere import CohereProvider
 
-        return CerebrasProvider
-    elif provider == 'cohere':
-        from .cohere import CohereProvider
+            return CohereProvider
+        case 'system-one':
+            from .system_one import SystemOneProvider
 
-        return CohereProvider
-    elif provider == 'system-one':
-        from .system_one import SystemOneProvider
+            return SystemOneProvider
+        case 'crusoe':
+            from .crusoe import CrusoeProvider
 
-        return SystemOneProvider
-    elif provider == 'crusoe':
-        from .crusoe import CrusoeProvider
+            return CrusoeProvider
+        case 'elevenlabs':
+            from .elevenlabs import ElevenLabsProvider
 
-        return CrusoeProvider
-    elif provider == 'xai':
-        from .xai import XaiProvider
+            return ElevenLabsProvider
+        case 'xai':
+            from .xai import XaiProvider
 
-        return XaiProvider
-    elif provider == 'moonshotai':
-        from .moonshotai import MoonshotAIProvider
+            return XaiProvider
+        case 'moonshotai':
+            from .moonshotai import MoonshotAIProvider
 
-        return MoonshotAIProvider
-    elif provider == 'meta':
-        from .meta import MetaProvider
+            return MoonshotAIProvider
+        case 'meta':
+            from .meta import MetaProvider
 
-        return MetaProvider
-    elif provider == 'fireworks':
-        from .fireworks import FireworksProvider
+            return MetaProvider
+        case 'fireworks':
+            from .fireworks import FireworksProvider
 
-        return FireworksProvider
-    elif provider == 'together':
-        from .together import TogetherProvider
+            return FireworksProvider
+        case 'together':
+            from .together import TogetherProvider
 
-        return TogetherProvider
-    elif provider == 'heroku':
-        from .heroku import HerokuProvider
+            return TogetherProvider
+        case 'heroku':
+            from .heroku import HerokuProvider
 
-        return HerokuProvider
-    elif provider == 'huggingface':
-        from .huggingface import HuggingFaceProvider
+            return HerokuProvider
+        case 'huggingface':
+            from .huggingface import HuggingFaceProvider
 
-        return HuggingFaceProvider
-    elif provider == 'ollama':
-        from .ollama import OllamaProvider
+            return HuggingFaceProvider
+        case 'ollama':
+            from .ollama import OllamaProvider
 
-        return OllamaProvider
-    elif provider == 'github':
-        from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
+            return OllamaProvider
+        case 'github':
+            from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-        return GitHubProvider  # pyright: ignore[reportDeprecated]
-    elif provider == 'github-copilot':
-        from .github_copilot import GitHubCopilotProvider
+            return GitHubProvider  # pyright: ignore[reportDeprecated]
+        case 'github-copilot':
+            from .github_copilot import GitHubCopilotProvider
 
-        return GitHubCopilotProvider
-    elif provider == 'litellm':
-        from .litellm import LiteLLMProvider
+            return GitHubCopilotProvider
+        case 'litellm':
+            from .litellm import LiteLLMProvider
 
-        return LiteLLMProvider
-    elif provider == 'vllm':
-        from .vllm import VLLMProvider
+            return LiteLLMProvider
+        case 'vllm':
+            from .vllm import VLLMProvider
 
-        return VLLMProvider
-    elif provider == 'nebius':
-        from .nebius import NebiusProvider
+            return VLLMProvider
+        case 'nebius':
+            from .nebius import NebiusProvider
 
-        return NebiusProvider
-    elif provider == 'ovhcloud':
-        from .ovhcloud import OVHcloudProvider
+            return NebiusProvider
+        case 'ovhcloud':
+            from .ovhcloud import OVHcloudProvider
 
-        return OVHcloudProvider
-    elif provider == 'alibaba':
-        from .alibaba import AlibabaProvider
+            return OVHcloudProvider
+        case 'alibaba':
+            from .alibaba import AlibabaProvider
 
-        return AlibabaProvider
-    elif provider == 'sambanova':
-        from .sambanova import SambaNovaProvider
+            return AlibabaProvider
+        case 'sambanova':
+            from .sambanova import SambaNovaProvider
 
-        return SambaNovaProvider
-    elif provider == 'sentence-transformers':
-        from .sentence_transformers import SentenceTransformersProvider
+            return SambaNovaProvider
+        case 'sentence-transformers':
+            from .sentence_transformers import SentenceTransformersProvider
 
-        return SentenceTransformersProvider
-    elif provider == 'snowflake':
-        from .snowflake import SnowflakeProvider
+            return SentenceTransformersProvider
+        case 'snowflake':
+            from .snowflake import SnowflakeProvider
 
-        return SnowflakeProvider
-    elif provider == 'typesafe':
-        from .typesafe import TypeSafeProvider
+            return SnowflakeProvider
+        case 'typesafe':
+            from .typesafe import TypeSafeProvider
 
-        return TypeSafeProvider
-    elif provider == 'voyageai':
-        from .voyageai import VoyageAIProvider
+            return TypeSafeProvider
+        case 'voyageai':
+            from .voyageai import VoyageAIProvider
 
-        return VoyageAIProvider
-    elif provider == 'zai':
-        from .zai import ZaiProvider
+            return VoyageAIProvider
+        case 'zai':
+            from .zai import ZaiProvider
 
-        return ZaiProvider
-    else:
-        raise ValueError(f'Unknown provider: {provider}')
+            return ZaiProvider
+        case _:
+            raise ValueError(f'Unknown provider: {provider}')
 
 
 def infer_provider(provider: str) -> Provider[Any]:

@@ -90,7 +90,7 @@ def saved_key() -> KeyReference | None:
         raise UserError('The saved Pylon key reference is invalid. Choose a key again with /pylon key.') from None
 
 
-class PylonConfig:
+class PylonSource:
     """The settings menu's rows, backed by plugin settings plus the `/keys` reference."""
 
     title = 'Pylon settings'
@@ -197,7 +197,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
 
     def __init__(self, host: PluginHost[DepsT], settings: PylonSettings) -> None:
         super().__init__(host, settings)
-        self.config = PylonConfig(settings, host.save_settings)
+        self.config = PylonSource(settings, host.save_settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         return (self._for_run,)
@@ -238,6 +238,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
                 return None
             client, token = None, resolve_key(token=reference)
         return Pylon[DepsT](
+            defer_loading=True,
             auth=token,
             client=client,
             read_only=settings.read_only,
@@ -273,7 +274,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
         return message
 
 
-def _status(config: PylonConfig) -> str:
+def _status(config: PylonSource) -> str:
     settings = config.settings
     options = f'read-only tools {_text(settings.read_only)}, server instructions {_text(settings.include_instructions)}'
     if settings.auth == 'browser':

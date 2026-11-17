@@ -203,7 +203,9 @@ class Shell:
         return capability  # pyright: ignore[reportUnknownVariableType]
 
     async def run_capability(self) -> Ordinal[None] | None:
-        return await self.auth()(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        ordinal = await self.auth()(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert ordinal is None or ordinal.defer_loading
+        return ordinal
 
     async def next_run(self) -> Ordinal[None]:
         ordinal = await self.run_capability()

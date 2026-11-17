@@ -1,0 +1,20 @@
+--- expected
++++ actual
+@@ -37,8 +36,0 @@
+-   "content": ""
+-  },
+-  {
+-   "role": "system",
+-   "content": "Please return text."
+-  },
+-  {
+-   "role": "assistant",
+@@ -59,8 +50,0 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": ""
+-  },
+-  {
+-   "role": "system",
+-   "content": "Please return text."

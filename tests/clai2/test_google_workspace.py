@@ -2,7 +2,7 @@
 
 import asyncio
 import io
-from collections.abc import Coroutine, Sequence
+from collections.abc import Awaitable, Coroutine, Sequence
 from pathlib import Path
 
 import pytest
@@ -54,6 +54,8 @@ def loaded(plugin: PluginHost[None]) -> GoogleWorkspace[None]:
     assert not isinstance(factory, AbstractCapability)
     capability = factory(context())
     assert is_workspace(capability)
+    assert capability.defer_loading
+    assert capability.id == 'google_workspace', 'stable whatever the products, so a load survives an edit'
     return capability
 
 
@@ -63,7 +65,9 @@ def is_workspace(capability: object) -> TypeIs[GoogleWorkspace[None]]:
 
 def run_token(capability: GoogleWorkspace[None]) -> str | None:
     assert callable(capability.auth)
-    return capability.auth(context())
+    token = capability.auth(context())
+    assert not isinstance(token, Awaitable)
+    return token
 
 
 async def configure(
@@ -114,7 +118,6 @@ async def test_the_conventional_key_is_resolved_on_every_run(monkeypatch: pytest
     capability = loaded(plugin)
     assert capability.services == ('gmail', 'calendar', 'drive')
     assert capability.read_only is True
-    assert capability.id == 'google-workspace-calendar-drive-gmail'
     assert run_token(capability) == 'saved-token'
     api_keys.save_key(name='GOOGLE_ACCESS_TOKEN', value='refreshed-token')
     assert run_token(capability) == 'refreshed-token'

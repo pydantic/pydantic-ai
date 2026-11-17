@@ -31,11 +31,11 @@ from pydantic_clai2.mcp import (
     StdioServer,
     TokenStore,
 )
-from pydantic_clai2.mcp._runtime import (
+from pydantic_clai2.mcp.runtime import (
     _sign_in_required as sign_in_required,  # pyright: ignore[reportPrivateUsage]
     sign_in as sign_in_for,
 )
-from pydantic_clai2.plugins.sign_in import SignInRequired
+from pydantic_clai2.plugins.sign_in import SignInRequiredError
 from tests.clai2.conftest import stored_accounts
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
@@ -200,8 +200,8 @@ async def test_listing_tools_never_signs_in(tmp_path: Path, vault: Vault, monkey
 
     async def rejected(toolset: MCPToolset[None]) -> MCPToolset[None]:
         try:
-            raise SignInRequired('Not signed in to docs. Run /mcp auth docs to sign in.')
-        except SignInRequired as exc:
+            raise SignInRequiredError('Not signed in to docs. Run /mcp auth docs to sign in.')
+        except SignInRequiredError as exc:
             raise RuntimeError('Client failed to connect') from exc
 
     monkeypatch.setattr(MCPToolset, '__aenter__', rejected)
@@ -217,11 +217,11 @@ async def test_listing_tools_never_signs_in(tmp_path: Path, vault: Vault, monkey
 
 
 def test_a_rejected_sign_in_reads_as_signing_in_again() -> None:
-    required = SignInRequired('Not signed in to docs. Run /mcp auth docs to sign in.')
+    required = SignInRequiredError('Not signed in to docs. Run /mcp auth docs to sign in.')
     try:
         try:
             raise required
-        except SignInRequired as exc:
+        except SignInRequiredError as exc:
             raise RuntimeError('Client failed to connect') from exc
     except RuntimeError as wrapped:
         assert sign_in_required(wrapped) is required

@@ -18,7 +18,7 @@ _ENVELOPE_KEY = '__pydantic_ai_harness_absurd_tool_result__'
 _RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result'})
 # Control flow (`ModelRetry`, `CallDeferred`, ...) is not checkpointed, so the call runs again on replay.
 _CONTROL_FLOW_KINDS = frozenset(
-    {'approval_required', 'call_deferred', 'model_retry', 'validation_error', 'tool_failed'}
+    {'approval_required', 'call_deferred', 'model_retry', 'validation_error', 'tool_failed', 'run_cancelled'}
 )
 
 # Absurd steps take no per-operation options.
