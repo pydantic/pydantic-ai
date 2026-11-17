@@ -193,7 +193,9 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         call = ToolCallPart(tool_name=name, args=args_json or '{}')
         reserved = reserve_nested_call(ctx)
         try:
-            return await manager.handle_call(call, approved=ctx.tool_call_approved, wrap_validation_errors=False)
+            return await manager.handle_call(
+                call, approved=ctx.tool_call_approved, metadata=ctx.tool_call_metadata, wrap_validation_errors=False
+            )
         except ValidationError as exc:
             errors = exc.errors(include_url=False, include_context=False)
             raise ModelRetry(f'Invalid arguments for tool {name!r}: {errors}') from exc

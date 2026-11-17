@@ -301,7 +301,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'ToolBridge': Combines(
         'one set of dispatcher tools per agent; `tools` is how one instance picks what it bridges',
-        lambda: (ToolBridge[Any](max_results=3), ToolBridge[Any](max_results=5)),
+        lambda: (ToolBridge[None](max_results=3), ToolBridge[None](max_results=5)),
         _check_tool_bridge,
     ),
     'SubAgents': Combines(

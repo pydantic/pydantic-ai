@@ -242,7 +242,7 @@ class TestToolBridge:
             """Delete a file."""
             if not ctx.tool_call_approved:
                 raise ApprovalRequired
-            return f'deleted {path}'
+            return f'deleted {path} for {ctx.tool_call_metadata}'
 
         model = _scripted([_call('tool_call', name='delete_file', args_json='{"path": "a.txt"}')])
         agent = Agent(model, tools=[delete_file], capabilities=[ToolBridge()], output_type=[str, DeferredToolRequests])
@@ -251,10 +251,11 @@ class TestToolBridge:
         assert isinstance(first.output, DeferredToolRequests)
         assert [call.tool_name for call in first.output.approvals] == ['tool_call']
 
-        results = first.output.build_results(approve_all=True)
+        [request] = first.output.approvals
+        results = first.output.build_results(approve_all=True, metadata={request.tool_call_id: {'by': 'alice'}})
         second = await agent.run(message_history=first.all_messages(), deferred_tool_results=results)
 
-        assert _returns(second.new_messages()) == ['deleted a.txt']
+        assert _returns(second.new_messages()) == ["deleted a.txt for {'by': 'alice'}"]
 
     async def test_denied_by_a_handler(self):
         def delete_file(ctx: RunContext[None], path: str) -> str:
