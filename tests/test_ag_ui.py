@@ -10180,6 +10180,74 @@ async def test_run_finished_interrupt_message_for_a_single_model_parameter() -> 
     assert interrupt['message'] == snapshot('Approve delete_file({"path":".env","force":false})?')
 
 
+class Force(BaseModel):
+    force: bool
+    path: str
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_for_a_model_field_named_like_its_parameter() -> None:
+    """A single model parameter whose name is also one of the model's fields is still read as unwrapped.
+
+    The model's `force` is a field's value rather than the model wrapped under its parameter name, which the
+    validated arguments show by holding an object there.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"force": "false", "path": ".env"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(force: Force) -> str:  # pragma: no cover
+        # Body never runs: the test asserts the pending approval's interrupt.
+        return f'deleted {force.path}'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot('Approve delete_file({"force":false,"path":".env"})?')
+
+
+class Target(BaseModel):
+    path: str
+    retries: int
+    token: str = 'server-token'
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_leaves_out_nested_defaults() -> None:
+    """A default inside an object or list item the model sent stays on the server too."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='sync',
+                json_args='{"target": {"path": ".env", "retries": "2"}, "mirrors": [{"path": "a", "retries": "1"}]}',
+            )
+        }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def sync(target: Target, mirrors: list[Target]) -> str:  # pragma: no cover
+        # Body never runs: the test asserts the pending approval's interrupt.
+        return target.path
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='sync .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot(
+        'Approve sync({"target":{"path":".env","retries":2},"mirrors":[{"path":"a","retries":1}]})?'
+    )
+
+
 @pytestmark_interrupts
 async def test_run_finished_interrupt_message_keeps_an_aliased_argument() -> None:
     """An argument the model sent under a parameter's alias keeps the model's value rather than vanish.

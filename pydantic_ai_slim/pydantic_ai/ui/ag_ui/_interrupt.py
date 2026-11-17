@@ -21,7 +21,7 @@ from pydantic.alias_generators import to_camel
 from pydantic.json_schema import WithJsonSchema
 from pydantic_core import to_json
 
-from ..._utils import is_str_dict
+from ..._utils import is_list, is_str_dict
 from ...exceptions import UserError
 from ...messages import ToolCallPart
 from ...tools import DeferredToolApprovalResult, DeferredToolRequests, GenerateToolJsonSchema, ToolApproved, ToolDenied
@@ -131,8 +131,8 @@ def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) ->
     """Build an AG-UI `Interrupt` from a pending approval `ToolCallPart` in `requests` (outbound).
 
     The `message` shows the arguments the model sent, each with the value the tool will receive from
-    `requests.validated_args`. A parameter's default and an argument a validation hook added aren't in
-    it: they can hold server-side values, and the message goes to the client. A request that doesn't
+    `requests.validated_args`. A default and an argument a validation hook added aren't in it, at any
+    depth: they can hold server-side values, and the message goes to the client. A request that doesn't
     carry validated arguments, such as one built by hand, shows the model's arguments.
     The `response_schema` describes the shape clients must put in `ResumeEntry.payload`;
     it is generated from `_ResumePayload`, the same model that validates the payload on
@@ -142,13 +142,16 @@ def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) ->
     args = call.args_as_dict()
     validated_args = requests.validated_args.get(call.tool_call_id, {})
     only_value = next(iter(validated_args.values())) if len(validated_args) == 1 else None
-    if is_str_dict(only_value) and not validated_args.keys() & args.keys():
-        # A tool whose only parameter is a model takes that model's fields unwrapped. A field the validated
-        # model doesn't have was dropped, or is excluded from its serialization.
-        args = {key: only_value[key] for key in args if key in only_value}
+    if is_str_dict(only_value) and not is_str_dict(args.get(next(iter(validated_args)))):
+        # A tool whose only parameter is a model takes that model's fields unwrapped, so the model's
+        # arguments are that model's fields, which the validated model has under their aliases.
+        args = sent_validated_values(args, only_value)
     else:
         # A key the validated arguments don't have may be a parameter's alias, so it keeps the model's value.
-        args = {key: validated_args.get(key, value) for key, value in args.items()}
+        args = {
+            key: sent_validated_values(value, validated_args[key]) if key in validated_args else value
+            for key, value in args.items()
+        }
     return Interrupt(
         id=f'{INTERRUPT_ID_PREFIX}{call.tool_call_id}',
         reason='tool_call',
@@ -160,6 +163,19 @@ def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) ->
         response_schema=deepcopy(_RESUME_RESPONSE_SCHEMA),
         metadata=requests.metadata.get(call.tool_call_id),
     )
+
+
+def sent_validated_values(sent: Any, validated: Any) -> Any:
+    """`validated`, keeping at every level only the object keys and list items `sent` has.
+
+    A default or a value a validation hook added, at any depth, is left out. A key `validated` doesn't
+    have was dropped by validation, or is excluded from its model's serialization.
+    """
+    if is_str_dict(sent) and is_str_dict(validated):
+        return {key: sent_validated_values(value, validated[key]) for key, value in sent.items() if key in validated}
+    if is_list(sent) and is_list(validated) and len(sent) == len(validated):
+        return [sent_validated_values(item, validated_item) for item, validated_item in zip(sent, validated)]
+    return validated
 
 
 def interrupt_id_to_tool_call_id(interrupt_id: str) -> str:
