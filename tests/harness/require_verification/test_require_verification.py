@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 
@@ -151,7 +152,14 @@ class TestRequireVerification:
 
     @pytest.mark.parametrize(
         'command',
-        ['ruff format .', 'ruff check --fix', 'npx prettier --write src', "sed -i 's/1/2/' app.py", 'echo 2 > app.py'],
+        [
+            'ruff format .',
+            'ruff check --fix',
+            'npx prettier --write src',
+            "sed -i 's/1/2/' app.py",
+            "sed -E -i 's/1/2/' app.py",
+            'echo 2 > app.py',
+        ],
     )
     async def test_an_edit_command_makes_checks_stale(self, tmp_path: Path, command: str) -> None:
         agent = _agent(tmp_path, _write(), _run('pytest -q'), _run(command), 'Done.', _run('pytest -q'), 'Verified.')
@@ -212,6 +220,8 @@ class TestRequireVerification:
         [
             'FAILED test_app.py\n[exit code: 1]',
             '[stdout]\npartial\n[Command timed out after 30s]',
+            '[stdout]\nwrote\n[exit code: 153]\n[File-size limit exceeded: max_file_bytes=10. Reduce file output before retrying.]',
+            '[exit code: 1]\n[Command failed with max_file_bytes=10; file writes may have reached the per-file limit.]',
             'PID: 7 (supervisor)\nOutput: /tmp/o\nStatus: /tmp/s\n{"pid": 7, "exit_code": 1}',
         ],
     )
@@ -390,6 +400,16 @@ class TestRequireVerification:
             ('verification required', {'require_verification.attempt': 1}),
             ('completion unverified', {'require_verification.attempts': 1}),
         ]
+
+    async def test_long_repetitive_commands_are_matched_in_linear_time(self, tmp_path: Path) -> None:
+        commands = ['echo ' + 'sed ' * 16_000, 'echo ' + 'sed -sed ' * 8_000, 'make ' + 'x ' * 32_000]
+        agent = _agent(tmp_path, *[_run(command) for command in commands], 'Done.')
+
+        started = time.perf_counter()
+        result = await agent.run('Look around')
+
+        assert result.output == 'Done.'
+        assert time.perf_counter() - started < 2
 
     def test_rejects_a_negative_attempt_limit(self) -> None:
         with pytest.raises(ValueError, match='`max_attempts` must be at least 0, got -1'):

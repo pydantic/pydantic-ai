@@ -40,7 +40,7 @@ DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
 DEFAULT_EDIT_COMMANDS: tuple[str, ...] = (
     r'\b(?:ruff\s+format|black|isort|cargo\s+fmt|gofmt\s+-w)\b',
     r'--(?:fix|write)\b',
-    r'\b(?:sed|perl)\s+(?:\S+\s+)*?-\w*i',
+    r'(?<![\w-])(?:sed|perl)(?:\s+-\w+)*\s+-\w*i',
     r'\bgit\s+apply\b|(?:^|\s)patch\s',
     r'\btee\b',
     r'(?<![\d&>])>(?!&)',
@@ -52,7 +52,7 @@ _ORIGIN = 'pydantic-ai-harness.require_verification.v1'
 
 _ASSIGNMENTS = re.compile(r'^(?:env\s+)?(?:\w+=\S*\s+)*')
 _MASKING = re.compile(r'[;|&`\n]|\$\(')
-_FAILED = ('[exit code:', '[Command timed out')
+_FAILED = ('[exit code:', '[Command timed out', '[File-size limit exceeded', '[Command failed with max_file_bytes')
 _RUNNING = ('Status: ', 'ID: ')
 
 

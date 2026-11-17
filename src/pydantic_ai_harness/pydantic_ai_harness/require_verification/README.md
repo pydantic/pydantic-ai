@@ -57,7 +57,7 @@ RequireVerification(
 - A command is read from the argument a tool's metadata names with `code_arg_name`, on tools whose metadata sets `code_arg_language='shell'`, as `Shell`'s `run_command` and `shell` tools do.
 - A command counts as a check when one of its `&&`-joined steps starts with a match for a `verification_commands` pattern, after any leading `NAME=value` assignments. A command with `;`, `|`, `||`, a background `&`, or a command substitution does not count, because the shell's exit status can then hide a failed check.
 - A command counts as an edit when an `edit_commands` pattern matches anywhere in it. An edit command is not also a check, so `ruff check --fix` makes earlier checks stale and leaves the run with none.
-- A check passed when `run_command` reports no `[exit code: N]` or timeout, or when the `shell` tool reports an `exit_code` of `0`. A command still running in the background is not a check yet.
+- A check passed when `run_command` reports no `[exit code: N]`, timeout, or file-size limit notice, or when the `shell` tool reports an `exit_code` of `0`. A command still running in the background is not a check yet.
 - Commands outside `edit_commands` are not edits. Extend it with the commands your agent uses to change files, such as a code generator.
 
 ## Ending unverified
