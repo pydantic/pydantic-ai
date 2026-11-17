@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, create_model
 from typing_extensions import TypeForm
 
 from pydantic_ai import Agent
+from pydantic_ai._instrumentation import record_uncaught_errors
 from pydantic_ai._utils import is_str_dict, replace_no_init
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -153,7 +154,13 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
         if self.mode == 'once' and self._cached_choice is not None:
             return self.choices[self._cached_choice].model
 
-        with run_ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+        # The router's exception message can carry request content, so it follows `include_content`.
+        with (
+            run_ctx.tracer.start_as_current_span(
+                _SPAN_NAME, record_exception=False, set_status_on_exception=False
+            ) as span,
+            record_uncaught_errors(span, include_content=_instrumentation_settings(run_ctx).include_content),
+        ):
             attributes: dict[str, str | int | float] = {
                 'model_router.mode': self.mode,
                 'model_router.run_step': ctx.run_step,

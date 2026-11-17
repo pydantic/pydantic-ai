@@ -33,13 +33,11 @@ from tests.harness.conftest import agent_run_names
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
-pytestmark = pytest.mark.anyio
-
 
 def _router_model(
     choice: str,
     *,
-    provider_details: Mapping[str, Any] | None = None,
+    provider_details: Mapping[str, object] | None = None,
     inspect: Callable[[list[ModelMessage], AgentInfo], None] | None = None,
 ) -> FunctionModel:
     def route(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -86,10 +84,6 @@ def _router(
 
 
 class TestModelRouter:
-    @pytest.fixture
-    def anyio_backend(self) -> str:
-        return 'asyncio'
-
     async def test_router_receives_the_run_history_ending_with_the_routed_request(self) -> None:
         received: list[list[ModelMessage]] = []
 
@@ -341,7 +335,7 @@ class TestModelRouter:
             ),
         ],
     )
-    async def test_probability_shapes(self, provider_details: Mapping[str, Any] | None, expected: str) -> None:
+    async def test_probability_shapes(self, provider_details: Mapping[str, object] | None, expected: str) -> None:
         router = _router(
             _router_model('fast', provider_details=provider_details),
             probability_threshold=0.5,
@@ -425,6 +419,28 @@ class TestModelRouter:
         assert attributes['model_router.mode'] == 'once'
         assert attributes['model_router.run_step'] == 1
         assert attributes['model_router.error.type'] == 'UserError'
+        assert 'Files are not supported' in str(span['events'])
+
+    async def test_a_user_error_message_stays_off_the_span_without_content(self, capfire: CaptureLogfire) -> None:
+        def reject(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            raise UserError('Files are not supported: https://example.com/a.png?signature=secret')
+
+        agent = Agent(
+            name='parent',
+            capabilities=[
+                _router(FunctionModel(reject)),
+                Instrumentation(settings=InstrumentationSettings(include_content=False)),
+            ],
+        )
+
+        with pytest.raises(UserError, match='Files are not supported'):
+            await agent.run('Choose')
+
+        span = next(span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'model_router.select')
+        assert 'signature=secret' not in str(span)
+        assert [event['attributes']['exception.type'] for event in span['events']] == [
+            'pydantic_ai.exceptions.UserError'
+        ]
 
     async def test_a_user_error_propagates_without_instrumentation(self) -> None:
         def reject(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -550,10 +566,6 @@ class TestModelRouter:
 
 class TestCompositionConstraints:
     """Pin what the README promises about routing's place in the step, which core's order fixes."""
-
-    @pytest.fixture
-    def anyio_backend(self) -> str:
-        return 'asyncio'
 
     async def test_per_step_routing_reads_the_history_one_step_behind_compaction(self) -> None:
         """Compaction bounds the routing input, but the compacting step routes on the old history."""
