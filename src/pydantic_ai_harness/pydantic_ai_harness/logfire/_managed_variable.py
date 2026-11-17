@@ -300,13 +300,9 @@ class ManagedVariableCapability(AbstractCapability[AgentDepsT], Generic[AgentDep
 
         return variable.get(targeting_key=targeting_key, attributes=attributes, label=self.label)
 
-    def _resolve_for_run(self, ctx: RunContext[AgentDepsT]) -> ResolvedVariable[ValueT]:
-        """The resolution `wrap_run` holds for the run; a subclass can reuse one made earlier."""
-        return self._resolve(ctx)
-
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Resolve the variable once and keep its baggage active for the duration of the run."""
-        resolved = self._resolve_for_run(ctx)
+        resolved = self._resolve(ctx)
         with resolved:
             token = self._resolved.set(resolved)
             try:

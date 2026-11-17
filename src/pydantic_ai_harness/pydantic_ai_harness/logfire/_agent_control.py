@@ -835,10 +835,10 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             f'agent runs as defined in code and nothing published in Logfire applies. {cause}'
         )
 
-    def _resolve_for_run(self, ctx: RunContext[AgentDepsT]) -> ResolvedVariable[AgentConfig]:
+    def _resolve(self, ctx: RunContext[AgentDepsT]) -> ResolvedVariable[AgentConfig]:
         """Reuse the resolution model selection made for this run, or resolve now when it was skipped."""
         handoff = self._selection_resolved.get()
-        resolved = handoff.pop() if handoff else self._resolve(ctx)
+        resolved = handoff.pop() if handoff else super()._resolve(ctx)
         self._warn_if_unreadable(self._ensure_variable(ctx), resolved)
         return resolved
 

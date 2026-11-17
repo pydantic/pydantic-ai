@@ -1212,17 +1212,30 @@ async def test_a_call_site_model_run_resolves_its_own_targeting(publish: Publish
     resolution -- another tenant's instructions and tools -- without consulting its own targeting.
     """
     keys: list[str] = []
+    tenants: list[str] = []
 
     def targeting(ctx: RunContext[str]) -> str:
         keys.append(ctx.deps)
         return ctx.deps
 
+    def attributes(ctx: RunContext[str]) -> dict[str, str]:
+        tenants.append(ctx.deps)
+        return {'tenant': ctx.deps}
+
     publish('per_tenant', AgentConfig(model='test'))
-    capability = AgentControl[str]('per_tenant', label='production', targeting_key=targeting)
+    capability = AgentControl[str]('per_tenant', label='production', targeting_key=targeting, attributes=attributes)
     agent = Agent(TestModel(), deps_type=str, capabilities=[capability])
     await agent.run('hello', deps='tenant-a')
     await agent.run('hello', deps='tenant-b', model=TestModel())
-    assert keys == ['tenant-a', 'tenant-b']
+    assert keys == tenants == ['tenant-a', 'tenant-b']
+
+
+def test_logfire_instance_is_ignored_for_a_prebuilt_variable() -> None:
+    variable = Variable(
+        'agent__prebuilt', type=AgentConfig, default=AgentConfig(), logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE
+    )
+    with pytest.warns(UserWarning, match='`logfire_instance` is ignored when `name` is a `Variable`'):
+        AgentControl(variable, logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
 
 
 async def test_a_resolved_config_builds_one_snapshot_per_process(

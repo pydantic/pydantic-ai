@@ -16,6 +16,7 @@ import logfire
 import pytest
 from logfire.variables import Variable
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.logfire._managed_variable import ManagedVariableCapability, resolution_reason
 
 _PREFIX = 'var__'
@@ -129,3 +130,8 @@ def test_ensure_variable_returns_variable_built_while_awaiting_lock() -> None:
         )
         is built
     )
+
+
+def test_nameless_variable_without_an_agent_name_raises() -> None:
+    with pytest.raises(UserError, match='this agent has none'):
+        _NamelessStrVariable()._ensure_variable_for_agent(None)  # pyright: ignore[reportPrivateUsage]
