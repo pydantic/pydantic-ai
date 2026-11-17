@@ -604,11 +604,15 @@ async def fail():
     async with talk:
         with pytest.raises(RuntimeError, match='provider went away') as failure:
             [event async for event in talk]
+        handled = KeyError('handled')
+        handled.__context__ = failure.value
         try:
-            raise KeyError('handled')
+            raise handled
         except KeyError:
             await talk.close()
-    # Recording what the closed session holds raises its failure again, which must not chain it to the one handled.
+    # Recording what the closed session holds raises its failure again, which must leave the chain of the error being
+    # handled, which holds it, as it was.
+    assert handled.__context__ is failure.value
     assert failure.value.__context__ is None
 
 
@@ -625,11 +629,19 @@ async def close_with_a_failing_read():
             pass
 
 
+async def close_with_an_unseen_failure():
+    # `close` raises the failure no consumer of the event stream saw, and what the session holds is still recorded.
+    with pytest.raises(RuntimeError, match='provider went away'):
+        async with session(fails=True) as talk:
+            [item async for item in talk.stream_transcripts()]
+
+
 def test_session():
     asyncio.run(converse())
     asyncio.run(fail())
     asyncio.run(close_with_audio_unread())
     asyncio.run(close_with_a_failing_read())
+    asyncio.run(close_with_an_unseen_failure())
 
 
 def test_session_out_of_a_loop():
@@ -647,9 +659,14 @@ class Lifecycle(InferredLifecycle):
         return super().take_pending()
 
 
+class Core(SessionCore):
+    def take_effects(self):
+        return super().take_effects()
+
+
 def test_core_and_lifecycle():
     lifecycle = Lifecycle()
-    core = SessionCore(model_name=lambda: None, provider_name=None, provider_url=None, conversation_id=None, run_id=None)
+    core = Core(model_name=lambda: None, provider_name=None, provider_url=None, conversation_id=None, run_id=None)
     for event in lifecycle.frame_for([OutputTranscript(text={text!r}, is_final=True), ResponseDone()]):
         core.apply(event)
         core.wait_tokens()
@@ -1366,8 +1383,9 @@ def test_capture_records_what_realtime_connections_send_and_yield(
 def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Path):
     """Each core call, session iteration, tap and error, what a closed session holds, and each model inferred.
 
-    `Session` stands in for a subclass defined once the capture started, and `Lifecycle` for a lifecycle a test calls
-    directly; the calls the session's connection makes on its own lifecycle are in its `realtime` records instead.
+    `Session` and `Core` stand in for subclasses defined once the capture started, which override some of the methods
+    recorded, and `Lifecycle` for a lifecycle a test calls directly; the calls the session's connection makes on its own
+    lifecycle are in its `realtime` records instead.
     """
     run(tmp_path, session=True).assert_outcomes(passed=4)
 
@@ -1468,6 +1486,21 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
             ('test_session', 'SessionCore.all_messages', {'core': 3}, ['args', 'kwargs', 'result'], None),
             ('test_session', 'SessionCore.all_messages', {'core': 3}, ['args', 'kwargs', 'result'], None),
             ('test_session', 'Unlisted.__aexit__', {'session': 3}, [], 'RuntimeError: cannot list the new messages'),
+            ('test_session', 'Session.stream_transcripts', {'session': 4}, ['items', 'kwargs'], None),
+            ('test_session', 'SessionCore.apply', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_session',
+                'Session.close',
+                {'session': 4},
+                ['all_messages', 'drops', 'new_messages', 'played_audio_bytes', 'usage'],
+                None,
+            ),
+            ('test_session', 'Session.__aexit__', {'session': 4}, [], 'RuntimeError: provider went away'),
             (
                 'test_session_out_of_a_loop',
                 'Session.__init__',
@@ -1476,19 +1509,19 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
                 'UserError: `retain_images_max` must be at least 0, or `None` for no limit.',
             ),
             ('test_core_and_lifecycle', 'Lifecycle.frame_for', {'lifecycle': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
-            ('test_core_and_lifecycle', 'SessionCore.all_messages', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.all_messages', {'core': 0}, ['args', 'kwargs', 'result'], None),
             (
                 'test_core_and_lifecycle',
-                'SessionCore.apply',
+                'Core.apply',
                 {'core': 0},
                 ['args', 'kwargs'],
                 'TypeError: The session core has no handling for the lifecycle event Unknown().',
@@ -1505,12 +1538,12 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
         ]
     )
     assert [
-        (record['target'].rsplit('.', 1)[-1], record['kwargs'], record['items'], record.get('error'))
+        (record['target'].rsplit('.', 1)[-1], record['kwargs'], record['items'])
         for record in records
         if 'items' in record
     ] == snapshot(
         [
-            ('stream_audio', {}, ['AQA='], None),
+            ('stream_audio', {}, ['AQA=']),
             (
                 'stream_transcripts',
                 {},
@@ -1527,15 +1560,14 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
                         'part_kind': 'speech',
                     }
                 ],
-                None,
             ),
             (
                 'stream_transcripts',
                 {'delta': True},
                 [{'index': 0, 'speaker': 'assistant', 'delta': 'hello', 'transcript': 'hello'}],
-                None,
             ),
-            ('stream_audio', {}, [], None),
+            ('stream_audio', {}, []),
+            ('stream_transcripts', {}, []),
         ]
     )
     assert [
@@ -1594,6 +1626,19 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
                 'new_messages': [],
                 'requests': 0,
                 'played_audio_bytes': 0,
+                'drops': {
+                    '_audio_tap_drops': 0,
+                    '_transcript_tap_drops': 0,
+                    '_queue_dropped_deltas': 0,
+                    '_queue_dropped_structural': 0,
+                },
+            },
+            {
+                'session': 4,
+                'all_messages': [],
+                'new_messages': [],
+                'requests': 0,
+                'played_audio_bytes': {'error': 'RuntimeError: provider went away'},
                 'drops': {
                     '_audio_tap_drops': 0,
                     '_transcript_tap_drops': 0,

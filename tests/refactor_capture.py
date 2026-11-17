@@ -129,7 +129,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import builtins
-import contextvars
 import dataclasses
 import functools
 import importlib.util
@@ -155,7 +154,6 @@ from collections.abc import (
     Mapping,
     Set,
 )
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -384,11 +382,9 @@ class RefactorCapture:
         # order the test first used it.
         self._numbers: weakref.WeakKeyDictionary[object, int] = weakref.WeakKeyDictionary()
         self._next_numbers: Counter[str] = Counter()
-        # Each view a session's `stream_audio` or `stream_transcripts` returned, with the record of what it yields, kept
-        # past its test while the view lives, and the classes of those views, whose `__anext__` is wrapped.
-        self._taps: weakref.WeakKeyDictionary[object, tuple[dict[str, object], list[object]]] = (
-            weakref.WeakKeyDictionary()
-        )
+        # Each view a session's `stream_audio` or `stream_transcripts` returned, with what it yields, kept past its test
+        # while the view lives, and the classes of those views, whose `__anext__` is wrapped.
+        self._taps: weakref.WeakKeyDictionary[object, list[object]] = weakref.WeakKeyDictionary()
         self._tap_classes: set[type] = set()
         # The sessions whose state was recorded once they closed.
         self._closed_sessions: weakref.WeakSet[RealtimeSession] = weakref.WeakSet()
@@ -927,7 +923,7 @@ class RefactorCapture:
                     'kwargs': normalized(kwargs),
                     'items': items,
                 }
-                self._taps[view] = record, items
+                self._taps[view] = items
                 self.records.append(record)
                 self._wrap_tap_view(type(view))
             return view
@@ -942,15 +938,8 @@ class RefactorCapture:
         original = view_class.__anext__
 
         async def recording_anext(view: AsyncIterator[object]) -> object:
-            record, items = self._taps[view]
-            try:
-                item = await original(view)
-            except StopAsyncIteration:
-                raise
-            except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
-                raise
-            items.append(normalized(item))
+            item = await original(view)
+            self._taps[view].append(normalized(item))
             return item
 
         self._monkeypatch.setattr(view_class, '__anext__', recording_anext)
@@ -982,25 +971,33 @@ class RefactorCapture:
             'session': self._number('session', session),
         }
 
-        def read() -> None:
-            # What the capture reads is no call the test or the session made.
-            _RECORDING_CORE_CALL.set(True)
-            _RECORDING_SESSION_CALL.set((running_task_id(), id(session)))
+        # What the capture reads is no call the test or the session made.
+        core_token = _RECORDING_CORE_CALL.set(True)
+        session_token = _RECORDING_SESSION_CALL.set((running_task_id(), id(session)))
+        try:
             record['all_messages'] = normalized(session.all_messages())
             record['new_messages'] = normalized(session.new_messages())
             record['usage'] = normalized(session.usage)
+            # Reading `played_audio_bytes` can raise the error that ended the session again. Raised where another
+            # exception is being handled, as when `close` raises, Python chains it to that one, and cuts the other's
+            # chain where it held the error, to keep it from looping back. The chain being handled is put back as it
+            # was. One thing can't be: the error's own `__context__`, where the chain didn't hold it. The reads stay in
+            # the event loop, where waiting on a thread would block it.
+            handled_chain: list[tuple[BaseException, BaseException | None]] = []
+            handled = sys.exception()
+            while handled is not None and all(handled is not seen for seen, _ in handled_chain):
+                handled_chain.append((handled, handled.__context__))
+                handled = handled.__context__
             try:
                 record['played_audio_bytes'] = session.played_audio_bytes
             except Exception as e:
                 record['played_audio_bytes'] = {'error': normalized(f'{type(e).__name__}: {e}')}
+            for exception, context in handled_chain:
+                exception.__context__ = context
             record['drops'] = {name: getattr(session, name) for name in SESSION_DROP_COUNTERS}
-
-        # Reading `played_audio_bytes` can raise the error that ended the session. Raised where another exception is
-        # being handled, as when `close` raises, that error would be chained to it, and Python would cut the other's
-        # chain short to keep it from looping back. A thread of its own handles none, and `result` raises here what
-        # else the reads raise there.
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            executor.submit(contextvars.copy_context().run, read).result()
+        finally:
+            _RECORDING_SESSION_CALL.reset(session_token)
+            _RECORDING_CORE_CALL.reset(core_token)
         self.records.append(record)
 
     def _wrap_core(self, cls: type[SessionCore]) -> None:
