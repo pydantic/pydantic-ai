@@ -188,6 +188,11 @@ class TestStackOneAuth:
         with pytest.raises(UserError, match='Pass `auth` only'):
             StackOne(account_id='45320', auth='key', api_key='other')
 
+    def test_missing_key_error_names_auth(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv('STACKONE_API_KEY', raising=False)
+        with pytest.raises(UserError, match='pass `auth` to `StackOne`'):
+            StackOne[None](account_id='45320').get_toolset()
+
     def test_auth_function_is_hidden_from_repr(self):
         assert 'per_user_key' not in repr(StackOne[str | None](account_id='45320', auth=per_user_key))
 
