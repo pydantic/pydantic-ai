@@ -104,6 +104,8 @@ class App:
     run_weather: Standalone[Prompt, RunOutput]
     run_streaming: Standalone[Prompt, RunOutput]
     run_failing_model: Standalone[Prompt, dict[str, str]]
+    run_inline_tool: Standalone[Prompt, dict[str, bool]]
+    inline_tool_contexts: list[str]
 
 
 def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
@@ -154,6 +156,21 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
             return {'type': type(error).__name__, 'status_code': str(error.status_code), 'body': str(error.body)}
         raise AssertionError('the model error was not raised')  # pragma: no cover
 
+    # `durable=False` runs a tool in the durable task itself instead of a child task.
+    inline_tool_contexts: list[str] = []
+    inline_durability = HatchetDurability[Any](hatchet)
+    inline_agent = Agent(TestModel(), name='inline', capabilities=[inline_durability])
+
+    @inline_agent.tool_plain(durable=False)
+    async def where_am_i() -> str:
+        inline_tool_contexts.append(type(hatchet.current_context).__name__)
+        return 'here'
+
+    @hatchet.durable_task(name='pydantic_ai_test_inline_tool', input_validator=Prompt)
+    async def run_inline_tool(input: Prompt, ctx: DurableContext) -> dict[str, bool]:
+        await inline_agent.run(input.prompt)
+        return {'ran': True}
+
     app = App(
         hatchet=hatchet,
         calls=calls,
@@ -163,6 +180,8 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         run_weather=run_weather,
         run_streaming=run_streaming,
         run_failing_model=run_failing_model,
+        run_inline_tool=run_inline_tool,
+        inline_tool_contexts=inline_tool_contexts,
     )
     workflows: list[Any] = [
         run_weather,
@@ -171,6 +190,8 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         *durability.workflows,
         *streaming_durability.workflows,
         *failing_durability.workflows,
+        run_inline_tool,
+        *inline_durability.workflows,
     ]
     return app, workflows
 
@@ -323,6 +344,12 @@ async def test_event_stream_of_failed_run(app: App):
         assert [event async for event in events] == []
     assert events.result is None
     assert events.error == "ModelHTTPError: status_code: 400, model_name: rejecting, body: {'error': 'bad request'}"
+
+
+async def test_non_durable_tool_runs_in_the_durable_task(app: App):
+    """A tool with `durable=False` runs in the durable task's own code, not in a child task."""
+    assert await app.run_inline_tool.aio_run(Prompt(prompt='hi')) == {'ran': True}
+    assert app.inline_tool_contexts == ['DurableContext']
 
 
 async def test_outside_durable_task_is_transparent(app: App):
