@@ -176,6 +176,7 @@ _CAPABILITY_PAGE_META = {
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrapped Workspace'),
     'repo-context.md': ('repo_context', 'Repo Context'),
+    'report-stale-files.md': ('report_stale_files', 'Report Stale Files'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),
     'researcher.md': ('researcher', 'Researcher'),

@@ -272,6 +272,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Conversation Search](pydantic_ai_harness/conversation_search/) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](pydantic_ai_harness/skills/) | Harness | Load [Agent Skill](https://ai.pydantic.dev/capabilities/on-demand/) (`SKILL.md`) instructions on demand |
 | [Repo Context](pydantic_ai_harness/repo_context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
+| [Report Stale Files](pydantic_ai_harness/report_stale_files/) | Harness | Tell the model when a file it read has since changed or been deleted in the workspace |
 | [Pydantic AI Docs](pydantic_ai_harness/pydantic_ai_docs/) | Harness | On-demand Pydantic AI documentation lookup |
 
 ### Control & safety

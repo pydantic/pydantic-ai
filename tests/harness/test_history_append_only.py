@@ -62,6 +62,7 @@ from pydantic_ai_harness import (
     Pylon,
     RelevanceCompaction,
     RepoContext,
+    ReportStaleFiles,
     Researcher,
     Shell,
     Skills,
@@ -162,6 +163,11 @@ def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
 def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
     (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
     return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _report_stale_files(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    (tmp_path / 'notes.md').write_text('Sunny.\n')
+    return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)]
 
 
 def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
@@ -362,6 +368,7 @@ FIXTURES: dict[str, Fixture] = {
     'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
     'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'RepoContext': _repo_context,
+    'ReportStaleFiles': _report_stale_files,
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
     'Shell': _workspace(Shell),
@@ -533,6 +540,12 @@ SCENARIOS: dict[str, Scenario] = {
             Turn(calls=(('look_up', {'topic': 'sports'}),)),
             Turn(text='Here is more.'),
             Turn(text='Here is more, checked.'),
+        )
+    ),
+    'ReportStaleFiles': Scenario(
+        state_calls=(
+            ('read_file', {'path': 'notes.md'}),
+            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
         )
     ),
     'RepoContext': Scenario(
