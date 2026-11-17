@@ -29,7 +29,7 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 _TRACE_ID_RE = re.compile('[0-9a-f]{32}')
 _SPAN_ID_RE = re.compile('[0-9a-f]{16}')
-REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
+REQUIRED_LABELS = ('area:agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
 # The recheck, artifact-replacement and two stop steps `shared/provider-health.md` adds to each agent job.
 # `agentic_workflow_guard.py` requires these names in every compiled lock.

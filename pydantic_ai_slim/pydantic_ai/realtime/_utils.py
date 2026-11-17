@@ -268,48 +268,57 @@ async def seed_user_content(
     content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
     result: list[str | BinaryContent] = []
     for item in content:
-        if isinstance(item, str):
-            result.append(item)
-        elif isinstance(item, TextContent):
-            result.append(item.content)
-        elif isinstance(item, CachePoint):
-            continue
-        elif isinstance(item, ImageUrl):
-            if not supports_images:
+        match item:
+            case str():
+                result.append(item)
+            case TextContent():
+                result.append(item.content)
+            case CachePoint():
+                continue
+            case ImageUrl():
+                result.append(await _seed_image_url(item, provider_name=provider_name, supports_images=supports_images))
+            case BinaryContent():
+                result.append(_seed_binary_content(item, provider_name=provider_name, supports_images=supports_images))
+            case AudioUrl() | VideoUrl() | DocumentUrl() | UploadedFile():
+                content_type = item.__class__.__name__
                 raise UserError(
-                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
-                    'Remove the image, or use a realtime provider that supports images.'
+                    f'`{content_type}` cannot be sent to {provider_name} in a realtime session. '
+                    'Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
                 )
-            downloaded = await download_item(item, data_format='bytes')
-            image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
-            if not image.is_image:
-                raise UserError(
-                    f'`ImageUrl` resolved to unsupported media type {image.media_type!r} in a '
-                    f'{provider_name} realtime session. Use a URL that returns an image, or remove it.'
-                )
-            result.append(image)
-        elif isinstance(item, BinaryContent):
-            if not item.is_image:
-                raise UserError(
-                    f'`BinaryContent` with media type {item.media_type!r} cannot be sent to {provider_name} '
-                    'in a realtime session. Convert it to text or an image, or remove it '
-                    'from `message_history` or the tool result.'
-                )
-            if not supports_images:
-                raise UserError(
-                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
-                    'Remove the image, or use a realtime provider that supports images.'
-                )
-            result.append(item)
-        elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl, UploadedFile)):
-            content_type = item.__class__.__name__
-            raise UserError(
-                f'`{content_type}` cannot be sent to {provider_name} in a realtime session. '
-                'Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
-            )
-        else:
-            assert_never(item)
+            case _:
+                assert_never(item)
     return result
+
+
+async def _seed_image_url(item: ImageUrl, *, provider_name: str, supports_images: bool) -> BinaryContent:
+    if not supports_images:
+        raise UserError(
+            f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
+            'Remove the image, or use a realtime provider that supports images.'
+        )
+    downloaded = await download_item(item, data_format='bytes')
+    image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
+    if not image.is_image:
+        raise UserError(
+            f'`ImageUrl` resolved to unsupported media type {image.media_type!r} in a '
+            f'{provider_name} realtime session. Use a URL that returns an image, or remove it.'
+        )
+    return image
+
+
+def _seed_binary_content(item: BinaryContent, *, provider_name: str, supports_images: bool) -> BinaryContent:
+    if not item.is_image:
+        raise UserError(
+            f'`BinaryContent` with media type {item.media_type!r} cannot be sent to {provider_name} '
+            'in a realtime session. Convert it to text or an image, or remove it '
+            'from `message_history` or the tool result.'
+        )
+    if not supports_images:
+        raise UserError(
+            f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
+            'Remove the image, or use a realtime provider that supports images.'
+        )
+    return item
 
 
 def seed_retry_feedback_text(part: RetryFeedbackPart) -> str:
@@ -496,20 +505,9 @@ def without_media(message: ModelMessage) -> ModelMessage | None:
     a marker saying the user spoke.
     """
     if isinstance(message, ModelRequest):
-        request_parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if isinstance(part, SpeechPart):
-                if part.transcript:
-                    request_parts.append(replace(part, audio=None))
-                else:
-                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
-            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
-                    request_parts.append(replace(part, content=text))
-            elif isinstance(part, ToolReturnPart) and part.files:
-                request_parts.append(replace(part, content=part.model_response_str(wrap_if_error=False)))
-            else:
-                request_parts.append(part)
+        request_parts: list[ModelRequestPart] = [
+            replayable for part in message.parts if (replayable := _request_part_without_media(part)) is not None
+        ]
         return replace(message, parts=request_parts) if request_parts else None
     response_parts = [
         replace(part, audio=None) if isinstance(part, SpeechPart) else part
@@ -517,3 +515,15 @@ def without_media(message: ModelMessage) -> ModelMessage | None:
         if not isinstance(part, FilePart)
     ]
     return replace(message, parts=response_parts) if response_parts else None
+
+
+def _request_part_without_media(part: ModelRequestPart) -> ModelRequestPart | None:
+    """`part` as `without_media` replays it, or `None` when nothing of it is left to replay."""
+    if isinstance(part, SpeechPart):
+        return replace(part, audio=None) if part.transcript else UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER)
+    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        text = [item for item in part.content if isinstance(item, (str, TextContent))]
+        return replace(part, content=text) if text else None
+    if isinstance(part, ToolReturnPart) and part.files:
+        return replace(part, content=part.model_response_str(wrap_if_error=False))
+    return part
