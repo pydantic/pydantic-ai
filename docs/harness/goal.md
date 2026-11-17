@@ -13,7 +13,7 @@ Keep an unattended agent working until a caller-defined completion check accepts
 
 ## Define completion
 
-Supply an explicit `goal` and an async `verify(ctx, output)` callable. Without `verify`, `Goal` only adds the goal instructions and never vetoes an answer. The verifier returns `None` to accept the output, or a nonempty string describing what remains. It receives the processed output unchanged, including structured outputs, and can inspect dependencies and message history through `RunContext`.
+Supply an explicit `goal` and an async `verify(ctx, output)` callable. Without `verify`, `Goal` only adds the goal instructions and never vetoes an answer. The verifier returns `None` to accept the output, or a nonempty string describing what remains. It receives the processed output unchanged, including structured outputs, and can inspect dependencies and message history through `RunContext`; [durable execution](#durable-execution) changes some of this.
 
 Output functions run before this check. A rejection can call them again on a later attempt. Keep output functions and verifiers read-only or idempotent; perform irreversible commits only after `agent.run()` returns an accepted result. `Goal` does not roll back tool calls or output-function side effects.
 
@@ -53,7 +53,7 @@ This example uses a local test model so it runs without credentials. Replace it 
 
 ## Judge completion with a model
 
-When completion is a matter of judgment rather than a mechanical check, the verifier can ask another agent. The judge's verdict is still a model's opinion, so give it evidence to weigh: test output, file contents, or tool results from `ctx.messages`, not just the final answer.
+When completion is a matter of judgment rather than a mechanical check, the verifier can ask another agent. The judge's verdict is still a model's opinion, so give it evidence to weigh: test output, file contents, or tool results from `ctx.messages` (outside Temporal), not just the final answer.
 
 ```python
 from pydantic import BaseModel
@@ -94,13 +94,13 @@ print(result.output)
 #> Breaking: `Agent.foo` was removed.
 ```
 
-Passing `usage=ctx.usage` adds the judge's requests and tokens to the run's usage, so the run's `UsageLimits` account for them. Every judge call adds cost and latency, and its verdict can vary between calls; each rejection also spends one of the output retries. Prefer a deterministic check wherever one exists, and reserve the judge for what only a model can assess. To steer the run while it works, rather than only checking its final answer, see [Trajectory Judge](trajectory-judge.md).
+Passing `usage=ctx.usage` adds the judge's requests and tokens to the run's usage, so the run's `UsageLimits` account for them (from the next request, under [durable execution](#durable-execution)). Every judge call adds cost and latency, and its verdict can vary between calls; each rejection also spends one of the output retries. Prefer a deterministic check wherever one exists, and reserve the judge for what only a model can assess. To steer the run while it works, rather than only checking its final answer, see [Trajectory Judge](trajectory-judge.md).
 
 ## Bound continuation
 
 When a final output fails verification, `Goal` raises `ModelRetry` through the public output hook. Core sends the goal and the verifier's explanation back to the model, preserving the conversation and allowing further tool calls. There is no second agent loop or persisted goal object.
 
-Set `Agent(retries={'output': n})` to bound these continuations. Goal rejections share the output retry budget with other output validation failures; they do not reserve independent rounds. Exhaustion raises `UnexpectedModelBehavior` rather than returning an unverified answer. Verifier exceptions propagate, and an empty explanation raises `UserError`.
+Set `Agent(retries={'output': n})` to bound these continuations. Goal rejections share the output retry budget with other output validation failures; they do not reserve independent rounds. Exhaustion raises `UnexpectedModelBehavior` rather than returning an unverified answer. Outside durable execution verifier exceptions propagate, and an empty explanation raises `UserError`.
 
 `UsageLimits` remain authoritative. Reaching a usage limit raises `UsageLimitExceeded`; `Goal` does not bypass the limit with an extra tool-less grace request. Token consumption cannot in general be predicted before a response. Applications needing a final wrap-up should budget for it explicitly rather than rely on a request after exhaustion.
 
@@ -112,13 +112,17 @@ The instructions ask the model to make reasonable decisions, but do not authoriz
 
 Each `Goal` has the default `id` `'goal'`. Two sharing an `id` are one goal stated twice when they agree, and a `UserError` when they differ. To enforce several goals, give each its own `id`: each contributes its own instructions and completion check, and every check must accept. A capability instance keeps no per-run retry counter and can be reused across runs. Callable verifiers are not serializable in agent specifications.
 
-Under a [durable execution](../durable_execution/overview.md) capability, the verifier runs as the durable operation `verify` under the capability's `id`, so a replay reuses its recorded result instead of checking again.
-
 Use `run()` or `run_sync()` when rejected output must stay private. Partial streamed outputs are not checked. Core does not support output retries through `run_stream()`; a rejected final streamed output raises `UnexpectedModelBehavior`, and the caller may already have received partial content. Deferred tool approvals are not completed answers and remain the host's responsibility.
 
 `Goal` evaluates processed output with outermost ordering inside instrumentation, like `OutputGuardrail`. Other output-changing capabilities at the same ordering position can still run after it; arrange their ordering so verification sees the output you intend to accept. This capability does not replace verification tools, task planning, or a live trajectory judge: those can produce evidence or steer work before completion.
 
 [`OutputGuardrail`](guardrails.md) can also send output back with `GuardrailResult.retry(...)`. Pick `Goal` when the check is about a goal: it states the goal and the headless rules in the instructions, names the goal in each retry message, and runs the check as a durable operation. Pick `OutputGuardrail` for block, redact, or retry policies that don't depend on a goal.
+
+## Durable execution
+
+Inside a [durable](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect) the verifier is a durable operation, checkpointed as `<agent>__capability__<id>.verify`. A replay reuses the recorded result instead of calling the verifier again, so a judge is paid for once and cannot decide differently on recovery.
+
+The output crosses the engine's serializer. On an engine that transports JSON, such as Temporal, a structured output reaches the verifier as plain JSON data, so validate it (`Summary.model_validate(output)`) rather than checking `isinstance`. Under Temporal the verifier's `RunContext` also carries only its serialized fields, without `messages` or `prompt`; pass evidence through `deps` instead. Usage the verifier adds to `ctx.usage`, such as a judge run with `usage=ctx.usage`, is carried back to the run when the operation returns, and the run's `UsageLimits` apply to it from the next request. Under Temporal a verifier exception fails the activity, which is retried under its retry policy (unbounded by default) rather than propagating.
 
 ## Telemetry
 

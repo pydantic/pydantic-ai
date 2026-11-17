@@ -229,3 +229,22 @@ class TestGoal:
         bound = RecordingDurability.from_agent(agent)
         assert bound is not None
         assert 'goal_agent__capability__goal.verify' in {name for name, _ in bound.calls}
+
+    async def test_durable_verifier_sees_json_output_and_its_usage_reaches_the_run(self) -> None:
+        judge = Agent(TestModel())
+        seen: list[object] = []
+
+        async def verify(ctx: RunContext[object], output: object) -> None:
+            seen.append(output)
+            await judge.run('Is it done?', usage=ctx.usage)
+
+        agent = Agent(
+            TestModel(custom_output_args={'done': True}),
+            name='goal_agent',
+            output_type=Result,
+            capabilities=[Goal(goal='Finish', verify=verify), RecordingDurability(isolated=True)],
+        )
+        result = await agent.run('Start')
+        assert result.output == Result(done=True)
+        assert seen == [{'done': True}]
+        assert result.usage.requests == 2

@@ -26,8 +26,9 @@ _HEADLESS_INSTRUCTIONS = (
 class GoalVerifier(Protocol[AgentDepsT]):
     """Return `None` when complete, or a nonempty explanation of what remains.
 
-    Receives the processed output unchanged and can inspect dependencies and
-    message history through `ctx`. Exceptions propagate to the caller.
+    Receives the processed output and can inspect dependencies and message history
+    through `ctx`. Under durable execution both cross the engine's serializer: on
+    Temporal a structured output arrives as JSON data and `ctx.messages` is unavailable.
     """
 
     async def __call__(self, ctx: RunContext[AgentDepsT], output: object, /) -> str | None:  # pragma: no cover

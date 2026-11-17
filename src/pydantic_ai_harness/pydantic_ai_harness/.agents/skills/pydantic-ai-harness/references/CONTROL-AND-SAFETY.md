@@ -923,7 +923,9 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
   nobody-is-available text for interactive runs; a `verify` is still enforced.
 - Pick `OutputGuardrail` instead for block/redact/retry policies that don't depend on a goal.
 - Default `id='goal'`: two that disagree under one `id` raise, so give each extra `Goal` its own `id`.
-  `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect.
+  `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect: a replay reuses
+  its result; on Temporal a structured output arrives as JSON data (validate it, don't `isinstance`),
+  `ctx.messages` is unavailable, and a verifier exception retries the activity instead of propagating.
 - Emits a `goal.verify` span (`goal.met`; `goal.description`/`goal.gap` with `trace_include_content`).
 
 ## See also
