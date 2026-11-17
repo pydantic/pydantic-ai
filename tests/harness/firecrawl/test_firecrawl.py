@@ -12,7 +12,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -219,6 +219,9 @@ This domain is for use in documentation examples without needing permission. Thi
         assert native_tools[0] == (['web_search'] if native_web_search else [])
         assert capability.get_native_tools() == [WebSearchTool(allowed_domains=['a.dev'])]
         assert len(client.searches) == (0 if native_web_search else 1)
+        assert FirecrawlSearch[object](native=True, exclude_domains=['b.dev']).get_native_tools() == [
+            WebSearchTool(blocked_domains=['b.dev'])
+        ]
 
     def test_web_search_tool_is_a_core_web_search_fallback(self):
         tool = FirecrawlSearch[None](client=FakeClient()).web_search_tool()
@@ -375,6 +378,61 @@ class TestFirecrawlSearchToolset:
         assert _text(await toolset.web_search('cats')).endswith('\n\nxxxx…')
         assert _text(await toolset.get_page('https://a.dev/one')).endswith('\n\nyyyy…')
 
+    @pytest.mark.parametrize(
+        ('domains', 'kept'),
+        [
+            ({'include_domains': ['A.dev']}, ['https://a.dev/1', 'https://docs.a.dev/2']),
+            ({'exclude_domains': ['a.dev']}, ['https://b.dev/3']),
+        ],
+    )
+    async def test_web_search_enforces_the_domain_lists_on_results(
+        self, domains: dict[str, list[str]], kept: list[str]
+    ):
+        # Firecrawl applies the lists as `site:` operators, which some self-hosted
+        # search backends only treat as hints.
+        urls = [
+            'https://a.dev/1',
+            'https://docs.a.dev/2',
+            'https://b.dev/3',
+            'https://nota.dev/4',
+            'http://[::1',
+            'https:///path',
+        ]
+        client = FakeClient(results=[{'url': url} for url in urls])
+        toolset = FirecrawlSearch[None](client=client, **domains).get_toolset()  # pyright: ignore[reportArgumentType]
+
+        returned = await toolset.web_search('cats')
+
+        assert [source['url'] for source in returned.metadata['sources']] == (
+            kept if 'include_domains' in domains else [*kept, 'https://nota.dev/4']
+        )
+
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'file:///etc/passwd',
+            'example.com/page',
+            'http://[::1',
+            'http://127.0.0.1:8080/',
+            'http://[::1]/',
+            'http://169.254.169.254/',
+        ],
+    )
+    async def test_get_page_refuses_urls_a_scraper_should_not_fetch(self, url: str):
+        # A self-hosted scraper fetches from inside your network, and the model picks the URL.
+        client = FakeClient(page={'markdown': 'secret'})
+
+        with pytest.raises(ModelRetry, match=r'is not an absolute http\(s\) URL|names a private or local address'):
+            await FirecrawlSearch[None](client=client).get_toolset().get_page(url)
+        assert client.urls == []
+
+    async def test_get_page_reads_a_public_ip_address(self):
+        client = FakeClient(page={'markdown': '# Page'})
+
+        await FirecrawlSearch[None](client=client).get_toolset().get_page('http://93.184.215.14/')
+
+        assert client.urls == ['http://93.184.215.14/']
+
     async def test_web_search_reports_no_results(self):
         returned = await FirecrawlSearch[None](client=FakeClient()).get_toolset().web_search('cats')
 
@@ -485,6 +543,19 @@ class TestHttpFirecrawlClient:
         assert await client.search('cats', limit=5, full_page=False, include_domains=[], exclude_domains=[]) == []
 
         assert seen[0].headers['authorization'] == 'Bearer fc-test'
+
+    @pytest.mark.parametrize('source', ['environment', 'argument'])
+    def test_an_api_key_with_control_characters_is_rejected_without_echoing_it(
+        self, monkeypatch: pytest.MonkeyPatch, source: str
+    ):
+        # HTTPX puts a header value it can't send in its error, which would reach a retry prompt.
+        if source == 'environment':
+            monkeypatch.setenv('FIRECRAWL_API_KEY', 'fc-se\ncret')
+
+        with pytest.raises(UserError, match='must not contain whitespace or control characters') as excinfo:
+            HttpFirecrawlClient(api_key='fc-se\ncret' if source == 'argument' else None)
+
+        assert 'cret' not in str(excinfo.value)
 
     async def test_base_url_is_read_from_the_environment(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv('FIRECRAWL_API_URL', 'http://localhost:3002/')

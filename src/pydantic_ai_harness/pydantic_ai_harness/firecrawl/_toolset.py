@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -10,7 +11,8 @@ from typing import Literal, Protocol
 import httpx2
 from typing_extensions import TypedDict
 
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai._ssrf import is_private_ip
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
@@ -97,6 +99,10 @@ class HttpFirecrawlClient(JsonApiClient):
                 request ends.
         """
         key = (api_key if api_key is not None else os.environ.get(self._API_KEY_ENV, '')).strip()
+        # HTTPX echoes a header value it can't send in its error, which would carry the key into a retry prompt.
+        if any(char.isspace() or not char.isprintable() for char in key):
+            source = '`api_key`' if api_key is not None else f'`{self._API_KEY_ENV}`'
+            raise UserError(f'{source} must not contain whitespace or control characters')
         super().__init__(
             base_url=base_url, http_client=http_client, headers={'Authorization': f'Bearer {key}'} if key else {}
         )
@@ -186,6 +192,43 @@ def _format_result(title: str | None, url: str, body: str) -> str:
     return '\n'.join(lines)
 
 
+def _domain(domain: str) -> str:
+    return domain.strip().lower().strip('.')
+
+
+def _host(url: str) -> str | None:
+    try:
+        host = httpx2.URL(url).host
+    except httpx2.InvalidURL:
+        return None
+    return _domain(host) or None
+
+
+def _in_domains(host: str, domains: Sequence[str]) -> bool:
+    """Whether `host` is one of `domains` or a subdomain of one, as a `site:` operator matches."""
+    return any(host == domain or host.endswith(f'.{domain}') for domain in domains)
+
+
+def _check_page_url(url: str) -> None:
+    """Refuse a URL a scraper should not fetch: one that is not `http(s)`, or names a private or metadata address.
+
+    A self-hosted Firecrawl fetches from inside your network, and the model picks the URL.
+    A hostname is not resolved here, since the scraper resolves it, not this process.
+    """
+    try:
+        parsed = httpx2.URL(url)
+    except httpx2.InvalidURL:
+        parsed = None
+    if parsed is None or parsed.scheme not in ('http', 'https') or not parsed.host:
+        raise ModelRetry(f'{url!r} is not an absolute http(s) URL.')
+    try:
+        ipaddress.ip_address(parsed.host.split('%', 1)[0])
+    except ValueError:
+        return
+    if is_private_ip(parsed.host):
+        raise ModelRetry(f'{url!r} names a private or local address, which `get_page` does not read.')
+
+
 def _source_list(sources: Mapping[str, str | None]) -> list[FirecrawlSource]:
     return [{'url': url, 'title': title} for url, title in sources.items()]
 
@@ -267,14 +310,29 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
         self._max_results = max_results
         self._max_text_chars = max_text_chars
         self._full_page = extraction_mode == 'full_page'
-        self._include_domains = list(include_domains)
-        self._exclude_domains = list(exclude_domains)
+        self._include_domains = [_domain(domain) for domain in include_domains]
+        self._exclude_domains = [_domain(domain) for domain in exclude_domains]
         self._client: FirecrawlClient = client if client is not None else HttpFirecrawlClient()
         self._operations = operations
         self.add_function(
             self.web_search, name='web_search', prepare=defer_to_native_web_search if defer_to_native else None
         )
         self.add_function(self.get_page, name='get_page')
+
+    def _is_usable_result_url(self, url: str) -> bool:
+        """Whether a result URL is one to show: well formed, and inside the domain lists.
+
+        Firecrawl applies the lists as `site:` operators, which some self-hosted search
+        backends treat as hints, so they are enforced on what comes back as well.
+        """
+        if not url or any(char.isspace() for char in url):
+            return False
+        host = _host(url)
+        if host is None:
+            return False
+        if self._include_domains and not _in_domains(host, self._include_domains):
+            return False
+        return not _in_domains(host, self._exclude_domains)
 
     @recoverable('Firecrawl')
     async def web_search(self, query: str) -> ToolReturn[str]:
@@ -300,7 +358,7 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
         sections: list[str] = []
         for result in found:
             url = _text(result.get('url')).strip()
-            if not url or any(char.isspace() for char in url):
+            if not self._is_usable_result_url(url):
                 continue
             title = _one_line(result.get('title')) or None
             # A result whose scrape failed has no markdown, so its highlight stands in. The highlight
@@ -334,6 +392,7 @@ class FirecrawlSearchToolset(FunctionToolset[AgentDepsT]):
         """
         if self._operations is not None:
             return raise_retry(await self._operations.get_page(url))
+        _check_page_url(url)
         page = await self._client.scrape(url)
         metadata = page.get('metadata')
         details: Mapping[object, object] = metadata if is_mapping(metadata) else {}

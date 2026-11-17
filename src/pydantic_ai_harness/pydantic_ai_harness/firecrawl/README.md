@@ -94,8 +94,13 @@ keeps a survey of several sources cheap and leaves full pages to `get_page`.
 In `'full_page'` mode, a result Firecrawl could not scrape falls back to its
 highlight.
 
-The domain lists apply to `web_search` only. `get_page` reads whatever URL the
-model passes.
+The domain lists apply to `web_search` only. Firecrawl turns them into `site:`
+operators, which some self-hosted search backends treat as hints, so results
+outside them are also dropped before the model sees them. `get_page` reads any
+public `http(s)` URL the model passes; it refuses other schemes and private,
+loopback, and link-local IP addresses. It does not resolve hostnames, since the
+scraper does that, so a self-hosted deployment still needs its own egress
+rules to keep the scraper away from internal hosts.
 
 ## Authentication
 
@@ -108,7 +113,8 @@ export FIRECRAWL_API_KEY='fc-...'
 
 Set `FIRECRAWL_API_URL` to point at a self-hosted Firecrawl deployment. It must
 be `https`, except against loopback for local development, and carry no query or
-fragment: the endpoint path is appended to it.
+fragment: the endpoint path is appended to it. A key with whitespace or control
+characters inside is rejected with a `UserError`.
 
 To configure either explicitly rather than through the environment, pass a
 client:
@@ -148,8 +154,8 @@ Any HTTP error status other than `401`, `402`, and `403` becomes `ModelRetry`, a
 network failures, a request past its deadline, and a `2xx` whose body is too
 large, not JSON, or not `success: true` with a `data` object, so the model can
 wait, rephrase, or try another URL rather than abort the run. A `get_page` call
-whose page reports an error status, such as a `404`, or has no content is a
-`ModelRetry` too. A `401`, `402`, or `403` propagates as
+for a URL it refuses, or whose page reports an error status, such as a `404`,
+or has no content is a `ModelRetry` too. A `401`, `402`, or `403` propagates as
 `httpx2.HTTPStatusError`: a rejected key or an exhausted account is
 configuration the model cannot fix.
 

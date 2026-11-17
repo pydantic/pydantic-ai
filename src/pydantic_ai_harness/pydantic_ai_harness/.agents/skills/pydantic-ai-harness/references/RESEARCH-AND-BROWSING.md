@@ -279,6 +279,9 @@ Gotchas:
 - Rate limits, 5xx, a non-JSON or `success: false` body, a page whose site answered 4xx/5xx, and an
   empty page become `ModelRetry`; 401/402/403 stop the run. For tests, pass `client=` a fake
   satisfying the exported `FirecrawlClient` protocol.
+- Results outside `include_domains`/`exclude_domains` are dropped client-side too. `get_page` refuses
+  non-`http(s)` URLs and private/loopback IP literals but resolves no hostnames, so a self-hosted
+  scraper still needs its own egress rules.
 - `HttpFirecrawlClient(http_client=...)` sends every request through your `httpx2.AsyncClient`; you
   close it. Each request has a 90-second deadline.
 - Citations under `metadata['sources']` as `FirecrawlSource`; durable execution records each request
