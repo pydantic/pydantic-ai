@@ -1292,7 +1292,7 @@ def test_monitor_creates_one_assigned_labeled_incident_then_reuses_it() -> None:
     assert len(client.posts) == 1
     payload: object = client.posts[0]
     payload_data = _mapping(payload) or {}
-    assert payload_data['labels'] == ['agentic-workflows', 'pydanty:meta']
+    assert payload_data['labels'] == ['area:agentic-workflows', 'pydanty:meta']
     assert payload_data['assignees'] == ['dsfaccini']
     body = payload_data.get('body')
     assert isinstance(body, str)

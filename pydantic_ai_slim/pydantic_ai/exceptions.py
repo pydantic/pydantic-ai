@@ -266,7 +266,8 @@ class RetryModelRequest(Exception):
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
     the model that is about to serve it, so preparation a capability does there for that model is
     redone rather than inherited from the previous attempt, as are the model's own message preparation
-    and token counting.
+    and token counting. An attempt at another model than the step's also resolves the instructions
+    and model settings again, with that model as `ctx.model`.
     `before_model_request` and `wrap_model_request` are *not* re-run: they belong to the request as a
     whole, not to a single attempt.
     """

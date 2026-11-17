@@ -2551,7 +2551,7 @@ async def test_history_from_another_model(allow_model_requests: None):
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
-        seen.append(json.loads(request.content))
+        seen.append(json.loads(decode_request_body(request.content, request.headers)))
         return answers(response={'type': 'noul', 'noul': 0.9})
 
     history: list[ModelMessage] = [

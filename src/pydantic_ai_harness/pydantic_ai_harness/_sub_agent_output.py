@@ -59,7 +59,7 @@ class ServingModelRecorder(AbstractCapability[Any]):
     """Records the model that served a sub-agent run's last request, to cancel a request it left pending.
 
     The model is the one capabilities like `BatchModelRequests` wrapped, so cancelling through it also releases the
-    request from a batch shared with other runs.
+    request from a batch shared with other runs. The names of that request's output tools are recorded too.
     """
 
     # It only observes the request, so it can be added to a sub-agent run under durable execution too.
@@ -67,11 +67,13 @@ class ServingModelRecorder(AbstractCapability[Any]):
 
     def __init__(self) -> None:
         self.model: Model | None = None
+        self.output_tools: frozenset[str] = frozenset()
 
     async def after_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
         self.model = request_context.model
+        self.output_tools = frozenset(tool.name for tool in request_context.model_request_parameters.output_tools)
         return response
 
 
