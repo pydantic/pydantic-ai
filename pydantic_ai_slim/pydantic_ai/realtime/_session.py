@@ -23,8 +23,9 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
 from .. import _agent_graph, _instructions, _system_prompt
+from .._capability_parts import render_capability_parts_for_live_channel
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
-from .._framing import SYSTEM_TAG, wrap
+from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import (
     _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
@@ -55,6 +56,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    CapabilityPart,
     CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
@@ -531,8 +533,10 @@ def _pending_message_text(pending: PendingMessage) -> str:
     Text-only parts join across messages. System prompts alone become a `SystemPromptText`, which the
     connection delivers on its channel for the operator's own text, as `send(SystemPromptPart(...))` does;
     next to user text they're `<system>`-tagged within the user turn, as `Model.prepare_messages` does for a
-    standard run's non-leading system prompts on a model without a system role. Anything else can't cross
-    the live input channel.
+    standard run's non-leading system prompts on a model without a system role. A
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] goes as the parts it renders to, with no lookalike
+    notes, as the live channel has neither those nor their announcement for any text. Anything else can't cross the
+    live input channel.
     """
     error = UserError(
         '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support text prompts '
@@ -542,7 +546,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     texts: list[str] = []
     system_prompts: list[str] = []
     from_user = False
-    for message in pending.messages:
+    for message in render_capability_parts_for_live_channel(list(pending.messages)):
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
@@ -551,7 +555,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
                 # User-channel text, including content a capability added such as a task report: never system voice.
                 from_user = True
             elif isinstance(part, SystemPromptPart):
-                texts.append(wrap(SYSTEM_TAG, part.content))
+                texts.append(frame(SYSTEM_TAG, part.content))
                 system_prompts.append(part.content)
             else:
                 raise error
@@ -561,15 +565,18 @@ def _pending_message_text(pending: PendingMessage) -> str:
 
 
 def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] | None:
-    """The parts to record for a delivered message of system prompts alone, or one that carries `TextContent`.
+    """The parts to record for a delivered message of system prompts alone, or one that carries capability content.
 
-    System prompts alone are delivered as system prompts, so they're recorded as they were. A capability
-    recognizes content it enqueued, such as a background task's report, by its `TextContent` metadata, so
-    the history keeps those enqueued user prompt parts as they were too. Any other message is recorded as the
-    one text part it was sent as, with its system prompts `<system>`-tagged in it.
+    System prompts alone are delivered as system prompts, so they're recorded as they were. A capability recognizes
+    content it enqueued, such as a background task's report, by its type or by its `TextContent` metadata, so the
+    history keeps a message with a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] or such user prompt parts
+    as it was too. Any other message is recorded as the one text part it was sent as, with its system prompts
+    `<system>`-tagged in it.
     """
     parts = [part for message in pending.messages if isinstance(message, ModelRequest) for part in message.parts]
-    if all(isinstance(part, SystemPromptPart) for part in parts):
+    if all(isinstance(part, SystemPromptPart) for part in parts) or any(
+        isinstance(part, CapabilityPart) for part in parts
+    ):
         return parts
     if all(isinstance(part, UserPromptPart) for part in parts) and any(
         isinstance(part, UserPromptPart)
@@ -1067,12 +1074,12 @@ class RealtimeSession:
                 return
             request = self._new_request([*statements, *update.parts])
             text = self._render_instruction_change(history, request)
-            frame: RealtimeInput = (
-                InstructionChangeContext(wrap(SYSTEM_TAG, text), system_prompt=text)
+            instruction_frame: RealtimeInput = (
+                InstructionChangeContext(frame(SYSTEM_TAG, text), system_prompt=text)
                 if self._profile.get('supports_system_messages', False)
-                else TextContext(wrap(SYSTEM_TAG, text))
+                else TextContext(frame(SYSTEM_TAG, text))
             )
-            await self._send_frame(frame, request=request)
+            await self._send_frame(instruction_frame, request=request)
             self._instruction_changes.append(request)
 
     async def __aenter__(self) -> RealtimeSession:

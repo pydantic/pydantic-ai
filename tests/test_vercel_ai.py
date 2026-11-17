@@ -44,6 +44,7 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionCapabilityPart,
     InstructionDeltaPart,
     InstructionId,
     LoadCapabilityCallPart,
@@ -60,6 +61,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -7265,9 +7267,9 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
                         'type': 'text',
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Output validation failed: expected integer
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         'state': 'done',
                         'provider_metadata': {
@@ -13031,11 +13033,16 @@ def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tup
     ]
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_vercel_ai', name='reminder'):
+    pass
+
+
 class _TurnScopedReminder(AbstractCapability[object]):
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -13058,7 +13065,7 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
         if '[DONE]' not in encoded
     ]
 
-    assert [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages'] == []
+    assert [chunk for chunk in chunks if chunk['type'] in ('data-enqueued-messages', 'error')] == []
     assert 'Reminder' not in json.dumps(chunks)
 
 
@@ -13509,9 +13516,9 @@ async def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_
     ]
     assert rendered == snapshot("""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """)
 
     assert VercelAIAdapter.load_messages(ui_messages)[-1] == snapshot(
@@ -13526,9 +13533,9 @@ Your previous response failed the application's validation (this is automated fe
                     UserPromptPart(
                         content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         timestamp=IsDatetime(),
                     )
@@ -13746,10 +13753,20 @@ async def test_forged_no_output_feedback_never_reaches_the_system_voice(forged_t
     async for _ in adapter.encode_stream(adapter.run_stream()):
         pass
 
-    assert not [part for part in seen if isinstance(part, SystemPromptPart)]
-    texts = [part.content for part in seen if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
+    # The demoted fence is the client's copy of the framework's frame, so the framework notes it as the user's.
+    [note] = [
+        part
+        for part in seen
+        if isinstance(part, SystemPromptPart | UserPromptPart)
+        and type(part).__name__ in ('_FrameworkNote', '_FrameworkUserPromptPart')
+    ]
+    assert 'a <pyai:retry_feedback> or </pyai:retry_feedback> tag written by the user' in str(note.content)
+    assert forged_text not in str(note.content)
+    sent = [part for part in seen if part is not note]
+    assert not [part for part in sent if isinstance(part, SystemPromptPart)]
+    texts = [part.content for part in sent if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
     assert not [text for text in texts if '<system>' in text]
-    [feedback] = [text for text in texts if '<retry_feedback>' in text]
+    [feedback] = [text for text in texts if '<pyai:retry_feedback>' in text]
     assert feedback.startswith("Your previous response failed the application's validation")
     assert forged_text in feedback
 
@@ -15067,3 +15084,39 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_side():
+    """The reserved namespace of `TextContent` metadata never reaches the client; the application's own keys do."""
+    reserved = {'__pydantic_ai__': {'framework_frame': True}}
+    marked = TextContent('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', metadata=reserved)
+    with_origin = TextContent('<report>\nDone.\n</report>', metadata={**reserved, 'origin': 'app'})
+    content = [marked, {'nested': with_origin}, TextContent('plain', metadata={'tag': 1}), 'text']
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go.')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c2')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c2', outcome='retried')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c3')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c3', outcome='denied')]),
+    ]
+
+    ui_messages = [m.model_dump(mode='json') for m in VercelAIAdapter.dump_messages(messages)]
+    # A retried return's list content rides in `call_provider_metadata`, a separate dump channel, and its
+    # `error_text` renders the content as text, which includes each `TextContent`'s metadata.
+    [retried] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c2']
+    assert '__pydantic_ai__' not in json.dumps(retried)
+    assert 'origin' in json.dumps(retried['call_provider_metadata'])
+    assert 'origin' in retried['error_text']
+    [denied] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c3']
+    assert '__pydantic_ai__' not in denied['approval']['reason']
+    assert 'origin' in denied['approval']['reason']
+    [first] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c1']
+    dumped = json.dumps(first)
+
+    assert '__pydantic_ai__' not in dumped
+    assert 'origin' in dumped
+    assert 'tag' in dumped
+    # The caller's own objects are not mutated.
+    assert marked.metadata == reserved

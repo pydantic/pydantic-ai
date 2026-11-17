@@ -62,6 +62,7 @@ from pydantic_ai._utils import (
     now_utc,
 )
 from pydantic_ai._uuid import uuid7
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -92,6 +93,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._capability_parts import has_capability_parts
 from ._context_size import context_input_tokens
 from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
@@ -1515,6 +1517,16 @@ async def _resolve_native_tool_factory(
     return tool
 
 
+async def _deferred_capability_catalog(run_context: RunContext[DepsT]) -> list[models.DeferredCapabilityEntry]:
+    """The step's deferred capability catalog, from the loader that renders it into the instructions.
+
+    Called after the instructions are rendered, which is when the loader resolves the catalog for the step, so both
+    read the same resolution.
+    """
+    loader = next((cap for cap in run_context.capabilities.values() if isinstance(cap, DeferredCapabilityLoader)), None)
+    return [] if loader is None else await loader.catalog(run_context)
+
+
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
@@ -1589,6 +1601,7 @@ async def _prepare_request_parameters(
         _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
         _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
+        deferred_capabilities=await _deferred_capability_catalog(run_context),
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
@@ -3306,6 +3319,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             (wrapped for wrapped in wrappers if wrapped[0] is request_context.model), None
         )
         request_context.messages = list(processed_context.messages)
+        request_context._hooked_messages = list(request_context.messages)  # pyright: ignore[reportPrivateUsage]
         request_context.model_settings = processed_context.model_settings or None
         request_context.model_request_parameters = processed_context.model_request_parameters
         request_context.model_id = processed_context.model_id
@@ -3399,7 +3413,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            if _has_instruction_state(messages):
+            if _continuation_needs_prepare(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
@@ -4733,6 +4747,15 @@ def _record_model_settings_changes(
     for request in requests:
         request.parts = [*request.parts, delta]
     ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+
+
+def _continuation_needs_prepare(messages: list[_messages.ModelMessage]) -> bool:
+    """Whether a continuation's history must go through `Model.prepare_messages` before it is sent.
+
+    Instruction state needs rendering, and so do capability parts: `prepare_messages` renders them, so a
+    continuation never hands one to a model's adapter.
+    """
+    return _has_instruction_state(messages) or has_capability_parts(messages)
 
 
 def _with_outgoing_reveal_state(

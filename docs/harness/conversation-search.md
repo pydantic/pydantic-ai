@@ -33,7 +33,23 @@ async def ask(question: str, conversation_id: str) -> str:
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![StepPersistence saves the full message history to a step store at every step. When compaction later drops messages from the live context, the model can call search_conversation_history. ConversationSearch keeps only runs with the calling run's conversation_id, replays their complete snapshots from the store to recover the original messages, ranks them with BM25, and returns the best excerpts with the messages around them.](../img/harness/conversation-search.svg)
+```mermaid
+flowchart TB
+    accTitle: Conversation Search: recall what compaction dropped
+    accDescr: The model sends a query to search_conversation_history, the tool of the ConversationSearch capability, and gets BM25-ranked excerpts. StepPersistence saves the full history to a step store, which holds snapshots of each step, from before compaction too, and ConversationSearch replays complete snapshots from it. With scope='conversation', other conversations are not searched.
+    model(["model"])
+    search["ConversationSearch()<br/>search_conversation_history"]:::capability
+    persist["StepPersistence"]
+    store[("step store<br/>snapshots of each step,<br/>before compaction too")]:::external
+    other["other conversations<br/>scope='conversation'"]:::blocked
+    model <-->|"query,<br/>BM25-ranked excerpts"| search
+    persist -->|"saves the full history"| store
+    search -->|"replays complete<br/>snapshots"| store
+    search -.-x|"not searched"| other
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Why
 
@@ -44,6 +60,7 @@ Compaction keeps the live history inside the context window, so an exact detail 
 - The tool reads the store when called, so it sees everything persisted so far, including earlier steps of the current run.
 - History a run inherits through `message_history` is indexed under the run that first persisted it, so threaded runs do not return the same message once per run (with the instruction-change exception under [Limitations](#limitations)).
 - Instruction changes recorded in history (`on_change='append'`) are searchable as system text; the initial instructions are not indexed.
+- What a capability added to the conversation, such as a sub-agent's report or a background tool's result, is searchable, labeled with the part's `kind` rather than as user text. A part scoped to a single request (`scope='request'`) is not indexed.
 - Long messages are clipped to 500 characters for display (200 for system text and tool-call arguments). When the matched term lies past the cutoff, the excerpt shows the text around it instead of the start. The index always holds the full text.
 
 ## How recovery works

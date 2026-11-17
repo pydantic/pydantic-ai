@@ -7,6 +7,9 @@ import sys
 from typing import Any
 
 import pytest
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from stackone_defender import DefenseResult, PromptDefense
 
 from pydantic_ai import Agent
@@ -30,18 +33,35 @@ def _observe() -> PromptDefense:
     return PromptDefense(enable_tier2=False)
 
 
-def _make_ctx() -> RunContext[object]:
-    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-1')
+def _make_ctx(exporter: InMemorySpanExporter | None = None, *, include_content: bool = False) -> RunContext[object]:
+    ctx: RunContext[object] = RunContext(
+        deps=None, model=TestModel(), usage=RunUsage(), run_id='run-1', trace_include_content=include_content
+    )
+    if exporter is not None:
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        ctx.tracer = provider.get_tracer('test')
+    return ctx
 
 
 def _call(tool_name: str = 'fetch') -> ToolCallPart:
     return ToolCallPart(tool_name=tool_name, args='{}', tool_call_id='call-1')
 
 
-async def _run(cap: PromptInjectionDefender[object], result: Any, *, tool_name: str = 'fetch') -> Any:
+async def _run(
+    cap: PromptInjectionDefender[object],
+    result: Any,
+    *,
+    tool_name: str = 'fetch',
+    ctx: RunContext[object] | None = None,
+) -> Any:
     return await cap.after_tool_execute(
-        _make_ctx(), call=_call(tool_name), tool_def=ToolDefinition(name=tool_name), args={}, result=result
+        ctx or _make_ctx(), call=_call(tool_name), tool_def=ToolDefinition(name=tool_name), args={}, result=result
     )
+
+
+def _flagged_spans(exporter: InMemorySpanExporter) -> list[ReadableSpan]:
+    return [span for span in exporter.get_finished_spans() if span.name == 'prompt_injection flagged']
 
 
 def _recorder() -> tuple[list[DefenseResult], Any]:
@@ -264,6 +284,58 @@ async def test_blocks_injection_past_large_array_threshold() -> None:
     assert isinstance(out, ToolReturn)
     assert isinstance(out.return_value, str)
     assert 'withheld' in out.return_value
+
+
+# --- Telemetry --------------------------------------------------------------
+
+
+async def test_default_configuration_records_flagged_verdict_span() -> None:
+    exporter = InMemorySpanExporter()
+    result = {'body': INJECTION}
+    assert await _run(PromptInjectionDefender(), result, ctx=_make_ctx(exporter)) is result
+    [span] = _flagged_spans(exporter)
+    assert dict(span.attributes or {}) == {
+        'gen_ai.tool.name': 'fetch',
+        'gen_ai.tool.call.id': 'call-1',
+        'prompt_injection.action': 'reported',
+        'prompt_injection.risk_level': 'high',
+        'prompt_injection.detections': ('ignore_previous',),
+    }
+
+
+async def test_blocked_verdict_span_includes_fields_only_with_content() -> None:
+    exporter = InMemorySpanExporter()
+    ctx = _make_ctx(exporter, include_content=True)
+    await _run(PromptInjectionDefender(block_high_risk=True), {'body': INJECTION}, ctx=ctx)
+    [span] = _flagged_spans(exporter)
+    attributes = span.attributes or {}
+    assert attributes['prompt_injection.action'] == 'blocked'
+    assert attributes['prompt_injection.fields_sanitized'] == ('body',)
+
+
+async def test_tier2_score_recorded_on_span(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scored(self: PromptDefense, value: object, tool_name: str) -> DefenseResult:
+        return DefenseResult(
+            allowed=True,
+            risk_level='high',
+            sanitized=value,
+            detections=[],
+            fields_sanitized=[],
+            patterns_by_field={},
+            tier2_score=0.9,
+        )
+
+    monkeypatch.setattr(PromptDefense, 'defend_tool_result_async', scored)
+    exporter = InMemorySpanExporter()
+    await _run(PromptInjectionDefender(), {'body': 'x'}, ctx=_make_ctx(exporter))
+    [span] = _flagged_spans(exporter)
+    assert (span.attributes or {})['prompt_injection.tier2_score'] == 0.9
+
+
+async def test_clean_result_records_no_span() -> None:
+    exporter = InMemorySpanExporter()
+    await _run(PromptInjectionDefender(), {'body': 'quarterly report attached'}, ctx=_make_ctx(exporter))
+    assert _flagged_spans(exporter) == []
 
 
 # --- Through the public Agent surface -------------------------------------

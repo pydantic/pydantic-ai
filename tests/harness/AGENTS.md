@@ -14,7 +14,7 @@ change a capability's tests. For async behavior, follow the harness
   the capability's public surface so tests survive internal refactors: drive the
   behavior through `Agent(..., capabilities=[...])`, or import the public class
   re-exported from the capability package's `__init__.py` (e.g.
-  `from pydantic_ai_harness.filesystem import FileSystemToolset`, not
-  `from pydantic_ai_harness.filesystem._toolset import _sanitize_recoverable_error`). When a
+  `from pydantic_ai_harness.file_system import FileSystemToolset`, not
+  `from pydantic_ai_harness.file_system._toolset import _sanitize_recoverable_error`). When a
   branch is only reachable by calling a private helper directly, mark it
   `# pragma: no cover` rather than reaching into the helper from a test.

@@ -301,10 +301,19 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
         # incompatibility by dropping `reasoning`, so the gateway marks the combination unsupported.
         ('anthropic/claude-sonnet-4.6', False),
         ('~anthropic/claude-sonnet-latest', False),
+        # Qwen3.8 Flash returns a 400 for a forced `tool_choice` while reasoning.
+        ('qwen/qwen3.8-flash', False),
         # Other downstream providers honor `reasoning` alongside a forced `tool_choice`.
         ('google/gemini-2.5-flash', True),
         ('openai/gpt-5-mini', True),
         ('unknown/model', True),
+        # Routes outside the table keep the default. Muse Spark 1.3 and Qwen3.8 2.4T are also served by hosts that
+        # accept forcing while reasoning. GLM-5.3 accepts `'required'` while reasoning but rejects a named function,
+        # which this flag can't express.
+        ('meta/muse-spark-1.3', True),
+        ('qwen/qwen3.8-2.4t-a95b', True),
+        ('qwen/qwen3.8-27b', True),
+        ('z-ai/glm-5.3', True),
     ],
 )
 def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: str, expected: bool) -> None:
@@ -313,6 +322,16 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     profile = provider.model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_forced_tool_choice_with_thinking') is expected
+
+
+@pytest.mark.parametrize(('model_name', 'expected'), [('qwen/qwen3.8-flash', True), ('qwen/qwen3.8-27b', None)])
+def test_openrouter_model_profile_on_routes_that_reject_forcing_while_reasoning(
+    model_name: str, expected: bool | None
+) -> None:
+    """Qwen3.8 Flash reasons unless told not to, so a request without a thinking setting counts as reasoning."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_enabled_by_default') is expected
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:

@@ -19,10 +19,20 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
+from pydantic_ai_harness.file_system import (
+    DirectoryCreatedEvent,
+    FileChangeRequestedEvent,
+    FileEditedEvent,
+    FileReadEvent,
+    FileSystem,
+    FileWrittenEvent,
+)
+from pydantic_ai_harness.shell import Shell
 
 from ...durable_exec.workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 from ...workspace_fakes import InMemoryProvider
-from .conftest import RecordingTaskContext
+from .._tool_calls import WORKSPACE_TOOL_CALLS, scripted_model
+from .conftest import RecordingTaskContext, run_agent_in_task
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -43,7 +53,8 @@ class WorkspaceTaskContext(RecordingTaskContext):
             self.in_child_task.reset(token)
 
 
-@pytest.mark.parametrize('check', cases())
+# `prepare_reads` checks an in-process engine; Render rebuilds the backend from the ref at each task.
+@pytest.mark.parametrize('check', [case for case in cases() if case.id != 'prepare_reads'])
 async def test_workspace_scenario(check: Check, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('TMPDIR', str(tmp_path))
     app = Workflows()
@@ -97,3 +108,41 @@ async def test_worker_restores_workspace_validation_context(tmp_path: Path) -> N
     assert 'workspace-agent__capability__workspace.call' in context.task_names
     assert 'workspace-agent__function_toolset__<agent>.call_tool' in context.task_names
     assert (tmp_path / 'note.txt').read_text() == 'saved'
+
+
+@pytest.mark.parametrize('veto', [False, True])
+async def test_file_system_and_shell_tools(tmp_path: Path, veto: bool) -> None:
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent[None, str](
+        scripted_model(WORKSPACE_TOOL_CALLS),
+        deps_type=type(None),
+        name='coder',
+        capabilities=[LocalWorkspace(tmp_path), FileSystem(), Shell(tools=['shell']), runtime],
+    )
+    events: list[str] = []
+
+    @agent.on_event(FileChangeRequestedEvent, FileWrittenEvent, FileEditedEvent, DirectoryCreatedEvent, FileReadEvent)
+    async def record(
+        ctx: RunContext[None],
+        event: FileChangeRequestedEvent | FileWrittenEvent | FileEditedEvent | DirectoryCreatedEvent | FileReadEvent,
+    ) -> None:
+        events.append(type(event).__name__)
+        if veto and isinstance(event, FileChangeRequestedEvent) and event.operation == 'edit':
+            event.cancel('denied')
+
+    output = await run_agent_in_task(agent, runtime, RecordingTaskContext())
+    content = 'one' if veto else 'two'
+    assert f'shell-{content}' in output
+    assert ("'note.txt' was not edited: denied" in output) is veto
+    edited = [] if veto else ['FileEditedEvent']
+    assert events == [
+        'FileChangeRequestedEvent',
+        'FileWrittenEvent',
+        'FileChangeRequestedEvent',
+        *edited,
+        'FileChangeRequestedEvent',
+        'DirectoryCreatedEvent',
+        'FileReadEvent',
+    ]
+    assert (tmp_path / 'note.txt').read_text() == content
+    assert (tmp_path / 'sub').is_dir()
