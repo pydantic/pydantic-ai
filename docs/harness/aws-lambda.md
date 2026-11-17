@@ -317,7 +317,7 @@ execution's traces show only the work that invocation did, and costs are counted
 - **A model step's retry waits the provider's `Retry-After`.** When a model request fails with a
   model error that has a `retry_after` (read from a `Retry-After` or `retry-after-ms` header, for
   example) and the step's retry strategy retries it, the execution suspends for that long, rounded
-  up to whole seconds, instead of the strategy's delay. No compute is billed while it waits. The
+  up to whole seconds (at least one), instead of the strategy's delay. No compute is billed while it waits. The
   strategy still decides whether to retry, so its attempt limit and error filters apply. A strategy
   is a function with no maximum to read, so the wait is capped at the strategy's own delay for that
   attempt or a minute, whichever is longer.

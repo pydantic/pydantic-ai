@@ -119,8 +119,9 @@ def _waiting_retry_after(config: StepConfig | None) -> StepConfig:
 
     The step's retry strategy, the SDK's default when none is set, still decides whether to retry. When it does and
     the model error has a `retry_after`, the SDK suspends the execution for that long instead of the strategy's delay,
-    rounded up to whole seconds. A strategy is a function with no maximum to read, so the wait is capped at the
-    strategy's own delay for the attempt or a minute, whichever is longer.
+    rounded up to whole seconds and at least one, as the SDK's own strategies wait. A strategy is a function with no
+    maximum to read, so the wait is capped at the strategy's own delay for the attempt or a minute, whichever is
+    longer.
     """
     step_config = config or StepConfig()
     strategy = step_config.retry_strategy or RetryPresets.default()
@@ -132,7 +133,8 @@ def _waiting_retry_after(config: StepConfig | None) -> StepConfig:
         delay = model_error_retry_after(error, maximum=max(decision.delay_seconds, _MINIMUM_RETRY_AFTER_CAP))
         if delay is None:
             return decision
-        return RetryDecision.retry(Duration(seconds=math.ceil(delay)))
+        # Like the SDK's own strategies, wait at least a second: a `Retry-After: 0` asks for no wait.
+        return RetryDecision.retry(Duration(seconds=max(1, math.ceil(delay))))
 
     return replace(step_config, retry_strategy=retry_strategy)
 

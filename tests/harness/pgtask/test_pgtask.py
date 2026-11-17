@@ -908,6 +908,8 @@ class TestRetryAfter:
         assert counter['calls'] == 2
         stored = await checkpoints(pgtask_db, task_id)
         assert stored[('limited__model.request', 0)] == {'__pydantic_ai_harness_retry_after__': 0.0}
+        # The wait is a durable sleep step of its own, between the two attempts.
+        assert ('limited__model.request.retry_after', 0) in stored
         assert ('limited__model.request', 1) in stored
 
     async def test_model_error_fails_the_attempt_without_a_wait_when_no_attempts_are_left(

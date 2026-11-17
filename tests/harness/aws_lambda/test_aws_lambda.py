@@ -605,6 +605,8 @@ class TestRetryAfter:
         [
             pytest.param(30.0, None, 30, id='retry-after'),
             pytest.param(0.5, None, 1, id='rounded-up-to-whole-seconds'),
+            # A wait that asks for none still waits the SDK's minimum of a second.
+            pytest.param(0.0, None, 1, id='at-least-a-second'),
             # The SDK's default strategy waits at most a minute, so the wait is capped at a minute.
             pytest.param(1000.0, None, 60, id='capped-at-a-minute'),
             # A strategy that waits longer than a minute raises the cap to its own delay.
