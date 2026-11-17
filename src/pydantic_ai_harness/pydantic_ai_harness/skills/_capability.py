@@ -55,7 +55,7 @@ class _Skill(AbstractCapability[AgentDepsT]):
     def __init__(self, skill: SkillDefinition) -> None:
         self.id = skill.name
         # Continuation lines are indented so a multiline description doesn't read as separate catalog entries.
-        self.description = skill.description.replace('\n', '\n  ')
+        self.description = _catalog_description(skill).replace('\n', '\n  ')
         self.defer_loading = True
         self.instructions = skill.render()
 
@@ -73,7 +73,7 @@ class Skills(AbstractCapability[AgentDepsT]):
     from a workspace of their own. A run with neither fails at its start.
 
     Each selected immediate child containing `SKILL.md` becomes a deferred capability named after
-    the skill: the model sees its name and description, and loads its Markdown body, with the
+    the skill: the model sees its name, description and `when_to_use`, and loads its Markdown body, with the
     skill's directory in the run's workspace, with `load_capability`. Bundled files are not loaded
     or executed. Descriptions longer than the Agent Skills limit are preserved and emit a warning.
     A skill found twice, through a symlink or as a byte-identical `SKILL.md`, counts once. A skill
@@ -108,7 +108,7 @@ class Skills(AbstractCapability[AgentDepsT]):
     """Where the libraries live, when not in the run's workspace; see `__init__`."""
 
     scanner: ArtifactScanner | None
-    """Scans each skill's description and body before it is offered, skipping flagged skills; see `__init__`."""
+    """Scans each skill's description, `when_to_use` and body before it is offered, skipping flagged skills; see `__init__`."""
 
     id: str | None = 'skills'
     """One per agent: two `Skills` combine into one catalog."""
@@ -177,7 +177,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                 `LocalWorkspaceBackend('/app')` for skills shipped with the code while the agent
                 works in a sandbox. It is read in-process: a durable engine does not route it
                 through its workflow machinery.
-            scanner: An `ArtifactScanner` that checks each skill's description and body for prompt injection,
+            scanner: An `ArtifactScanner` that checks each skill's description, `when_to_use` and body for prompt injection,
                 credential exfiltration, and hidden content. A flagged skill is left out of the catalog, with
                 a warning, as a `SkippedSkill` whose `reason` is `'flagged'`. Omit to load skills unscanned.
         """
@@ -402,11 +402,20 @@ class Skills(AbstractCapability[AgentDepsT]):
         return advice
 
 
+def _catalog_description(skill: SkillDefinition) -> str:
+    """The text the model's catalog lists for `skill`: its description, then its `when_to_use`."""
+    if skill.when_to_use is None:
+        return skill.description
+    # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
+    return f'{skill.description} {skill.when_to_use}'
+
+
 def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> SkippedSkill | None:
-    """The entry for `skill` when `scanner` flags its description or body, otherwise `None`."""
+    """The entry for `skill` when `scanner` flags its catalog text or body, otherwise `None`."""
     if scanner is None:
         return None
-    scan = scanner.scan(f'{skill.description}\n\n{skill.body}', source=f'skill:{skill.name}')
+    # Scan exactly what reaches the model: the catalog entry, including `when_to_use`, and the body.
+    scan = scanner.scan(f'{_catalog_description(skill)}\n\n{skill.body}', source=f'skill:{skill.name}')
     if not scan.flagged:
         return None
     return SkippedSkill(

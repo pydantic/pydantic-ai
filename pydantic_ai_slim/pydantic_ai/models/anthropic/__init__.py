@@ -189,6 +189,7 @@ try:
     from anthropic import (
         DEFAULT_TIMEOUT,
         NOT_GIVEN,
+        APIConnectionError,
         APIStatusError,
         AsyncAnthropicAWS,
         AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
@@ -322,7 +323,7 @@ try:
         splits_batch,
     )
     from ._containers import is_tool_result_only
-    from ._errors import is_expired_container_error, map_api_errors
+    from ._errors import is_expired_container_error, map_api_errors, status_and_body
     from ._message_passes import (
         anchor_system_messages,
         drop_unpaired_native_tool_calls,
@@ -528,6 +529,15 @@ _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropi
 # so `anthropic_calls_cited_web_tools_directly` stays off for them. The other clients don't send those versions.
 _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS = (
     AsyncAnthropicAWS,
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
+# The Claude API rejects a `tool_use` with no `tool_result`, and a `tool_result` whose `tool_use_id` names no
+# `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). The platform clients aren't verified to, so
+# `rejects_unpaired_tool_calls` stays off for them and their requests keep the history as translated.
+_UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
@@ -1294,6 +1304,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for every client in
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
         already sets it.
+
+        `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Bedrock Mantle,
+        Vertex AI and Foundry clients, which aren't verified to reject an unpaired tool call, unless the provider's
+        profile already sets it.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1332,6 +1346,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_calls_cited_web_tools_directly=not isinstance(
                         client, _CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS
                     )
+                ),
+            )
+        if 'rejects_unpaired_tool_calls' not in profile:
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(
+                    rejects_unpaired_tool_calls=not isinstance(client, _UNPAIRED_TOOL_CALLS_UNVERIFIED_CLIENTS)
                 ),
             )
         return profile
@@ -1740,9 +1761,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
+            except (APIStatusError, APIConnectionError) as error:
+                # `status_and_body` also reads a status a retrying transport gave up on, which `anthropic` wraps in
+                # `APIConnectionError`, so the recoveries below run for it as for the SDK's own error.
+                response = status_and_body(error)
                 if (
-                    is_expired_container_error(error)
+                    response is not None
+                    and is_expired_container_error(*response)
                     and prepared.container_from_history
                     and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
@@ -1752,13 +1777,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ):
                     try:
                         return await create(None, initial_thinking, initial_betas, initial_thinking_override)
-                    except APIStatusError as fallback_error:
+                    except (APIStatusError, APIConnectionError) as fallback_error:
                         # Classify what the fallback hit, not the 500 that caused it, so a stale
                         # thinking block rejected only on this attempt still reaches the retry
                         # below. The history-resolved container is gone, so it stays dropped there.
-                        error = fallback_error
+                        error, response = fallback_error, status_and_body(fallback_error)
                         retry_container = None
-                if not is_stale_thinking_block_error(anthropic_profile, prepared.initial_effective_thinking, error):
+                if response is None or not is_stale_thinking_block_error(
+                    anthropic_profile, prepared.initial_effective_thinking, *response
+                ):
                     raise error
 
             result = await create(
@@ -2453,8 +2480,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await count(initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
-                if not is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+            except (APIStatusError, APIConnectionError) as error:
+                # As in `_messages_create`, a status a retrying transport gave up on is recovered from too.
+                if (response := status_and_body(error)) is None or not is_stale_thinking_block_error(
+                    anthropic_profile, initial_effective_thinking, *response
+                ):
                     raise
 
             result = await count(

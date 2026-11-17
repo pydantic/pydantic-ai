@@ -2183,8 +2183,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         from .._tool_search import synthesize_local_tool_search_messages
 
+        untranslated = messages
         messages = synthesize_local_tool_search_messages(
-            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
+            messages,
+            keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None,
+            pair_returns=self.profile.get('rejects_unpaired_tool_calls', False),
         )
 
         if not clears_request_scoped_prompts:
@@ -2208,11 +2211,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _order_tool_results_by_call(messages)
+        # After the reorder above, so the returns land where an agent run's repair after this method puts them.
+        messages = self._repair_dangling_translated_tool_search_calls(messages, untranslated)
 
         if tool_call_id_length is not None:
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _repair_dangling_translated_tool_search_calls(
+        self, messages: list[ModelMessage], untranslated: list[ModelMessage]
+    ) -> list[ModelMessage]:
+        """Answer the tool-search calls translated from `untranslated` that have no return, where the API requires it.
+
+        See `_tool_search.repair_dangling_translated_calls` and the profile's `rejects_unpaired_tool_calls`.
+        """
+        if not self.profile.get('rejects_unpaired_tool_calls', False):
+            return messages
+        from .._tool_search import repair_dangling_translated_calls
+
+        return repair_dangling_translated_calls(messages, untranslated)
 
     def _translate_legacy_tool_reveals(
         self,
