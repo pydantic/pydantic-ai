@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -37,11 +38,19 @@ class _Researcher:
     """A model that calls `look_up` twice per response until it's told to stop calling tools."""
 
     def __init__(self) -> None:
-        self.requests: list[tuple[ToolChoice, list[ToolDefinition]]] = []
+        self.requests: list[tuple[ToolChoice, list[ToolDefinition], bool]] = []
+        """Per request: the `tool_choice`, the function tools, and whether the wrap-up prompt was sent with it."""
 
     def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tool_choice = info.model_settings.get('tool_choice') if info.model_settings else None
-        self.requests.append((tool_choice, info.function_tools))
+        # The request-scoped prompt reaches the model as the final request's own framed text.
+        prompted = any(
+            isinstance(part, UserPromptPart)
+            and isinstance(part.content, str)
+            and DEFAULT_WRAP_UP_PROMPT in part.content
+            for part in messages[-1].parts
+        )
+        self.requests.append((tool_choice, info.function_tools, prompted))
         if tool_choice == 'none':
             return ModelResponse(parts=[TextPart('what I found so far')])
         step = len(self.requests)
@@ -92,8 +101,12 @@ class TestWrapUpAtLimits:
         assert wrap_ups(result.new_messages()) == [
             (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'request_limit'})
         ]
-        # The tools stay defined on the final request, so the cached prefix still matches.
-        assert [choice for choice, _ in model.requests] == [None, None, 'none']
+        # Only the final request carries the prompt, and its tools stay defined, so the cached prefix still matches.
+        assert [(choice, prompted) for choice, _, prompted in model.requests] == [
+            (None, False),
+            (None, False),
+            ('none', True),
+        ]
         assert model.requests[2][1] == model.requests[0][1]
 
     async def test_run_stream_wraps_up(self) -> None:
@@ -154,6 +167,16 @@ class TestWrapUpAtLimits:
             (DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': 'tool_calls_limit'})
         ]
 
+    async def test_tool_call_budget_too_small_for_another_batch_wraps_up(self) -> None:
+        looked_up: list[str] = []
+
+        # One call is left after the first batch of two, so the next batch is assumed to go over.
+        result = await _agent(_Researcher(), looked_up).run('Research', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert result.output == 'what I found so far'
+        assert sorted(looked_up) == ['a1', 'b1']
+        assert wrapped_up_by(result.new_messages()) == 'tool_calls_limit'
+
     @pytest.mark.parametrize(
         ('limits', 'limit'),
         [
@@ -168,8 +191,9 @@ class TestWrapUpAtLimits:
         result = await _agent(_Researcher(), looked_up).run('Research', usage_limits=limits)
 
         assert result.output == 'what I found so far'
-        # At least one round of tools ran before the projection made a request the last.
-        assert looked_up
+        # Two rounds of tools ran: the third request is the first after which a final one would go over.
+        assert sorted(looked_up) == ['a1', 'a2', 'b1', 'b2']
+        assert result.usage.requests == 3
         assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, {'origin': ORIGIN, 'limit': limit})]
 
     async def test_custom_prompt(self) -> None:

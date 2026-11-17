@@ -47,12 +47,14 @@ When the run's `UsageLimits` leave room for one more model request but not for a
 | Limit | The final request |
 |---|---|
 | `request_limit` | The last request the limit allows |
-| `tool_calls_limit` | The request after the tool-call budget is used up |
+| `tool_calls_limit` | The first request after which the tool calls left are fewer than the run's largest batch so far, or none are left |
 | `input_tokens_limit`, `output_tokens_limit`, `total_tokens_limit` | The first request after which a final request is projected to go over the limit |
 
-- A batch of tool calls that would go over `tool_calls_limit` still raises `UsageLimitExceeded`, before any of its calls run. Answering such a batch as not executed and wrapping up after it needs core to stop counting denied tool results against the limit ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
+- A batch of tool calls larger than any before it that would go over `tool_calls_limit` still raises `UsageLimitExceeded`, before any of its calls run. Answering such a batch as not executed and wrapping up after it needs core to stop counting denied tool results against the limit ([follow-up](https://github.com/pydantic/pydantic-ai/issues/11818#issuecomment-6930825644)).
 - Token use is projected from this run's responses. Input and total tokens are assumed to grow on each further request by as much as the last response grew over the one before, plus the final prompt; output tokens to be at most the largest response's. A final request that uses more than projected still raises `UsageLimitExceeded`.
 - `cost_limit` and `per_request_input_tokens_limit` aren't projected, and raise as before.
+- If the final answer fails output validation, no request is left for the retry and the run raises `UsageLimitExceeded`.
+- A run given no `usage_limits` gets the default [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits), whose `request_limit` is 50, so it wraps up on its 50th request instead of raising.
 - A model that still calls tools on the final request, as a provider that doesn't enforce `tool_choice='none'` allows, has them run as usual, unless `tool_calls_limit` is used up, in which case they raise `UsageLimitExceeded`. After calls that ran, the next request is made the last again, or raises when no request is left.
 
 ## Telling a wrapped-up answer from a finished one

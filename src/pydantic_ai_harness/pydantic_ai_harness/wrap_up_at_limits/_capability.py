@@ -108,13 +108,15 @@ def _limit_reached(
 ) -> LimitName | None:
     """The limit that leaves room for this request but not for a final one after it, if any.
 
-    The token use of both is projected from `responses`, the run's responses so far, plus the final
-    request's `prompt_tokens`. Input grows with the history; each response's output is its own.
+    A batch of tool calls is assumed to be as large as the largest so far, and the token use of both
+    requests is projected from `responses`, the run's responses so far, plus the final request's
+    `prompt_tokens`. Input grows with the history; each response's output is its own.
     """
     reserved = reserved_usage_limits(limits)
     if reserved is not None and reserved.request_limit is not None and usage.requests >= reserved.request_limit:
         return 'request_limit'
-    if limits.tool_calls_limit is not None and usage.tool_calls >= limits.tool_calls_limit:
+    largest_batch = max((len(r.tool_calls) for r in responses), default=0)
+    if limits.tool_calls_limit is not None and limits.tool_calls_limit - usage.tool_calls < max(1, largest_batch):
         return 'tool_calls_limit'
     projections: tuple[tuple[LimitName, int | None, int, int], ...] = (
         (

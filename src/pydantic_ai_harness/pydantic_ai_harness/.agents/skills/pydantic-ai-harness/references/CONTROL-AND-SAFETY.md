@@ -836,9 +836,10 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 #> partial answer
 ```
 
-- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (budget used up), and
-  input/output/total token limits (projected from the run's responses). `cost_limit` and
-  `per_request_input_tokens_limit` are not projected. A batch over `tool_calls_limit` still raises.
+- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (fewer calls left than the
+  largest batch so far), and input/output/total token limits (projected from the run's responses).
+  `cost_limit` and `per_request_input_tokens_limit` are not projected. A larger batch that goes over
+  `tool_calls_limit` still raises. With no `usage_limits`, the default `request_limit=50` applies.
 - `wrapped_up_by(result.new_messages())` (`.wrap_up_at_limits`) returns the `LimitName` that cut the run
   short, or `None`; it reads the final prompt's `metadata` (`origin` `'pydantic-ai-harness.wrap_up_at_limits.v1'`).
 - With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
