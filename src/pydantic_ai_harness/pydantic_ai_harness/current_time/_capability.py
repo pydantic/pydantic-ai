@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, tzinfo
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -36,23 +36,22 @@ class CurrentTime(AbstractCapability[AgentDepsT]):
     precision: Literal['date', 'hour'] = 'date'
     """`'date'` states the weekday and date. `'hour'` also states the hour, adding an update to the history every
     hour of a conversation."""
+    _zone: tzinfo = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.id = self.id or _ID
-        self._zone()
+        # Resolved once here, as reading tzdata on a request would block the event loop.
+        self._zone = ZoneInfo(self.timezone) if isinstance(self.timezone, str) else self.timezone
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], InstructionPart | None]:
         """Return the current date or hour, read from the request being sent."""
         return self._current_time
 
-    def _zone(self) -> tzinfo:
-        return ZoneInfo(self.timezone) if isinstance(self.timezone, str) else self.timezone
-
     def _current_time(self, ctx: RunContext[AgentDepsT]) -> InstructionPart | None:
         stamp = next((m.timestamp for m in reversed(ctx.messages) if isinstance(m, ModelRequest) and m.timestamp), None)
         if stamp is None:
             return None
-        zone = self._zone()
+        zone = self._zone
         now = stamp.astimezone(zone)
         hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec='minutes')
         offset = hour[len('YYYY-MM-DDTHH:MM') :]

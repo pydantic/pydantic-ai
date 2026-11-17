@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -49,6 +50,14 @@ class _HostZone(tzinfo):
 
 def _german_strftime(format: str, t: object) -> str:
     return format.replace('%A', 'Freitag')
+
+
+class _CountedZoneInfo(ZoneInfo):
+    built = 0
+
+    def __new__(cls, key: str) -> _CountedZoneInfo:
+        cls.built += 1
+        return super().__new__(cls, key)
 
 
 def _clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
@@ -137,6 +146,16 @@ Today's date is Saturday, 2026-01-03 (UTC).
         part = instructions(ctx)
         assert part is not None
         assert 'Friday' in part.content
+
+    async def test_the_time_zone_is_resolved_once_when_built(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Resolving a zone the cache has evicted reads tzdata from disk, which a request must not do in the event loop.
+        monkeypatch.setattr('pydantic_ai_harness.current_time._capability.ZoneInfo', _CountedZoneInfo)
+        monkeypatch.setattr(_CountedZoneInfo, 'built', 0)
+        capability = await anyio.to_thread.run_sync(lambda: CurrentTime[None](timezone='Europe/Amsterdam'))
+        agent = _agent(capability, [])
+        await agent.run('What day is it?')
+        await agent.run('And now?')
+        assert _CountedZoneInfo.built == 1
 
     def test_an_unknown_time_zone_fails_when_built(self) -> None:
         with pytest.raises(ZoneInfoNotFoundError):
