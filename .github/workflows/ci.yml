@@ -2508,7 +2508,8 @@ jobs:
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
   # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
   # nothing: when the harness release just cut is not the release the definition names, it opens
-  # that pull request for a maintainer to merge when the released version is newer than the pin.
+  # that pull request for a maintainer to merge when the released version is newer than the pin,
+  # and closes the pin bumps it opened for earlier releases.
   #
   # The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
   # workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would arrive
@@ -2657,3 +2658,37 @@ jobs:
 
           gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" --title "${title}" \
             --label chore --label pkg:harness --body-file "${RUNNER_TEMP}/pin-bump.md"
+
+      # A step of its own so that a rerun still reaches it: the step above stops once the pull
+      # request it would open exists.
+      - name: Close the superseded pin bump pull requests
+        if: steps.guard.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # The author and the branch name together pick out the pull requests this job opened:
+          # the App opens other pull requests too, and people can name a branch anything.
+          pin_prs=$(gh pr list --state open --author app/pydantic-docs \
+            --json number,headRefName --jq '.[] | [.number, .headRefName] | @tsv')
+          current=$(awk -F '\t' -v branch="gh-aw-engine-pin-${RELEASED}" '$2 == branch { print $1 }' <<< "$pin_prs")
+          if [[ -z "$current" ]]; then
+            echo "No open pull request bumps the gh-aw engine pin to ${RELEASED}."
+            exit 0
+          fi
+          # Only lower versions: a patch release for an older minor can follow a newer release.
+          superseded=$(awk -F '\t' -v released="$RELEASED" '
+            BEGIN { split(released, r, "[.]") }
+            $2 ~ /^gh-aw-engine-pin-[0-9]+\.[0-9]+\.[0-9]+$/ {
+              version = $2
+              sub(/^gh-aw-engine-pin-/, "", version)
+              split(version, p, "[.]")
+              for (i = 1; i <= 3; i++) {
+                if (r[i] + 0 > p[i] + 0) { print $1; next }
+                if (r[i] + 0 < p[i] + 0) next
+              }
+            }
+          ' <<< "$pin_prs")
+          for number in $superseded; do
+            gh pr close "$number" --comment "Superseded by #${current}, which bumps the pin to \`${RELEASED}\`."
+          done
