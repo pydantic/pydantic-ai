@@ -297,6 +297,50 @@ async def test_replay_when_thread_cannot_be_continued(
     assert isinstance(response, ModelResponse)
     assert response.provider_response_id == 'msg_3'
     assert response.provider_details and 'thread_fingerprint' in response.provider_details
+    assert response.provider_details['thread_replayed'] is True
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_thread_not_found_after_a_replay_is_sent_without_a_thread(allow_model_requests: None, stream: bool):
+    """A continue from a replayed response that gets `thread_not_found` again is sent without `thread`, with a warning.
+
+    Anthropic may be unable to store the conversation, so the response records `'thread_unsupported'`, and the next
+    request is sent without `thread` straight away, warning no more (any other warning fails the test).
+    """
+    not_found = _thread_error(404, 'thread_not_found')
+    api = _Api(
+        replies=[{'type': 'text', 'text': 'Hello'}, not_found, {'type': 'text', 'text': 'Hi again'}, not_found],
+        stream=stream,
+    )
+    async with _model(api) as model:
+        agent = Agent(model, instructions='Be brief.', model_settings=_SETTINGS)
+        first = await _run(agent, 'Hi', [], stream)
+        replayed = await _run(agent, 'Again', first, stream)
+        with pytest.warns(UserWarning, match="can't be continued right after it was replayed"):
+            unthreaded = await _run(agent, 'Once more', replayed, stream)
+        await _run(agent, 'Last', unthreaded, stream)
+
+    threads = [body.get('thread') for body in api.bodies]
+    assert threads == snapshot(
+        [
+            {'type': 'create'},
+            {'type': 'continue', 'previous_message_id': 'msg_1'},
+            {'type': 'create'},
+            {'type': 'continue', 'previous_message_id': 'msg_3'},
+            None,
+            None,
+        ]
+    )
+    assert _user_texts(api.bodies[4]) == ['Hi', 'Hello', 'Again', 'Hi again', 'Once more']
+    assert _BETA not in api.betas[5]
+    replayed_response, unthreaded_response = replayed[-1], unthreaded[-1]
+    assert isinstance(replayed_response, ModelResponse) and isinstance(unthreaded_response, ModelResponse)
+    replayed_details = replayed_response.provider_details or {}
+    unthreaded_details = unthreaded_response.provider_details or {}
+    assert replayed_details['thread_replayed'] is True
+    assert unthreaded_details['thread_unsupported'] is True
+    assert 'thread_replayed' not in unthreaded_details
+    assert unthreaded_details['thread_fingerprint'] == replayed_details['thread_fingerprint']
 
 
 async def test_unrelated_404_is_not_replayed(allow_model_requests: None):

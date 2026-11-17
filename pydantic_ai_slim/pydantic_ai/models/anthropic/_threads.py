@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
 _THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
 _THREAD_UNSUPPORTED_KEY = 'thread_unsupported'
+_THREAD_REPLAYED_KEY = 'thread_replayed'
 
 # The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
 # The `skills` in `container`, whether `fallbacks` is sent, and the betas are fixed too: see `thread_fingerprint`.
@@ -76,6 +77,8 @@ class Thread:
 
     continuation: tuple[str, list[BetaMessageParam]] | None = None
     """For a continue request, the response ID it continues from and its new messages."""
+    continues_replay: bool = False
+    """For a continue request, whether the response it continues from was a replay (see `ThreadRecord`)."""
     cache_breakpoints: tuple[list[str], list[str]] | None = None
     """The cache breakpoints of the request, which for a continue request are only those of the new messages."""
 
@@ -145,20 +148,25 @@ def with_thread(
 
 @dataclass
 class ThreadRecord:
-    """Set by `_first_attempt` when its request was sent in a thread, or without one that threads don't support.
+    """Set by `_first_attempt` when its request was sent in a thread, or without one that threads can't serve.
 
     The response is stamped with the thread's fingerprint in its `provider_details`. Sent in the thread, it also gets
     its `thread_digest` as its `history_digest`, unless a server-side fallback model wrote it: the thread doesn't
-    store that turn, so it's left unstamped and the next request creates a new thread. Sent without it, it's marked
+    store that turn, so it's left unstamped and the next request creates a new thread. Sent in a thread that replays
+    the conversation after a continue request failed, it's also marked `'thread_replayed'`: if the API can't continue
+    from it either, it may be unable to store the conversation, so that request is sent without a thread. Sent
+    without it, because threads don't support the request or after that failed replay, it's marked
     `'thread_unsupported'`, so the next request with the same fingerprint doesn't try the thread again.
     """
 
     fingerprint: str | None = None
     history: Hasher | None = None
-    """The history the request was sent in the thread with, or `None` when threads don't support the request."""
+    """The history the request was sent in the thread with, or `None` when it was sent without a thread."""
+    replayed: bool = False
+    """Whether the request replayed the conversation in a new thread after a continue request failed."""
 
     def stamp(self, response: ModelResponse, *, from_fallback_model: bool) -> ModelResponse:
-        """`response` with its thread recorded, if its request was sent in one or threads don't support it.
+        """`response` with its thread recorded, if its request was sent in one or threads can't serve it.
 
         `from_fallback_model` says whether a server-side fallback model wrote it (see `served_by_fallback_model`).
         """
@@ -169,6 +177,8 @@ class ThreadRecord:
             return replace(response, provider_details={**details, _THREAD_UNSUPPORTED_KEY: True})
         if from_fallback_model:
             return response
+        if self.replayed:
+            details[_THREAD_REPLAYED_KEY] = True
         return replace(
             response, provider_details=details, history_digest=thread_digest(self.history, response, self.fingerprint)
         )
@@ -215,8 +225,8 @@ def thread_unsupported(messages: list[ModelMessage], fingerprint: str) -> bool:
 
 def thread_continuation(
     model: AnthropicModel, messages: list[ModelMessage], fingerprint: str, history_digest_key: bytes | None
-) -> tuple[str, list[ModelMessage]] | None:
-    """The response ID to continue a thread from, and the messages after it, if the latest response allows it.
+) -> tuple[str, list[ModelMessage], bool] | None:
+    """The response ID to continue a thread from, the messages after it, and whether it was a replay, if allowed.
 
     Only the most recent response counts, as each response ID can be continued once: a later response from
     another model (say, through `FallbackModel`) wasn't stored in the thread. A refusal isn't continued, and
@@ -243,5 +253,5 @@ def thread_continuation(
         and response.state == 'complete'
         and new_messages
     ):
-        return response.provider_response_id, new_messages
+        return response.provider_response_id, new_messages, details.get(_THREAD_REPLAYED_KEY) is True
     return None

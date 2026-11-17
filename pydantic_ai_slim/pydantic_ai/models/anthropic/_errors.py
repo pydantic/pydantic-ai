@@ -99,15 +99,16 @@ def is_thread_replay_error(body: object | None) -> bool:
     See https://platform.claude.com/docs/en/build-with-claude/message-threads#errors. A 404 for a model that
     doesn't exist has no thread `error_code`, so it isn't replayed.
     """
-    return _thread_error_code(body) in _THREAD_REPLAY_ERROR_CODES
+    return thread_error_code(body) in _THREAD_REPLAY_ERROR_CODES
 
 
 def is_thread_unsupported_error(body: object | None) -> bool:
     """Whether a thread request uses a feature or organization setting threads don't support, so it's sent without one."""
-    return _thread_error_code(body) == 'thread_unsupported_request'
+    return thread_error_code(body) == 'thread_unsupported_request'
 
 
-def _thread_error_code(body: object | None) -> object:
+def thread_error_code(body: object | None) -> object:
+    """The `error_code` in the `details` of a thread error, like `thread_not_found`."""
     error_body = reported_error_body(body)
     details = error_body.get('details') if _utils.is_str_dict(error_body) else None
     return details.get('error_code') if _utils.is_str_dict(details) else None

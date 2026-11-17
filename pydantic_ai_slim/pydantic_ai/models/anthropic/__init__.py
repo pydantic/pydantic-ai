@@ -312,6 +312,7 @@ try:
         is_thread_unsupported_error,
         map_api_errors,
         status_and_body,
+        thread_error_code,
     )
     from ._message_passes import (
         anchor_system_messages,
@@ -738,10 +739,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and its
     [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] covers it and the history before it. A
     response is only chosen while both still match, so changed instructions, tools, betas or other fixed fields, an
-    edited history, a refusal, or a response from another model start a new thread with the full history. A request
-    using something threads don't support is sent without one, with a warning, and its response records
-    `'thread_unsupported': True`. See [Message threads](../../models/anthropic.md#message-threads-beta) for every
-    case.
+    edited history, a refusal, or a response from another model start a new thread with the full history. So does a
+    thread Anthropic can no longer continue, and the response to that replay records `'thread_replayed': True`. A
+    request using something threads don't support is sent without one, with a warning, and its response records
+    `'thread_unsupported': True`. So is a continue from a replayed response that fails because the thread can't be
+    found either, as Anthropic may be unable to store that conversation. See
+    [Message threads](../../models/anthropic.md#message-threads-beta) for every case.
 
     The response ID comes from the message history, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass
@@ -1886,11 +1889,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         In a thread it's a continue request when possible, else a create. A continue request needs the most recent
         response in the history to have been stored in a thread whose fixed fields match this request's. A continue
-        request that the API can't serve is replayed as a create request with the full conversation. A create
-        request that threads don't support is sent again without one, and the response records that, so the next
-        request with the same fingerprint is sent without a thread straight away. The recovery retries in
-        `_messages_create` send no thread, as they change fixed fields, so a response is only stamped with the
-        fingerprint of a thread request that succeeded, or of a request threads don't support (see `ThreadRecord`).
+        request that the API can't serve is replayed as a create request with the full conversation. If the API
+        can't find the thread of a replayed response either, it may be unable to store the conversation, so the
+        request is sent without a thread. So is a create request that threads don't support, sent again without one.
+        Either way the response records it, so the next request with the same fingerprint is sent without a thread
+        straight away. The recovery retries in `_messages_create` send no thread, as they change fixed fields, so a
+        response is only stamped with the fingerprint of a thread request that succeeded, or of a request sent
+        without a thread as above (see `ThreadRecord`).
         """
         if thread_record is None:
             return await send(None)
@@ -1908,20 +1913,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if thread_unsupported(messages, fingerprint):
             thread_record.fingerprint = fingerprint
             return await send(None)
+        thread = await self._continue_thread(messages, model_settings, model_request_parameters, fingerprint)
         if (
-            thread := await self._continue_thread(messages, model_settings, model_request_parameters, fingerprint)
-        ) is not None:
-            try:
-                response = await send(thread)
-            except (APIStatusError, APIConnectionError) as error:
-                # Like the recoveries in `_messages_create`, this reads a status a retrying transport gave up on too.
-                failure = status_and_body(error)
-                if failure is None or not is_thread_replay_error(failure[1]):
-                    raise
-            else:
-                thread_record.fingerprint = fingerprint
-                thread_record.history = history_hasher(messages, self._history_digest_key)
-                return response
+            thread is not None
+            and (response := await self._send_continue(messages, send, thread, thread_record, fingerprint)) is not None
+        ):
+            return response
         try:
             response = await send(Thread(cache_breakpoints=prepared.cache_breakpoints))
         except (APIStatusError, APIConnectionError) as error:
@@ -1940,6 +1937,42 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return await send(None)
         thread_record.fingerprint = fingerprint
         thread_record.history = history_hasher(messages, self._history_digest_key)
+        thread_record.replayed = thread is not None
+        return response
+
+    async def _send_continue(
+        self,
+        messages: list[ModelMessage],
+        send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
+        thread: Thread,
+        thread_record: ThreadRecord,
+        fingerprint: str,
+    ) -> BetaMessage | AnthropicEventStream | None:
+        """Send the continue request `thread`, or return `None` when the API can't serve it, so the caller replays.
+
+        If the API can't find the thread of a replayed response either, it may be unable to store the conversation,
+        so the request is sent without a thread instead, and the response records that (see `_first_attempt`).
+        """
+        try:
+            response = await send(thread)
+        except (APIStatusError, APIConnectionError) as error:
+            # Like the recoveries in `_messages_create`, this reads a status a retrying transport gave up on too.
+            failure = status_and_body(error)
+            if failure is None or not is_thread_replay_error(failure[1]):
+                raise
+            if not thread.continues_replay or thread_error_code(failure[1]) != 'thread_not_found':
+                return None
+            warnings.warn(
+                f"The thread of this conversation with {self.model_name!r} can't be continued right after it was "
+                "replayed, so Anthropic may be unable to store it. It's sent without a thread, and so are later "
+                'requests in this conversation with the same instructions, tools and other fixed fields.',
+                UserWarning,
+                stacklevel=3,
+            )
+            thread_record.fingerprint = fingerprint
+            return await send(None)
+        thread_record.fingerprint = fingerprint
+        thread_record.history = history_hasher(messages, self._history_digest_key)
         return response
 
     async def _continue_thread(
@@ -1953,7 +1986,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         continuation = thread_continuation(self, messages, fingerprint, self._history_digest_key)
         if continuation is None:
             return None
-        previous_message_id, new_messages = continuation
+        previous_message_id, new_messages, continues_replay = continuation
         # This maps the new messages a second time. A slice of `prepared.anthropic_messages` would avoid that
         # once the mapping can say where each history message starts. `continues_thread` keeps their
         # `SystemPromptPart`s where the full mapping puts them: none of them opens the conversation, so none is
@@ -1974,6 +2007,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return Thread(
             continuation=(previous_message_id, new_prepared.anthropic_messages),
             cache_breakpoints=continue_cache_breakpoints(new_prepared.cache_breakpoints),
+            continues_replay=continues_replay,
         )
 
     async def _create_message(
