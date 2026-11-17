@@ -1632,6 +1632,7 @@ def _patch_hf_provider_mappings():
         ('together', 'meta-llama/Llama-4-Scout-17B-16E-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
+        ('groq', 'openai/gpt-oss-120b', 'conversational'),
     ]
 
     for provider, model_id, task in models:
