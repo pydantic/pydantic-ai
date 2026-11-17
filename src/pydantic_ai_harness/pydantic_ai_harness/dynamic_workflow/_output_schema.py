@@ -54,28 +54,22 @@ def parse_output_schema(schema: object) -> OutputSchema:
     return parsed
 
 
-def _matches_type(value: JsonValue, type_: _JsonType) -> bool:
-    match type_:
-        case 'object':
-            return isinstance(value, dict)
-        case 'array':
-            return isinstance(value, list)
-        case 'string':
-            return isinstance(value, str)
-        case 'integer':
-            return isinstance(value, int) and not isinstance(value, bool)
-        case 'number':
-            return isinstance(value, int | float) and not isinstance(value, bool)
-        case 'boolean':
-            return isinstance(value, bool)
-    return value is None
+_TYPE_CHECKS: dict[_JsonType, Callable[[JsonValue], bool]] = {
+    'object': lambda value: isinstance(value, dict),
+    'array': lambda value: isinstance(value, list),
+    'string': lambda value: isinstance(value, str),
+    'integer': lambda value: isinstance(value, int) and not isinstance(value, bool),
+    'number': lambda value: isinstance(value, int | float) and not isinstance(value, bool),
+    'boolean': lambda value: isinstance(value, bool),
+    'null': lambda value: value is None,
+}
 
 
 def _value_error(value: JsonValue, schema: OutputSchema) -> str | None:
     """Why `value` itself does not match `schema`, ignoring what it contains."""
     type_ = schema.get('type')
     types: list[_JsonType] = type_ if isinstance(type_, list) else [type_] if type_ is not None else []
-    if types and not any(_matches_type(value, t) for t in types):
+    if types and not any(_TYPE_CHECKS[t](value) for t in types):
         return f'expected {" or ".join(types)}'
     if 'enum' in schema and value not in schema['enum']:
         return f'must be one of {schema["enum"]}'
