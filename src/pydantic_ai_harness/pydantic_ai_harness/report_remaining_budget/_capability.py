@@ -96,7 +96,7 @@ class ReportRemainingBudget(AbstractCapability[AgentDepsT]):
         from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
         from pydantic_ai_harness.spend_limits import Budget
 
-        spend = SpendLimits(budgets=[Budget(usd=Decimal('10'), window='day')])
+        spend = SpendLimits(budgets=[Budget(usd=Decimal(10), window='day')])
         agent = Agent('openai:gpt-5.6-sol', capabilities=[spend, ReportRemainingBudget(spend_limits=spend)])
         ```
     """

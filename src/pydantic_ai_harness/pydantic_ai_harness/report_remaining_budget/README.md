@@ -27,7 +27,7 @@ from pydantic_ai import Agent, UsageLimits
 from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
 from pydantic_ai_harness.spend_limits import Budget
 
-spend = SpendLimits(budgets=[Budget(usd=Decimal('10'), window='day')])
+spend = SpendLimits(budgets=[Budget(usd=Decimal(10), window='day')])
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[spend, ReportRemainingBudget(spend_limits=spend)])
 result = agent.run_sync('...', usage_limits=UsageLimits(request_limit=20, total_tokens_limit=200_000))
 ```

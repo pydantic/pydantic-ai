@@ -881,7 +881,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
 from pydantic_ai_harness.spend_limits import Budget
 
-spend = SpendLimits(budgets=[Budget(usd=Decimal('10'), window='day')])
+spend = SpendLimits(budgets=[Budget(usd=Decimal(10), window='day')])
 agent = Agent('test', capabilities=[spend, ReportRemainingBudget(spend_limits=spend)])
 ```
 

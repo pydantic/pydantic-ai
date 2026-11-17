@@ -102,7 +102,7 @@ Budget remaining:
     async def test_reports_spend_budgets_by_window(self):
         spend = SpendLimits[None](
             budgets=[
-                Budget(usd=Decimal('10'), tokens=1_000_000, window='day'),
+                Budget(usd=Decimal(10), tokens=1_000_000, window='day'),
                 Budget(tokens=500, window='month', name='tenant'),
                 Budget(window='total', name='accounting'),
             ]
