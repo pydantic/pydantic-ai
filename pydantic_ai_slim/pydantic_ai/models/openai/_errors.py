@@ -18,6 +18,7 @@ from ...messages import ModelResponse
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
 )
+from .._transport_errors import transport_error_message
 
 
 @contextmanager
@@ -35,8 +36,12 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gener
         # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
     except httpx2.HTTPStatusError as e:
-        # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
-        raise _model_errors.transport_status_error(model_name, e.response) from e
+        raise map_transport_status_error(e, model_name, model_id_namespace) from e
+    except httpx2.TransportError as e:
+        # For a streamed request, `openai` reads the body of an error status outside its own transport error handling,
+        # so a connection that breaks off while sending that body surfaces as the raw `httpx2` error.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 def map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
@@ -52,6 +57,24 @@ def map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str
     )
 
 
+def map_transport_status_error(e: httpx2.HTTPStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
+    """The error for a status a retrying transport gave up on, which `openai` lets through unwrapped."""
+    body, error, text = _model_errors.transport_error_body(e.response)
+    code, error_type = _model_errors.openai_error_fields(error)
+    return status_error(
+        model_name,
+        model_id_namespace,
+        status_code=e.response.status_code,
+        body=body,
+        code=code,
+        error_type=error_type,
+        # `openai`'s own message holds the whole body.
+        message=text,
+        headers=dict(e.response.headers),
+        error_object=error,
+    )
+
+
 def status_error(
     model_name: str,
     model_id_namespace: str,
@@ -62,8 +85,13 @@ def status_error(
     error_type: str | None,
     message: str | None,
     headers: Mapping[str, str] | None = None,
+    error_object: Mapping[str, object] | None = None,
 ) -> ModelHTTPError:
-    """The error for an HTTP error status, which a batch also reports for each request that failed."""
+    """The error for an HTTP error status, which a batch also reports for each request that failed.
+
+    `body` is the error object, as `openai` unwraps it from the response body, unless `error_object` is given: the body
+    of a status a retrying transport gave up on is the whole response body, which wraps it.
+    """
     suggested_model_id = None
     if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
@@ -74,7 +102,8 @@ def status_error(
     elif model_id_namespace == 'moonshotai':
         # Moonshot sends an exhausted balance as a 429 too; only its error type tells it from a rate limit.
         category = _model_errors.moonshot_type_category(error_type) or category
-    if status_code == 403 and flags_input(body.get('metadata') if _utils.is_str_dict(body) else None):
+    reported = body if error_object is None else error_object
+    if status_code == 403 and flags_input(reported.get('metadata') if _utils.is_str_dict(reported) else None):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
     return ModelHTTPError.for_category(

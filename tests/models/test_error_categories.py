@@ -9,7 +9,7 @@ Mock transports use `localhost` base URLs, which VCR ignores.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -34,11 +34,11 @@ from pydantic_ai import (
     ModelUnavailableError,
 )
 from pydantic_ai.capabilities import ModelFallback
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models import Model
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ..conftest import try_import
+from ..conftest import gave_up_on, retrying_client, try_import
 
 with try_import() as imports_successful:
     import grpc
@@ -56,7 +56,6 @@ with try_import() as imports_successful:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.errors import HfHubHTTPError
     from openai import AsyncOpenAI
-    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.cohere import CohereModel
@@ -64,22 +63,24 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.models.mistral import MistralModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.providers.zai import ZaiProvider
-    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
     from .test_bedrock import _bedrock_model_with_error  # pyright: ignore[reportPrivateUsage]
@@ -123,6 +124,16 @@ def _openai(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+
+
+def _openai_responses(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 
 
 def _openrouter(handler: Handler) -> Model:
@@ -223,6 +234,14 @@ def _cohere(handler: Handler) -> Model:
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
 
 
+def _ollama(handler: Handler) -> Model:
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    return OllamaModel(
+        'gpt-oss:20b-cloud',
+        provider=OllamaProvider(base_url='http://localhost/v1', api_key='test', http_client=http_client),
+    )
+
+
 def _json(status_code: int, body: Any, headers: dict[str, str] | None = None) -> Handler:
     def handler(request: Any) -> Any:
         response_class = httpx.Response if isinstance(request, httpx.Request) else httpx2.Response
@@ -257,6 +276,28 @@ def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
             raise error_class('failed', request=request)
         error_class2 = {'connect': httpx2.ConnectError, 'timeout': httpx2.ReadTimeout, 'pool': httpx2.PoolTimeout}[kind]
         raise error_class2('failed', request=request)
+
+    return handler
+
+
+class _ErrorBodyBreakingOff(httpx2.AsyncByteStream):
+    def __init__(self, kind: Literal['protocol', 'timeout']) -> None:
+        self.kind = kind
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'{"error": {"mess'
+        raise (httpx2.RemoteProtocolError if self.kind == 'protocol' else httpx2.ReadTimeout)('failed')
+
+
+def _error_body_breaking_off(kind: Literal['protocol', 'timeout']) -> Handler:
+    """A 503 whose body breaks off after its first chunk, as when a proxy cuts the connection.
+
+    For a streamed request, `openai` reads an error status's body outside the code that wraps transport errors in
+    `APIConnectionError`, so the raw `httpx2` error reaches the model.
+    """
+
+    def handler(request: Any) -> Any:
+        return httpx2.Response(503, headers={'content-type': 'application/json'}, stream=_ErrorBodyBreakingOff(kind))
 
     return handler
 
@@ -508,6 +549,38 @@ CASES = [
         handler=_sse_data({'error': {'message': 'Overloaded', 'type': 'overloaded'}}),
         categories=_OVERLOADED,
         attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': None, 'provider_error_type': 'overloaded'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-error-body-broken-off',
+        model=_openai,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-error-body-timeout',
+        model=_openai,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-broken-off',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-timeout',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
         stream=True,
     ),
     Case(
@@ -1041,6 +1114,64 @@ CASES = [
         },
     ),
     Case(
+        id='mistral-context-window-prompt-too-long',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'Prompt 142251 > 131072 maximum context length',
+                'type': 'invalid_request_prompt_too_long',
+                'param': None,
+                'code': '3059',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3059',
+            'provider_error_type': 'invalid_request_prompt_too_long',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'reasoning_effort none is not supported for this model, supported values: '
+                "[<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+                'type': 'invalid_request_invalid_args',
+                'param': None,
+                'code': '3051',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_REJECTED,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3051',
+            'provider_error_type': 'invalid_request_invalid_args',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args-structured-message',
+        model=_mistral,
+        handler=_json(
+            422,
+            {
+                'object': 'error',
+                'message': {'detail': [{'type': 'missing', 'loc': ['body', 'messages'], 'msg': 'Field required'}]},
+                'type': 'invalid_request_invalid_args',
+                'code': '3051',
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 422, 'provider_error_code': '3051'},
+    ),
+    Case(
         id='mistral-rate-limit',
         model=_mistral,
         handler=_json(429, {'object': 'error', 'message': 'Requests rate limit exceeded', 'type': 'rate_limited'}),
@@ -1067,6 +1198,23 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400},
+    ),
+    Case(
+        id='ollama-cloud-context-window',
+        model=_ollama,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': 'prompt too long; exceeded max context length by 668997 tokens (ref: …)',
+                    'type': 'invalid_request_error',
+                    'param': None,
+                    'code': None,
+                }
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
         id='openai-unavailable',
@@ -2091,23 +2239,66 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     assert (exc.__cause__ is not None) == case.has_cause
 
 
-def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
-    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status."""
+_TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
+    _openai,
+    _openrouter,
+    _zai,
+    _moonshotai,
+    _ollama,
+    _anthropic,
+    _anthropic_bedrock,
+    _google,
+    _mistral,
+)
+"""Models whose status a retrying transport gave up on is classified from its body as their SDK's error is.
 
-    def validate_response(response: httpx2.Response) -> None:
-        response.raise_for_status()
+Groq and Cohere chat aren't: their SDKs take a legacy `httpx` client, whose retrying transport closes the response
+without reading its body.
+"""
 
-    transport = AsyncHTTPX2TenacityTransport(
-        config=RetryConfig(
-            retry=retry_if_exception_type(httpx2.HTTPStatusError),
-            wait=wait_none(),
-            stop=stop_after_attempt(3),
-            reraise=True,
-        ),
-        wrapped=httpx2.MockTransport(handler),
-        validate_response=validate_response,
+_GAVE_UP_TWINS = [
+    case
+    for case in CASES
+    if case.model in _TRANSPORT_CLASSIFIED_MODELS
+    and not case.stream
+    and case.has_cause
+    and ModelHTTPError in case.categories
+    and 'transport-gave-up' not in case.id
+]
+
+
+def _error_summary(exc: ModelHTTPError) -> tuple[object, ...]:
+    """What a status a retrying transport gave up on must share with the provider SDK's error for the same response.
+
+    That's the error category, provider error code and type, suggested model ID, hint and `retry_after`.
+    """
+    categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
+    return (
+        categories,
+        exc.status_code,
+        exc.provider_error_code,
+        exc.provider_error_type,
+        exc.suggested_model_id,
+        exc.hint,
+        exc.retry_after,
     )
-    return httpx2.AsyncClient(transport=transport)
+
+
+@pytest.mark.parametrize('case', _GAVE_UP_TWINS, ids=[case.id for case in _GAVE_UP_TWINS])
+async def test_transport_gave_up_status_error_category(allow_model_requests: None, case: Case):
+    """A status a retrying transport gave up on raises what the provider SDK raises for the same response.
+
+    That's the same error category, provider error code and type, suggested model ID, hint and `retry_after`.
+    """
+
+    async def error(handler: Handler) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(case.model(handler)).run('hello')
+        return exc_info.value
+
+    sdk_error = await error(case.handler)
+    gave_up_error = await error(gave_up_on(case.handler))
+    assert _error_summary(gave_up_error) == _error_summary(sdk_error)
 
 
 def _retrying_openai(client: httpx2.AsyncClient) -> Model:
@@ -2154,7 +2345,7 @@ async def test_model_fallback_after_retrying_transport_gives_up(
         return ModelResponse(parts=[TextPart('from the fallback model')])
 
     agent = Agent(
-        make_model(_retrying_client(handler)),
+        make_model(retrying_client(handler)),
         model_settings={'max_retries': 0},
         capabilities=[ModelFallback(FunctionModel(fallback))],
     )
@@ -2165,6 +2356,164 @@ async def test_model_fallback_after_retrying_transport_gives_up(
     [attempt] = result.response.failed_attempts or []
     assert attempt.outcome == 'error'
     assert attempt.error is not None and attempt.error.startswith('ModelUnavailableError: status_code: 503')
+
+
+_AZURE_CONTENT_FILTER_BODY: dict[str, Any] = {
+    'error': {
+        'message': "The response was filtered due to the prompt triggering Azure OpenAI's content management policy.",
+        'type': None,
+        'param': 'prompt',
+        'code': 'content_filter',
+        'status': 400,
+        'innererror': {
+            'code': 'ResponsibleAIPolicyViolation',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        },
+    }
+}
+
+
+async def _compact(model: Model) -> ModelResponse:
+    return await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings={'max_retries': 0},
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ('call', 'azure', 'history', 'status_code', 'body', 'category'),
+    [
+        pytest.param(
+            'chat',
+            True,
+            [ModelRequest.user_text_prompt('hello')],
+            400,
+            _AZURE_CONTENT_FILTER_BODY,
+            ModelRequestRejectedError,
+            id='azure-chat',
+        ),
+        pytest.param(
+            'responses',
+            True,
+            [ModelRequest.user_text_prompt('hello')],
+            400,
+            _AZURE_CONTENT_FILTER_BODY,
+            ModelRequestRejectedError,
+            id='azure-responses',
+        ),
+        pytest.param(
+            'compact', True, [], 400, _AZURE_CONTENT_FILTER_BODY, ModelRequestRejectedError, id='azure-compaction'
+        ),
+        pytest.param(
+            'responses',
+            False,
+            [
+                ModelRequest.user_text_prompt('hello'),
+                ModelResponse(
+                    parts=[],
+                    model_name='gpt-5.2',
+                    provider_name='openai',
+                    provider_response_id='resp_expired',
+                    state='suspended',
+                ),
+            ],
+            404,
+            {'error': {'message': "Response with id 'resp_expired' not found.", 'type': 'invalid_request_error'}},
+            ModelNotFoundError,
+            id='responses-resume',
+        ),
+    ],
+)
+async def test_retrying_transport_gave_up_is_not_recovered_from_so_fallback_moves_on(
+    allow_model_requests: None,
+    call: Literal['chat', 'responses', 'compact'],
+    azure: bool,
+    history: list[ModelMessage],
+    status_code: int,
+    body: dict[str, Any],
+    category: type[ModelHTTPError],
+):
+    """An OpenAI status the SDK's error would be recovered from stays a `ModelHTTPError` once a retrying transport gave up.
+
+    Recovered from, an Azure content filter is a `content_filter` response, which the agent raises as
+    `ContentFilterError`, and a resumed response the provider no longer has raises `SuspendedResponseExpired`.
+    Neither is a `ModelAPIError`, so fallback wouldn't move on to the next model, which is why a status a retrying
+    transport gave up on is raised as `ModelHTTPError`, see https://github.com/pydantic/pydantic-ai/pull/11934.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body)
+
+    client = retrying_client(handler)
+    provider = (
+        AzureProvider(
+            azure_endpoint='https://example.openai.azure.com',
+            api_version='2024-10-21',
+            api_key='test',
+            http_client=client,
+        )
+        if azure
+        else OpenAIProvider(api_key='test', http_client=client)
+    )
+    with pytest.raises(category) as exc_info:
+        if call == 'chat':
+            await OpenAIChatModel('gpt-5.2', provider=provider).request(
+                history, {'max_retries': 0}, ModelRequestParameters()
+            )
+        elif call == 'responses':
+            await OpenAIResponsesModel('gpt-5.2', provider=provider).request(
+                history, {'max_retries': 0}, ModelRequestParameters()
+            )
+        else:
+            await _compact(OpenAIResponsesModel('gpt-5.2', provider=provider))
+
+    assert exc_info.value.status_code == status_code
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'body'),
+    [
+        pytest.param(
+            400,
+            {'error': {'message': 'bad', 'type': 'invalid_request_error', 'param': None, 'code': None}},
+            id='400',
+        ),
+        pytest.param(
+            429,
+            {
+                'error': {
+                    'message': 'Rate limit reached.',
+                    'type': 'requests',
+                    'param': None,
+                    'code': 'rate_limit_exceeded',
+                }
+            },
+            id='429',
+        ),
+    ],
+)
+async def test_compaction_transport_gave_up_status_error_category(
+    allow_model_requests: None, status_code: int, body: dict[str, Any]
+):
+    """A status a retrying transport gave up on during compaction raises what the SDK raises for the same response."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body, headers={'retry-after': '2'})
+
+    async def error(client: httpx2.AsyncClient) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await _compact(OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test', http_client=client)))
+        return exc_info.value
+
+    sdk_error = await error(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+    gave_up_error = await error(retrying_client(handler))
+    assert isinstance(gave_up_error.__cause__, httpx2.HTTPStatusError)
+    assert _error_summary(gave_up_error) == _error_summary(sdk_error)
 
 
 @pytest.mark.parametrize(
@@ -2204,7 +2553,7 @@ async def test_retrying_transport_gave_up_keeps_streamed_error_body(
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(status_code, stream=httpx2.ByteStream(json.dumps(body).encode()))
 
-    agent = Agent(make_model(_retrying_client(handler)), model_settings={'max_retries': 0})
+    agent = Agent(make_model(retrying_client(handler)), model_settings={'max_retries': 0})
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('hello')
 

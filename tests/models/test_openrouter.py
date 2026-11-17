@@ -577,7 +577,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
         RunUsage(
             input_tokens=17,
             output_tokens=2177,
-            details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
+            details={'reasoning_tokens': 960, 'image_tokens': 0},
             output_reasoning_tokens=960,
             requests=1,
             cost=Decimal('0.00435825'),
@@ -1082,6 +1082,9 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     This verifies the fix for https://github.com/pydantic/pydantic-ai/issues/3617
     where OpenRouter's translation layer didn't support modern JSON Schema features.
+
+    Both recorded responses also carry OpenRouter's `is_byok: true`, which stays in `provider_details`
+    and out of the usage details that are summed across requests and exported to OpenTelemetry.
     """
     from enum import Enum
 
@@ -1139,6 +1142,27 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     assert result.output.level_type == LevelType.ground
     assert result.output.space_count == 3
+
+    responses = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
+    assert [(r.provider_details or {}).get('is_byok') for r in responses] == [True, True]
+    assert result.usage == snapshot(
+        RunUsage(
+            details={'reasoning_tokens': 0, 'image_tokens': 0},
+            input_tokens=806,
+            output_tokens=124,
+            cost=Decimal('0.0005518000000000'),
+            requests=2,
+            tool_calls=1,
+        )
+    )
+    assert result.usage.opentelemetry_attributes() == snapshot(
+        {
+            'gen_ai.usage.input_tokens': 806,
+            'gen_ai.usage.output_tokens': 124,
+            'gen_ai.usage.details.reasoning_tokens': 0,
+            'gen_ai.usage.details.image_tokens': 0,
+        }
+    )
 
 
 async def test_openrouter_google_inlines_property_names_and_contains_refs(

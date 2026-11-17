@@ -38,6 +38,8 @@ cluster:cache	Work stream: prompt cache retention, expiry and prefix stability
 cluster:complexity	Work stream: cognitive complexity refactors under the 15-per-function gate (#10983)
 cluster:concise-docs	Trim harness docs pages and Ruff-format their code and diagram snippets
 cluster:extra-headers	Header-name handling in extra_headers (user-agent, anthropic-beta)
+cluster:gh-aw	Work stream: gh-aw agentic workflows on the public pydantic-ai engine
+cluster:thinking-profiles	Work stream: model profiles that turn thinking on for model families and gateway routes
 cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
 codemode	CodeMode: model-written scripts, the tools they call, their limits, and interpreter state.
 cohere
@@ -138,6 +140,7 @@ provider-parity-explore
 pydanty:bot	Bot classification managed by pydanty.
 pydanty:brief-generated	An issue_brief artifact version landed
 pydanty:cancel	Kill switch: pydanty never starts a run on this issue or PR while present; nothing auto-removes it.
+pydanty:duplicate	Pydanty triage decided this issue duplicates another issue.
 pydanty:failed	Pydanty could not complete issue triage
 pydanty:fix-attempted	issue-fix-tdd workflow ran
 pydanty:fix-cannot-reproduce	Fix workflow couldn't reproduce the bug
