@@ -196,6 +196,22 @@ async def test_long_sequential_chain():
     assert result == 10  # 10 increments
 
 
+async def test_long_transform_chain():
+    """A path with more transforms than the recursion limit allows frames still runs."""
+    g = GraphBuilder(input_type=int, output_type=int)
+
+    def increment(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs + 1
+
+    path = g.edge_from(g.start_node)
+    for _ in range(1100):
+        path = path.transform(increment)
+    g.add(path.to(g.end_node))
+
+    graph = g.build()
+    assert await graph.run(inputs=0) == 1100
+
+
 async def test_join_with_single_input():
     """Test a join operation that only receives one input."""
     g = GraphBuilder(state_type=EdgeCaseState, output_type=list[int])
