@@ -4,7 +4,29 @@ Discover and load a repo's accumulated coding-assistant context engineering (CE)
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/repo_context/)
 
-![RepoContext has three strategies. On by default, autoload puts one instruction file per directory, AGENTS.md or else CLAUDE.md, into the instructions: the working directory's, plus each ancestor's when walk_up is set, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. On by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues the contents of that directory's AGENTS.md before the next model request.](https://pydantic.dev/docs/ai/img/harness/repo-context.svg)
+```mermaid
+flowchart TB
+    accTitle: Repo Context: load the instruction files a repo already has
+    accDescr: On by default, RepoContext instruction autoload loads AGENTS.md or CLAUDE.md in the working directory as instructions once, at run start, and nested traversal adds AGENTS.md in src/api to the message tail after a read or listing. Off by default, asset inventory answers the model's inventory_agent_context() with skills, agents and hooks from .claude, .agents, .codex and .grok.
+    subgraph workspace["Workspace"]
+        files["AGENTS.md or<br/>CLAUDE.md in the<br/>working directory"]
+        roots[".claude, .agents,<br/>.codex, .grok"]
+        nested["AGENTS.md<br/>in src/api"]
+    end
+    subgraph repo["RepoContext()"]
+        autoload["instruction<br/>autoload<br/>on by default"]:::capability
+        inventory["asset<br/>inventory<br/>off by default"]:::capability
+        traversal["nested<br/>traversal<br/>on by default"]:::capability
+    end
+    model(["model"])
+    files -->|"once, at run start"| autoload
+    roots -->|"skills, agents, hooks"| inventory
+    nested -->|"after a read or listing"| traversal
+    autoload -->|"instructions"| model
+    inventory <-->|"inventory_agent_context()"| model
+    traversal -->|"message tail"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -135,9 +157,9 @@ message history before the next model request. A directory counts as surfaced wh
 is still in the conversation: a later run of the same conversation doesn't
 repeat it, and once compaction summarizes the note away, the next traversal
 surfaces it again. The working directory's files are not surfaced again when
-the walk-up already loaded them. Every part of a note carries
-`{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
-in its `metadata`, which is how `RepoContext` and compaction recognize it.
+the walk-up already loaded them. A note is a `ContextFilePathPart` (pointer) or
+a `ContextFilePart` (contents), [capability parts](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) whose `directory`
+field names the surfaced directory, which is how `RepoContext` recognizes it.
 Same-directory instruction symlinks are named after their targets, and load
 only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
@@ -150,7 +172,7 @@ over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
-`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+`FileWrittenEvent` from `pydantic_ai_harness.file_system`; set `root_dir` to the
 directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
@@ -180,17 +202,62 @@ not just the file you originally linked.
 
 Nested files are different: the model chooses which directories to read, and
 those can include vendored code or a checkout someone else wrote. Their contents
-and paths reach the model as a user message, not as instructions. The
-`'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart`
-(a system message where the model supports one mid-conversation, and
-`<system>`-tagged user text otherwise), followed by the file's path as a
-user-message `<context-file path="..." />` tag.
+and paths are data read from the workspace, so they reach the model as a user
+message, not as instructions. A `'pointer'` note is a `ContextFilePathPart`
+that sends the file's path in a `<context_file_path>` tag, with a note in the
+application's voice asking the model to read the file if it's relevant (a system
+message where the model supports one mid-conversation, and `<system>`-tagged
+user text otherwise). Both kinds of note carry a `WorkspaceSource`: for a
+workspace the operator doesn't control, it has no authority, and the note also
+says the file was written by its author, not by the user or the application.
 
-Each file is wrapped in `<context-file path="...">` tags. The `<` of every
-opening or closing `<context-file>` tag inside a file, and of every framing tag
-Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), is
-escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own
-block.
+Walk-up files are wrapped in `<context-file path="...">` tags in the
+instructions. The `<` of every opening or closing `<context-file>` tag inside a
+file, and of every framing tag Pydantic AI writes (`<system>`, `<pyai:context>`,
+`<pyai:tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-
+escaped, so a file stays inside its own block.
+
+A `'contents'` note is a `ContextFilePart` that sends the file in a
+`<context_file path="...">` tag, with the path HTML-escaped. The file goes out
+as written: an opening or closing `<context_file>` tag in it, or text that looks
+like one of Pydantic AI's frames, such as a `<system>` tag, gets a note saying
+the file's author wrote it, so a file stays inside its own block. Find either
+kind of note in history by its type.
+
+### Pinning accepted files
+
+An app that asks the user to accept a workspace's instruction files, skills or
+sub-agent definitions before trusting them can pin what was accepted. Record
+`file_digest(workspace, path)` when the user accepts a file, and before each run
+pass the recorded digests to `pin_accepted_files`. A file whose content no
+longer matches is capped at `changed` (`'none'` by default) through an
+`AuthorityWorkspace`, so `Workspace.authority_of` reports the lower level until
+the user accepts the new content and the app records its new digest. Showing the
+user what changed is up to the app, which holds the accepted content.
+
+```python {test="skip"}
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.repo_context import file_digest, pin_accepted_files
+
+workspace = Workspace(LocalWorkspaceBackend('./project'))
+accepted = {'AGENTS.md': await file_digest(workspace, 'AGENTS.md')}  # when the user accepts it
+
+# Later, after AGENTS.md changed:
+pinned = await pin_accepted_files(workspace, accepted)
+print(await pinned.authority_of('AGENTS.md'))
+#> none
+# Pass `pinned` as the run's `workspace=`.
+```
+
+A changed file never rises above the level the workspace already gives it, and
+files not in `accepted` keep the workspace's level. Files are compared when
+`pin_accepted_files` is called, not when they are read later in the run.
+
+The lower level changes what reaches the model only in capabilities that check
+`authority_of` (see
+[Files you didn't write](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority)).
+`RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they
+still load a changed file as before.
 
 ## Cache cost
 

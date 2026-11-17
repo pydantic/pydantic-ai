@@ -2,7 +2,7 @@ r"""Claude Code CLI compatibility and shared policy for gh-aw workflows.
 
 Production workflows load `agent.py` through the public `pydantic-ai` engine.
 This module provides the local/development runner and shared policy helpers
-(`run_request_limit`, `failure_details`, `compact_history`) used by that agent.
+(`run_request_limit`, `failure_details`, `zai_error_code`, `compact_history`) used by that agent.
 
 The legacy runner accepts Claude Code CLI arguments:
 
@@ -89,6 +89,7 @@ from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
@@ -498,7 +499,7 @@ _ZAI_PLAN_LIMIT_CODES = frozenset(
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
 
 
-def _zai_error_code(body: object) -> str | None:
+def zai_error_code(body: object) -> str | None:
     """Return the `error.code` of a decoded Z.ai error body, or `None` when it has none."""
     try:
         error = _ERROR_BODY_ADAPTER.validate_python(_ERROR_BODY_ADAPTER.validate_python(body).get('error'))
@@ -563,7 +564,7 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
             body = _ERROR_BODY_ADAPTER.validate_json(await response.aread())
         except ValidationError:
             return True
-        if _zai_error_code(body) in _ZAI_PLAN_LIMIT_CODES:
+        if zai_error_code(body) in _ZAI_PLAN_LIMIT_CODES:
             response.headers['x-should-retry'] = 'false'
             return False
         return True
@@ -824,6 +825,8 @@ def _part_text(part: MessagePart) -> str:
         return ''
     if isinstance(part, ModelSettingsDeltaPart):
         return f'model settings changed: {part.settings!r}'
+    if isinstance(part, CapabilityPart):
+        return f'{part.kind}: {part.model_content()!r}'
     if isinstance(part, CapabilityLoadDeltaPart):
         return f'loaded capabilities changed: loaded={part.loaded!r}'
     return str(part.content)
@@ -1375,7 +1378,7 @@ def failure_details(error: BaseException | None) -> dict[str, object]:
         if error.status_code in (401, 403):
             kind = 'authentication'
         elif error.status_code == 429:
-            kind = 'plan_limit' if _zai_error_code(error.body) in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
+            kind = 'plan_limit' if zai_error_code(error.body) in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
     failure: dict[str, object] = {'kind': kind}
     if http_status is not None:
         failure['http_status'] = http_status

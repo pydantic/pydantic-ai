@@ -111,22 +111,22 @@ Values:
 
 Per-provider mapping:
 
-| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud |
-|---|---|---|---|---|---|
-| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ |
-| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ |
-| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) |
-| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) |
+| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud | Groq | xAI |
+|---|---|---|---|---|---|---|---|
+| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ | `'auto'` | _(omitted)_ |
+| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ | `'on_demand'` | `'default'` |
+| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) | `'flex'` | _(omitted)_ |
+| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) | _(omitted)_ | `'priority'` |
 
 On Google Cloud the unified field maps only to safe PT-with-spillover variants so customers with
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
 (OpenAI's `'scale'`, `'fast'` and `'ultrafast'`, Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT
-routing tiers) are reachable only through the per-provider field.
+routing tiers, and Groq's `'performance'`) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
-`google_cloud_service_tier`) always take precedence over this unified field when set.
+`google_cloud_service_tier`, `groq_service_tier`) always take precedence over this unified field when set.
 """
 
 
@@ -296,6 +296,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     request_timeout: float
@@ -405,6 +406,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
     * OpenAI Decisions
+    * Google Decisions
     """
 
     parallel_tool_calls: bool
@@ -604,6 +606,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     thinking: ThinkingLevel
@@ -717,8 +720,8 @@ class ModelSettings(TypedDict, total=False):
 
     See [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value semantics and
     the per-provider mapping table. Provider-specific settings (`openai_service_tier`,
-    `anthropic_service_tier`, `bedrock_service_tier`, `google_cloud_service_tier`)
-    take precedence over this unified field when set.
+    `anthropic_service_tier`, `bedrock_service_tier`, `google_cloud_service_tier`,
+    `groq_service_tier`) take precedence over this unified field when set.
 
     Supported by:
 
@@ -731,11 +734,13 @@ class ModelSettings(TypedDict, total=False):
       preview, so no effect is observable without access)
     * Crusoe
     * GitHub Copilot
+    * Groq (`'default'` is sent as `'on_demand'`; `'priority'` is omitted; `'performance'` via `groq_service_tier`)
     * Ollama
     * OpenRouter
     * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
     * Z.AI
     * Bedrock Mantle
+    * xAI (`'default'` and `'priority'` only; `'auto'` and `'flex'` are omitted)
 
     The OpenAI-derived model classes send the OpenAI value unchanged, so the OpenAI column of the
     mapping table applies to them.
@@ -763,9 +768,10 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
 
-    On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
-    Z.AI), the model's own derived keys overwrite yours when the keys collide.
+    On the models that build their own `extra_body` (Groq, and the OpenAI-derived Cerebras, OpenRouter,
+    Snowflake and Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
 
 

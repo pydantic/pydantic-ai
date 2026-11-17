@@ -7,6 +7,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import product
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
@@ -22,7 +23,14 @@ from pydantic_ai import (
     ToolApproved,
     ToolDenied,
 )
-from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, Instrumentation, durable_operation
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    BatchModelRequests,
+    Instrumentation,
+    LocalWorkspace,
+    SetToolMetadata,
+    durable_operation,
+)
 from pydantic_ai.durable_exec import (
     conversation_id_from_run_id,
 )
@@ -39,20 +47,26 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider
+from .._tool_calls import WORKSPACE_TOOL_CALLS, scripted_model
 
 with try_import() as imports_successful:
     from durabletask import task
     from durabletask.client import OrchestrationFailedError
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+    from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
+    from pydantic_ai_harness.shell import Shell
 
     from .worker import (
         InMemoryWorker,
@@ -199,6 +213,62 @@ class TestAzureDurableTaskDurability:
             result = run_agent(durable_worker, agent, 'Hi', instance_id='hello', deps=None)
         assert result.output == 'hello'
         assert durable_worker.activity_calls == ['support__model.request']
+
+    @pytest.mark.parametrize('veto', [False, True])
+    def test_file_system_and_shell_tools(self, durable_worker: InMemoryWorker, tmp_path: Path, veto: bool) -> None:
+        agent = Agent(
+            scripted_model(WORKSPACE_TOOL_CALLS),
+            name='coder',
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Shell(tools=['shell']), AzureDurableTaskDurability()],
+        )
+        requests: list[str] = []
+
+        @agent.on_event(FileChangeRequestedEvent)
+        async def record(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
+            requests.append(event.operation)
+            if veto and event.operation == 'edit':
+                event.cancel('denied')
+
+        with registered_agent(durable_worker, agent):
+            result = run_agent(durable_worker, agent, deps=None)
+        content = 'one' if veto else 'two'
+        assert f'shell-{content}' in result.output
+        assert ("'note.txt' was not edited: denied" in result.output) is veto
+        # The orchestrator, and so its listeners, re-run on every replay.
+        assert set(requests) == {'write', 'edit', 'create_directory'}
+        assert (tmp_path / 'note.txt').read_text() == content
+        assert (tmp_path / 'sub').is_dir()
+
+    @pytest.mark.parametrize(
+        'tool_name,args',
+        [
+            ('write_file', {'path': 'note.txt', 'content': 'changed'}),
+            ('edit_file', {'path': 'note.txt', 'old_text': 'original', 'new_text': 'changed'}),
+            ('create_directory', {'path': 'sub'}),
+        ],
+    )
+    def test_file_change_in_an_activity_fails_closed(
+        self, durable_worker: InMemoryWorker, tmp_path: Path, tool_name: str, args: dict[str, object]
+    ) -> None:
+        (tmp_path / 'note.txt').write_text('original')
+        agent = Agent(
+            scripted_model([(tool_name, args)]),
+            name='coder',
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                SetToolMetadata(tools=[tool_name], azure_durable_task=None),
+                AzureDurableTaskDurability(),
+            ],
+        )
+        with registered_agent(durable_worker, agent):
+            with pytest.raises(
+                OrchestrationFailedError,
+                match=re.escape(f"FileSystem's {tool_name!r} tool cannot ask listeners about a change"),
+            ):
+                run_agent(durable_worker, agent, deps=None)
+        assert (tmp_path / 'note.txt').read_text() == 'original'
+        assert not (tmp_path / 'sub').exists()
 
     @pytest.mark.parametrize('same_agent', [False, True])
     def test_multiple_runs_have_distinct_replay_stable_ids(
@@ -451,6 +521,7 @@ class TestAzureDurableTaskDurability:
             'compat__model.request',
             'compat__model.request_stream',
             'compat__model.compact_messages',
+            'compat__model.count_tokens',
             'compat__model.cancel_suspended_response',
             'compat__capability__compat.operation',
             'compat__capability__workspace.call',
@@ -508,6 +579,7 @@ class TestAzureDurableTaskDurability:
                 '8b6d0ca92d02859d',
                 '688888820165bdcf',
                 '4a56fe7a73fcb1b6',
+                'd579555674f2835a',
             ]
         }
         assert all(len(name) == 100 for name in names)
@@ -937,6 +1009,39 @@ class TestAzureDurableTaskDurability:
             'capability__capability__recorder.record',
             'capability__model.request',
         ]
+
+    def test_count_tokens_is_an_activity(self, durable_worker: InMemoryWorker) -> None:
+        """The count ahead of a request is an activity, and the key it wrote on its decoded request reaches the run."""
+
+        class CountingModel(FunctionModel):
+            async def count_tokens(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> RequestUsage:
+                request = next(message for message in reversed(messages) if isinstance(message, ModelRequest))
+                request.metadata = {'__pydantic_ai__': {'counted': True}}
+                return RequestUsage(input_tokens=5)
+
+        agent = Agent(
+            CountingModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])),
+            name='count',
+            capabilities=[AzureDurableTaskDurability()],
+        )
+        limits = UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, list[dict[str, object] | None]]:
+            result = yield from run_durable(context, lambda: agent.run('Hi', usage_limits=limits))
+            return [message.metadata for message in result.all_messages() if isinstance(message, ModelRequest)]
+
+        durable_worker.add_orchestrator(orchestrator)
+        with registered_agent(durable_worker, agent):
+            metadata = completed(durable_worker, durable_worker.schedule(orchestrator))
+        assert metadata == [{'__pydantic_ai__': {'counted': True}}]
+        assert durable_worker.activity_calls == ['count__model.count_tokens', 'count__model.request']
 
     def test_streamed_model_and_event_handler(self, durable_worker: InMemoryWorker) -> None:
         observed: list[AgentStreamEvent] = []

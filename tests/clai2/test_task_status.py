@@ -13,7 +13,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.subagents import DelegationTaskEvent
+from pydantic_ai_harness.sub_agents import DelegationTaskEvent
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore

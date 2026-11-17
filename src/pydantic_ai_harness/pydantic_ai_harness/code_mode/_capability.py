@@ -14,9 +14,12 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Too
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelResponse,
     NativeToolSearchReturnPart,
+    OperatorSource,
+    OperatorText,
     SystemPromptPart,
     post_compaction_window,
 )
@@ -32,6 +35,7 @@ from pydantic_ai_harness.code_mode._speculation import (
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
+    CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
     as_os_handler,
@@ -52,7 +56,20 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'added to the available-functions catalog in the system prompt'
 )
 _DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
-"""`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
+"""`SystemPromptPart.metadata['origin']` of a discovery announcement an earlier version recorded, whose
+`metadata['tools']` lists the names it announced."""
+
+
+@dataclass(kw_only=True)
+class DiscoveryAnnouncementPart(InstructionCapabilityPart, namespace='code_mode', name='discovery_announcement'):
+    """The notice `CodeMode(dynamic_catalog=True)` enqueues when a tool search makes new functions callable in `run_code`.
+
+    Its text names each new function by the Python identifier `run_code` calls it by. Find announcements in history
+    by this type.
+    """
+
+    tools: tuple[str, ...] = ()
+    """The names of the tools it announces, as the search found them. Never sent to the model."""
 
 
 @dataclass
@@ -81,13 +98,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ```
 
     By default, sandboxed code cannot touch the host -- no filesystem, environment
-    variables, or clock. Two parameters open it up:
+    variables, or clock. Three parameters open it up:
 
     - `mount` shares specific host directories: reach for it when the agent reads or
       writes real files.
     - `os_access` routes the sandbox's OS calls to a handler you provide: reach for it
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
+    - `os_policy` sets the sandbox's own clock and time zone (or sleep and random-seed
+      policies), merged over the defaults that route them to `os_access`.
 
     The built-in `OSAccess` has an isolated filesystem and environment but uses the
     host clock by default; custom OS handlers can expose other host resources.
@@ -133,6 +152,20 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
+
+    os_policy: CodeModeOSPolicy | None = None
+    """Monty session policies for the sandbox's clock, timezone, sleep, and randomness.
+
+    Keys you set are merged over the defaults, which route the clock, sleeps, and random seeding
+    to `os_access` (so without a handler, the clock and unseeded `random` are unavailable).
+    `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives sandboxed code the worker's clock
+    in that zone without any handler; a `datetime` value freezes the clock at that instant;
+    `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but makes `astimezone()`,
+    `%Z`, and `time.tzname` report that zone. See `pydantic_monty.OSPolicy` for every key.
+
+    Inside a Temporal workflow, a `'system'` clock or `random_start` is read again on replay; keep
+    the defaults (or fixed values) there.
+    """
 
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
@@ -329,6 +362,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                os_policy=self.os_policy,
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
@@ -343,6 +377,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            os_policy=self.os_policy,
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
@@ -435,13 +470,12 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         # identifier `run_code` calls it by, which can't carry markup or prose. The tool names as found are
         # kept in the metadata, which the model never sees.
         listing = ', '.join(f'`{function}`' for function in functions.values())
-        # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
-        # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
-        # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
+        # The framework's own wording, naming each function by the identifier `run_code` calls it by.
         ctx.enqueue(
-            SystemPromptPart(
-                content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.',
-                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': list(functions)},
+            DiscoveryAnnouncementPart(
+                content=OperatorText(f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'),
+                source=OperatorSource(),
+                tools=tuple(functions),
             )
         )
 
@@ -449,16 +483,19 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Read the names announced after the latest compaction boundary.
 
-    An announcement is identified only by its `SystemPromptPart.metadata` (`origin` and the `tools` it lists),
-    which survives serialization and the merging of adjacent requests; its text never counts, so a system
-    prompt that merely reads like one, or a name shaped like a list of names, adds nothing. An announcement a
-    history processor or a UI round trip dropped no longer counts, so the tool is announced again when it's
-    next discovered, and so is a tool from a history recorded before announcements were marked.
+    An announcement is a `DiscoveryAnnouncementPart`, identified by its type and the `tools` it lists, which survive
+    serialization and the merging of adjacent requests; its text never counts, so a system prompt that merely reads
+    like one adds nothing. An earlier version recorded it as a `SystemPromptPart` marked by its `metadata` (`origin`
+    and `tools`), which still counts. An announcement a history processor or a UI round trip dropped no longer
+    counts, so the tool is announced again when it's next discovered, and so is a tool from a history recorded before
+    announcements were marked.
     """
     announced: set[str] = set()
     for message in post_compaction_window(messages):
         for part in message.parts:
-            if (
+            if isinstance(part, DiscoveryAnnouncementPart):
+                announced.update(part.tools)
+            elif (
                 isinstance(part, SystemPromptPart)
                 and part.metadata is not None
                 and part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN
