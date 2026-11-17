@@ -763,7 +763,7 @@ Model-name strings themselves never need registering. The agent's own model, set
 
 Model strings work as expected. To customize how a model string is built — a custom provider, API keys injected from configuration, per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `TemporalDurability`: it gets first crack at every string, both at run setup and when the model is rebuilt inside the activity, where the resolver runs again with the run's actual `deps`. Since the resolver re-runs on the worker, it must be deterministic for a given `(model_id, deps)` and must not perform external I/O — carry credentials on `deps` or close over configuration loaded at startup.
 
-For test models, construct one stable instance and register it in the `models` dict passed to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], then use that same instance with `agent.override(model=test_model)`. The registered key is the identity carried through workflow replay and model activity resolution.
+To use a test model with an agent built at module level, register it in your test setup with `register_model()` on the same `TemporalDurability` instance, then select it with `agent.override(model=...)`, by key or by that instance. The registered key is the identity carried through workflow replay and model activity resolution, so the worker process has to have registered it too (in tests, the worker usually runs in the same process).
 
 Here's an example showing how to pre-register and use multiple models:
 

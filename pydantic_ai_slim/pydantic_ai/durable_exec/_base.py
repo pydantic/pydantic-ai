@@ -426,6 +426,37 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'{type(self).__name__}_request_model_scope', default=None
         )
 
+    def register_model(self, model_id: str, model: Model) -> None:
+        """Register a model instance under `model_id`, like an entry in `models=`.
+
+        Use this to make a model instance available to a durable agent after it was built, typically
+        a test model in test setup, so production code doesn't have to construct it:
+
+        ```python {test="skip" lint="skip"}
+        durability.register_model('test', FunctionModel(my_model_function))
+        with agent.override(model='test'):
+            ...
+        ```
+
+        The registration applies to every agent this capability is attached to, and it lives in this
+        process only: a worker in another process must register the same ID before it handles the run.
+        Registering an ID again replaces the earlier model.
+
+        Args:
+            model_id: The ID to select the model by, with `agent.run(model=...)` or `agent.override(model=...)`.
+                `'default'` is reserved for the agent's own model.
+            model: The model instance.
+        """
+        if model_id == 'default':
+            raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+        # Bound copies share this dict with the capability they were copied from.
+        self._extra_models[model_id] = model
+
+    @property
+    def _registered_models(self) -> dict[str, Model]:
+        """The models bound at construction, plus any registered later with `register_model`."""
+        return {**self._models_by_id, **self._extra_models}
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         """Return the capability to use with the agent: the bound copy, with any `_companion_capabilities` outside it."""
         bound = self._bind_for_agent(agent)
@@ -2074,7 +2105,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability -- its
         position relative to this one doesn't matter for non-registry strings.
         """
-        return self._models_by_id.get(model_id)
+        return self._registered_models.get(model_id)
 
     def _model_id_for_request(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> str | None:
         """The cross-boundary identifier for this request's model.
@@ -2164,7 +2195,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
     def _registered_model_id(self, model: Model) -> tuple[bool, str | None]:
-        for model_id, registered in self._models_by_id.items():
+        for model_id, registered in self._registered_models.items():
             if registered is model:
                 return True, None if model_id == 'default' else model_id
         return False, None

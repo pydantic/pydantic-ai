@@ -4400,6 +4400,32 @@ async def test_dbos_durability_override_registered_model(dbos: DBOS) -> None:
     assert await run_agent() == 'alt-response'
 
 
+async def test_dbos_durability_register_model_after_construction(dbos: DBOS) -> None:
+    """A model registered with `register_model` after the agent was built can be selected by key or instance.
+
+    This is how tests use a test model with a durable agent built at module level, without putting the
+    test model in production code's `models=`.
+    """
+    durability = DBOSDurability()
+    agent = Agent(_durability_fn_model, name='durability_register_model_later', capabilities=[durability])
+    durability.register_model('test', _dbos_alt_model)
+
+    @DBOS.workflow()
+    async def run_agent() -> tuple[str, str]:
+        with agent.override(model='test'):
+            by_key = await agent.run('hello')
+        with agent.override(model=_dbos_alt_model):
+            by_instance = await agent.run('hello')
+        return by_key.output, by_instance.output
+
+    assert await run_agent() == ('alt-response', 'alt-response')
+
+
+def test_dbos_durability_register_model_rejects_default_id() -> None:
+    with pytest.raises(UserError, match="Model ID 'default' is reserved"):
+        DBOSDurability().register_model('default', _dbos_alt_model)
+
+
 async def test_dbos_durability_unregistered_model_instance_errors(dbos: DBOS) -> None:
     """An unregistered `Model` instance is rejected in the workflow, before any step runs.
 

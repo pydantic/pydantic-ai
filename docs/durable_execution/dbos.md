@@ -205,7 +205,15 @@ deploy the change as a new application version; DBOS can't recover a workflow st
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'{{ openai:medium }}'`) and model instances. A model instance can't be serialized across the step boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. Pre-register a specific instance by passing a `models` dict to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and reference it by key or pass that same instance to `agent.override(model=...)`; alternatively pass a model-name string and build the instance inside the step with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.
 
-To use a test model, construct one stable instance, register it in `models`, and use that same instance in `agent.override(model=...)`. The registered key is the identity sent across the step boundary, so replay and replacement workers resolve the same registered model.
+To use a test model with an agent built at module level, register it in your test setup with `register_model()` on the same `DBOSDurability` instance, then select it with `agent.override(model=...)`, by key or by that instance:
+
+```python {test="skip" lint="skip"}
+durability.register_model('test', FunctionModel(my_model_function))
+with agent.override(model='test'):
+    result = await my_workflow()
+```
+
+The registered key is the identity sent across the step boundary. A registration lives in its process, so a replacement worker in another process has to register the same key.
 
 To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `DBOSDurability`: it gets first crack at every string, and the resolver runs again inside the step with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
