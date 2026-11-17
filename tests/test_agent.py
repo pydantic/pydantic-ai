@@ -3103,6 +3103,7 @@ def test_structured_dict_recursive_refs():
 
 @requires_jsonschema
 def test_structured_dict_validate_retries_output_not_matching_the_schema():
+    """Not a VCR test: pins the `json_schema` retry payload, which cassette matching would not compare."""
     PersonDict = StructuredDict(
         {
             'type': 'object',
@@ -3146,6 +3147,7 @@ $: Additional properties are not allowed ('nickname' was unexpected)\
 
 
 def test_structured_dict_without_validate_accepts_output_not_matching_the_schema():
+    """Not a VCR test: pins that an unvalidated output passes through, independent of any provider."""
     PersonDict = StructuredDict({'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']})
 
     def return_person(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3157,6 +3159,8 @@ def test_structured_dict_without_validate_accepts_output_not_matching_the_schema
 
 @requires_jsonschema
 def test_structured_dict_validate_resolves_local_refs_and_rejects_others(monkeypatch: pytest.MonkeyPatch):
+    """Not a VCR test: schema construction and validation only, no request is sent."""
+
     def no_fetch(*args: object, **kwargs: object) -> None:
         raise AssertionError('fetched a remote schema')  # pragma: no cover
 
@@ -3213,7 +3217,18 @@ def test_structured_dict_validate_resolves_local_refs_and_rejects_others(monkeyp
 
 
 @requires_jsonschema
+def test_structured_dict_validate_keeps_the_siblings_of_a_root_ref():
+    """Not a VCR test: validation only, no request is sent."""
+    PayloadDict = StructuredDict(
+        {'$ref': '#/$defs/Payload', '$defs': {'Payload': {'type': 'object'}}, 'required': ['id']}, validate=True
+    )
+    with pytest.raises(ValidationError, match=re.escape("$: 'id' is a required property")):
+        TypeAdapter(PayloadDict).validate_python({})
+
+
+@requires_jsonschema
 def test_structured_dict_validate_uses_the_draft_the_schema_names():
+    """Not a VCR test: validation only, no request is sent."""
     PairDict = StructuredDict(
         {
             '$schema': 'http://json-schema.org/draft-07/schema#',
@@ -3230,11 +3245,13 @@ def test_structured_dict_validate_uses_the_draft_the_schema_names():
 
 @requires_jsonschema
 def test_structured_dict_validate_rejects_an_invalid_schema():
+    """Not a VCR test: construction-time `UserError`, no request is sent."""
     with pytest.raises(UserError, match=re.escape('`StructuredDict` got an invalid JSON schema: 5 is not valid')):
         StructuredDict({'type': 'object', 'properties': {'a': {'type': 5}}}, validate=True)
 
 
 def test_structured_dict_validate_requires_jsonschema(monkeypatch: pytest.MonkeyPatch):
+    """Not a VCR test: construction-time `UserError`, no request is sent."""
     monkeypatch.setitem(sys.modules, 'jsonschema', None)
     with pytest.raises(UserError, match=re.escape('`StructuredDict(validate=True)` requires the `jsonschema` package')):
         StructuredDict({'type': 'object'}, validate=True)

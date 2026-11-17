@@ -434,8 +434,9 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
-    json_schema = _utils.check_object_json_schema(json_schema)
+    # Validate against the schema as given: for a root `$ref`, the object schema sent to the model drops its siblings.
     validator = _json_schema_validator(json_schema) if validate else None
+    json_schema = _utils.check_object_json_schema(json_schema)
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
