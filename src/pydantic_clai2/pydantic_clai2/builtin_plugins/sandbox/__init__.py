@@ -46,7 +46,7 @@ from pydantic_clai2.runtime.session import ConversationWorkspace
 from pydantic_clai2.ui.menus.dialogs import RUNNERS, TerminalDialogs
 from pydantic_clai2.ui.rendering.status import StatusSegment
 
-__all__ = ('SandboxPlugin',)
+__all__ = ('SandboxPlugin', 'TextPart',)
 
 
 def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
@@ -281,13 +281,13 @@ class SandboxPlugin(Plugin):
         try:
             # Saved before seeding, which can take minutes, so a CLAI that dies meanwhile leaves a conversation
             # naming the sandbox, which `/sandbox delete` can delete. The request is CLAI's, not a prompt the user
-            # typed, so `/rewind` cannot cut the history back to before it. The response is what the model reads.
+            # typed, so `/rewind` cannot cut the history back to before it. The response only names the sandbox:
+            # it is empty, so providers send nothing for it, and the run's instructions say where the tools run.
             request = imported_context(
                 f'The user ran /sandbox {provider.name}.', source='clai', kind='sandbox', at=datetime.now(UTC)
             )
-            reply = TextPart(f'Working in {provider.title} sandbox {ref.id}, at {provider.working_dir}.')
             await conversation.commit_messages(
-                [ModelRequest(parts=[request]), ModelResponse(parts=[reply], workspace_ref=ref)]
+                [ModelRequest(parts=[request]), ModelResponse(parts=[], workspace_ref=ref)]
             )
             if github is not None and provider.token_in_sandbox:
                 # After the commit, so a sandbox holding the token is named for `/sandbox delete` even if this fails.

@@ -8,7 +8,6 @@ failed or over-budget summary degrades to truncation. `compact_now` drives the c
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Literal, Self
 
 from pydantic import (
@@ -21,7 +20,7 @@ from pydantic import (
     model_serializer,
 )
 
-from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart
+from pydantic_ai import ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
 from pydantic_ai.workspaces import WorkspaceRef
@@ -38,7 +37,6 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime import agent_instrumentation
-from pydantic_clai2.runtime.imported_history import imported_context
 from pydantic_clai2.runtime.session import local_workspace_provider
 from pydantic_clai2.ui.menus.field_menu import first_error, shown
 from pydantic_clai2.ui.rendering.status import Status
@@ -309,14 +307,14 @@ def _keeping_workspace(before: Sequence[ModelMessage], after: list[ModelMessage]
     """`after`, still naming the workspace `before` last worked in when compacting dropped every response naming it.
 
     A run works in the workspace its history's latest response names, so a conversation in a `/sandbox` would
-    otherwise continue on this machine. A local folder is left alone: the session works in its own anyway.
+    otherwise continue on this machine. The name goes on an empty response, as core records for a turn that ended
+    unanswered: providers send no message for it, so the model is not made to have said anything. A local folder
+    is left alone, as the session works in its own anyway.
     """
     ref = _latest_workspace(before)
     if ref is None or ref.provider == local_workspace_provider() or _latest_workspace(after) == ref:
         return after
-    note = imported_context('The conversation was compacted.', source='clai', kind='compaction', at=datetime.now(UTC))
-    still = TextPart(f'Still working in {ref.provider} workspace {ref.id}.')
-    return [*after, ModelRequest(parts=[note]), ModelResponse(parts=[still], workspace_ref=ref)]
+    return [*after, ModelResponse(parts=[], workspace_ref=ref)]
 
 
 def _latest_workspace(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:

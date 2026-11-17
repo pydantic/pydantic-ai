@@ -430,10 +430,9 @@ class TestCommand:
         [part] = request.parts
         # CLAI's note, not a typed prompt, so `/rewind` never cuts the history back past the sandbox.
         assert imported_kind(part) == 'sandbox'
-        # The model reads this reply as its own, so it says where it works, not what the user should do.
+        # The response only names the sandbox: with no parts, the model is not made to have said anything.
         assert isinstance(response, ModelResponse)
-        assert response.parts == [TextPart('Working in Fake sandbox sbx-1, at /home/user/workspace.')]
-        assert response.workspace_ref == WorkspaceRef(provider='fake', id='sbx-1')
+        assert (response.parts, response.workspace_ref) == ([], WorkspaceRef(provider='fake', id='sbx-1'))
         assert [segment() for segment in loaded.status_segments] == ['fake sandbox']
         assert await plugin.command([]) == (
             'This conversation runs in Fake sandbox sbx-1, in /home/user/workspace. /sandbox delete deletes it.'

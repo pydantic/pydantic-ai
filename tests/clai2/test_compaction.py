@@ -378,10 +378,11 @@ async def test_compact_keeps_naming_a_workspace_other_than_this_machine(strategy
     assert all(isinstance(message, ModelRequest) for message in local)
     # A sandbox: still named after the compacted history, so the next turn runs there.
     sandbox = WorkspaceRef(provider='e2b', id='sbx-1')
-    *compacted, note, still = await compact(sandbox)
+    *compacted, named = await compact(sandbox)
     assert (len(compacted), compacted[-1]) == (len(local), local[-1]) == (len(local), log)
-    assert isinstance(note, ModelRequest) and isinstance(still, ModelResponse)
-    assert (still.text, still.workspace_ref) == ('Still working in e2b workspace sbx-1.', sandbox)
+    # With no parts, providers send nothing for it, so the model is not made to have said anything.
+    assert isinstance(named, ModelResponse)
+    assert (named.parts, named.workspace_ref) == ([], sandbox)
 
 
 async def test_gauge_marks_its_reading_estimated_until_a_response_reports_usage(
