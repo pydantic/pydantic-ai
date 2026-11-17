@@ -225,12 +225,18 @@ class TestSecretRedaction:
         assert replacement.startswith('k=[redacted:')
         assert replacement.endswith('_key]')
 
-    @pytest.mark.parametrize('prefix', ['', 'Bearer ', 'token=', '.', '"', "'", ':', '/'])
+    @pytest.mark.parametrize('prefix', ['', 'Bearer ', 'token=', '.', '"', "'", ':', '/', '-', 'x-'])
     def test_a_jwt_after_a_separator_is_removed(self, prefix: str):
-        """A JWT starts a token after whitespace or punctuation other than `-`."""
+        """A JWT starts a token after whitespace or punctuation."""
         jwt = 'eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
 
         assert redact_secrets(f'{prefix}{jwt}').replacement == f'{prefix}[redacted:jwt]'
+
+    def test_a_jwt_whose_header_segment_holds_a_hyphen_is_not_matched(self):
+        """The header segment takes no `-`; `{"alg":"HS256","kid":"a>"}` encodes to one."""
+        jwt = 'eyJhbGciOiJIUzI1NiIsImtpZCI6ImE-In0.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
+
+        assert redact_secrets(jwt).action == 'allow'
 
     @pytest.mark.parametrize(
         ('detector', 'text'), [(redact_personal_data, '9' * 100_000), (redact_secrets, 'eyJ-' * 50_000)]
