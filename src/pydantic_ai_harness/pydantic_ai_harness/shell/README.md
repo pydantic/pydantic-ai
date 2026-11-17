@@ -269,10 +269,11 @@ from pydantic_ai_harness import BackgroundTools, Shell
 capabilities = [Shell(), BackgroundTools(tools=['run_command'])]
 ```
 
-The model gets a started message at once and the command's output as a follow-up message when
-it exits, within its `timeout_seconds`; the run waits for it. To hear when a process prints
-something, have the command wait for it, such as `until grep -m1 ERROR server.log; do sleep 1; done`.
-Commands read stdin at end of file: there is no tool to write to a running command's input.
+The model gets a started message at once and the command's output as a follow-up
+message when it exits, within its `timeout_seconds`; the run waits for it. To hear
+when a process prints something, have the command wait for it, such as
+`until grep -m1 ERROR server.log; do sleep 1; done`. Commands read stdin at end of
+file: there is no tool to write to a running command's input.
 
 Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
@@ -308,9 +309,9 @@ never deleted: clean them up yourself, and keep verbose commands' output
 bounded.
 
 `allowed_commands`, `denied_commands`, `denied_operators`, `allow_interactive`,
-`env`, `denied_env_patterns`, and `secret_env` apply to `shell` exactly as to `run_command`.
-`persist_cwd` does not: every `shell` command starts in the workspace's working
-directory, whatever `run_command` has tracked. Commands and logs live in the workspace; the
+`env`, `denied_env_patterns`, and `secret_env` apply to `shell` exactly as to
+`run_command`. `persist_cwd` does not: every `shell` command starts in the
+workspace's working directory, whatever `run_command` has tracked. Commands and logs live in the workspace; the
 workspace calls that start and poll them are not replay-safe.
 
 Each `shell` call emits progress events in the `shell` namespace, so a UI can
