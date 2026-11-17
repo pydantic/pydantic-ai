@@ -35,8 +35,6 @@ from ..tools import (
     ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
-    _listing_tools_before_tool_instance_defaults,  # pyright: ignore[reportPrivateUsage]
-    _SharedToolValues,  # pyright: ignore[reportPrivateUsage]
 )
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -166,6 +164,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ]
 
         self.tools = {}
+        # Names of the tools added as `Tool` instances, which get this toolset's `strict`, `include_return_schema`,
+        # `sequential` and `defer_loading` when it lists them. A function added with `add_function` already has them.
+        self._tool_instance_names: set[str] = set()
         for tool in tools:
             if isinstance(tool, Tool):
                 self.add_tool(tool)  # pyright: ignore[reportUnknownArgumentType]
@@ -732,83 +733,53 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
-        # `add_tool` applies the toolset's `sequential`, `requires_approval`, and `defer_loading` when they're
-        # `True`; a `Tool`'s plain booleans can't distinguish an explicit `False`, so restore the overrides
-        # passed here on the copy it stored.
-        added = self.tools[tool.name]
-        added.sequential = sequential
-        added.requires_approval = requires_approval
-        assert added._shared_values is not None  # pyright: ignore[reportPrivateUsage]
-        added._shared_values.values.requires_approval = requires_approval  # pyright: ignore[reportPrivateUsage]
-        added._assigned_values = added._own_values()  # pyright: ignore[reportPrivateUsage]
-        added.defer_loading = defer_loading
-        added._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
-        added._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
-        return added
+        self._tool_instance_names.discard(tool.name)
+        # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
+        tool.requires_approval = requires_approval
+        return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `strict` and `include_return_schema` apply to the tool when the tool leaves them unset,
-        its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
-        `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none.
-
-        The toolset stores a copy with these applied, so the `Tool` passed in keeps its own values
-        wherever else it's used.
+        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
+        when the tool sets none. Its `strict` and `include_return_schema` apply when the tool leaves them unset,
+        and its `sequential` and `defer_loading` when they're `True`. Those four apply when the toolset lists the
+        tool, so another toolset or agent holding the same `Tool` lists it with its own.
 
         Args:
             tool: The tool to add.
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        self._record_shared_values(tool)
-        added = copy(tool)
-        if added.max_retries is None and self.max_retries is not None:
-            added.max_retries = self.max_retries
-        if added.strict is None and self.strict is not None:
-            added.strict = self.strict
-        if added.include_return_schema is None and self.include_return_schema is not None:
-            added.include_return_schema = self.include_return_schema
-        if self.sequential and not added.sequential:
-            added.sequential = True
-            added._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        if tool.max_retries is None and self.max_retries is not None:
+            tool.max_retries = self.max_retries
         if self.requires_approval:
-            added.requires_approval = True
-        if self._defer_loading and not added.defer_loading:
-            added.defer_loading = True
-            added._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+            tool.requires_approval = True
         if self.metadata is not None:
-            added.metadata = self.metadata | (added.metadata or {})
-        added._assigned_values = added._own_values()  # pyright: ignore[reportPrivateUsage]
-        self.tools[added.name] = added
+            tool.metadata = self.metadata | (tool.metadata or {})
+        self.tools[tool.name] = tool
+        self._tool_instance_names.add(tool.name)
 
-    def _record_shared_values(self, tool: Tool[AgentDepsT]) -> None:
-        """Record the values this toolset used to write onto `tool` itself, for Temporal and DBOS workflows started before toolsets stored copies.
+    def _listed_tool(self, name: str, tool: Tool[AgentDepsT]) -> Tool[AgentDepsT]:
+        """`tool` as this toolset lists it under `name`.
 
-        Every copy shares the record, as every holder shared the `Tool`.
+        A `Tool` instance gets the toolset's `strict`, `include_return_schema`, `sequential` and `defer_loading` on a
+        copy, so the `Tool` itself keeps its own values for every other toolset and agent holding it.
         """
-        own = tool._own_values()  # pyright: ignore[reportPrivateUsage]
-        record = tool._shared_values  # pyright: ignore[reportPrivateUsage]
-        if record is None:
-            record = _SharedToolValues(tool._own_values(), own)  # pyright: ignore[reportPrivateUsage]
-            tool._shared_values = record  # pyright: ignore[reportPrivateUsage]
-        # A value set on the `Tool` since a toolset last added it, or on a copy since its toolset set it, reached
-        # every holder.
-        since = tool._assigned_values or record.last_added  # pyright: ignore[reportPrivateUsage]
-        values = record.values
-        if own.max_retries != since.max_retries:
-            values.max_retries = own.max_retries
-        if own.requires_approval != since.requires_approval:
-            values.requires_approval = own.requires_approval
-        if own.metadata != since.metadata:
-            values.metadata = own.metadata
-        if tool._assigned_values is None:  # pyright: ignore[reportPrivateUsage]
-            record.last_added = own
-        if values.max_retries is None:
-            values.max_retries = self.max_retries
-        values.requires_approval = values.requires_approval or self.requires_approval
-        if self.metadata is not None:
-            values.metadata = self.metadata | (values.metadata or {})
+        if name not in self._tool_instance_names:
+            return tool
+        listed = copy(tool)
+        if listed.strict is None:
+            listed.strict = self.strict
+        if listed.include_return_schema is None:
+            listed.include_return_schema = self.include_return_schema
+        if self.sequential and not listed.sequential:
+            listed.sequential = True
+            listed._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        if self._defer_loading and not listed.defer_loading:
+            listed.defer_loading = True
+            listed._defer_loading_from_toolset = True  # pyright: ignore[reportPrivateUsage]
+        return listed
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:
@@ -832,7 +803,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        for original_name, tool in self.tools.items():
+        for original_name, stored in self.tools.items():
+            tool = self._listed_tool(original_name, stored)
             max_retries = self._max_retries_for(tool, ctx)
             # `retries` is keyed by the name the model calls the tool by, computed here by applying
             # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
@@ -893,14 +865,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         return self._tool_for(tool, tool_def, self._max_retries_for(tool, ctx), original_name)
 
     def _max_retries_for(self, tool: Tool[AgentDepsT], ctx: RunContext[AgentDepsT]) -> int:
-        # Set while Temporal and DBOS list tools for a workflow started before toolsets stored copies: the tool then
-        # retries as often as it did then.
-        if _listing_tools_before_tool_instance_defaults.get():
-            max_retries = tool._values_before_copies().max_retries  # pyright: ignore[reportPrivateUsage]
-        else:
-            max_retries = tool.max_retries
-        if max_retries is None:
-            max_retries = self.max_retries
+        max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
         return max_retries if max_retries is not None else ctx.max_retries
 
     def _tool_for(

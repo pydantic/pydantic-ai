@@ -2199,14 +2199,14 @@ def test_function_toolset_defaults_apply_to_tool(added_with: Literal['constructo
     assert tool_def.include_return_schema is True
 
 
-def test_function_toolset_defaults_stay_off_a_shared_tool():
-    """A `Tool` added to a toolset keeps its own values in every other toolset and agent that holds it.
+async def test_function_toolset_defaults_stay_off_a_shared_tool():
+    """A `Tool` held by several toolsets and agents is listed with each one's `strict`, `include_return_schema`, `sequential` and `defer_loading`.
 
-    Each toolset stores a copy with its own defaults applied, so the order the toolsets are built in doesn't
-    matter either, and `add_function` returns the copy the toolset holds.
+    A toolset applies those when it lists the tool, without changing the `Tool`, so the order the toolsets are built in
+    doesn't matter either. `add_function` returns the tool the toolset holds.
 
-    Not a VCR test: it pins which `ToolDefinition` values the agent registers; each provider's tests pin how
-    these fields reach the wire.
+    Not a VCR test: it pins which `ToolDefinition` values each toolset lists; each provider's tests pin how these fields
+    reach the wire.
     """
 
     def my_tool() -> str:  # pragma: no cover
@@ -2215,49 +2215,31 @@ def test_function_toolset_defaults_stay_off_a_shared_tool():
     def added() -> str:  # pragma: no cover
         return 'added'
 
-    def values(
-        tool: Tool[object],
-    ) -> tuple[int | None, bool | None, bool | None, bool, dict[str, Any] | None, bool, bool]:
-        return (
-            tool.max_retries,
-            tool.strict,
-            tool.include_return_schema,
-            tool.requires_approval,
-            tool.metadata,
-            tool.sequential,
-            tool.defer_loading,
-        )
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    async def listed(toolset: FunctionToolset[None], name: str) -> tuple[bool | None, bool | None, bool, bool]:
+        tool_def = (await toolset.get_tools(ctx))[name].tool_def
+        return tool_def.strict, tool_def.include_return_schema, tool_def.sequential, tool_def.defer_loading
 
     tool = Tool(my_tool)
-    toolset = FunctionToolset(
-        [tool],
-        max_retries=5,
-        strict=True,
-        include_return_schema=True,
-        requires_approval=True,
-        metadata={'k': 'v'},
-        sequential=True,
-        defer_loading=True,
-    )
-    other = FunctionToolset([tool], max_retries=2, strict=False, include_return_schema=False)
+    toolset = FunctionToolset([tool], strict=True, include_return_schema=True, sequential=True, defer_loading=True)
+    other = FunctionToolset([tool], strict=False, include_return_schema=False)
 
-    assert values(tool) == (None, None, None, False, None, False, False)
-    assert values(toolset.tools['my_tool']) == (5, True, True, True, {'k': 'v'}, True, True)
-    assert values(other.tools['my_tool']) == (2, False, False, False, None, False, False)
-    # A toolset's copy added to another toolset keeps what the first toolset set on it.
-    added_again = FunctionToolset([toolset.tools['my_tool']]).tools['my_tool']
-    assert values(added_again) == (5, True, True, True, {'k': 'v'}, True, True)
+    assert (tool.strict, tool.include_return_schema, tool.sequential, tool.defer_loading) == (None, None, False, False)
+    assert await listed(toolset, 'my_tool') == (True, True, True, True)
+    assert await listed(other, 'my_tool') == (False, False, False, False)
     stored = toolset.add_function(added, sequential=False)
     assert stored is toolset.tools['added']
-    assert values(stored) == (5, True, True, True, {'k': 'v'}, False, True)
+    assert await listed(toolset, 'added') == (True, True, False, True)
 
+    # The example from #12617: a toolset with `defer_loading=True` doesn't hide the `Tool` from an agent holding it.
     test_model = TestModel(call_tools=[])
-    Agent(test_model, tools=[tool]).run_sync('Hello')
+    await Agent(test_model, tools=[tool]).run('Hello')
     assert test_model.last_model_request_parameters is not None
     assert [
-        (d.name, d.kind, d.strict, d.include_return_schema, d.metadata, d.sequential, d.defer_loading)
+        (d.name, d.strict, d.include_return_schema, d.sequential, d.defer_loading)
         for d in test_model.last_model_request_parameters.function_tools
-    ] == [('my_tool', 'function', None, None, None, False, False)]
+    ] == [('my_tool', None, None, False, False)]
 
 
 def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():

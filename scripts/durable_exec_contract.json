@@ -6487,6 +6487,28 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
       ]
     },
+    "Tool._defer_loading_from_toolset": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::holds_tool_instance_defaults"
+      ]
+    },
+    "Tool._sequential_from_toolset": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::holds_tool_instance_defaults"
+      ]
+    },
     "Tool.function_schema": {
       "engines": [
         "durable_exec"
@@ -6626,7 +6648,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
       ]
     },
-    "_listing_tools_before_tool_instance_defaults": {
+    "_without_toolset_sequential_defer_loading": {
       "engines": [
         "durable_exec"
       ],
@@ -7152,6 +7174,17 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
+      ]
+    },
+    "FunctionToolset._listed_tool": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::holds_tool_instance_defaults"
       ]
     },
     "FunctionToolset.call_tool": {

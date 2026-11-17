@@ -35,15 +35,15 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
 _TOOL_INSTANCE_DEFAULTS_PATCH = 'pydantic_ai:function_toolset_defaults_on_tool_instances'
-"""`workflow.patched()` ID marking histories in which `FunctionToolset` applied its defaults to its own copy of each `Tool` instance."""
+"""`workflow.patched()` ID marking histories in which `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
 
 
 @contextmanager
 def gate_tool_instance_defaults(toolset: FunctionToolset[AgentDepsT]) -> Generator[None]:
-    """List `toolset`'s `Tool` instances the way they were listed before `FunctionToolset` stored copies, in histories recorded before then.
+    """List `toolset`'s `Tool` instances without the `sequential` and `defer_loading` a `FunctionToolset` set on them, in histories recorded before it did.
 
-    A tool's `sequential`, `defer_loading`, `requires_approval`, `max_retries` and `metadata` change which
-    activities the workflow schedules, so those histories replay only with the old values.
+    A sequential or deferred tool changes which activities the workflow schedules, so those histories
+    replay only without them.
     """
     if holds_tool_instance_defaults(toolset) and not workflow.patched(_TOOL_INSTANCE_DEFAULTS_PATCH):
         with listing_tools_before_tool_instance_defaults():

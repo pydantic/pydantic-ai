@@ -342,28 +342,10 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
 ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
 
-_listing_tools_before_tool_instance_defaults: ContextVar[bool] = ContextVar(
-    '_listing_tools_before_tool_instance_defaults', default=False
+_without_toolset_sequential_defer_loading: ContextVar[bool] = ContextVar(
+    '_without_toolset_sequential_defer_loading', default=False
 )
-"""Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its defaults to its own copy of each `Tool` instance."""
-
-
-@dataclass
-class _DefaultedToolValues:
-    """A `Tool`'s values for the defaults a `FunctionToolset` used to write onto the `Tool` itself."""
-
-    max_retries: int | None
-    requires_approval: bool
-    metadata: dict[str, Any] | None
-
-
-@dataclass
-class _SharedToolValues:
-    """The values every `FunctionToolset` holding a `Tool` wrote onto it, back when it wrote onto the `Tool` itself."""
-
-    values: _DefaultedToolValues
-    last_added: _DefaultedToolValues
-    """The `Tool`'s own values when a toolset last added it. A value set on the `Tool` since then reached every holder."""
+"""Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
 
 
 def _validate_max_retries(max_retries: int | None) -> None:
@@ -403,18 +385,11 @@ class Tool(Generic[ToolAgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
-    # Set on the copy a `FunctionToolset` stores when it turned on `sequential` or `defer_loading` from its own
+    # Set on the copy a `FunctionToolset` lists when it turned on `sequential` or `defer_loading` from its own
     # value. Temporal and DBOS list that copy without them for workflows started before `FunctionToolset` did so.
     # Unannotated, so they aren't dataclass fields: a dataclass subclass adding a required field stays valid.
     _sequential_from_toolset = False
     _defer_loading_from_toolset = False
-    # A `FunctionToolset` used to write its `max_retries`, `requires_approval` and `metadata` onto the `Tool` itself,
-    # so everything holding it listed it with what every toolset wrote. `_shared_values` records those, shared by
-    # the `Tool` and every toolset's copy of it; `_assigned_values` holds what this copy's toolset set on it. Temporal
-    # and DBOS list the copy the old way for workflows started before toolsets stored copies. Not `__init__` fields,
-    # so a dataclass subclass adding a required field stays valid.
-    _shared_values: _SharedToolValues | None = field(default=None, init=False, repr=False, compare=False)
-    _assigned_values: _DefaultedToolValues | None = field(default=None, init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -602,44 +577,21 @@ class Tool(Generic[ToolAgentDepsT]):
     @property
     def tool_def(self) -> ToolDefinition:
         # Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its
-        # defaults to its own copy of each `Tool` instance: list the tool as it was listed then, without the
-        # toolset's `sequential` and `defer_loading` and with what every holder wrote onto the shared `Tool`, so
-        # `prepare` sees what it saw then.
-        before = _listing_tools_before_tool_instance_defaults.get()
-        values = self._values_before_copies() if before else self._own_values()
+        # `sequential` and `defer_loading` to `Tool` instances: drop those, so `prepare` sees what it saw then.
+        without_toolset = _without_toolset_sequential_defer_loading.get()
         return ToolDefinition(
             name=self.name,
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
-            sequential=self.sequential and not (before and self._sequential_from_toolset),
-            metadata=values.metadata,
+            sequential=self.sequential and not (without_toolset and self._sequential_from_toolset),
+            metadata=self.metadata,
             tool_kind=self.tool_kind,
             timeout=self.timeout,
-            defer_loading=self.defer_loading and not (before and self._defer_loading_from_toolset),
-            kind='unapproved' if values.requires_approval else 'function',
+            defer_loading=self.defer_loading and not (without_toolset and self._defer_loading_from_toolset),
+            kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
             include_return_schema=self.include_return_schema,
-        )
-
-    def _own_values(self) -> _DefaultedToolValues:
-        return _DefaultedToolValues(self.max_retries, self.requires_approval, self.metadata)
-
-    def _values_before_copies(self) -> _DefaultedToolValues:
-        """This copy's values as listed before `FunctionToolset` stored copies.
-
-        That's what every toolset holding the `Tool` wrote onto it, except a value changed since this copy's toolset
-        set it, which reached every holder then too.
-        """
-        own = self._own_values()
-        shared = own if self._shared_values is None else self._shared_values.values
-        assigned = self._assigned_values or own
-        return _DefaultedToolValues(
-            shared.max_retries if self.max_retries == assigned.max_retries else self.max_retries,
-            shared.requires_approval
-            if self.requires_approval == assigned.requires_approval
-            else self.requires_approval,
-            shared.metadata if self.metadata == assigned.metadata else self.metadata,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:

@@ -7281,8 +7281,11 @@ _shared_tools = {
     'approval_set_between_adds': Tool(first_once, name='first'),
     'retries_set_between_adds': Tool(first_after_two_retries, name='first'),
     'metadata_set_between_adds': Tool(first_once, name='first'),
+    'approval_reset_between_adds': Tool(first_once, name='first'),
+    'retries_reset_between_adds': Tool(first_after_two_retries, name='first'),
+    'metadata_reset_between_adds': Tool(first_once, name='first'),
 }
-# Each applies its default to its own copy of the shared `Tool`, which the agents hold through a toolset without it.
+# Each writes its default onto the shared `Tool`, which the agents hold through a toolset without it.
 _shared_tool_defaults_toolsets = [
     FunctionToolset([_shared_tools['requires_approval']], requires_approval=True),
     FunctionToolset([_shared_tools['max_retries']], max_retries=2),
@@ -7290,12 +7293,17 @@ _shared_tool_defaults_toolsets = [
     FunctionToolset([_shared_tools['approval_set_between_adds']]),
     FunctionToolset([_shared_tools['retries_set_between_adds']]),
     FunctionToolset([_shared_tools['metadata_set_between_adds']]),
+    FunctionToolset([_shared_tools['approval_reset_between_adds']], requires_approval=True),
+    FunctionToolset([_shared_tools['retries_reset_between_adds']], max_retries=2),
+    FunctionToolset([_shared_tools['metadata_reset_between_adds']], metadata={'dbos': {'child_workflow': {}}}),
 ]
-# Set after one toolset added the `Tool` and before the agent's did: it reached every holder back when they held the
-# `Tool` itself.
+# Set after one toolset added the `Tool` and before the agent's did.
 _shared_tools['approval_set_between_adds'].requires_approval = True
 _shared_tools['retries_set_between_adds'].max_retries = 2
 _shared_tools['metadata_set_between_adds'].metadata = {'dbos': {'child_workflow': {}}}
+_shared_tools['approval_reset_between_adds'].requires_approval = False
+_shared_tools['retries_reset_between_adds'].max_retries = None
+_shared_tools['metadata_reset_between_adds'].metadata = None
 _shared_tool_defaults_agents = {
     case: Agent(
         FunctionModel(_call_both_tools_and_retries),
@@ -7320,121 +7328,57 @@ async def shared_tool_defaults_workflow(case: str) -> str:
 
 
 _both_calls = ['__model.request', 'first_step_one', 'second_step', '__model.request']
+_deferred_call = ('deferred', ['__model.request', 'second_step'])
+_two_retries = (
+    'done',
+    ['__model.request', 'second_step', '__model.request', '__model.request', 'first_step_one', '__model.request'],
+)
+
+
+def _first_in_child_workflow(case: str) -> tuple[str, list[str]]:
+    return (
+        'done',
+        [
+            '__model.request',
+            f'shared_{case}_tool_instance__function_toolset__tools.call_tool__child_workflow',
+            'DBOS.getResult',
+            'second_step',
+            '__model.request',
+        ],
+    )
 
 
 @pytest.mark.parametrize(
-    ('case', 'unpatched_run', 'patched_run'),
+    ('case', 'expected_run'),
     [
-        (
-            'requires_approval',
-            ('deferred', ['__model.request', 'second_step']),
-            ('done', [_patch_step, *_both_calls]),
-        ),
-        (
-            'max_retries',
-            (
-                'done',
-                [
-                    '__model.request',
-                    'second_step',
-                    '__model.request',
-                    '__model.request',
-                    'first_step_one',
-                    '__model.request',
-                ],
-            ),
-            ('failed', [_patch_step, '__model.request', 'second_step', '__model.request']),
-        ),
-        (
-            'metadata',
-            (
-                'done',
-                [
-                    '__model.request',
-                    'shared_metadata_tool_instance__function_toolset__tools.call_tool__child_workflow',
-                    'DBOS.getResult',
-                    'second_step',
-                    '__model.request',
-                ],
-            ),
-            ('done', [_patch_step, *_both_calls]),
-        ),
-        (
-            'approval_set_between_adds',
-            ('deferred', ['__model.request', 'second_step']),
-            ('deferred', ['__model.request', 'second_step']),
-        ),
-        (
-            'retries_set_between_adds',
-            (
-                'done',
-                [
-                    '__model.request',
-                    'second_step',
-                    '__model.request',
-                    '__model.request',
-                    'first_step_one',
-                    '__model.request',
-                ],
-            ),
-            (
-                'done',
-                [
-                    '__model.request',
-                    'second_step',
-                    '__model.request',
-                    '__model.request',
-                    'first_step_one',
-                    '__model.request',
-                ],
-            ),
-        ),
-        (
-            'metadata_set_between_adds',
-            (
-                'done',
-                [
-                    '__model.request',
-                    'shared_metadata_set_between_adds_tool_instance__function_toolset__tools.call_tool__child_workflow',
-                    'DBOS.getResult',
-                    'second_step',
-                    '__model.request',
-                ],
-            ),
-            (
-                'done',
-                [
-                    '__model.request',
-                    'shared_metadata_set_between_adds_tool_instance__function_toolset__tools.call_tool__child_workflow',
-                    'DBOS.getResult',
-                    'second_step',
-                    '__model.request',
-                ],
-            ),
-        ),
+        ('requires_approval', _deferred_call),
+        ('max_retries', _two_retries),
+        ('metadata', _first_in_child_workflow('metadata')),
+        ('approval_set_between_adds', _deferred_call),
+        ('retries_set_between_adds', _two_retries),
+        ('metadata_set_between_adds', _first_in_child_workflow('metadata_set_between_adds')),
+        ('approval_reset_between_adds', ('done', _both_calls)),
+        ('retries_reset_between_adds', ('failed', ['__model.request', 'second_step', '__model.request'])),
+        ('metadata_reset_between_adds', ('done', _both_calls)),
     ],
 )
 async def test_dbos_shared_tool_defaults_recover(
-    dbos: DBOS,
-    monkeypatch: pytest.MonkeyPatch,
-    case: str,
-    unpatched_run: tuple[str, list[str]],
-    patched_run: tuple[str, list[str]],
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch, case: str, expected_run: tuple[str, list[str]]
 ) -> None:
-    """A workflow started while `FunctionToolset` wrote its defaults onto a shared `Tool` recovers.
+    """A `Tool` another toolset holds is listed with the `requires_approval`, `max_retries` and `metadata` it carries.
 
-    Without the patch marker, the agent lists the `Tool` with the `requires_approval`, `max_retries` and `metadata`
-    another toolset holding it set, as released versions did: the call waits for approval, gets that toolset's two
-    retries, or runs in a child workflow. A new workflow lists the agent's own values. Faking `DBOS.patch_async`
-    stands in for the code before the upgrade, which never called it. A value set on the `Tool` between two toolsets
-    adding it is listed in both.
+    That's how released versions listed it, so a workflow started on one recovers: the call waits for approval, gets
+    the other toolset's two retries, or runs in a child workflow, and a value set on the `Tool` between two toolsets
+    adding it, or reset, is listed as set. Neither workflow records a patch. Faking `DBOS.patch_async` stands in for
+    the code before the upgrade, which never called it.
 
     Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
     """
+    result, steps = expected_run
 
     async def recorded_steps(workflow_id: str) -> list[str]:
-        steps = await dbos.list_workflow_steps_async(workflow_id)
-        return [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps]
+        recorded = await dbos.list_workflow_steps_async(workflow_id)
+        return [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in recorded]
 
     async def start() -> tuple[str, bool]:
         """Start the workflow; return its ID and whether it crashed after the run rather than failing in it."""
@@ -7454,10 +7398,7 @@ async def test_dbos_shared_tool_defaults_recover(
     patched_id, patched_crashed = await start()
 
     await asyncio.sleep(0.01)
-    for (workflow_id, crashed), (result, steps) in (
-        ((unpatched_id, unpatched_crashed), unpatched_run),
-        ((patched_id, patched_crashed), patched_run),
-    ):
+    for workflow_id, crashed in ((unpatched_id, unpatched_crashed), (patched_id, patched_crashed)):
         assert crashed == (result != 'failed')
         if crashed:
             assert await (await DBOS.resume_workflow_async(workflow_id)).get_result() == result

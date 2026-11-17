@@ -2516,7 +2516,7 @@ async def test_function_toolset_defaults_on_tool_instances_replay(
         assert (await replayer.replay_workflow(history)).replay_failure is None
 
 
-# --- A `Tool` shared with a `FunctionToolset` that sets a default, across the upgrade that copied it ---
+# --- A `Tool` shared with a `FunctionToolset` that sets a default released versions wrote onto it ---
 
 
 def _call_both_tools_and_retries(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2542,12 +2542,14 @@ _shared_tools = {
     'requires_approval': Tool(first_in_workflow, name='first'),
     'max_retries': Tool(first_after_two_retries, name='first'),
     'metadata': Tool(first_in_workflow, name='first'),
-    'approval_set_on_copy': Tool(first_in_workflow, name='first'),
     'approval_set_between_adds': Tool(first_in_workflow, name='first'),
     'retries_set_between_adds': Tool(first_after_two_retries, name='first'),
     'metadata_set_between_adds': Tool(first_in_workflow, name='first'),
+    'approval_reset_between_adds': Tool(first_in_workflow, name='first'),
+    'retries_reset_between_adds': Tool(first_after_two_retries, name='first'),
+    'metadata_reset_between_adds': Tool(first_in_workflow, name='first'),
 }
-# Each applies its default to its own copy of the shared `Tool`, which the agents hold through a toolset without it.
+# Each writes its default onto the shared `Tool`, which the agents hold through a toolset without it.
 _shared_tool_defaults_toolsets = [
     FunctionToolset([_shared_tools['requires_approval']], requires_approval=True),
     FunctionToolset([_shared_tools['max_retries']], max_retries=2),
@@ -2555,28 +2557,27 @@ _shared_tool_defaults_toolsets = [
     FunctionToolset([_shared_tools['approval_set_between_adds']]),
     FunctionToolset([_shared_tools['retries_set_between_adds']]),
     FunctionToolset([_shared_tools['metadata_set_between_adds']]),
+    FunctionToolset([_shared_tools['approval_reset_between_adds']], requires_approval=True),
+    FunctionToolset([_shared_tools['retries_reset_between_adds']], max_retries=2),
+    FunctionToolset([_shared_tools['metadata_reset_between_adds']], metadata={'temporal': False}),
 ]
-# Set after one toolset added the `Tool` and before the agent's did: it reached every holder back when they held the
-# `Tool` itself.
+# Set after one toolset added the `Tool` and before the agent's did.
 _shared_tools['approval_set_between_adds'].requires_approval = True
 _shared_tools['retries_set_between_adds'].max_retries = 2
 _shared_tools['metadata_set_between_adds'].metadata = {'temporal': False}
-_shared_tool_defaults_agent_toolsets = {
-    case: FunctionToolset([tool, Tool(second)], id='tools') for case, tool in _shared_tools.items()
-}
-# Changing a toolset's copy reached every holder of the `Tool` back when it held the `Tool` itself, so a workflow
-# started then lists it the same way.
-_shared_tool_defaults_agent_toolsets['approval_set_on_copy'].tools['first'].requires_approval = True
+_shared_tools['approval_reset_between_adds'].requires_approval = False
+_shared_tools['retries_reset_between_adds'].max_retries = None
+_shared_tools['metadata_reset_between_adds'].metadata = None
 _shared_tool_defaults_agents = {
     case: Agent(
         FunctionModel(_call_both_tools_and_retries),
         name=f'shared_{case}_tool_instance',
         deps_type=type(None),
         output_type=[str, DeferredToolRequests],
-        toolsets=[toolset],
+        toolsets=[FunctionToolset([tool, Tool(second)], id='tools')],
         capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
     )
-    for case, toolset in _shared_tool_defaults_agent_toolsets.items()
+    for case, tool in _shared_tools.items()
 }
 
 
@@ -2589,62 +2590,34 @@ class SharedToolDefaultsWorkflow:
 
 
 _both_calls = ['model_request', 'call_tool', 'call_tool', 'model_request']
+_deferred_call = ('deferred', ['model_request', 'call_tool'])
+_two_retries = ('done', [*_both_calls, 'call_tool', 'model_request', 'call_tool', 'model_request'])
+_first_in_workflow = ('done', ['model_request', 'call_tool', 'model_request'])
 
 
 @pytest.mark.parametrize(
-    ('case', 'unpatched_run', 'patched_run'),
+    ('case', 'expected_run'),
     [
-        (
-            'requires_approval',
-            ('deferred', ['model_request', 'call_tool']),
-            ('done', _both_calls),
-        ),
-        (
-            'max_retries',
-            ('done', [*_both_calls, 'call_tool', 'model_request', 'call_tool', 'model_request']),
-            ('failed', [*_both_calls, 'call_tool']),
-        ),
-        (
-            'metadata',
-            ('done', ['model_request', 'call_tool', 'model_request']),
-            ('done', _both_calls),
-        ),
-        (
-            'approval_set_on_copy',
-            ('deferred', ['model_request', 'call_tool']),
-            ('deferred', ['model_request', 'call_tool']),
-        ),
-        (
-            'approval_set_between_adds',
-            ('deferred', ['model_request', 'call_tool']),
-            ('deferred', ['model_request', 'call_tool']),
-        ),
-        (
-            'retries_set_between_adds',
-            ('done', [*_both_calls, 'call_tool', 'model_request', 'call_tool', 'model_request']),
-            ('done', [*_both_calls, 'call_tool', 'model_request', 'call_tool', 'model_request']),
-        ),
-        (
-            'metadata_set_between_adds',
-            ('done', ['model_request', 'call_tool', 'model_request']),
-            ('done', ['model_request', 'call_tool', 'model_request']),
-        ),
+        ('requires_approval', _deferred_call),
+        ('max_retries', _two_retries),
+        ('metadata', _first_in_workflow),
+        ('approval_set_between_adds', _deferred_call),
+        ('retries_set_between_adds', _two_retries),
+        ('metadata_set_between_adds', _first_in_workflow),
+        ('approval_reset_between_adds', ('done', _both_calls)),
+        ('retries_reset_between_adds', ('failed', [*_both_calls, 'call_tool'])),
+        ('metadata_reset_between_adds', ('done', _both_calls)),
     ],
 )
 async def test_shared_tool_defaults_replay(
-    client: Client,
-    monkeypatch: pytest.MonkeyPatch,
-    case: str,
-    unpatched_run: tuple[str, list[str]],
-    patched_run: tuple[str, list[str]],
+    client: Client, monkeypatch: pytest.MonkeyPatch, case: str, expected_run: tuple[str, list[str]]
 ):
-    """A history recorded while `FunctionToolset` wrote its defaults onto a shared `Tool` replays.
+    """A `Tool` another toolset holds is listed with the `requires_approval`, `max_retries` and `metadata` it carries.
 
-    Without the patch marker, the agent lists the `Tool` with the `requires_approval`, `max_retries` and `metadata`
-    another toolset holding it set, as released versions did: the call waits for approval, gets that toolset's two
-    retries, or runs in the workflow. A new run lists the agent's own values. A value set on the agent's copy is
-    listed in both, as is a value set on the `Tool` between two toolsets adding it. Unsandboxed, so `workflow.patched`
-    can be faked for the original run.
+    That's how released versions listed it, so a history recorded on one replays: the call waits for approval, gets
+    the other toolset's two retries, or runs in the workflow, and a value set on the `Tool` between two toolsets adding
+    it, or reset, is listed as set. The patch marker changes none of it. Unsandboxed, so `workflow.patched` can be
+    faked for the original run.
     """
 
     async def run_workflow() -> tuple[tuple[str, list[str]], WorkflowHistory]:
@@ -2681,8 +2654,8 @@ async def test_shared_tool_defaults_replay(
     monkeypatch.undo()
     patched_result, patched_history = await run_workflow()
 
-    assert unpatched_result == unpatched_run
-    assert patched_result == patched_run
+    assert unpatched_result == expected_run
+    assert patched_result == expected_run
 
     replayer = Replayer(
         workflows=[SharedToolDefaultsWorkflow],

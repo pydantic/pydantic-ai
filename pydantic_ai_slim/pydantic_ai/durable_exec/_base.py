@@ -229,15 +229,8 @@ def capability_selects_child_workflow(capability: AbstractCapability[Any], key: 
 
 
 def toolset_selects_child_workflow(toolset: FunctionToolset[Any], key: str) -> bool:
-    """Whether a tool in `toolset` selects a child workflow in its own metadata.
-
-    That includes metadata every toolset holding the `Tool` wrote onto it before `FunctionToolset` stored copies,
-    which workflows started before then are listed with.
-    """
-    return any(
-        selects_child_workflow(tool.metadata, key) or selects_child_workflow(tool._values_before_copies().metadata, key)  # pyright: ignore[reportPrivateUsage]
-        for tool in toolset.tools.values()
-    )
+    """Whether a tool in `toolset` selects a child workflow in its own metadata."""
+    return any(selects_child_workflow(tool.metadata, key) for tool in toolset.tools.values())
 
 
 class _BoundModelOperations(NamedTuple):

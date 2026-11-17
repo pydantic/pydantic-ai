@@ -44,7 +44,7 @@ from pydantic_ai.tools import (
     AgentDepsT,
     RunContext,
     ToolDefinition,
-    _listing_tools_before_tool_instance_defaults,  # pyright: ignore[reportPrivateUsage]
+    _without_toolset_sequential_defer_loading,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -775,33 +775,28 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
 
 
 def holds_tool_instance_defaults(toolset: FunctionToolset[AgentDepsT]) -> bool:
-    """Whether `toolset` holds a `Tool` it lists differently from how it was listed before `FunctionToolset` stored copies.
-
-    That's a `Tool` a `FunctionToolset` made sequential or deferred, or one whose `max_retries`, `requires_approval`
-    or `metadata` differ from what every toolset holding it wrote onto the one `Tool` they shared.
-    """
+    """Whether `toolset` holds a `Tool` instance it lists as sequential or deferred from its own value."""
     return any(
-        tool._sequential_from_toolset  # pyright: ignore[reportPrivateUsage]
-        or tool._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
-        or tool._values_before_copies() != tool._own_values()  # pyright: ignore[reportPrivateUsage]
-        for tool in toolset.tools.values()
+        (listed := toolset._listed_tool(name, tool))._sequential_from_toolset  # pyright: ignore[reportPrivateUsage]
+        or listed._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
+        for name, tool in toolset.tools.items()
     )
 
 
 @contextmanager
 def listing_tools_before_tool_instance_defaults() -> Generator[None]:
-    """List `Tool` instances the way they were listed before `FunctionToolset` stored copies with its defaults applied.
+    """List `Tool` instances without the `sequential` and `defer_loading` a `FunctionToolset` set on them.
 
-    A `Tool` is listed without the `sequential` and `defer_loading` a `FunctionToolset` set on its copy, and with the
-    `max_retries`, `requires_approval` and `metadata` every toolset holding it wrote onto the one `Tool` they
-    shared. Each tool's `prepare` sees the definition it saw then. These values change which durable operations a
-    workflow runs, so workflows started before then can only continue with them.
+    That's how they were listed before `FunctionToolset` applied its `sequential` and `defer_loading` to
+    `Tool` instances, and each tool's `prepare` sees the definition it saw then. A sequential or deferred
+    tool changes which durable operations a workflow runs, so workflows started before then can only
+    continue with these.
     """
-    token = _listing_tools_before_tool_instance_defaults.set(True)
+    token = _without_toolset_sequential_defer_loading.set(True)
     try:
         yield
     finally:
-        _listing_tools_before_tool_instance_defaults.reset(token)
+        _without_toolset_sequential_defer_loading.reset(token)
 
 
 class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
