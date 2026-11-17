@@ -45,10 +45,12 @@ from pydantic_ai_harness.dynamic_workflow import (
     DynamicWorkflow,
     DynamicWorkflowToolset,
     WorkflowAgent,
+    WorkflowCall,
     WorkflowResourceLimits,
 )
 
 from .._deferred_tools import deferring_agent, pending_agent
+from ._concurrent_sub_agents import DeferredStarts
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -1511,6 +1513,63 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):  # pragma: no branch
                 await task
+
+
+async def test_call_scheduler_registers_calls_before_starting_them() -> None:
+    events: list[str] = []
+    contexts: list[RunContext[object]] = []
+
+    def scheduler(ctx: RunContext[object]) -> DeferredStarts:
+        contexts.append(ctx)
+        return DeferredStarts(events)
+
+    workflow = DynamicWorkflow[object](
+        agents=[_sub_agent('A', 'alpha'), _sub_agent('B', 'beta')], call_scheduler=scheduler
+    )
+    ctx = _ctx()
+    code = (
+        "import asyncio\nfirst = await asyncio.gather(alpha(task='a'), beta(task='b'))\n[*first, await alpha(task='c')]"
+    )
+    out = await _run_script(workflow.get_toolset(), code, ctx)
+    assert out == snapshot(['A', 'B', 'A'])
+    assert events == snapshot(
+        [
+            'register alpha',
+            'register beta',
+            'flush',
+            'start alpha',
+            'start beta',
+            'register alpha',
+            'flush',
+            'start alpha',
+        ]
+    )
+    assert contexts == [ctx]
+
+
+class _FailingScheduler:
+    async def run(self, call: WorkflowCall) -> object:
+        raise ValueError('host detail')
+
+    async def flush(self) -> None:
+        pass
+
+
+async def test_call_scheduler_errors_reach_the_script_without_host_details() -> None:
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('kaboom')
+
+    code = "try:\n    await {name}(task='x')\nexcept RuntimeError as e:\n    result = str(e)\nresult"
+    failing = DynamicWorkflow[object](agents=[_sub_agent()], call_scheduler=lambda ctx: _FailingScheduler())
+    assert await _run_script(failing.get_toolset(), code.format(name='sub')) == snapshot(
+        'call scheduler raised ValueError'
+    )
+    passing = DynamicWorkflow[object](
+        agents=[Agent(FunctionModel(boom), name='bad')], call_scheduler=lambda ctx: DeferredStarts([])
+    )
+    assert await _run_script(passing.get_toolset(), code.format(name='bad')) == snapshot(
+        "sub-agent 'bad' raised ValueError"
+    )
 
 
 # --- Runtime reveal --------------------------------------------------------

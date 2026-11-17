@@ -43,7 +43,6 @@ _BEHAVIORAL_FRONTMATTER_FIELDS = frozenset(
         'paths',
         'shell',
         'tools',
-        'when_to_use',
     }
 )
 
@@ -53,6 +52,7 @@ class _SkillFrontmatter(BaseModel):
 
     name: str | None = None
     description: str
+    when_to_use: str | None = None
     disable_model_invocation: bool = Field(default=False, alias='disable-model-invocation')
     user_invocable: bool = Field(default=True, alias='user-invocable')
 
@@ -72,6 +72,13 @@ class _SkillFrontmatter(BaseModel):
         if not stripped:
             raise ValueError('must not be empty')
         return stripped
+
+    @field_validator('when_to_use', mode='after')
+    @classmethod
+    def _strip_when_to_use(cls, value: str) -> str | None:
+        # Frontmatter is loaded without implicit types, so a set field is always text. An empty trigger has
+        # nothing to append to the catalog description.
+        return value.strip() or None
 
 
 MissingDirectories: TypeAlias = Literal['error', 'skip']
@@ -105,6 +112,9 @@ class SkillDefinition:
 
     description: str
     """The `description` frontmatter field, listed in the model's catalog."""
+
+    when_to_use: str | None = None
+    """The `when_to_use` frontmatter field, appended to the catalog description."""
 
     body: str
     """The Markdown after the frontmatter, without leading and trailing blank lines."""
@@ -170,7 +180,7 @@ SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 
 - `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
 - `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
 - `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
-- `'flagged'`: a skill whose description or body the `Skills(scanner=...)` artifact scan flagged.
+- `'flagged'`: a skill whose description, `when_to_use` or body the `Skills(scanner=...)` artifact scan flagged.
 """
 
 
@@ -393,6 +403,7 @@ def parse_skill(text: str, skill_file: str) -> SkillDefinition:
     return SkillDefinition(
         name=normalized_name,
         description=frontmatter.description,
+        when_to_use=frontmatter.when_to_use,
         body=body,
         ignored_behavioral_fields=ignored_fields,
         model_invocable=not frontmatter.disable_model_invocation,

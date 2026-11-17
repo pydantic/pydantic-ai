@@ -226,7 +226,8 @@ class AbstractNativeTool(ABC):
         if cls is not AbstractNativeTool:
             return core_schema.no_info_wrap_validator_function(_validate_without_provider_field_warnings, handler(cls))
 
-        tools = NATIVE_TOOL_TYPES.values()
+        # A snapshot: a type registering on another thread would change the registry mid-iteration.
+        tools = tuple(NATIVE_TOOL_TYPES.values())
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:

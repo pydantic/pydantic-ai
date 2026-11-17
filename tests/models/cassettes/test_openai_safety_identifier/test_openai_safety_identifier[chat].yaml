@@ -1,0 +1,156 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "136"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4o
+        stream: false
+        messages:
+        - role: user
+          content: What is 2+2?
+        safety_identifier: scrubbed
+        user: user_id
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "567"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-Eki3ZyCI3LDx9g00tJvwwhfnQSqG1
+        object: chat.completion
+        created: 1794801149
+        model: gpt-4o-2024-08-06
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: 2 + 2 equals 4.
+            refusal: null
+            annotations: []
+          logprobs: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 14
+          completion_tokens: 8
+          total_tokens: 22
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_f89046aead
+  recorded_at: 2026-11-16T03:52:29.879565+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "87"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4o
+        stream: false
+        messages:
+        - role: user
+          content: What is 2+2?
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "346"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-Eki3axiiNfW1CDCfdAmwBn3vhn0TD
+        object: chat.completion
+        created: 1794801150
+        model: gpt-4o-2024-08-06
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: 2 + 2 equals 4.
+            refusal: null
+            annotations: []
+          logprobs: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 14
+          completion_tokens: 8
+          total_tokens: 22
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_ce6605ba42
+  recorded_at: 2026-11-16T03:52:30.880235+00:00
