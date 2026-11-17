@@ -9,6 +9,7 @@ from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Final, Literal, TypeAlias
 
 from opentelemetry.trace import Span
+from pydantic import TypeAdapter
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -578,9 +579,20 @@ async def _store_source(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: 
     if not isinstance(store, FileMemoryStore):
         return _MEMORY_SOURCE
     # The store's own `workspace=`, or else the run's, as `FileMemoryStore` reads its files.
-    workspace = secondary_workspace(store.workspace, 'FileMemoryStore') or ctx.workspace
-    source = await WorkspaceSource.from_workspace(workspace, posixpath.join(store.directory, scope, MAIN_FILENAME))
-    return _MEMORY_SOURCE if source.authority == 'operator' else source
+    own = secondary_workspace(store.workspace, 'FileMemoryStore')
+    source = await WorkspaceSource.from_workspace(
+        own or ctx.workspace, posixpath.join(store.directory, scope, MAIN_FILENAME)
+    )
+    if source.authority == 'operator':
+        return _MEMORY_SOURCE
+    if own is None:
+        return source
+    # The model never sees where a store of its own keeps its files, nor the scope, which can hold a tenant's
+    # `namespace` and the `agent_name`: the note names the file alone, at the level the full path has.
+    return _WORKSPACE_SOURCE.validate_python({'path': MAIN_FILENAME, 'authority': source.authority})
+
+
+_WORKSPACE_SOURCE: Final = TypeAdapter(WorkspaceSource)
 
 
 def _snapshot_part(content: str, metadata: dict[str, str], source: CapabilityPartSource) -> MemorySnapshotPart:

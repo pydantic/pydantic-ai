@@ -503,7 +503,7 @@ ends with &lt;/context-file
 
     async def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
-        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True)
+        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True, nested_traversal=False)
         await cap.before_run(_run_context(workspace=workspace))
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
@@ -526,9 +526,12 @@ root
 Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
 """)
 
-    def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:
-        instructions = RepoContext[object](autoload_instructions=False).get_instructions()
-        assert instructions == snapshot(
+    async def test_nested_traversal_without_autoload_states_how_files_relate(self, workspace: Workspace) -> None:
+        # Rendered after `before_run`, which checks whether any file nested traversal reads is below `'operator'`.
+        cap = RepoContext[object](autoload_instructions=False)
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot(
             "Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them."
         )
 
@@ -741,7 +744,10 @@ class TestToolset:
 
     @pytest.mark.parametrize('asset_roots', [('.claude', '.agents'), ('../shared',)])
     def test_inventory_hint_is_static(self, asset_roots: tuple[str, ...]) -> None:
-        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True, asset_roots=asset_roots)
+        # Without nested traversal, whose precedence sentence depends on the run's levels.
+        cap = RepoContext[object](
+            autoload_instructions=False, expose_inventory_tool=True, asset_roots=asset_roots, nested_traversal=False
+        )
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'inventory_agent_context' in instructions
@@ -1867,6 +1873,31 @@ This directory has an instruction file that is not loaded here, because it isn't
 </pyai:context>
 A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
+
+    @pytest.mark.parametrize('path_authority', [{}, {'vendor': 'none'}])
+    async def test_the_precedence_sentence_without_autoload_follows_path_entries(
+        self, tmp_path: Path, path_authority: dict[str, Authority]
+    ) -> None:
+        # Nested traversal still reads `vendor/AGENTS.md` without the walk-up, so a lower `vendor` keeps its files
+        # from ranking over the operator's.
+        _write(tmp_path / 'vendor' / 'AGENTS.md', 'vendored rules')
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority=path_authority
+        )
+        instructions: list[str | None] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            instructions.append(request.instructions)
+            yield 'done'
+
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[RepoContext(autoload_instructions=False, nested_traversal=True, expose_inventory_tool=False)],
+        ).run('go', workspace=workspace)
+
+        assert ('takes precedence' in (instructions[0] or '')) is (not path_authority)
 
     async def test_an_ancestor_covered_by_path_authority_keeps_its_level(self, tmp_path: Path) -> None:
         working_dir = self._repo(tmp_path)
