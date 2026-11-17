@@ -239,7 +239,7 @@ class RedisSpendStore:
     """
 
     def __post_init__(self) -> None:
-        """Reject a prefix that would break the hash tag it is wrapped in, and report dead overrides.
+        """Reject a prefix that would break the hash tag it is wrapped in.
 
         A brace inside the prefix moves or truncates the tag, so two windows of one
         budget would hash to different slots and a cluster would refuse the script that
