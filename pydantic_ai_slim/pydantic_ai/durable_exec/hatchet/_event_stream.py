@@ -112,36 +112,44 @@ def task_event_stream_handler(
     async def publishing_handler(run_context: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]) -> None:
         ctx = hatchet.current_context
         parent_run_id = ctx.parent_workflow_run_id if isinstance(ctx, Context) else None
-        if ctx is None or parent_run_id is None:
-            if handler is not None:
-                await handler(run_context, stream)
-                return
-            async for _ in stream:
-                pass
-            return
-
-        topic = config.topic(agent_name, parent_run_id)
-        # A retried attempt streams the response again, under new IDs: a consumer sees both attempts' events.
-        id_prefix = f'{ctx.task_run_id}:{ctx.attempt_number}'
-
-        async def publishing(events: AsyncIterable[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
-            index = 0
-            async for event in events:
-                if config.events is None or config.events(event):
-                    await publish_event(hatchet, config, topic, message_id=f'{id_prefix}:{index}', event=event)
-                    index += 1
-                yield event
-
-        published = publishing(stream)
-        try:
-            if handler is not None:
-                await handler(run_context, published)
-        finally:
-            # Keep publishing whatever a handler that returned early left behind.
-            async for _ in published:
-                pass
+        if ctx is not None and parent_run_id is not None:
+            topic = config.topic(agent_name, parent_run_id)
+            # A retried attempt streams the response again, under new IDs: a consumer sees both attempts' events.
+            id_prefix = f'{ctx.task_run_id}:{ctx.attempt_number}'
+            stream = _publishing(hatchet, config, topic, id_prefix, stream)
+        await _drain(run_context, stream, handler)
 
     return publishing_handler
+
+
+async def _publishing(
+    hatchet: Hatchet,
+    config: HatchetEventStream,
+    topic: str,
+    id_prefix: str,
+    events: AsyncIterable[AgentStreamEvent],
+) -> AsyncIterator[AgentStreamEvent]:
+    """Publish each selected event to the run's topic as it passes through."""
+    index = 0
+    async for event in events:
+        if config.events is None or config.events(event):
+            await publish_event(hatchet, config, topic, message_id=f'{id_prefix}:{index}', event=event)
+            index += 1
+        yield event
+
+
+async def _drain(
+    run_context: RunContext[AgentDepsT],
+    stream: AsyncIterable[AgentStreamEvent],
+    handler: EventStreamHandler[AgentDepsT] | None,
+) -> None:
+    """Hand the stream to `handler`, then consume whatever it left behind, so every event is still published."""
+    try:
+        if handler is not None:
+            await handler(run_context, stream)
+    finally:
+        async for _ in stream:
+            pass
 
 
 class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent | AgentRunResultEvent[OutputDataT]]):
