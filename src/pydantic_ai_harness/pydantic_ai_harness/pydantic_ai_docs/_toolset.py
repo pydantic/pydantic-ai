@@ -107,7 +107,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         """Return the Pydantic AI documentation for `topic` as markdown.
 
         Reads from a configured local docs checkout when available, otherwise
-        fetches the page for the installed Pydantic AI version. Returns the full page; call
+        fetches the page from the Pydantic AI docs on GitHub. Returns the full page; call
         it once per topic you need.
 
         Args:
