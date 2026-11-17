@@ -20,6 +20,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.batch import BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -459,6 +460,11 @@ class _JudgingSettingsModel(WrapperModel):
                     super().request_stream(messages, model_settings, model_request_parameters, run_context)
                 )
             yield response
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        # Under `BatchModelRequests`, the model prepares the request here instead of in `request`.
+        with raise_unsupported_setting_warnings():
+            return await super().batch_encode(request)
 
 
 def _spec_list(value: object, name: str) -> Sequence[object]:

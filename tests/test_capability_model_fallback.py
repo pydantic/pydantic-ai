@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
@@ -81,6 +82,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     StreamedResponse,
 )
+from pydantic_ai.models.batch import BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel, FallbackOn
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -3087,6 +3089,40 @@ async def test_a_streamed_continuation_pinned_to_a_model_that_would_ignore_a_set
         assert await result.get_output() == 'backup answered'
 
     assert calls == ['backup']
+
+
+class _IgnoresStopSequencesInBatches(SlowBatchTestModel):
+    """A batch model that ignores `stop_sequences`, preparing each request when it's encoded, as providers do."""
+
+    unsupported_settings = frozenset({'stop_sequences'})
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        self.prepare_request(request.model_settings, request.model_request_parameters)
+        return await super().batch_encode(request)  # pragma: no cover
+
+
+async def test_a_batched_request_moves_on_from_a_model_that_would_ignore_a_setting():
+    """Under `BatchModelRequests`, the warning is raised when the request is encoded, so nothing is submitted."""
+    primary = _IgnoresStopSequencesInBatches(model_name='primary')
+    backup = SlowBatchTestModel(model_name='backup')
+    agent = Agent(
+        primary,
+        capabilities=[ModelFallback(backup, fallback_on=_SKIPS_IGNORING), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+
+    # The suite's `error` warnings filter would raise the warning even without `ModelFallback`, hiding the gap.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UnsupportedSettingWarning)
+        result = await agent.run('x', model_settings=_STOP)
+
+    assert (len(primary.created), len(backup.created)) == (0, 1)
+    assert [(a.model_name, a.outcome, a.error) for a in result.response.failed_attempts or []] == [
+        (
+            'primary',
+            'error',
+            "UnsupportedSettingWarning: The `stop_sequences` setting is not supported by model 'test:primary' and will be ignored.",
+        )
+    ]
 
 
 @_OWNERS
