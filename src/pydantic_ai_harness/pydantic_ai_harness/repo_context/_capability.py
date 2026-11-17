@@ -334,13 +334,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
-        # Known before `get_instructions`, which runs before `before_run`: with any file below `'operator'` where nested
-        # traversal reads, the precedence sentence mustn't rank its files over the operator's. Without a workspace,
-        # `before_run` fails the run.
-        workspace = ctx.workspace
-        run._lowered = (
-            workspace.attached and await lowest_authority_under(workspace, await workspace.working_dir()) != 'operator'
-        )
+        # Known before `get_instructions`, which runs before `before_run`, without I/O: `for_run` mustn't reach the
+        # workspace. `before_run` also looks for a `path_authority` entry lowering files where nested traversal reads.
+        run._lowered = ctx.workspace.authority != 'operator'
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -350,6 +346,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         workspace = ctx.workspace
         working_dir = await self._working_dir(workspace)
+        if self.nested_traversal and not self._lowered:
+            # With any file below `'operator'` where nested traversal reads, the precedence sentence mustn't rank its
+            # files over the operator's.
+            self._lowered = await lowest_authority_under(workspace, str(working_dir)) != 'operator'
         top: Path | None = None
         if self.home_dir is not None:
             # The working directory has its symlinks resolved, so `home_dir` needs them resolved too to contain it.
