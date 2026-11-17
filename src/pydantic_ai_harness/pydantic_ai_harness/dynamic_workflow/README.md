@@ -187,12 +187,17 @@ finding = await researcher(task="Who first described the effect?", output_schema
 finding["source_url"]
 ```
 
-The schema replaces the sub-agent's `output_type` for that run, through
-[`StructuredDict`](https://pydantic.dev/docs/ai/core-concepts/output/#structured-dict), so the same
-caveats apply: it is sent to the model as the output schema, and the returned `dict` is not
-validated against it. The sub-agent's own output type, and any validation it does, is bypassed for
-that call, which is why it is opt-in per sub-agent. A schema that is not an object schema, or that
-uses `$ref` or `$defs`, fails the call before it counts against `max_agent_calls`. A sub-agent with
+The schema replaces the sub-agent's `output_type` for that run. It is sent to the model as the
+output tool's schema, and the returned `dict` is validated against it: an output that does not
+match goes back to the sub-agent's model as a retry, within the sub-agent's output retry budget.
+The sub-agent's own output type, and any validation it does, is bypassed for that call, which is
+why it is opt-in per sub-agent.
+
+The schema can use `type`, `properties`, `required`, `additionalProperties`, `items`, `enum`,
+`const` and `anyOf`, plus the annotations `title`, `description`, `default` and `examples`, and
+nested objects are written inline. Every validation keyword it accepts is enforced. A schema that is not
+an object schema, or that uses any other keyword (including `$ref` and `$defs`), fails the call
+before it counts against `max_agent_calls`. A sub-agent with
 [output validators](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions)
 cannot take a per-run output type, so a call to it with `output_schema` raises a `RuntimeError` in
 the script.

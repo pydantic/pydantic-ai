@@ -652,30 +652,115 @@ except RuntimeError as e:
     )
 
 
+_DEFS_SCHEMA = '{"type": "object", "$defs": {"A": {"type": "string"}}, "properties": {"a": {"$ref": "#/$defs/A"}}}'
+_POINTER_SCHEMA = '{"type": "object", "properties": {"a": {"type": "string"}, "b": {"$ref": "#/properties/a"}}}'
+
+
 @pytest.mark.parametrize(
     ('schema', 'error'),
     [
-        ('"object"', 'output_schema must be a JSON object'),
-        ('{"type": "string"}', 'output_schema is not usable: Schema must be an object'),
-        (
-            '{"type": "object", "$defs": {"A": {"type": "string"}}, "properties": {"a": {"$ref": "#/$defs/A"}}}',
-            r'output_schema cannot use \$ref or \$defs; write nested objects inline',
-        ),
-        (
-            '{"type": "object", "properties": {"a": {"type": "string"}, "b": {"$ref": "#/properties/a"}}}',
-            r'output_schema cannot use \$ref or \$defs; write nested objects inline',
-        ),
-        ('{"$ref": "#"}', r'output_schema cannot use \$ref or \$defs; write nested objects inline'),
+        ('"object"', 'schema: Input should be a valid dictionary'),
+        ('{"type": "string"}', 'type: must be "object"'),
+        (_DEFS_SCHEMA, 'properties.a.$ref: Extra inputs are not permitted; $defs: Extra inputs are not permitted'),
+        (_POINTER_SCHEMA, 'properties.b.$ref: Extra inputs are not permitted'),
+        ('{"$ref": "#"}', '$ref: Extra inputs are not permitted'),
+        ('{"type": "object", "minimum": 1}', 'minimum: Extra inputs are not permitted'),
     ],
+    ids=['not-a-dict', 'not-an-object', 'defs', 'pointer', 'top-level-ref', 'unsupported-keyword'],
 )
 async def test_unusable_output_schema_rejected_before_budget_is_spent(schema: str, error: str) -> None:
     # Smuggled through `json.loads` (typed `Any`), so only the runtime guard can catch it.
     ts = DynamicWorkflowToolset[object](
         agents=[WorkflowAgent(_sub_agent(), allow_output_schema=True)], max_agent_calls=1
     )
-    with pytest.raises(ModelRetry, match=f'sub\\(\\) {error}'):
+    with pytest.raises(ModelRetry) as exc_info:
         await _run_script(ts, f'import json\nawait sub(task="x", output_schema=json.loads({schema!r}))')
+    assert f'TypeError: sub() output_schema is not usable: {error}' in str(exc_info.value)
     assert await _run_script(ts, "await sub(task='x')") == 'ok'
+
+
+_KITCHEN_SINK_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'name': {'type': 'string'},
+        'count': {'type': 'integer'},
+        'score': {'type': 'number'},
+        'ok': {'type': 'boolean'},
+        'note': {'type': ['string', 'null']},
+        'tags': {'type': 'array', 'items': {'type': 'string'}},
+        'kind': {'enum': ['a', 'b']},
+        'version': {'const': 1},
+        'ref': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]},
+        'meta': {'type': 'object', 'additionalProperties': {'type': 'string'}},
+        'open': {'type': 'object'},
+        'anything': {},
+    },
+    'required': ['name', 'count'],
+    'additionalProperties': False,
+}
+
+
+async def test_output_not_matching_the_schema_is_retried() -> None:
+    bad = {
+        'extra': 1,
+        'count': True,
+        'score': 'x',
+        'ok': 1,
+        'note': 3,
+        'tags': ['a', 2],
+        'kind': 'c',
+        'version': 2,
+        'ref': 1.5,
+        'meta': {'k': 1},
+    }
+    good = {
+        'name': 'n',
+        'count': 1,
+        'score': 0.5,
+        'ok': True,
+        'note': None,
+        'tags': ['a'],
+        'kind': 'a',
+        'version': 1,
+        'ref': 'r',
+        'meta': {'k': 'v'},
+        'open': {'x': 1},
+        'anything': [1],
+    }
+    retry_prompts: list[str] = []
+
+    def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        retry_prompts.extend(
+            str(part.content)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        )
+        (output_tool,) = info.output_tools
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, good if retry_prompts else bad)])
+
+    researcher: Agent[object, str] = Agent(FunctionModel(researcher_fn), name='researcher')
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(researcher, allow_output_schema=True)])
+    code = f'await researcher(task="x", output_schema={_KITCHEN_SINK_SCHEMA!r})'
+    assert await _run_script(ts, code) == good
+    assert retry_prompts == snapshot(
+        [
+            """\
+Output does not match the required schema:
+$.name: required
+$.extra: additional property not allowed
+$.count: expected integer
+$.score: expected number
+$.ok: expected boolean
+$.note: expected string or null
+$.tags[1]: expected string
+$.kind: must be one of ['a', 'b']
+$.version: must be 1
+$.ref: matches none of the anyOf options\
+"""
+        ]
+    )
 
 
 async def test_via_agent_run_end_to_end() -> None:

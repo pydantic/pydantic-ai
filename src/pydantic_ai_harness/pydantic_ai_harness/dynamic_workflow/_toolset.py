@@ -18,12 +18,11 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, cast
 
-from pydantic import Field, JsonValue, TypeAdapter, ValidationError
-from pydantic.json_schema import JsonSchemaValue
+from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
-from pydantic_ai import AbstractToolset, RunContext, StructuredDict, ToolDefinition
+from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability
@@ -64,6 +63,7 @@ from pydantic_ai_harness._sub_agent_output import (
     without_resumable_outputs,
 )
 from pydantic_ai_harness._warn import renamed_duration_limit
+from pydantic_ai_harness.dynamic_workflow._output_schema import JsonObject, parse_output_schema, schema_output
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.aws_lambda._bridge import StepBridge
@@ -155,7 +155,6 @@ class _WorkflowArgs(TypedDict):
 _WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArgs)
 _WORKFLOW_ARGS_JSON_SCHEMA = _WORKFLOW_ARGS_ADAPTER.json_schema()
 _WORKFLOW_ARGS_VALIDATOR: SchemaValidatorProt = _WORKFLOW_ARGS_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
-_JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
 class _BudgetExhaustedError(RuntimeError):
@@ -209,8 +208,10 @@ values.\
 
 _OUTPUT_SCHEMA_DESCRIPTION = """\
 A sub-agent with an `output_schema` overload can return a result in a shape you choose: pass a JSON
-schema with `"type": "object"` and no `$ref` or `$defs`, and the call returns a dict in that shape
-instead of the agent's own output:
+schema with `"type": "object"`, and the call returns a dict validated against it instead of the
+agent's own output. Write nested objects inline; the supported keywords are `type`, `properties`,
+`required`, `additionalProperties`, `items`, `enum`, `const`, `anyOf`, `title`, `description`,
+`default` and `examples`:
 
 ```python
 finding = await researcher(task="...", output_schema={
@@ -604,7 +605,7 @@ def _completed_workflow_result(
 
 def _dispatched_call(
     agent_name: str, kwargs: Mapping[str, object], *, allow_output_schema: bool
-) -> tuple[str, type[JsonSchemaValue] | None]:
+) -> tuple[str, Callable[[JsonObject], JsonObject] | None]:
     """The `task` a sandbox call to sub-agent `agent_name` passed, and the output type its `output_schema` asks for."""
     # Monty does not validate kwargs against the sandbox signature at runtime, and the static
     # check can be evaded through `Any` (e.g. `json.loads` results) -- so check here: a dropped
@@ -625,30 +626,9 @@ def _dispatched_call(
     if schema is None:
         return task, None
     try:
-        json_schema = _JSON_SCHEMA_ADAPTER.validate_python(schema, strict=True)
-    except ValidationError as exc:
-        raise TypeError(f'{agent_name}() output_schema must be a JSON object') from exc
-    # References are inlined on the host, where they can expand a small schema without bound.
-    if _uses_references(json_schema):
-        raise TypeError(f'{agent_name}() output_schema cannot use $ref or $defs; write nested objects inline')
-    try:
-        return task, StructuredDict(json_schema)
-    except UserError as exc:
+        return task, schema_output(parse_output_schema(schema))
+    except ValueError as exc:
         raise TypeError(f'{agent_name}() output_schema is not usable: {exc}') from exc
-
-
-def _uses_references(schema: dict[str, JsonValue]) -> bool:
-    """Whether a `$ref` or `$defs` key appears anywhere in `schema`, walked without recursion."""
-    stack: list[JsonValue] = [schema]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, dict):
-            if '$ref' in node or '$defs' in node:
-                return True
-            stack.extend(node.values())
-        elif isinstance(node, list):
-            stack.extend(node)
-    return False
 
 
 async def _run_recorded(run: Callable[[], Awaitable[object]]) -> dict[str, Any]:
@@ -683,8 +663,8 @@ class WorkflowAgent(Generic[AgentDepsT]):
 
     allow_output_schema: bool = False
     """Let the script pass `output_schema`, an object JSON schema that replaces the agent's
-    `output_type` for that call. The returned dict is not validated against the schema, and the
-    agent's own output type, including any validation it does, is bypassed for the call."""
+    `output_type` for that call. The returned dict is validated against the schema, and the agent's
+    own output type, including any validation it does, is bypassed for the call."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -960,7 +940,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         task: str,
         ctx: RunContext[AgentDepsT],
         branches: _LambdaBranches | None = None,
-        output_type: type[JsonSchemaValue] | None = None,
+        output_type: Callable[[JsonObject], JsonObject] | None = None,
     ) -> Any:
         """Run one sub-agent against the shared per-run budget.
 
@@ -996,7 +976,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         agent_name: str,
         task: str,
         ctx: RunContext[AgentDepsT],
-        output_type: type[JsonSchemaValue] | None,
+        output_type: Callable[[JsonObject], JsonObject] | None,
     ) -> Any:
         """Run one sub-agent, with `output_type` replacing its own, and return its output as JSON-compatible data."""
         # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
