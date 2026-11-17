@@ -13,7 +13,6 @@ from pydantic_ai import CallToolsNode, DeferredToolRequests, PendingModelRespons
 from pydantic_ai._capability_parts import check_operator_text
 from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionCapabilityPart, OperatorSource, OperatorText, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai_harness.file_system._tool_kinds import EDIT_FILE_KIND, WRITE_FILE_KIND
@@ -29,11 +28,12 @@ DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
 """What `RequireVerification` tells the agent each time it sends the run back, unless `instructions` is set."""
 
 DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
-    r'(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run\s+)?(?:python3?\s+-m\s+)?'
+    r'(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?:\S*/)?python3?\s+-m\s+)?(?:\S*/)?'
     r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check)\b',
-    r'(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|check|build)\b',
-    r'(?:npx\s+)?(?:tsc|eslint|vitest|jest)\b',
-    r'(?:cargo|go|dotnet)\s+(?:test|build|check|clippy|vet)\b',
+    r'(?:npm|pnpm|yarn|bun)(?:\s+-\S+(?:\s+[^-\s]\S*)?|\s+workspace\s+\S+)*\s+(?:run\s+)?'
+    r'(?:test|lint|typecheck|check|build)\b',
+    r'(?:npx\s+)?(?:\S*/)?(?:tsc|eslint|vitest|jest)\b',
+    r'(?:cargo(?:\s+\+\S+)?|go|dotnet)\s+(?:test|build|check|clippy|vet)\b',
     r'(?:make|just)\s+(?:\S+\s+)*?(?:test|lint|typecheck|check|build)\w*\b',
     r'(?:mvn|gradle|\./mvnw|\./gradlew)\s+(?:\S+\s+)*?(?:test|verify|check|build)\b',
 )
@@ -132,7 +132,7 @@ class RequireVerification(AbstractCapability[AgentDepsT]):
             self._verification = tuple(re.compile(pattern) for pattern in self.verification_commands)
             self._edit = tuple(re.compile(pattern) for pattern in self.edit_commands)
         except re.error as error:
-            raise UserError(f'RequireVerification has an invalid command pattern: {error}') from error
+            raise ValueError(f'RequireVerification has an invalid command pattern: {error}') from error
         check_operator_text(self.instructions, what='`RequireVerification.instructions`')
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> RequireVerification[AgentDepsT]:

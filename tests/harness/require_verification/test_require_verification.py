@@ -13,7 +13,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks, LocalWorkspace
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -219,6 +218,15 @@ class TestRequireVerification:
             'pytest -q > /dev/null 2>&1',
             "pytest -k 'parse|render'",
             'cd pkg; uv run pytest',
+            'uv run --no-sync pytest tests/test_app.py',
+            'uv run --frozen pyright',
+            'uv run -m pytest',
+            '.venv/bin/pytest -q',
+            'node_modules/.bin/tsc --noEmit',
+            'pnpm -r test',
+            'npm --prefix web test',
+            'yarn workspace web test',
+            'cargo +nightly test',
             'export CI=1\npytest -q\n',
         ],
     )
@@ -531,5 +539,5 @@ class TestRequireVerification:
             RequireVerification[None](max_attempts=-1)
 
     def test_rejects_an_invalid_pattern(self) -> None:
-        with pytest.raises(UserError, match='RequireVerification has an invalid command pattern'):
+        with pytest.raises(ValueError, match='RequireVerification has an invalid command pattern'):
             RequireVerification[None](edit_commands=['('])
