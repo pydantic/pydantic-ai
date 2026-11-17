@@ -5431,24 +5431,24 @@ async def test_per_run_capability_contributing_executing_toolset_still_rejected_
         await run_with_toolset_capability()
 
 
-class _CustomExecutingToolset(AbstractToolset[None]):
+class _CustomExecutingToolset(AbstractToolset[Any]):
     """A custom executing toolset the runtime-toolset guard has no kind for."""
 
     @property
     def id(self) -> str | None:
         return 'custom_executing'
 
-    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:  # pragma: no cover
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:  # pragma: no cover
         return {}
 
     async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
     ) -> Any:  # pragma: no cover
         return None
 
 
-def _per_run_function_toolset() -> FunctionToolset[None]:
-    toolset = FunctionToolset[None](id='per_run_function')
+def _per_run_function_toolset() -> FunctionToolset[Any]:
+    toolset = FunctionToolset[Any](id='per_run_function')
 
     @toolset.tool_plain
     def per_run_tool() -> str:  # pragma: no cover
@@ -5465,7 +5465,7 @@ def _per_run_function_toolset() -> FunctionToolset[None]:
     ],
 )
 async def test_per_run_capability_with_executing_toolset_rejected_inside_workflow(
-    dbos: DBOS, toolset_factory: Callable[[], AbstractToolset[None]]
+    dbos: DBOS, toolset_factory: Callable[[], AbstractToolset[Any]]
 ) -> None:
     """Per-run capability toolsets are default-deny: only known non-executing leaves are allowed.
 
