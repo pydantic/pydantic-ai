@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
 from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceCommand, WorkspaceRef
-from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness.file_system import WRITE_FILE_KIND, FileSystem
 from pydantic_ai_harness.permissions import (
     DEFAULT_ASK_COMMANDS,
     PermissionDecision,
@@ -627,6 +627,19 @@ class TestPermissionRules:
         result = await agent.run('go', workspace=Workspace(_WindowsBackend()) if windows else None)
 
         assert result.output == 'A permission rule denied this tool call, so it did not run. Do not retry it.'
+
+    @pytest.mark.parametrize(('path', 'runs'), [('Notes\\a.txt', True), ('notes\\..\\secrets\\k', False)])
+    async def test_windows_allow_path_globs_need_every_spelling_to_match(self, path: str, runs: bool) -> None:
+        def save(path: str, content: str) -> str:
+            return 'saved'
+
+        rules = [PermissionRule('allow', tools=['save'], args={'path': 'notes/*'})]
+        tool = Tool(save, tool_kind=WRITE_FILE_KIND)
+        agent = _rules_agent(_calls(('save', {'path': path, 'content': 'x'})), rules, 'read-only', tool)
+
+        result = await agent.run('go', workspace=Workspace(_WindowsBackend()))
+
+        assert (result.output == 'saved') is runs
 
     async def test_an_allow_rule_skips_read_only_asks_but_not_ask_commands(self) -> None:
         """`ask_commands` still asks about a command an allow rule matches; remove a pattern from it to opt out."""

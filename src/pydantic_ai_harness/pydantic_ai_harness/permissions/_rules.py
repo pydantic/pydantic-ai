@@ -10,7 +10,7 @@ import shlex
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from fnmatch import fnmatchcase
-from typing import Any, Generic, Literal, Required
+from typing import Any, Generic, Literal, NamedTuple, Required
 
 from typing_extensions import TypedDict
 
@@ -169,12 +169,24 @@ def _contains(words: Sequence[str], rule: Sequence[str]) -> bool:
     )
 
 
-def _matches_segment(rule: PermissionRule[Any], segment: _Segment) -> bool:
-    words = _words(rule.command or '')
-    if rule.verdict == 'allow':
-        return not segment.redirected and segment.words[: len(words)] == words
-    arguments = (word for index, word in enumerate(segment.words) if index not in segment.descriptors)
-    return _contains(_loose(arguments), _loose(words))
+class _CommandRule(NamedTuple):
+    rule: PermissionRule[Any]
+    words: list[str]
+    loose: list[str]
+
+
+def _segment_rule(rules: Sequence[_CommandRule], segment: _Segment) -> PermissionRule[Any] | None:
+    """The strictest rule matching one simple command: allow rules by prefix, others anywhere in it."""
+    arguments = _loose(word for index, word in enumerate(segment.words) if index not in segment.descriptors)
+    return _strictest(
+        parsed.rule
+        for parsed in rules
+        if (
+            not segment.redirected and segment.words[: len(parsed.words)] == parsed.words
+            if parsed.rule.verdict == 'allow'
+            else _contains(arguments, parsed.loose)
+        )
+    )
 
 
 def _strictest(rules: Iterable[PermissionRule[Any]]) -> PermissionRule[Any] | None:
@@ -207,7 +219,8 @@ def _command_rule(
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
     if segments is None:
         return _unsplittable_rule(rules, command)
-    deciders = [_strictest(rule for rule in rules if _matches_segment(rule, segment)) for segment in segments]
+    parsed = [_CommandRule(rule, words := _words(rule.command or ''), _loose(words)) for rule in rules]
+    deciders = [_segment_rule(parsed, segment) for segment in segments]
     restrictive = _strictest(rule for rule in deciders if rule is not None and rule.verdict != 'allow')
     if restrictive is not None or None in deciders:
         return restrictive
@@ -244,10 +257,11 @@ def decide(
         if all(_arg_matches(rule, args.get(name), glob, posix=posix) for name, glob in rule.args.items())
     ]
     found = [rule for rule in applicable if rule.command is None]
-    if command is None:
+    command_rules = [rule for rule in applicable if rule.command is not None]
+    if command is None or not (command_rules or any(rule.verdict == 'allow' for rule in found)):
         return _strictest(found)
     segments = _segments(command) if posix else None
-    decided = _command_rule([rule for rule in applicable if rule.command is not None], command, segments)
+    decided = _command_rule(command_rules, command, segments)
     rule = _strictest([*found, decided] if decided is not None else found)
     if segments is None and rule is not None and rule.verdict == 'allow':
         return None
