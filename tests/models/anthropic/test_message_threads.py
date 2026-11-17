@@ -1,4 +1,4 @@
-"""Tests for Anthropic message threads (`anthropic_thread`).
+"""Tests for Anthropic message threads (`anthropic_previous_message_id`).
 
 `test_create_then_continue_live` records a create request and a continue request against the live API. The rest
 run against a mock HTTP transport: the failures that make a request replay (`thread_not_found` after a thread
@@ -74,7 +74,7 @@ pytestmark = [
 ]
 
 _BETA = 'message-threads-2026-08-12'
-_SETTINGS: AnthropicModelSettings = {'max_tokens': 256, 'anthropic_thread': True}
+_SETTINGS: AnthropicModelSettings = {'max_tokens': 256, 'anthropic_previous_message_id': 'auto'}
 
 
 @dataclass
@@ -201,7 +201,7 @@ async def _check_create_then_continue(model: AnthropicModel, request_capture: Re
         model,
         instructions='Reply with one word.',
         tools=[get_weather],
-        model_settings=AnthropicModelSettings(max_tokens=512, anthropic_thread=True),
+        model_settings=AnthropicModelSettings(max_tokens=512, anthropic_previous_message_id='auto'),
     )
     first = await _run(agent, 'Say hi.', [], stream)
     second = await _run(agent, 'Say bye.', first, stream)
@@ -398,7 +398,9 @@ async def _first_request_thread(
         if supported:
             await agent.run('Hi')
         else:
-            with pytest.warns(UserWarning, match=f'`anthropic_thread` is not supported on `{type(client).__name__}`'):
+            with pytest.warns(
+                UserWarning, match=f'`anthropic_previous_message_id` is not supported on `{type(client).__name__}`'
+            ):
                 await agent.run('Hi')
 
     [body] = api.bodies
@@ -711,7 +713,7 @@ async def test_compaction_request_is_sent_without_a_thread(allow_model_requests:
 
 
 def test_compaction_request_never_uses_a_thread():
-    """`may_use_thread` turns a compaction request down even with `anthropic_thread` set.
+    """`may_use_thread` turns a compaction request down even with `anthropic_previous_message_id` set.
 
     A unit test: `compact_messages` passes no thread record, so the public path above never reaches this guard.
     """
@@ -1030,7 +1032,7 @@ async def test_cache_breakpoints_recorded_for_the_request_sent(allow_model_reque
             model,
             instructions='Be brief.',
             tools=[get_weather],
-            model_settings=AnthropicModelSettings(max_tokens=256, anthropic_thread=True, cache=True),
+            model_settings=AnthropicModelSettings(max_tokens=256, anthropic_previous_message_id='auto', cache=True),
             capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))],
         )
         first = await _run(agent, ['Context', CachePoint(), 'Hi'], [], stream)

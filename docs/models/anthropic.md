@@ -576,7 +576,7 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 ## Message threads (Beta)
 
-In a long conversation, every request normally sends the whole history again. With Anthropic's [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads), Anthropic keeps the conversation and each request sends only what's new, which keeps time to first token low as the conversation grows. Set [`AnthropicModelSettings.anthropic_thread`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thread] to `True` to use them:
+In a long conversation, every request normally sends the whole history again. With Anthropic's [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads), Anthropic keeps the conversation and each request sends only what's new, which keeps time to first token low as the conversation grows. Set [`AnthropicModelSettings.anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id] to `'auto'` to use them:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -585,7 +585,7 @@ from pydantic_ai.models.anthropic import AnthropicModelSettings
 agent = Agent(
     '{{ anthropic:medium }}',
     instructions='Instructions...',
-    model_settings=AnthropicModelSettings(anthropic_thread=True),
+    model_settings=AnthropicModelSettings(anthropic_previous_message_id='auto'),
 )
 
 result1 = agent.run_sync('Your question')  # creates a thread
@@ -610,7 +610,7 @@ A request is sent without a thread when:
 - Its `extra_body` sets `messages`, which replaces the history the thread is built from.
 - It's a [`compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] request, which samples no reply.
 
-Threads are available on the Claude API, Claude Platform on AWS, Claude Models on Google Cloud (Anthropic managed) and Microsoft Foundry. On Bedrock and Vertex AI, `anthropic_thread` is ignored with a `UserWarning`. [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads] in the model's `profile` controls this.
+Threads are available on the Claude API, Claude Platform on AWS, Claude Models on Google Cloud (Anthropic managed) and Microsoft Foundry. On Bedrock and Vertex AI, `anthropic_previous_message_id` is ignored with a `UserWarning`. [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads] in the model's `profile` controls this.
 
 Each response sent in a thread records `'thread_fingerprint'` in its [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and a digest of its ID, that fingerprint, its parts and the history it was created from as [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], which is how the next request knows it can continue. Keep both when you store the message history; a response without them starts a new thread. If the history comes from a client, pass a `history_digest_key` (see below) or leave threads off, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history). When Anthropic rejects a thread because the request uses something threads don't support, Pydantic AI warns and sends the request again without one, and the response records `'thread_unsupported': True` beside its `'thread_fingerprint'`. The next request with the same fixed fields is then sent without a thread straight away, and changing one of them tries a thread again.
 

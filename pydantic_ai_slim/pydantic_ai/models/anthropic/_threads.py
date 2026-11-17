@@ -110,7 +110,7 @@ def continue_cache_breakpoints(
 def may_use_thread(
     model: AnthropicModel, model_settings: AnthropicModelSettings, compaction: BetaCompactionConfigParam | None
 ) -> bool:
-    """Whether `anthropic_thread` applies to a request.
+    """Whether `anthropic_previous_message_id` applies to a request.
 
     A compaction request samples no reply, so it never uses one. Nor does a request whose `extra_body` sets `messages`:
     that replaces the history the thread would be built from. Where the model's profile doesn't support threads
@@ -118,7 +118,7 @@ def may_use_thread(
     """
     extra_body = model_settings.get('extra_body')
     if (
-        not model_settings.get('anthropic_thread')
+        model_settings.get('anthropic_previous_message_id') != 'auto'
         or compaction is not None
         or (is_str_mapping(extra_body) and 'messages' in extra_body)
     ):
@@ -126,7 +126,8 @@ def may_use_thread(
     if model.profile.get('anthropic_supports_message_threads', False):
         return True
     warnings.warn(
-        f'`anthropic_thread` is not supported on `{type(model.client).__name__}`; the setting will be ignored.',
+        f'`anthropic_previous_message_id` is not supported on `{type(model.client).__name__}`; the setting will be '
+        'ignored.',
         UserWarning,
         stacklevel=2,
     )

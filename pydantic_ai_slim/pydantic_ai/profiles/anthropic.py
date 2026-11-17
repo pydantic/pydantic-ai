@@ -317,8 +317,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the endpoint serves Anthropic
     [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads). Default: `False`.
 
-    When False, [`anthropic_thread`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thread] is ignored
-    with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    When False,
+    [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
     `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
     and for the Foundry client, and leaves it off for the Bedrock and Vertex AI clients, where Anthropic doesn't offer
     threads. Set it in the provider's profile or with `profile=` for a client that forwards threads to the Claude API.

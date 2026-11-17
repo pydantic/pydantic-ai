@@ -722,15 +722,22 @@ class AnthropicModelSettings(ModelSettings, total=False):
     with history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
-    anthropic_thread: bool
-    """Continue the conversation in an Anthropic [message thread](https://platform.claude.com/docs/en/build-with-claude/message-threads), sending only the new messages.
+    anthropic_previous_message_id: Literal['auto']
+    """Continue the conversation in an Anthropic [message thread](https://platform.claude.com/docs/en/build-with-claude/message-threads), omitting the messages the thread holds.
 
-    Each request creates a thread, or continues the one the most recent response in the message history was
-    stored in, leaving out the messages before that response and `system` and `tools`, which the thread keeps. A
-    response records the thread's fixed fields under `'thread_fingerprint'` in
+    - `'auto'`: continue the thread of the most recent usable `provider_response_id` in the message history, as
+      the thread's `previous_message_id`. If the history contains no such response, the request creates a thread
+      with the full history.
+
+    Only `'auto'` is supported for now. A concrete message ID to continue from, like the response ID
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+    takes, may come later.
+
+    A continue request leaves out the messages before the chosen response, and `system` and `tools`, which the
+    thread keeps. A response records the thread's fixed fields under `'thread_fingerprint'` in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and its
     [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] covers it and the history before it. A
-    request continues only when both still match, so changed instructions, tools, betas or other fixed fields, an
+    response is only chosen while both still match, so changed instructions, tools, betas or other fixed fields, an
     edited history, a refusal, or a response from another model start a new thread with the full history. A request
     using something threads don't support is sent without one, with a warning, and its response records
     `'thread_unsupported': True`. See [Message threads](../../models/anthropic.md#message-threads-beta) for every
@@ -746,7 +753,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Threads are available on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and
     Microsoft Foundry. On Bedrock and Vertex AI, the setting is ignored with a `UserWarning`; see
     [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads].
-    Threads aren't eligible for Zero Data Retention. Defaults to `False`.
+    Threads aren't eligible for Zero Data Retention. By default, no thread is used.
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -1797,9 +1804,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         on one are settled here, on the request as it would otherwise be sent, so the rest of the request (and the
         prompt cache it reads) stays the same.
 
-        With `thread_record`, the request uses a message thread when `anthropic_thread` applies (see `may_use_thread`
-        and `_first_attempt`), and the record gets the fingerprint to stamp on the response when it did, or when
-        threads don't support the request.
+        With `thread_record`, the request uses a message thread when `anthropic_previous_message_id` applies (see
+        `may_use_thread` and `_first_attempt`), and the record gets the fingerprint to stamp on the response when it
+        did, or when threads don't support the request.
         """
         if thread_record is not None and not may_use_thread(self, model_settings, compaction):
             thread_record = None
@@ -1923,7 +1930,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise
             # The request uses something threads don't support, like context management: send it without one.
             warnings.warn(
-                f"Threads don't support this request to {self.model_name!r}, so it's sent without `anthropic_thread`, "
+                f"Threads don't support this request to {self.model_name!r}, so it's sent without a thread, "
                 'and so are later requests in this conversation with the same instructions, tools and other fixed '
                 f'fields: {error.message}',
                 UserWarning,
