@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -23,16 +24,7 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 __all__ = ['ReportToolErrors', 'ToolErrorInfo']
 
 
-def _durable_failures() -> tuple[type[Exception], ...]:
-    try:
-        from temporalio.exceptions import ActivityError
-    except ImportError:  # pragma: lax no cover
-        return ()
-    return (ActivityError,)
-
-
 _PASS_THROUGH = (
-    *_durable_failures(),
     ModelRetry,
     ToolFailed,
     ApprovalRequired,
@@ -42,11 +34,17 @@ _PASS_THROUGH = (
     UsageLimitExceeded,
     UserError,
 )
-"""Signals a tool raises on purpose, a cancellation core already reports, and errors no retry can fix.
+"""Signals a tool raises on purpose, a cancellation core already reports, and errors no retry can fix."""
 
-A Temporal activity's failure carries the tool's exception only as a type name, after the activity's retry policy
-gave up, so it can't be matched against `exceptions` or the signals above and stays with the workflow.
-"""
+
+def _is_durable_failure(error: Exception) -> bool:
+    """Whether `error` is a failed Temporal activity, checked without importing `temporalio`.
+
+    It names the tool's exception only by its type, after the activity's retry policy gave up, so it can't be
+    matched against `exceptions` or the signals above and stays with the workflow.
+    """
+    activity_error: object = getattr(sys.modules.get('temporalio.exceptions'), 'ActivityError', None)
+    return isinstance(activity_error, type) and isinstance(error, activity_error)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -114,6 +112,8 @@ class _ReportErrorsToolset(WrapperToolset[AgentDepsT]):
         except _PASS_THROUGH:
             raise
         except self.report.exceptions as error:
+            if _is_durable_failure(error):
+                raise
             assert ctx.tool_call_id is not None
             info = ToolErrorInfo(name=name, args=tool_args, tool_call_id=ctx.tool_call_id, error=error)
             raise ToolFailed(self.report.format_error(ctx, info)) from error
