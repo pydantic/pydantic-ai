@@ -778,9 +778,21 @@ Code Mode keeps running `run_code` in workflow code, as described above, when an
 
 Each turn uses the `activity_config` you pass to `TemporalDurability`. Its `start_to_close_timeout`
 bounds one turn, and its retry policy retries a turn that failed to reach the server. A retry starts
-from the same stored ID, so it runs the turn again from the same state. When the retries run out, the
+from the same stored ID, so it runs the turn again from the same state. Writes the turn made to a
+`'read-write'` mount are not undone, so a retried turn makes them again. When the retries run out, the
 workflow fails with Temporal's `ActivityError`. Errors in the snippet itself, such as syntax errors,
 exceptions, and time limits, are returned to the model as model retries, as they are outside Temporal.
+
+`resource_limits` apply to each turn, including `max_duration_seconds`, which workflow code turns
+off. Keep `start_to_close_timeout` above `max_duration_seconds`: otherwise Temporal stops a long turn
+first and retries it, instead of Code Mode reporting the time limit to the model. With
+`'unlimited'`, `start_to_close_timeout` is the only bound on a turn.
+
+Values cross between turns as JSON. A snippet's result that has no JSON form comes back as its `repr`,
+as it does outside an activity. A nested call whose arguments have no JSON form, such as an instance
+of a class the snippet defined, raises `TypeError` in the snippet instead of calling the tool. If the
+server no longer has a run's stored state, for example because it expired, Code Mode resets the
+session and tells the model the connection was lost, as for a dropped connection outside Temporal.
 
 ## Observability
 

@@ -233,7 +233,7 @@ CodeMode(
 `CodeMode` works next to `TemporalDurability()` (install `pydantic-ai-harness[codemode,temporal]`), but
 `run_code` executes in workflow code and is re-run on replay. Keep snippets deterministic: put external
 reads, writes, and clock access in wrapped tools (which become activities), not in `mount`/`os_access`.
-Inside a Temporal workflow `max_duration_seconds` is disabled (memory and suspension caps still apply) and a
+Inside a Temporal workflow `max_duration_seconds` is disabled for code run in workflow code (memory and suspension caps still apply) and a
 workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
 
 With a remote `monty_sandbox` whose server stores sessions and `CodeMode(id=...)`, each turn (the code
@@ -242,7 +242,9 @@ against the 2 seconds and replay reads turn results from history. Runs stay work
 `id`, against a server that stores nothing, with `os_access` set, with an `'overlay'` mount (the
 default mode; use `'read-only'` or `'read-write'`), or when the workflow started before this change.
 Turns use `TemporalDurability`'s `activity_config`; a turn that still fails after its retries fails
-the workflow with `ActivityError`.
+the workflow with `ActivityError`. In a turn activity `max_duration_seconds` applies again, so keep
+`start_to_close_timeout` above it. A retried turn repeats its `'read-write'` mount writes. A result
+with no JSON form comes back as its `repr`; nested-call arguments with no JSON form raise `TypeError`.
 
 Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
 as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory

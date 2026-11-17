@@ -42,7 +42,6 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
-    _resolve_resource_limits,  # pyright: ignore[reportPrivateUsage]
     as_os_handler,
     in_durable_execution,
     monty_sandbox_from_url,
@@ -362,7 +361,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
-                run_monty_turn=None if self.id is None else self._monty_turn,
             )
         return CodeModeToolset(
             wrapped=toolset,
@@ -378,7 +376,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
-            run_monty_turn=None if self.id is None else self._monty_turn,
         )
 
     @durable_operation('monty_turn')
@@ -389,11 +386,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         session lives on the server between turns, so nothing here needs to outlive one.
         """
         assert self.monty_sandbox is not None, 'only a remote sandbox runs turns as durable operations'
-        limits = _resolve_resource_limits(self.resource_limits)
-        async with await build_remote_pool(self.monty_sandbox, limits) as pool:
-            return await run_monty_turn(
-                pool, request, limits=limits, os_policy=session_os_policy(self.os_policy), mount=self.mount
-            )
+        async with await build_remote_pool(self.monty_sandbox, request.limits) as pool:
+            return await run_monty_turn(pool, request, os_policy=session_os_policy(self.os_policy), mount=self.mount)
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

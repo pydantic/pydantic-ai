@@ -58,14 +58,21 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent, Tool, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.grpc_relay import serve_monty_relay
-from tests.harness.code_mode.stored_sessions import StoredSessionPool
+from tests.harness.code_mode.stored_sessions import SERVER, StoredSessionPool
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
@@ -277,6 +284,13 @@ _CALL_SITE_SNIPPETS = [
     'line = Path("/tests/stored_sessions.py").read_text().splitlines()[0]\n'
     'f"{double(n=n)} | {error} | {line}"',
     'def broken(:',
+    # Values with no JSON form: an argument raises at the call site, and results come back as their
+    # `repr`, as CodeMode renders them outside an activity.
+    'from dataclasses import dataclass\n'
+    '@dataclass\nclass P:\n    x: int\n'
+    'try:\n    await add(a=P(1), b=2)\nexcept TypeError as e:\n    arg_error = str(e)\n'
+    '[P(1), arg_error]',
+    'b"\\xff"',
 ]
 
 
@@ -341,6 +355,46 @@ class RefusedTurnWorkflow:
     async def run(self) -> str:
         result = await refusing_code_mode_agent.run('Calculate 3 + 4')
         return result.output  # pragma: no cover
+
+
+def _session_loss_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    """Model that sets `x`, lets the server lose the session as the prompt says, then reads `x` back."""
+    results = [
+        part.content
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    if not results:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x = 1\nx'}, tool_call_id='set')])
+    if len(results) == 1:
+        # The model request is an activity in this process, between the two `run_code` calls.
+        prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+        if prompt == 'expire the record':
+            SERVER.records.clear()
+        else:
+            SERVER.stores = False
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x + 1'}, tool_call_id='read')])
+    return ModelResponse(parts=[TextPart(content=json.dumps(results))])
+
+
+session_loss_code_mode_agent = Agent(
+    FunctionModel(_session_loss_model),
+    name='code_mode_temporal_session_loss_agent',
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=StoredSessionPool),  # pyright: ignore[reportArgumentType]
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class SessionLossWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await session_loss_code_mode_agent.run(prompt)
+        return result.output
 
 
 @workflow.defn
@@ -757,7 +811,11 @@ async def test_remote_turns_fall_back_without_stored_sessions(client: Client) ->
         workflow_runner=_workflow_runner(),
     ):
         output = await client.execute_workflow(
-            StoredSessionsWorkflow.run, args=['Calculate 3 + 4', False], id=workflow_id, task_queue=TASK_QUEUE
+            StoredSessionsWorkflow.run,
+            args=['Calculate 3 + 4', False],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
         )
 
     assert output == 'done: 70'
@@ -782,7 +840,7 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         output = await client.execute_workflow(
             CallSiteWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE, execution_timeout=timedelta(seconds=30)
         )
-    type_error, added, call_sites, syntax_error = json.loads(output)
+    type_error, added, call_sites, syntax_error, no_json_form, raw_bytes = json.loads(output)
     assert type_error.startswith('Type error in code:\nerror[missing-argument]')
     assert added == 2
     first_line = (Path(__file__).parent / 'stored_sessions.py').read_text().splitlines()[0]
@@ -795,6 +853,12 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         '    def broken(:\n               ~\nSyntaxError: Expected a parameter or the end of the parameter list'
     )
 
+    assert no_json_form == [
+        "MontyClassProxy(name='P', attributes={'x': 1})",
+        'add() got an argument that has no JSON form, so it cannot be sent to the tool',
+    ]
+    assert raw_bytes == "b'\\xff'"
+
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     # The type-checked snippet that fails and the syntax error are one turn each. The mounted file read
     # and the undefined name are answered inside a turn; only `double` and `add` leave it.
@@ -802,6 +866,8 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
         *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
+        *['model_request', 'monty_turn'],
+        *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn', 'model_request'],
     ]
     replay_result = await Replayer(
@@ -832,3 +898,34 @@ async def test_failed_turn_activity_fails_the_workflow(client: Client) -> None:
     assert activity_error.activity_type.endswith('__monty_turn')
     assert isinstance(activity_error.cause, ApplicationError)
     assert activity_error.cause.type == 'ConnectionRefusedError'
+
+
+@pytest.mark.parametrize('prompt', ['expire the record', 'stop storing'])
+async def test_remote_turns_report_a_lost_session(client: Client, prompt: str) -> None:
+    """A run whose stored state the server no longer has resets the session and tells the model.
+
+    It does not move to the workflow-side path, which would start an empty REPL without saying so, or
+    rerun nested calls the snippet already made. Either way the second `run_code` reads `x` from
+    state that is gone.
+    """
+    workflow_id = f'test_code_mode_temporal_session_loss_{prompt.split()[0]}'
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[SessionLossWorkflow],
+            plugins=[AgentPlugin(session_loss_code_mode_agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            output = await client.execute_workflow(
+                SessionLossWorkflow.run,
+                args=[prompt],
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    finally:
+        SERVER.stores = True
+    first, second = json.loads(output)
+    assert first == 1
+    assert second.startswith('The sandbox connection was lost and the session was reset.')

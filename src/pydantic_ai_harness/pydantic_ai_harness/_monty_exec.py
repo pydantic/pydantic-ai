@@ -331,12 +331,14 @@ class TurnFeed:
     run_turn: Callable[[TurnRequest], Awaitable[MontyTurn]]
     run_state: MontyRunState
     capture: PrintCapture
+    limits: ResourceLimits
 
     async def start(self, code: str, type_check_stubs: str | None) -> TurnSnapshot:
-        return await self._turn(TurnRequest(self.run_state.stored_state, code=code, type_check_stubs=type_check_stubs))
+        state = self.run_state.stored_state
+        return await self._turn(TurnRequest(state, self.limits, code=code, type_check_stubs=type_check_stubs))
 
     async def resume(self, resume: TurnResume) -> TurnSnapshot:
-        return await self._turn(TurnRequest(self.run_state.stored_state, resume=resume))
+        return await self._turn(TurnRequest(self.run_state.stored_state, self.limits, resume=resume))
 
     async def _turn(self, request: TurnRequest) -> TurnSnapshot:
         try:

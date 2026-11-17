@@ -15,9 +15,12 @@ therefore plain data: the types below are what crosses the activity boundary.
 from __future__ import annotations
 
 import base64
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, get_args
+from typing import Any, Literal, TypeGuard, get_args
 
+from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
     AsyncFunctionSnapshot,
     AsyncFutureSnapshot,
@@ -34,6 +37,7 @@ from pydantic_monty import (
     MontyComplete,
     MontyCrashedError,
     MontyDisconnectError,
+    MontyError,
     MontyRuntimeError,
     MontySyntaxError,
     MontyTypingError,
@@ -41,6 +45,9 @@ from pydantic_monty import (
     OSPolicy,
     ResourceLimits,
 )
+
+from pydantic_ai.messages import is_multi_modal_content
+from pydantic_ai_harness._typeguards import is_mapping
 
 SettledData = ExternalReturnValue | ExternalExceptionData
 """A settled call result as plain data, which a turn in another process can resume the sandbox with."""
@@ -73,6 +80,53 @@ def settled_data(result: ExternalSettledResult) -> SettledData:
     return ExternalExceptionData(exc_type=exc_type, message=message)
 
 
+# Scalars every tool-return serializer handles. Unlike CodeMode's `_SANDBOX_NATIVE_SCALARS` this
+# leaves out `Ellipsis`, which Monty holds but JSON has no form for.
+_MODEL_NATIVE_SCALARS = (str, bytes, bytearray, bool, int, float, type(None))
+
+
+def model_safe_result(value: object) -> object:
+    """Render the parts of a snippet's result that have no JSON form as their `repr`.
+
+    Monty hands some sandbox values back as host objects: `type(x)` and `ValueError` arrive
+    as `type` objects, `len` as a `MontyStdTypeProxy`, a bare exception instance as itself.
+    None of them serialize, so the tool return would abort the run in whichever layer
+    renders it first (`ToolOutputLimits`, or pydantic-ai building the model request). The
+    `repr` is what the snippet's author would have seen in a Python REPL. Non-finite floats
+    do serialize, but as `null`, which would hide the result, so they render as `repr` too.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
+    if isinstance(value, _MODEL_NATIVE_SCALARS) or is_multi_modal_content(value):
+        return value
+    if is_mapping(value):
+        return _model_safe_mapping(value)
+    if _is_list_or_tuple(value):
+        items = [model_safe_result(item) for item in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    return value if _serializes(value) else repr(value)
+
+
+def _model_safe_mapping(value: Mapping[object, object]) -> object:
+    """`model_safe_result` for a mapping, rendering each key that has no JSON form as its `repr`."""
+    rendered = {key if _serializes({key: None}) else repr(key): model_safe_result(item) for key, item in value.items()}
+    # A rendered key can equal an existing one (`{int: 1, "<class 'int'>": 2}`), and
+    # the dict would silently drop an entry; the whole mapping's `repr` loses nothing.
+    return rendered if len(rendered) == len(value) else repr(value)
+
+
+def _is_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
+    return isinstance(value, (list, tuple))
+
+
+def _serializes(value: object) -> bool:
+    try:
+        to_json(value)
+    except PydanticSerializationError:
+        return False
+    return True
+
+
 @dataclass
 class TurnResume:
     """How to resume the snapshot a turn paused at."""
@@ -96,6 +150,8 @@ class TurnRequest:
 
     state: str | None
     """The stored record to start from, base64-encoded; `None` starts a fresh session."""
+    limits: ResourceLimits
+    """The run's configured limits, applied to this turn."""
     code: str | None = None
     resume: TurnResume | None = None
     type_check_stubs: str | None = None
@@ -183,11 +239,14 @@ class MontyTurn:
     failure: MontyFailure | None = None
 
 
+_SESSION_LOST = MontyTurn('failed', failure=MontyFailure('disconnected'))
+"""The server no longer has the session's state, which CodeMode reports as a dropped session."""
+
+
 async def run_monty_turn(
     pool: AsyncMontyRemote,
     request: TurnRequest,
     *,
-    limits: ResourceLimits,
     os_policy: OSPolicy,
     mount: MountDir | list[MountDir] | None,
 ) -> MontyTurn:
@@ -200,24 +259,30 @@ async def run_monty_turn(
     """
     type_check = request.type_check_stubs is not None
     async with pool.checkout(
-        limits=limits, type_check=type_check, type_check_stubs=request.type_check_stubs, os_policy=os_policy
+        limits=request.limits,
+        type_check=type_check,
+        type_check_stubs=request.type_check_stubs,
+        os_policy=os_policy,
+        ephemeral=False,
     ) as session:
         if session.session_id is None:
-            return MontyTurn('not_stored')
+            # A server can also fail to store one session in time. Only a run with nothing stored yet
+            # can move to the workflow; later, the state the run has built is lost.
+            return MontyTurn('not_stored') if request.state is None else _SESSION_LOST
         capture = CollectString()
         try:
-            if request.resume is None:
-                if request.state is not None:
-                    await session.load_session(base64.b64decode(request.state))
+            paused = await _load(session, request, mount=mount, capture=capture)
+        except MontyError:
+            # The stored record could not be loaded, for example because the server let it expire.
+            return _SESSION_LOST
+        try:
+            if paused is None:
                 assert request.code is not None, 'a turn that resumes nothing feeds code'
                 snapshot = await session.feed_start(
                     request.code, print_callback=capture, mount=mount, skip_type_check=not type_check
                 )
             else:
-                assert request.state is not None, 'a resumed turn starts from the snapshot it paused at'
-                paused = await session.load_snapshot(
-                    base64.b64decode(request.state), mount=mount, print_callback=capture
-                )
+                assert request.resume is not None, 'a turn that loads a snapshot resumes it'
                 snapshot = await _resume(paused, request.resume)
             snapshot = await _answer_in_turn(snapshot)
         except BaseException as error:
@@ -230,7 +295,10 @@ async def run_monty_turn(
         state = await _dump(session)
         prints = capture.output
         if isinstance(snapshot, MontyComplete):
-            return MontyTurn('complete', state=state, prints=prints, output=snapshot.output)
+            output = model_safe_result(snapshot.output)
+            # `model_safe_result` keeps `bytes`, which have no JSON form unless they are UTF-8.
+            output = output if _serializes(output) else repr(snapshot.output)
+            return MontyTurn('complete', state=state, prints=prints, output=output)
         if isinstance(snapshot, AsyncFunctionSnapshot):
             call = TurnCall(
                 function_name=snapshot.function_name,
@@ -251,18 +319,40 @@ async def _answer_in_turn(
     A name lookup is left undefined, so the sandbox raises `NameError`. An OS call other than a sleep
     is answered from the mounts, as CodeMode does without an `os_access` handler, which this path
     never has. Its arguments, such as a `PurePosixPath`, need not then cross the activity boundary.
+    A call whose arguments have no JSON form cannot reach the tool's own activity, so it raises
+    `TypeError` at the call site.
     """
     while True:
         if isinstance(snapshot, AsyncNameLookupSnapshot):
             snapshot = await snapshot.resume()
-        elif (
-            isinstance(snapshot, AsyncFunctionSnapshot)
-            and snapshot.is_os_function
-            and snapshot.function_name not in SLEEP_FUNCTIONS
-        ):
+        elif not isinstance(snapshot, AsyncFunctionSnapshot):
+            return snapshot
+        elif snapshot.is_os_function and snapshot.function_name not in SLEEP_FUNCTIONS:
             snapshot = await snapshot.resume_auto()
+        elif not _serializes((snapshot.args, snapshot.kwargs)):
+            message = (
+                f'{snapshot.function_name}() got an argument that has no JSON form, so it cannot be sent to the tool'
+            )
+            snapshot = await snapshot.resume({'exception': TypeError(message)})
         else:
             return snapshot
+
+
+async def _load(
+    session: AsyncMontySession,
+    request: TurnRequest,
+    *,
+    mount: MountDir | list[MountDir] | None,
+    capture: CollectString,
+) -> AsyncSnapshot | None:
+    """Restore the record the turn starts from: the session to feed, or the snapshot to resume and return."""
+    if request.state is None:
+        return None
+    state = base64.b64decode(request.state)
+    if request.resume is None:
+        await session.load_session(state)
+        return None
+    return await session.load_snapshot(state, mount=mount, print_callback=capture)
 
 
 async def _dump(session: AsyncMontySession) -> str:

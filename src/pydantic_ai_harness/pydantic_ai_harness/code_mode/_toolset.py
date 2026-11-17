@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import math
 import re
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
@@ -11,11 +10,11 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
-from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
+from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
@@ -31,7 +30,6 @@ from pydantic_ai.messages import (
     ToolReturnContent,
     ToolReturnPart,
     UserContent,
-    is_multi_modal_content,
 )
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
@@ -73,8 +71,7 @@ from pydantic_ai_harness._monty_exec import (
     TurnFeed,
     in_temporal_workflow,
 )
-from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest
-from pydantic_ai_harness._typeguards import is_mapping
+from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
@@ -988,11 +985,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     into it and the dispatch path below claims them; `for_run_step` copies share it by reference.
     """
 
-    run_monty_turn: Callable[[RunContext[AgentDepsT], TurnRequest], Awaitable[MontyTurn]] | None = field(
-        default=None, kw_only=True, repr=False
-    )
-    """`CodeMode`'s `monty_turn` durable operation, set when the capability has the `id` it needs to be one."""
-
     # Shared by `for_run_step` copies so they use the same REPL session and the original entered
     # instance can close it. `for_run` leaves this unset, giving concurrent runs isolated state.
     _run_state: MontyRunState | None = field(default=None, init=False, repr=False, compare=False)
@@ -1311,23 +1303,29 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         A remote sandbox otherwise keeps the workflow task waiting on the network while a snippet
         computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
-        out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
-        Monty does not keep `'overlay'` mount writes across a stored snapshot. The first `run_code`
+        out only where they behave as they do here: an `os_access` handler may use workflow APIs, Monty
+        does not keep `'overlay'` mount writes across a stored snapshot, and a `repl_store` restores
+        into and saves the live session. The operation needs the capability's `id`. The first `run_code`
         call decides for the whole run, so a run never moves REPL state between the two paths, and
         `workflow.patched` keeps runs that started before this existed on the path they started on.
         """
+        from pydantic_ai_harness.code_mode._capability import CodeMode
+
+        capability = self.capability
+        if not isinstance(capability, CodeMode) or capability.id is None:
+            return None
         if run_state.durable_turns is None:
             mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
             run_state.durable_turns = (
                 self.monty_sandbox is not None
-                and self.run_monty_turn is not None
                 and self.os_access is None
+                and self.repl_store is None
                 and all(mount.mode != 'overlay' for mount in mounts)
                 and _workflow_patched(_DURABLE_TURNS_PATCH)
             )
-        if not run_state.durable_turns or self.run_monty_turn is None:
+        if not run_state.durable_turns:
             return None
-        return partial(self.run_monty_turn, ctx)
+        return partial(capability._monty_turn, ctx)  # pyright: ignore[reportPrivateUsage]
 
     async def _feed_start(
         self,
@@ -1342,7 +1340,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> tuple[Callable[[], Awaitable[Snapshot]], BlockingPortal | None]:
         """How to start feeding `code`, and the portal to call Monty through: in turns, or on the live session."""
         if in_workflow and (run_turn := self._durable_turn(ctx, run_state)) is not None:
-            return partial(TurnFeed(run_turn, run_state, capture).start, code, type_check_stubs), None
+            # The configured limits: Monty's elapsed-time check is replay-safe in an activity.
+            feed = TurnFeed(run_turn, run_state, capture, _resolve_resource_limits(self.resource_limits))
+            return partial(feed.start, code, type_check_stubs), None
         type_check = type_check_stubs is not None
         session = await run_state.get_session(
             type_check=type_check, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_workflow
@@ -1455,7 +1455,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
         if result is not None:
-            result = _model_safe_result(_TOOL_RETURN_CONTENT_TA.validate_python(result))
+            result = model_safe_result(_TOOL_RETURN_CONTENT_TA.validate_python(result))
 
         return result
 
@@ -1686,50 +1686,3 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             for td in callable_defs.values()
         )
         return '\n\n'.join(parts)
-
-
-# Scalars every tool-return serializer handles. Unlike `_SANDBOX_NATIVE_SCALARS` this leaves out
-# `Ellipsis`, which Monty holds but JSON has no form for.
-_MODEL_NATIVE_SCALARS = (str, bytes, bytearray, bool, int, float, type(None))
-
-
-def _model_safe_result(value: object) -> object:
-    """Render the parts of a snippet's result that have no JSON form as their `repr`.
-
-    Monty hands some sandbox values back as host objects: `type(x)` and `ValueError` arrive
-    as `type` objects, `len` as a `MontyStdTypeProxy`, a bare exception instance as itself.
-    None of them serialize, so the tool return would abort the run in whichever layer
-    renders it first (`ToolOutputLimits`, or pydantic-ai building the model request). The
-    `repr` is what the snippet's author would have seen in a Python REPL. Non-finite floats
-    do serialize, but as `null`, which would hide the result, so they render as `repr` too.
-    """
-    if isinstance(value, float) and not math.isfinite(value):
-        return repr(value)
-    if isinstance(value, _MODEL_NATIVE_SCALARS) or is_multi_modal_content(value):
-        return value
-    if is_mapping(value):
-        return _model_safe_mapping(value)
-    if _is_list_or_tuple(value):
-        items = [_model_safe_result(item) for item in value]
-        return tuple(items) if isinstance(value, tuple) else items
-    return value if _serializes(value) else repr(value)
-
-
-def _model_safe_mapping(value: Mapping[object, object]) -> object:
-    """`_model_safe_result` for a mapping, rendering each key that has no JSON form as its `repr`."""
-    rendered = {key if _serializes({key: None}) else repr(key): _model_safe_result(item) for key, item in value.items()}
-    # A rendered key can equal an existing one (`{int: 1, "<class 'int'>": 2}`), and
-    # the dict would silently drop an entry; the whole mapping's `repr` loses nothing.
-    return rendered if len(rendered) == len(value) else repr(value)
-
-
-def _is_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
-    return isinstance(value, (list, tuple))
-
-
-def _serializes(value: object) -> bool:
-    try:
-        to_json(value)
-    except PydanticSerializationError:
-        return False
-    return True
