@@ -15,6 +15,7 @@ from pydantic_ai.capabilities import (
     Capability,
     HandleDeferredToolCalls,
     LocalWorkspace,
+    SetToolMetadata,
     ToolSearch,
 )
 from pydantic_ai.capabilities.abstract import ValidatedToolArgs
@@ -39,7 +40,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness import FileSystem, ToolBridge
+from pydantic_ai_harness import CodeMode, FileSystem, ToolBridge
 from pydantic_ai_harness.file_system import READ_FILE_KIND
 from pydantic_ai_harness.tool_bridge import TOOL_CALL_KIND, ToolBridgeToolset
 
@@ -259,7 +260,7 @@ class TestToolBridge:
     async def test_approval_raised_by_a_bridged_tool(self):
         call_ids: list[str | None] = []
 
-        def delete_file(ctx: RunContext[None], path: str) -> str:
+        def delete_file(ctx: RunContext[object], path: str) -> str:
             """Delete a file."""
             call_ids.append(ctx.tool_call_id)
             if not ctx.tool_call_approved:
@@ -281,7 +282,7 @@ class TestToolBridge:
         assert call_ids == [request.tool_call_id, request.tool_call_id]
 
     async def test_denied_by_a_handler(self):
-        def delete_file(ctx: RunContext[None], path: str) -> str:
+        def delete_file(ctx: RunContext[object], path: str) -> str:
             """Delete a file."""
             raise ApprovalRequired
 
@@ -349,7 +350,7 @@ class TestToolBridge:
     async def test_bridged_tool_sees_its_retries(self):
         attempts: list[int] = []
 
-        def flaky(ctx: RunContext[None]) -> str:
+        def flaky(ctx: RunContext[object]) -> str:
             """Fail on the first attempt."""
             attempts.append(ctx.retry)
             if ctx.retry == 0:
@@ -509,3 +510,39 @@ class TestToolBridge:
 
         [failed] = _return_parts(result.all_messages())
         assert (failed.tool_name, failed.outcome, failed.content) == ('tool_call', 'failed', 'service is down')
+
+    async def test_wrappers_listed_first_see_the_bridged_tools(self):
+        risks: list[object] = []
+
+        class Record(AbstractCapability[object]):
+            async def before_tool_execute(
+                self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ) -> ValidatedToolArgs:
+                risks.append((tool_def.name, (tool_def.metadata or {}).get('risk')))
+                return args
+
+        model = _scripted([_call('tool_call', name='_get_weather', args_json='{"city": "Rome"}')])
+        agent = Agent(
+            model,
+            tools=[_get_weather],
+            capabilities=[SetToolMetadata(tools=['_get_weather'], risk='high'), Record(), ToolBridge()],
+        )
+
+        await agent.run('weather?')
+
+        assert risks == [('tool_call', None), ('_get_weather', 'high')]
+
+    @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
+    @pytest.mark.parametrize('bridge_first', [True, False], ids=['bridge-first', 'code-mode-first'])
+    async def test_code_mode_wraps_the_bridge(self, bridge_first: bool):
+        seen: list[list[str]] = []
+        capabilities: list[AbstractCapability[object]] = [ToolBridge(), CodeMode()]
+        agent = Agent(
+            _scripted([], seen),
+            tools=[_get_weather],
+            capabilities=capabilities if bridge_first else capabilities[::-1],
+        )
+
+        await agent.run('hi')
+
+        assert seen == [['run_code']]

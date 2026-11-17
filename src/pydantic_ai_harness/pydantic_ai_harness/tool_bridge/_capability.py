@@ -5,9 +5,8 @@ from __future__ import annotations
 from dataclasses import KW_ONLY, dataclass
 
 from pydantic_ai import AbstractToolset
-from pydantic_ai.capabilities import AbstractCapability, ToolSearchFunc
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch, ToolSearchFunc
 from pydantic_ai.tools import AgentDepsT, ToolSelector
-from pydantic_ai.toolsets._tool_search import keywords_search_fn
 from pydantic_ai_harness.tool_bridge._toolset import ToolBridgeToolset
 
 
@@ -38,10 +37,10 @@ class ToolBridge(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    search: ToolSearchFunc[AgentDepsT] = keywords_search_fn
+    search: ToolSearchFunc[AgentDepsT] | None = None
     """Ranks the bridged tools for a `tool_search` query: `(ctx, queries, tools) -> names`, sync or async.
 
-    Defaults to the keyword matching [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] uses.
+    `None` (default) uses the keyword matching [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] uses.
     """
 
     max_results: int = 10
@@ -52,6 +51,14 @@ class ToolBridge(AbstractCapability[AgentDepsT]):
 
     id: str | None = 'tool_bridge'
     """An agent has one bridge, so two of them merge into one by default."""
+
+    def get_ordering(self) -> CapabilityOrdering:
+        """Sit just inside `ToolSearch` and outside every other wrapper.
+
+        Wrappers such as `SetToolMetadata` and `PrefixTools` then see the bridged tools whatever order the
+        capabilities are listed in.
+        """
+        return CapabilityOrdering(position='outermost', wrapped_by=[ToolSearch])
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Wrap the agent's tools in the bridge."""

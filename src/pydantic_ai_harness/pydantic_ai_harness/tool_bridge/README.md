@@ -28,7 +28,7 @@ A tool added, removed or changed mid-run changes what `tool_search` finds, not t
 ## Options
 
 - `tools` (default `'all'`): which tools to bridge, as a list of names or a `(ctx, tool_def) -> bool` callable, sync or async. The rest stay visible to the model as normal tools.
-- `search`: ranks the bridged tools for a query, with the signature of a `ToolSearchFunc`. Defaults to the keyword matching [`ToolSearch`](https://pydantic.dev/docs/ai/capabilities/tool-search/) uses.
+- `search`: ranks the bridged tools for a query, with the signature of a `ToolSearchFunc`. `None` (default) uses the keyword matching [`ToolSearch`](https://pydantic.dev/docs/ai/capabilities/tool-search/) uses.
 - `max_results` (default `10`): the most tools one `tool_search` returns.
 - `max_retries` (default `3`): retries for each dispatcher tool, spent on unknown tool names, invalid arguments and retries the bridged tools ask for.
 
@@ -51,7 +51,7 @@ Tools with `defer_loading=True` are bridged and found with `tool_search`, so [`T
 
 ## Composition
 
-Two `ToolBridge` capabilities on one agent merge into one; the later one's settings win. [`CodeMode`](../code_mode/) wraps the bridge's three tools like any other tools, so to put many tools behind `run_code` instead, use one of the two.
+Two `ToolBridge` capabilities on one agent merge into one; the later one's settings win. The bridge sits just inside tool search and outside every other capability that wraps the toolset, whatever order the capabilities are listed in, so wrappers such as `SetToolMetadata` and `PrefixTools` apply to the bridged tools. [`CodeMode`](../code_mode/) wraps the bridge's three tools like any other tools, so to put many tools behind `run_code` instead, use one of the two.
 
 ## Telemetry
 

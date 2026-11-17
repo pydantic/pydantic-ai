@@ -101,8 +101,8 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     tools: ToolSelector[AgentDepsT] = 'all'
     """Which wrapped tools to bridge; the rest stay native."""
 
-    search: ToolSearchFunc[AgentDepsT] = keywords_search_fn
-    """Ranks the bridged tools for a `tool_search` query."""
+    search: ToolSearchFunc[AgentDepsT] | None = None
+    """Ranks the bridged tools for a `tool_search` query; `None` uses `ToolSearch`'s keyword matching."""
 
     max_results: int = 10
     """Maximum number of `tool_search` results."""
@@ -183,7 +183,8 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
     async def _search(
         self, ctx: RunContext[AgentDepsT], query: str, bridged: dict[str, ToolsetTool[AgentDepsT]]
     ) -> list[_Match]:
-        names = self.search(ctx, [query], [tool.tool_def for tool in bridged.values()])
+        search = self.search or keywords_search_fn
+        names = search(ctx, [query], [tool.tool_def for tool in bridged.values()])
         if inspect.isawaitable(names):
             names = await names
         matches = [

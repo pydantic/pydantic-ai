@@ -448,11 +448,12 @@ agent = Agent('test', capabilities=[ToolBridge(['github_search', 'github_get_iss
 ```
 
 Options: `tools` (`'all'`, a list of names, or a `(ctx, tool_def) -> bool` callable; the rest stay
-native), `search` (a `ToolSearchFunc`, default keyword matching), `max_results=10`, `max_retries=3`.
+native), `search` (a `ToolSearchFunc`; `None` uses `ToolSearch`'s keyword matching), `max_results=10`, `max_retries=3`.
 Gotchas: approval-required and external tools, framework control tools, code-execution tools (`run_code`,
 `run_command`) and `unless_native` fallbacks stay native, as do deferred tools a capability owns; other `defer_loading=True` tools are bridged, so `ToolSearch` has nothing left to reveal; the
 names `tool_search`, `tool_describe` and `tool_call` are reserved; each call costs an extra step and
-loses provider-side strict schema validation. Two merge into one (default `id='tool_bridge'`). Recognize `tool_call` by its kind,
+loses provider-side strict schema validation. Two merge into one (default `id='tool_bridge'`). It orders itself just inside `ToolSearch` and
+outside other wrappers (`SetToolMetadata`, `PrefixTools`); `CodeMode` wraps it. Recognize `tool_call` by its kind,
 `TOOL_CALL_KIND` (`tool_bridge.tool_call`, from `pydantic_ai_harness.tool_bridge`), not its name.
 
 ## Media externalization (not a capability)
