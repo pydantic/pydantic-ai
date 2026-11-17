@@ -643,8 +643,10 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbo
 ```
 
 That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
-The configured `max_duration_seconds` still applies outside Temporal. Inside a Temporal workflow,
+The configured `max_duration_seconds` still applies outside Temporal. In Temporal workflow code,
 Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
+When turns run as activities (see [Remote turns as activities](#remote-turns-as-activities)), the timer
+applies again and the factory is called once per turn, so return a new pool from each call.
 
 Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
 instructions or tool arguments.
@@ -755,7 +757,8 @@ answered by Monty from the mounts first and reach the handler on another thread.
 ### Remote turns as activities
 
 With a remote `monty_sandbox` whose Monty server stores sessions, Code Mode runs each turn as its own
-activity. A turn is the part of a snippet between two nested tool calls. The server saves the session
+activity. A turn is the part of a snippet between two points where it waits on the host: a nested
+tool call, a sleep, or deferred calls. The server saves the session
 after each turn and returns an ID, and the next turn starts from that ID in whichever worker runs it.
 Computation in the sandbox then no longer counts against the workflow task's 2-second limit, and
 replay reads each turn's result from history instead of connecting to the server.
@@ -788,9 +791,10 @@ off. Keep `start_to_close_timeout` above `max_duration_seconds`: otherwise Tempo
 first and retries it, instead of Code Mode reporting the time limit to the model. With
 `'unlimited'`, `start_to_close_timeout` is the only bound on a turn.
 
-Tool results reach the sandbox with the same types as in workflow code, `bytes` included. The
-snippet's result keeps its built-in types, such as `bytes`, tuples and NaN; a value of another type,
-such as a `datetime`, arrives as its JSON form, which is what the model sees either way. A nested call whose arguments have no JSON form, such as an instance of a class the
+Tool results reach the sandbox with the same types as in workflow code, `bytes` included. Nested
+call arguments and the snippet's result keep their built-in types, such as `bytes` and tuples; a
+result of another type, such as a `datetime`, arrives as its JSON form, which is what the model sees
+either way. A nested call whose arguments have no JSON form, such as an instance of a class the
 snippet defined, raises `TypeError` in the snippet: its arguments cannot reach the tool's activity. If
 the server no longer has a run's stored state, for example because it expired, Code Mode resets the
 session and tells the model the connection was lost, as for a dropped connection outside Temporal.

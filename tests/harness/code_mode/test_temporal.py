@@ -56,7 +56,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, Tool, ToolDefinition
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelRequest,
@@ -271,6 +271,11 @@ def double(n: int) -> int:
     return n * 2
 
 
+def echo(value: Any) -> Any:
+    """Return `value`."""
+    return value
+
+
 def blob() -> dict[str, Any]:
     """Return values plain JSON does not carry: bytes that are not UTF-8 and a NaN, nested too."""
     return {'raw': b'\xff\x00', 'nan': float('nan'), 'nested': {'a': {'b': b'\xff', 'c': 2}, 't': [[1, b'x']]}}
@@ -296,7 +301,8 @@ _CALL_SITE_SNIPPETS = [
     '[P(1), arg_error]',
     # Values plain JSON would change, in a tool result and in the snippet's result.
     'v = await blob()\n'
-    '[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], v["nested"], (1, ...), {(1, 2): {"k": (b"a",)}}]',
+    'e = await echo(value=[(1, b"x"), {2: (b"y",)}])\n'
+    '[type(v["raw"]).__name__, v["raw"], v["nan"] != v["nan"], v["nested"], e, (1, ...), {(1, 2): {"k": (b"a",)}}]',
 ]
 
 
@@ -320,7 +326,7 @@ def _call_site_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
 call_site_code_mode_agent = Agent(
     FunctionModel(_call_site_model),
     name='code_mode_temporal_call_site_agent',
-    toolsets=[FunctionToolset(tools=[add, Tool(double, sequential=True), blob], id='math')],
+    toolsets=[FunctionToolset(tools=[add, Tool(double, sequential=True), blob, echo], id='math')],
     capabilities=[
         CodeMode(
             id='code',
@@ -401,6 +407,57 @@ class SessionLossWorkflow:
     async def run(self, prompt: str) -> str:
         result = await session_loss_code_mode_agent.run(prompt)
         return result.output
+
+
+class _InMemoryReplStore:
+    def __init__(self) -> None:
+        self.states: dict[str, bytes] = {}
+
+    async def load(self, ctx: RunContext[Any]) -> bytes | None:
+        return self.states.get(ctx.conversation_id or '')
+
+    async def save(self, ctx: RunContext[Any], state: bytes | None) -> None:
+        if state is not None:
+            self.states[ctx.conversation_id or ''] = state
+
+
+# Runs that keep the workflow-side path although the server stores sessions.
+workflow_side_code_mode_agents = {
+    'overlay': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_overlay_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[
+            CodeMode(
+                id='code',
+                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                mount=MountDir(virtual_path='/tests', host_path=str(Path(__file__).parent)),
+            ),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    ),
+    'repl_store': Agent(
+        FunctionModel(_code_mode_model),
+        name='code_mode_temporal_repl_store_agent',
+        toolsets=[FunctionToolset(tools=[add], id='math')],
+        capabilities=[
+            CodeMode(
+                id='code',
+                monty_sandbox=StoredSessionPool,  # pyright: ignore[reportArgumentType]
+                repl_store=_InMemoryReplStore(),
+            ),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    ),
+}
+
+
+@workflow.defn
+class WorkflowSideWorkflow:
+    @workflow.run
+    async def run(self, reason: str) -> str:
+        result = await workflow_side_code_mode_agents[reason].run('Calculate 3 + 4')
+        return str(result.output)
 
 
 @workflow.defn
@@ -829,6 +886,30 @@ async def test_remote_turns_fall_back_without_stored_sessions(client: Client) ->
     assert _activity_types(history) == ['model_request', 'monty_turn', 'call_tool', 'model_request', 'model_request']
 
 
+@pytest.mark.parametrize('reason', ['overlay', 'repl_store'])
+async def test_remote_turns_stay_in_the_workflow(client: Client, reason: str) -> None:
+    """An `'overlay'` mount, the default mode, or a `repl_store` keeps every turn in the workflow."""
+    workflow_id = f'test_code_mode_temporal_workflow_side_{reason}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowSideWorkflow],
+        plugins=[AgentPlugin(workflow_side_code_mode_agents[reason])],
+        workflow_runner=_workflow_runner(),
+    ):
+        output = await client.execute_workflow(
+            WorkflowSideWorkflow.run,
+            args=[reason],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+
+    assert output == 'done: 70'
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _activity_types(history) == ['model_request', 'call_tool', 'model_request', 'model_request']
+
+
 async def _run_call_sites(client: Client, workflow_id: str, *, stores: bool) -> list[Any]:
     SERVER.stores = stores
     try:
@@ -878,14 +959,15 @@ async def test_remote_turns_resume_calls_in_place(client: Client) -> None:
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     # The type-checked snippet that fails and the syntax error are one turn each. The mounted file read
-    # and the undefined name are answered inside a turn; only `double`, `add` and `blob` leave it.
+    # and the undefined name are answered inside a turn; only `double`, `add`, `blob` and `echo` leave it.
     assert _activity_types(history) == [
         *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
         *['model_request', 'monty_turn'],
         *['model_request', 'monty_turn'],
-        *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn', 'model_request'],
+        *['model_request', 'monty_turn', 'monty_turn', 'call_tool', 'monty_turn'],
+        *['monty_turn', 'call_tool', 'monty_turn', 'model_request'],
     ]
     replay_result = await Replayer(
         workflows=[CallSiteWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=_workflow_runner()

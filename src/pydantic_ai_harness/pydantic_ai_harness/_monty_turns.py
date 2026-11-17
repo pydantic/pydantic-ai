@@ -224,8 +224,10 @@ class TurnCall:
     """The external call a turn paused at."""
 
     function_name: str
-    args: tuple[Any, ...]
-    kwargs: dict[str, Any]
+    args: object
+    """The positional arguments, as `to_wire` encodes them."""
+    kwargs: object
+    """The keyword arguments, as `to_wire` encodes them."""
     call_id: int
     is_os_function: bool
 
@@ -301,8 +303,9 @@ class MontyTurn:
     failure: MontyFailure | None = None
 
 
-_SESSION_LOST = MontyTurn('failed', failure=MontyFailure('disconnected'))
-"""The server no longer has the session's state, which CodeMode reports as a dropped session."""
+def _session_lost() -> MontyTurn:
+    """The server no longer has the session's state, which CodeMode reports as a dropped session."""
+    return MontyTurn('failed', failure=MontyFailure('disconnected'))
 
 
 async def run_monty_turn(
@@ -330,14 +333,14 @@ async def run_monty_turn(
         if session.session_id is None:
             # A server can also fail to store one session in time. Only a run with nothing stored yet
             # can move to the workflow; later, the state the run has built is lost.
-            return MontyTurn('not_stored') if request.state is None else _SESSION_LOST
+            return MontyTurn('not_stored') if request.state is None else _session_lost()
         capture = CollectString()
         try:
             paused = await _load(session, request, mount=mount, capture=capture)
         except MontyRuntimeError:
             # The stored record could not be loaded, for example because the server let it expire.
             # Connection errors are other `MontyError`s and raise, so the activity retry loads it again.
-            return _SESSION_LOST
+            return _session_lost()
         try:
             if paused is None:
                 assert request.code is not None, 'a turn that resumes nothing feeds code'
@@ -363,8 +366,8 @@ async def run_monty_turn(
         if isinstance(snapshot, AsyncFunctionSnapshot):
             call = TurnCall(
                 function_name=snapshot.function_name,
-                args=snapshot.args,
-                kwargs=snapshot.kwargs,
+                args=to_wire(snapshot.args),
+                kwargs=to_wire(snapshot.kwargs),
                 call_id=snapshot.call_id,
                 is_os_function=snapshot.is_os_function,
             )

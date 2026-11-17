@@ -377,11 +377,11 @@ class TurnFunctionSnapshot:
 
     @property
     def args(self) -> tuple[Any, ...]:
-        return self.call.args
+        return from_wire(self.call.args)
 
     @property
     def kwargs(self) -> dict[str, Any]:
-        return self.call.kwargs
+        return from_wire(self.call.kwargs)
 
     @property
     def call_id(self) -> int:
