@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic_ai import exceptions
 from pydantic_ai._fallback import FallbackChain, FallbackOn, FallbackPredicates
+from pydantic_ai._unsupported_settings import raise_warnings as raise_unsupported_setting_warnings
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -210,7 +211,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """With `UnsupportedSettingWarning` in `fallback_on`, have each attempt's model raise the warning it would emit."""
         if not self._predicates.unsupported_setting:
             return None
-        return _JudgingSettingsModel(model, self._predicates)
+        return _JudgingSettingsModel(model)
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         if not self._supplies_model:
@@ -434,17 +435,13 @@ class _JudgingSettingsModel(WrapperModel):
     The warning is raised before anything is sent, as the attempt's error, so the agent records it as a failed attempt.
     """
 
-    def __init__(self, wrapped: Model, predicates: FallbackPredicates):
-        super().__init__(wrapped)
-        self._predicates = predicates
-
     async def request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        with self._predicates.judging_settings():
+        with raise_unsupported_setting_warnings():
             return await super().request(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
@@ -457,7 +454,7 @@ class _JudgingSettingsModel(WrapperModel):
     ) -> AsyncGenerator[StreamedResponse]:
         async with AsyncExitStack() as stack:
             # Only while the stream is opened, which is when the model prepares the request.
-            with self._predicates.judging_settings():
+            with raise_unsupported_setting_warnings():
                 response = await stack.enter_async_context(
                     super().request_stream(messages, model_settings, model_request_parameters, run_context)
                 )
