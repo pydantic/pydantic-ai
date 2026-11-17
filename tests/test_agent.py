@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pickle
 import re
 import sys
 from collections import defaultdict
@@ -9865,6 +9866,24 @@ def test_agent_run_result_serialization() -> None:
     # Check that we can load the data back
     deserialized_result = adapter.validate_json(serialized_data)
     assert deserialized_result == result
+
+
+async def test_agent_run_result_pickles_with_unpicklable_tool_metadata() -> None:
+    agent = Agent(TestModel(call_tools=[], custom_output_text='done'))
+
+    @agent.tool_plain(metadata={'filter': lambda: True})  # pragma: no branch
+    def unused() -> str:
+        return 'unused'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    restored = pickle.loads(pickle.dumps(result))
+
+    assert restored.output == 'done'
+    assert restored.all_messages() == result.all_messages()
+    assert restored.usage == result.usage
+    # Pickling works on a copy, so the live result keeps its state.
+    assert result._state.last_model_request_parameters is not None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_repr() -> None:

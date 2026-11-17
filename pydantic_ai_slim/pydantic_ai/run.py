@@ -959,6 +959,9 @@ class AgentRunResult(Generic[OutputDataT]):
         # means nothing in another process; its ref stays in the messages' `workspace_ref`.
         state = self.__dict__.copy()
         state.pop('_workspace', None)
+        # A finished result never reads the last request's tool definitions or the MCP tool cache again, and
+        # tool metadata may not pickle. Clear them on a copy so the live result is left untouched.
+        state['_state'] = dataclasses.replace(self._state, last_model_request_parameters=None, mcp_tool_defs_cache={})
         return state
 
     @classmethod
