@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, SupportsIndex
 
 import anyio
 import pytest
@@ -41,7 +42,7 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness import DetectLoops, GuardrailResult, InputGuardrail
 from pydantic_ai_harness.detect_loops import (
     DetectedLoop,
     LoopDetectedError,
@@ -301,7 +302,7 @@ class TestDetectLoops:
     async def test_short_repetition_is_not_a_loop(self):
         loops, detector = _collect()
         # A long run of a short unit, like a divider or a row of zeros, repeats a unit shorter than `min_period`.
-        script = _script(['=' * 50] * 20 + ['0, '] * 300)
+        script = _script(['=' * 50] * 50 + ['0, '] * 700)
 
         await _agent(script, detector).run('Draw a table', event_stream_handler=_drain)
 
@@ -354,11 +355,66 @@ class TestDetectLoops:
             action='error',
         )
         calls = [_args('{"path": "a.txt"}', index=index, name='read_file') for index in range(6)]
-        script = _script(calls, [*(_thinking(LOOP) for _ in range(30)), *([LOOP] * 30)])
+        script = _script(calls, [*(_thinking(LOOP) for _ in range(40)), *([LOOP] * 40)])
 
         result = await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
-        assert result.output == LOOP * 30
+        assert result.output == LOOP * 40
+
+    async def test_a_long_part_is_fed_without_copying_its_rest(self):
+        slices: list[tuple[str, int]] = []
+
+        class Text(str):
+            def __getitem__(self, key: SupportsIndex | slice, /) -> str:
+                piece = super().__getitem__(key)
+                frame = inspect.currentframe()
+                assert frame is not None and frame.f_back is not None
+                slices.append((frame.f_back.f_code.co_name, len(piece)))
+                return piece
+
+        content = Text(PROGRESS * 20)
+        agent = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content)])),
+            capabilities=[DetectLoops(stream_check_every=64)],
+        )
+
+        await agent.run('Explain')
+
+        fed = [length for caller, length in slices if caller == '_feed']
+        assert sum(fed) == len(content)
+        assert max(fed) == 64
+
+    async def test_a_pending_parallel_input_guard_decides_before_the_loop_is_acted_on(self):
+        detected = asyncio.Event()
+
+        @dataclass
+        class Signalling(RepetitionDetector[object]):
+            async def detect(self, ctx: RunContext[object], sample: StreamSample) -> Repetition | None:
+                repetition = await super().detect(ctx, sample)
+                if repetition is not None:
+                    detected.set()
+                return repetition
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await detected.wait()
+            return GuardrailResult.block('Not allowed.')
+
+        script = _script(
+            [*(_thinking(LOOP) for _ in range(60)), 'answer'], [_args('{"path": "a.txt"}', name='read_file')]
+        )
+        agent = Agent(
+            script.model(),
+            capabilities=[DetectLoops(stream_detector=Signalling()), InputGuardrail(guard=guard, parallel=True)],
+        )
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:  # pragma: no cover
+            raise AssertionError('a blocked prompt runs no tools')
+
+        result = await agent.run('Explain', event_stream_handler=_drain)
+
+        assert result.output == 'Not allowed.'
+        assert len(script.requests) == 1
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)
