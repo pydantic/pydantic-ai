@@ -11,18 +11,33 @@ from collections.abc import Sequence
 from typing import TypeGuard
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent
+from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent, is_multi_modal_content
 from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
 
-def is_text_tool_return(value: object) -> TypeGuard[ToolReturn[str]]:
-    """Whether `value` is a `ToolReturn` with a string payload."""
-    return isinstance(value, ToolReturn) and isinstance(value.return_value, str)
+def scanned_value(value: object) -> str | list[UserContent] | None:
+    """`value` if it is a string or a list of strings and media, such as text beside a screenshot.
+
+    These are the tool results a detector reads. `TextContent` is left out of a list: the model
+    also sees its `metadata`, which a detector does not read.
+    """
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return None
+    parts: list[UserContent] = []
+    for part in value:  # pyright: ignore[reportUnknownVariableType]
+        if not (isinstance(part, str | CachePoint) or is_multi_modal_content(part)):
+            return None
+        parts.append(part)
+    return parts
 
 
-def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailResult | None, str | None]:
-    """Run `detector` over one text part of `ToolReturn.content`.
+def _detect_text(
+    detector: TextDetector, text: str, what: str = 'tool content'
+) -> tuple[GuardrailResult | None, str | None]:
+    """Run `detector` over one string, `what` naming it in the error for a non-text replacement.
 
     Returns a terminal verdict, or the replacement text -- `None` when the part is left alone.
     """
@@ -33,7 +48,7 @@ def _detect_content_text(detector: TextDetector, text: str) -> tuple[GuardrailRe
         return None, None
     replacement = verdict.replacement
     if not isinstance(replacement, str):
-        raise UserError('A text detector used with for_tool_result_text() must replace tool content with text.')
+        raise UserError(f'A text detector used with for_tool_result_text() must replace {what} with text.')
     return None, replacement
 
 
@@ -70,6 +85,10 @@ def _detect_text_run(
     leave the rest of the value exposed while the joined pass reported the span clean. It
     can hide a terminal verdict the same way.
 
+    A list `return_value` comes through here too, although the model sees it as a JSON array
+    rather than one string. It is scanned joined on purpose, since a model can rejoin the
+    elements, and a match across elements redacts them as one span.
+
     The span keeps its parts when sanitizing them one by one already produced the text that
     sanitizing the whole span produces. Then the boundaries carry nothing, and each part
     keeps its own metadata. When the two differ, something is only reachable across a
@@ -96,7 +115,7 @@ def _detect_text_run(
         if not isinstance(part, str | TextContent):
             continue
         original = _text_of(part)
-        verdict, replacement = _detect_content_text(detector, original)
+        verdict, replacement = _detect_text(detector, original)
         if verdict is not None:
             return verdict, run, False
         replaced |= replacement is not None
@@ -105,7 +124,7 @@ def _detect_text_run(
         originals.append(original)
         texts.append(original if replacement is None else replacement)
     if len(texts) > 1:
-        verdict, joined = _detect_content_text(detector, ''.join(originals))
+        verdict, joined = _detect_text(detector, ''.join(originals))
         if verdict is not None:
             return verdict, run, False
         if joined is not None and joined != ''.join(texts):
@@ -134,7 +153,7 @@ def detect_tool_return_content(
     `None` when no part was redacted, so the caller keeps the original shape.
     """
     if isinstance(content, str):
-        return _detect_content_text(detector, content)
+        return _detect_text(detector, content)
     if content is None:
         return None, None
     rewritten: list[UserContent] = []
@@ -156,3 +175,41 @@ def detect_tool_return_content(
         if part is not None:
             rewritten.append(part)
     return None, rewritten if replaced else None
+
+
+def is_tool_return(value: object) -> TypeGuard[ToolReturn[object]]:
+    """Whether `value` is a `ToolReturn`."""
+    return isinstance(value, ToolReturn)
+
+
+def _identifier_verdict(detector: TextDetector, value: list[UserContent]) -> GuardrailResult | None:
+    """A verdict on the first file identifier in `value` that `detector` does not allow.
+
+    Core shows the model each file's identifier (`See file <identifier>.`). An identifier
+    can't be rewritten in place, so one the detector would replace blocks the result.
+    """
+    for part in value:
+        if is_multi_modal_content(part):
+            verdict = detector(part.identifier)
+            if verdict.action == 'replace':
+                return GuardrailResult.block('A file identifier in the tool result was flagged by a detector.')
+            if verdict.action != 'allow':
+                return verdict
+    return None
+
+
+def detect_return_value(
+    detector: TextDetector, value: str | list[UserContent]
+) -> tuple[GuardrailResult | None, str | list[UserContent] | None]:
+    """Run `detector` over a tool result's string, or the text of its content parts, keeping images.
+
+    A list is scanned like `ToolReturn.content`, adjacent strings joined, though the model sees a JSON array.
+
+    Returns a terminal verdict, or the replacement -- `None` when nothing was redacted.
+    """
+    if isinstance(value, str):
+        return _detect_text(detector, value, 'a tool result')
+    if (verdict := _identifier_verdict(detector, value)) is not None:
+        return verdict, None
+    verdict, rewritten = detect_tool_return_content(detector, value)
+    return verdict, None if rewritten is None else list(rewritten)

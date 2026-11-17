@@ -161,8 +161,8 @@ OutputGuardrail(guard=for_text(redact_secrets, on_other='allow'))  # skips it de
 ```
 
 A tool result guard receives `ToolResultInfo`, not just a value. Use
-`for_tool_result_text` to adapt a detector for a bare string result or the text
-channels of a `ToolReturn`:
+`for_tool_result_text` to adapt a detector for a bare string result, a list of strings
+and images (such as a screenshot tool returns), or the text channels of a `ToolReturn`:
 
 ```python
 from pydantic_ai_harness import ToolGuardrail
@@ -171,14 +171,16 @@ from pydantic_ai_harness.guardrails.detectors import for_tool_result_text, redac
 ToolGuardrail(result_guard=for_tool_result_text(redact_secrets))
 ```
 
-The adapter checks a string `return_value` and all text in `content`, which core
+The adapter checks a string or content-list `return_value` and all text in `content`, which core
 sends as a separate user-prompt part. Adjacent text parts are scanned joined, so a
 secret split across two parts is still caught. A `CachePoint` between two text parts
 does not separate them; an image or document does. If sanitizing the joined text gives
 a different result from sanitizing each part, the span becomes one part carrying the
 first part's metadata, and a `CachePoint` between merged parts moves ahead of it;
-otherwise each part keeps its own metadata. `ToolReturn` metadata, kind, and non-text
-parts are kept.
+otherwise each part keeps its own metadata. Images and other non-text parts are kept,
+in `return_value` and `content` alike, as are `ToolReturn` metadata and kind.
+The model also sees each file's identifier in a content-list `return_value`, so the
+detector checks it too; one it would redact blocks the result, since an identifier can't be rewritten.
 
 As with `for_text`, a non-text result raises by default. `on_other='allow'`
 skips the whole result, including the `content` of a `ToolReturn` whose
