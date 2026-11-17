@@ -132,9 +132,10 @@ def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) ->
 
     The `message` shows the arguments the model sent, each with the value the tool will receive from
     `requests.validated_args`. A default and an argument a validation hook added aren't in it, at any
-    depth: they can hold server-side values, and the message goes to the client. An argument whose
-    shape validation changed, such as a list a hook extended, shows the model's value. A request that
-    doesn't carry validated arguments, such as one built by hand, shows the model's arguments.
+    depth: they can hold server-side values, and the message goes to the client. An argument keeps the
+    model's value where its validated value can't be matched to it: a key validation renamed, such as a
+    validation alias, or a value whose shape validation changed, such as a list a hook extended. A request
+    that doesn't carry validated arguments, such as one built by hand, shows the model's arguments.
     The `response_schema` describes the shape clients must put in `ResumeEntry.payload`;
     it is generated from `_ResumePayload`, the same model that validates the payload on
     resume. `editedArgs`, when present, replaces the proposed `ToolCallPart.args`
@@ -143,16 +144,13 @@ def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) ->
     args = call.args_as_dict()
     validated_args = requests.validated_args.get(call.tool_call_id, {})
     only_name, only_value = next(iter(validated_args.items())) if len(validated_args) == 1 else (None, None)
-    if is_str_dict(only_value) and (list(args) != [only_name] or only_name in only_value):
-        # A tool whose only parameter is a model takes that model's fields unwrapped. As in validation,
-        # `{name: ...}` is the model wrapped under its parameter's name only when `name` isn't a field.
+    if not is_str_dict(only_value):
+        args = sent_validated_values(args, validated_args)
+    elif list(args) != [only_name]:
+        # A tool whose only parameter is a model takes that model's fields unwrapped.
         args = sent_validated_values(args, only_value)
-    else:
-        # A key the validated arguments don't have may be a parameter's alias, so it keeps the model's value.
-        args = {
-            key: sent_validated_values(value, validated_args[key]) if key in validated_args else value
-            for key, value in args.items()
-        }
+    # Otherwise `{name: ...}` is either the model's field `name` or the model wrapped under its parameter's
+    # name, which only the tool's schema tells apart, so the message keeps the model's arguments.
     return Interrupt(
         id=f'{INTERRUPT_ID_PREFIX}{call.tool_call_id}',
         reason='tool_call',
@@ -167,20 +165,20 @@ def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) ->
 
 
 def sent_validated_values(sent: Any, validated: Any) -> Any:
-    """`validated`, keeping at every level only the object keys and list items `sent` has.
+    """`sent`, with each value it has replaced by the one at the same place in `validated`, at every depth.
 
-    A default or a value a validation hook added, at any depth, is left out: where validation changed a
-    value's shape, such as a list a hook extended, the model's value is kept instead. A key `validated`
-    doesn't have was dropped by validation, or is excluded from its model's serialization.
+    A default or a value a validation hook added isn't in `sent`, so it's left out. A key `validated`
+    lacks, and a value whose shape `validated` doesn't share, keep the model's value.
     """
-    if is_str_dict(validated):
-        if not is_str_dict(sent):
-            return sent
-        return {key: sent_validated_values(value, validated[key]) for key, value in sent.items() if key in validated}
-    if is_list(validated):
-        if not is_list(sent) or len(sent) != len(validated):
-            return sent
+    if is_str_dict(sent) and is_str_dict(validated):
+        return {
+            key: sent_validated_values(value, validated[key]) if key in validated else value
+            for key, value in sent.items()
+        }
+    if is_list(sent) and is_list(validated) and len(sent) == len(validated):
         return [sent_validated_values(item, validated_item) for item, validated_item in zip(sent, validated)]
+    if any(is_str_dict(value) or is_list(value) for value in (sent, validated)):
+        return sent
     return validated
 
 

@@ -10157,14 +10157,14 @@ class Deletion(BaseModel):
 async def test_run_finished_interrupt_message_for_a_single_model_parameter() -> None:
     """A tool whose only parameter is a model shows that model's fields the model sent, as the tool receives them.
 
-    The model sends the fields unwrapped, so they're matched against the validated model's fields: one the
-    model drops doesn't appear, nor does a default.
+    The model sends the fields unwrapped, so they're matched against the validated model's fields, and a default
+    doesn't appear.
     """
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
-        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env", "force": "false", "extra": "dropped"}')}
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env", "force": "false"}')}
 
     agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
 
@@ -10222,30 +10222,81 @@ class Command(BaseModel):
     command: dict[str, str]
 
 
-@pytestmark_interrupts
-async def test_run_finished_interrupt_message_for_an_object_field_named_like_its_parameter() -> None:
-    """A single model parameter whose object-valued field shares its name is read as unwrapped, as validation reads it.
+class Named(BaseModel):
+    name: str = 'server-token'
+    path: str
 
-    `{"command": {...}}` is then the model's `command` field, not the model wrapped under its parameter's name.
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_keeps_the_model_arguments_when_their_only_key_names_the_parameter() -> (
+    None
+):
+    """For a single model parameter, arguments whose only key is the parameter's name are shown as the model sent them.
+
+    `{"<name>": {...}}` is either the model's field `<name>` or the model wrapped under its parameter's name, and only
+    the tool's schema tells the two apart: `execute` reads it as `Command.command`, `sync` as a wrapped `Named`, whose
+    `name` default stays on the server.
     """
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
-        yield {0: DeltaToolCall(name='execute', json_args='{"command": {"action": "delete", "path": "/srv/data"}}')}
+        yield {
+            0: DeltaToolCall(name='execute', json_args='{"command": {"action": "delete", "path": "/srv/data"}}'),
+            1: DeltaToolCall(name='sync', json_args='{"name": {"path": "/srv/data"}}'),
+        }
 
     agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(requires_approval=True)
     def execute(command: Command) -> str:  # pragma: no cover
-        # Body never runs: the test asserts the pending approval's interrupt.
+        # Body never runs: the test asserts the pending approvals' interrupts.
         return command.command['action']
+
+    @agent.tool_plain(requires_approval=True)
+    def sync(name: Named) -> str:  # pragma: no cover
+        # Body never runs: the test asserts the pending approvals' interrupts.
+        return name.path
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete /srv/data')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert [interrupt['message'] for interrupt in run_finished['outcome']['interrupts']] == snapshot(
+        [
+            'Approve execute({"command":{"action":"delete","path":"/srv/data"}})?',
+            'Approve sync({"name":{"path":"/srv/data"}})?',
+        ]
+    )
+
+
+class AliasedTarget(BaseModel):
+    path: str = Field(validation_alias='filePath')
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_keeps_a_nested_validation_alias() -> None:
+    """A field the model sent under its validation alias keeps the model's value rather than vanish.
+
+    The validated model is dumped under the field's name, so the alias has no match there.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"target": {"filePath": "/srv/data"}, "force": "true"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(target: AliasedTarget, force: bool) -> str:  # pragma: no cover
+        # Body never runs: the test asserts the pending approval's interrupt.
+        return target.path
 
     events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete /srv/data')))
 
     run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
     interrupt = run_finished['outcome']['interrupts'][0]
-    assert interrupt['message'] == snapshot('Approve execute({"command":{"action":"delete","path":"/srv/data"}})?')
+    assert interrupt['message'] == snapshot('Approve delete_file({"target":{"filePath":"/srv/data"},"force":true})?')
 
 
 @pytestmark_interrupts
