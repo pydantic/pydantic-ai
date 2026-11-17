@@ -84,8 +84,10 @@ returned action ID. The final output depends on the linked provider and its data
 ## Authenticate each user
 
 `auth` takes the API key as a string, or a sync or async function of the run context that returns one. The function is
-called at the start of each run, so one agent can serve users with different StackOne projects. It never falls back to
-`STACKONE_API_KEY`: when it returns `None` or `''`, that run has no StackOne tools.
+called at the start of each run, so the key can come from deps or a secret store rather than the capability's
+configuration, and a run without a key gets no StackOne tools: the function never falls back to `STACKONE_API_KEY`,
+and returning `None` or `''` leaves that run without them. Each key must belong to the StackOne project that owns
+`account_id`.
 
 ```python
 from dataclasses import dataclass
