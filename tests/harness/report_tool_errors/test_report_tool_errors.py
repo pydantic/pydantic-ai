@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -12,6 +11,9 @@ from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import (
     ApprovalRequired,
+    CallDeferred,
+    RunCancelled,
+    SkipToolExecution,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -61,6 +63,18 @@ def _agent(model: FunctionModel, *capabilities: AbstractCapability[None]) -> Age
     @agent.tool_plain
     def refuse() -> str:
         raise ToolFailed('not today')
+
+    @agent.tool_plain
+    def external() -> str:
+        raise CallDeferred
+
+    @agent.tool_plain
+    def skipped() -> str:
+        raise SkipToolExecution('skipped by the tool')
+
+    @agent.tool_plain
+    def sub_agent() -> str:
+        raise RunCancelled('stopped itself')
 
     @agent.tool_plain
     def fetch() -> str:
@@ -177,7 +191,7 @@ class TestReportToolErrors:
                 tool_def: ToolDefinition,
                 args: ValidatedToolArgs,
                 error: Exception,
-            ) -> Any:
+            ) -> None:
                 seen.append(type(error).__name__)
                 raise error
 
@@ -195,3 +209,21 @@ class TestReportToolErrors:
         result = _agent(_scripted([ToolCallPart('guarded', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
         assert isinstance(result.output, DeferredToolRequests)
         assert [call.tool_call_id for call in result.output.approvals] == ['c1']
+
+    def test_call_deferred_still_defers(self) -> None:
+        result = _agent(_scripted([ToolCallPart('external', {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_call_id for call in result.output.calls] == ['c1']
+
+    @pytest.mark.parametrize(
+        ('tool_name', 'expected'),
+        [
+            ('skipped', ('c1', 'skipped by the tool', 'success')),
+            ('sub_agent', ('c1', 'The sub-agent run was cancelled: stopped itself', 'failed')),
+        ],
+    )
+    def test_skip_and_sub_agent_cancellation_keep_their_results(
+        self, tool_name: str, expected: tuple[str, object, str]
+    ) -> None:
+        result = _agent(_scripted([ToolCallPart(tool_name, {}, tool_call_id='c1')]), ReportToolErrors()).run_sync('go')
+        assert _tool_results(result.all_messages()) == [expected]
