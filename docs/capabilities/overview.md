@@ -161,7 +161,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Handle Deferred Tool Calls](handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
 | [System Reminders](https://pydantic.dev/docs/ai/harness/system-reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
-| [Detect Loops](https://pydantic.dev/docs/ai/harness/detect-loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
+| [Detect Loops](https://pydantic.dev/docs/ai/harness/detect-loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 | [Refine Output](https://pydantic.dev/docs/ai/harness/refine-output/) | Harness | Send the agent back to review and revise its output before the run ends |
 
@@ -169,7 +169,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `store.load_active()` and `capabilities=` |
+| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run; the host loads them into a later run via `load_active(workspace)` and `capabilities=` |
 
 ### Execution runtime
 

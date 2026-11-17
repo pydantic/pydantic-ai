@@ -263,7 +263,6 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
         'pull_request',
         'pull_request_review',
         'pull_request_review_comment',
-        'pull_request_review_thread',
     }
     assert observer.on['pull_request'].paths is None
     assert set(observer.on['pull_request'].types) == {
@@ -276,7 +275,6 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
     }
     assert observer.on['pull_request_review'].types == ['submitted', 'edited', 'dismissed']
     assert observer.on['pull_request_review_comment'].types == ['created', 'edited', 'deleted']
-    assert observer.on['pull_request_review_thread'].types == ['resolved', 'unresolved']
     for job in observer.jobs.values():
         assert not job.permissions
         assert all(not step.uses for step in job.steps)
@@ -322,7 +320,6 @@ def test_observer_cannot_choose_the_status_target():
     scenarios: list[tuple[str, str]] = [
         ('forged-title', 'active'),
         ('review-comment', 'active'),
-        ('review-thread', 'active'),
         ('empty-event-prs', 'active'),
         ('pull-request', 'active'),
         ('producer', 'active'),
@@ -378,7 +375,6 @@ if (data.scenario === 'repository-changed') live.head.repo.id = 777;
 if (data.scenario === 'closed-while-queued') live.state = 'closed';
 if (data.scenario === 'wrong-source') serverRun.event = 'workflow_dispatch';
 if (data.scenario === 'review-comment') serverRun.event = 'pull_request_review_comment';
-if (data.scenario === 'review-thread') serverRun.event = 'pull_request_review_thread';
 if (data.scenario === 'pull-request') serverRun.event = 'pull_request';
 if (data.scenario === 'wrong-path') serverRun.path = '.github/workflows/untrusted.yml';
 if (data.scenario === 'foreign-workflow-repository') serverRun.repository.full_name = 'attacker/pydantic-ai';
