@@ -155,12 +155,13 @@ def launch_script(
     directory: str, cwd: str, command: str, *, exclusive: bool, combined: bool, log_limit: int | None, interval: float
 ) -> str:
     """The PowerShell that launches `command` as a job in `directory`, starting in `cwd`."""
-    out, err = ('output.log', 'output.log') if combined else ('stdout.log', 'stderr.log')
+    stdout_log, stderr_log = ('output.log', 'output.log') if combined else ('stdout.log', 'stderr.log')
     wrapper = (
-        f'$dir = {literal(directory)}\n$cwd = {literal(cwd)}\n$out = {literal(out)}\n$err = {literal(err)}\n'
+        f'$dir = {literal(directory)}\n$cwd = {literal(cwd)}\n'
+        f'$out = {literal(stdout_log)}\n$err = {literal(stderr_log)}\n'
         f'$limit = {log_limit or 0}\n$interval = {interval:g}\n' + _WRAPPER
     )
-    logs = ', '.join(literal(log) for log in dict.fromkeys((out, err)))
+    logs = ', '.join(literal(log) for log in dict.fromkeys((stdout_log, stderr_log)))
     return (
         f'$dir = {literal(directory)}\n$exclusive = ${str(exclusive).lower()}\n$logs = @({logs})\n'
         f'$script = {literal(powershell_script(command))}\n$supervisor = {literal(wrapper)}\n'

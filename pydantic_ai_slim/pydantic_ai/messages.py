@@ -5729,7 +5729,15 @@ def _repair_dangling_tool_calls(
     the other pipeline passes — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as the
     mechanism for inspecting what was synthesized.
     """
-    dangling_by_response = _dangling_tool_calls_to_repair(messages, repair_last_response=repair_last_response)
+    return _close_out_dangling_tool_calls(
+        messages, _dangling_tool_calls_to_repair(messages, repair_last_response=repair_last_response)
+    )
+
+
+def _close_out_dangling_tool_calls(
+    messages: list[ModelMessage], dangling_by_response: dict[int, list[ToolCallPart]]
+) -> list[ModelMessage]:
+    """Give each call in `dangling_by_response` a synthesized return, placed as `_repair_dangling_tool_calls` describes."""
     if not dangling_by_response:
         return messages
 
