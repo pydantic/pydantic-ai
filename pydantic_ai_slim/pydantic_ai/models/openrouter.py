@@ -1312,24 +1312,13 @@ class OpenRouterModel(OpenAIChatModel):
                 )
             )
             thinking_remedy = f'OpenRouter would silently drop reasoning. {thinking_remedy}'
-        unavailable_reason = tool_forcing_unavailable_reason(
-            profile, thinking=forcing_thinking, thinking_remedy=thinking_remedy
-        )
-        explicit_choice = model_settings.get('tool_choice')
-        if (
-            unavailable_reason is not None
-            and not disables_thinking
-            and profile.get('supports_forced_tool_choice', True)
-            and (explicit_choice == 'required' or (isinstance(explicit_choice, list) and bool(explicit_choice)))
-        ):
-            # The error is the category of the route's 400, so `FallbackModel` and `except ModelAPIError` handle it as
-            # they handle the 400.
-            raise ModelRequestRejectedError(
-                self.model_name,
-                f'tool_choice={explicit_choice!r} is not supported by model {self.model_name!r}. {unavailable_reason}',
-            )
         return support_tool_forcing(
-            self.model_name, model_settings, unavailable_reason, disables_thinking=thinking and disables_thinking
+            self.model_name,
+            model_settings,
+            tool_forcing_unavailable_reason(profile, thinking=forcing_thinking, thinking_remedy=thinking_remedy),
+            disables_thinking=thinking and disables_thinking,
+            # Outside Anthropic routes, a route that can't force while thinking returns a 400 for it.
+            api_rejects=not disables_thinking and profile.get('supports_forced_tool_choice', True),
         )
 
     @override
